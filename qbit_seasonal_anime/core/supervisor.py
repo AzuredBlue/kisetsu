@@ -329,9 +329,14 @@ class Supervisor:
                     show.aliases = list(set(current_aliases) | incoming_aliases)
                     updated = True
 
+                # The user marking the show COMPLETED on their AniList list is a
+                # completion signal in its own right: it means they are done with the
+                # series and want the rule stood down, whether or not we ever
+                # confirmed every episode.
+                anilist_marked_complete = (data.get("list_status") == "COMPLETED")
                 is_finished = (data.get("status") == "FINISHED")
-                if is_finished and data.get("next_airing_episode") is None:
-                    if has_downloaded_final_episode(self.session, show):
+                if anilist_marked_complete or (is_finished and data.get("next_airing_episode") is None):
+                    if anilist_marked_complete or has_downloaded_final_episode(self.session, show):
                         if show.next_airing_episode is not None:
                             show.next_airing_episode = None
                             updated = True
@@ -343,7 +348,10 @@ class Supervisor:
                             if show.qbit_rule_name:
                                 disable_rule(self.qbit, show.qbit_rule_name)
                             updated = True
-                            msg = f"Show '{show.display_name}' completed all {show.total_episodes} episodes. Status -> COMPLETED, rule disabled."
+                            if anilist_marked_complete:
+                                msg = f"Show '{show.display_name}' marked COMPLETED on AniList. Status -> COMPLETED, rule disabled."
+                            else:
+                                msg = f"Show '{show.display_name}' completed all {show.total_episodes} episodes. Status -> COMPLETED, rule disabled."
                             logger.info(msg)
                             logs.append(msg)
                     else:
@@ -359,7 +367,15 @@ class Supervisor:
                         show.next_airing_at = data.get("next_airing_at")
                         updated = True
 
-                if show.status == MonitoredStatus.COMPLETED and not has_downloaded_final_episode(self.session, show):
+                # Re-open a show we completed on download evidence alone, in case that
+                # evidence was wrong. A completion the user asked for on AniList is
+                # deliberate, so it stands; flipping the list back to CURRENT brings the
+                # show back through here and re-opens it.
+                if (
+                    show.status == MonitoredStatus.COMPLETED
+                    and not anilist_marked_complete
+                    and not has_downloaded_final_episode(self.session, show)
+                ):
                     show.status = (
                         MonitoredStatus.FIXED
                         if (show.last_confirmed_episode or 0) > 0

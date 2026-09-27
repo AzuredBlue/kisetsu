@@ -1,10 +1,13 @@
+from datetime import timedelta
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
+from qbit_seasonal_anime.db.models import Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from qbit_seasonal_anime.db.session import get_settings
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
 
@@ -100,6 +103,108 @@ async def test_anilist_reopens_stale_completed_show_when_finale_is_not_confirmed
 
     assert show.status == MonitoredStatus.FIXED
     assert show.next_airing_episode == 12
+
+
+MUSHOKU_RULE = "[Seasonal] Mushoku Tensei - Jobless Reincarnation Season 3"
+
+
+def _anilist_completed_fixture():
+    """A working show whose finale was downloaded but never confirmed (last_confirmed < total)."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    session.add(Settings(id=1, anilist_username="TestUser", base_dir="/tmp/Anime"))
+    show = Monitored(
+        id=8,
+        anilist_id=178789,
+        display_name="Mushoku Tensei: Jobless Reincarnation Season 3",
+        aliases_json='["Mushoku Tensei S3"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=14,
+        next_airing_episode=14,
+        next_airing_at=utc_now() - timedelta(hours=2),
+        last_confirmed_episode=13,
+        qbit_rule_name=MUSHOKU_RULE,
+    )
+    session.add(show)
+    session.commit()
+
+    mock_qbit = MagicMock()
+    mock_qbit.get_rss_rules.return_value = {MUSHOKU_RULE: {"enabled": True}}
+
+    return session, show, mock_qbit
+
+
+def _anilist_payload(**overrides):
+    payload = {
+        "anilist_id": 178789,
+        "display_name": "Mushoku Tensei: Jobless Reincarnation Season 3",
+        "list_status": "COMPLETED",
+        "status": "RELEASING",
+        "total_episodes": 14,
+        "next_airing_episode": 14,
+        "next_airing_at": utc_now(),
+        "season": "SUMMER",
+        "season_year": 2026,
+    }
+    payload.update(overrides)
+    return payload
+
+
+@pytest.mark.asyncio
+async def test_anilist_completed_list_status_completes_show_without_finale_confirmed():
+    """The user finishing the show on AniList stands the rule down even if we never confirmed the finale."""
+    session, show, mock_qbit = _anilist_completed_fixture()
+    mock_anilist = MagicMock()
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[_anilist_payload()])
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=get_settings(session))
+
+    logs = await supervisor.sync_anilist_schedule()
+    session.refresh(show)
+
+    assert show.status == MonitoredStatus.COMPLETED
+    assert show.next_airing_episode is None
+    assert show.next_airing_at is None
+    assert show.last_confirmed_episode == 13  # untouched: AniList does not prove the download
+    assert any("marked COMPLETED on AniList" in l for l in logs)
+    mock_qbit.set_rss_rule.assert_called_with(rule_name=MUSHOKU_RULE, rule_def={"enabled": False})
+
+
+@pytest.mark.asyncio
+async def test_anilist_completion_survives_the_next_cycle():
+    """The re-open guard must not undo a completion the user asked for on AniList."""
+    session, show, mock_qbit = _anilist_completed_fixture()
+    mock_anilist = MagicMock()
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[_anilist_payload()])
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=get_settings(session))
+
+    await supervisor.sync_anilist_schedule()
+    await supervisor.sync_anilist_schedule()
+    session.refresh(show)
+
+    assert show.status == MonitoredStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_anilist_completion_reverts_when_list_status_goes_back_to_current():
+    """Symmetric: moving the list entry off COMPLETED re-opens the show and restores the air date."""
+    session, show, mock_qbit = _anilist_completed_fixture()
+    mock_anilist = MagicMock()
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[_anilist_payload()])
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=get_settings(session))
+    await supervisor.sync_anilist_schedule()
+
+    airing_soon = utc_now() + timedelta(days=7)
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(
+        return_value=[_anilist_payload(list_status="CURRENT", next_airing_episode=14, next_airing_at=airing_soon)]
+    )
+    await supervisor.sync_anilist_schedule()
+    session.refresh(show)
+
+    assert show.status == MonitoredStatus.FIXED
+    assert show.next_airing_episode == 14
+    assert show.next_airing_at is not None
 
 
 def _rule_sync_fixture(n_shows):

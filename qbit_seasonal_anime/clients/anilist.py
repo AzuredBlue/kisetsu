@@ -10,9 +10,10 @@ ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 
 USER_SEASONAL_QUERY = """
 query ($userName: String) {
-  MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING]) {
+  MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING, COMPLETED]) {
     lists {
       entries {
+        status
         media {
           id
           title {
@@ -153,6 +154,10 @@ class AniListClient:
         1. Currently releasing anime
         2. Upcoming anime planned for next season (or current season if not yet released)
         3. Finished anime from the current season (or extending cour monitored shows)
+        4. Already-monitored anime the user has marked COMPLETED on their list
+
+        Each returned dict carries the entry's own list status as "list_status", so
+        the caller can treat "I finished watching this" as a completion signal.
         """
         if not username.strip():
             return []
@@ -174,6 +179,10 @@ class AniListClient:
                 if media_id in anime_dict:
                     continue
 
+                # The user's own list status (CURRENT/PLANNING/COMPLETED), distinct
+                # from media["status"] which is the show's broadcast state.
+                list_status = entry.get("status")
+
                 status = media.get("status")
                 season = media.get("season")
                 season_year = media.get("seasonYear")
@@ -189,6 +198,20 @@ class AniListClient:
                 )
                 is_monitored = bool(monitored_anilist_ids and media_id in monitored_anilist_ids)
 
+                # A list-completed entry means the user has finished watching, so it
+                # must never be introduced as a new show - the broadcast-state clauses
+                # below can match an old finished show from a current season and would
+                # otherwise have us arm a download rule for something already watched.
+                # Monitored shows still fall through, because the caller has to see
+                # them in order to stand their existing rule down.
+                if list_status == "COMPLETED" and not is_monitored:
+                    continue
+
+                # is_monitored also carries list-completed entries through: a show the
+                # user finished watching is no longer CURRENT/PLANNING, so none of the
+                # broadcast-state clauses would match, but we still need to see it in
+                # order to mark it COMPLETED. The rest of the completed backlog falls
+                # out here.
                 if not (is_currently_releasing or is_current_or_next_season_planned or is_current_season_finished or is_monitored):
                     continue
 
@@ -220,6 +243,7 @@ class AniListClient:
                     "title_romaji": titles.get("romaji") or "",
                     "title_english": titles.get("english") or "",
                     "aliases": list(aliases),
+                    "list_status": list_status or "",
                     "status": status or "UNKNOWN",
                     "total_episodes": media.get("episodes"),
                     "next_airing_episode": next_airing_episode,
