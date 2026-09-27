@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 
 from qbit_seasonal_anime.db.session import get_engine, get_settings
 from qbit_seasonal_anime.db.models import Monitored, Feed, RuleHistory, MonitoredStatus, RuleOutcome, MatchHistory, utc_now
-from qbit_seasonal_anime.clients.qbit import QBitClient
+from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
@@ -689,6 +689,14 @@ async def run_cycle_now(session: Session = Depends(get_db)):
 
     s = get_settings(session)
     qbit = QBitClient(host=s.qbit_host, username=s.qbit_username, password=s.qbit_password, timeout=10)
+
+    # Probe first so the button does not launch a cycle that can only fail.
+    try:
+        await asyncio.to_thread(qbit.test_connection)
+    except QbitClientError as e:
+        state.add_log(f"Manual cycle skipped: qBittorrent is unavailable: {e}", "ERROR")
+        raise HTTPException(status_code=503, detail=f"qBittorrent is unavailable: {e}")
+
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
 
     state.is_running_cycle = True

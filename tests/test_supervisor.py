@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.core.supervisor import Supervisor
+from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
 from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
@@ -99,3 +100,85 @@ async def test_anilist_reopens_stale_completed_show_when_finale_is_not_confirmed
 
     assert show.status == MonitoredStatus.FIXED
     assert show.next_airing_episode == 12
+
+
+def _rule_sync_fixture(n_shows):
+    """Engine + session with n monitored shows that each need a rule written."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime")
+    session.add(settings)
+
+    shows = []
+    for i in range(n_shows):
+        feed = Feed(name=f"Feed {i}", qbit_feed_url=f"https://example.com/{i}/rss", qbit_feed_name=f"Feed {i}")
+        session.add(feed)
+        session.commit()
+        session.refresh(feed)
+        show = Monitored(
+            anilist_id=1000 + i,
+            display_name=f"Show {i}",
+            aliases_json=f'["Show {i}"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=feed.id,
+        )
+        session.add(show)
+        shows.append(show)
+    session.commit()
+    for show in shows:
+        session.refresh(show)
+    return session, settings, shows
+
+
+def test_sync_active_rules_stops_at_the_first_lost_connection():
+    """A dead socket fails every remaining rule, so emit one warning and stop."""
+    session, settings, shows = _rule_sync_fixture(4)
+
+    qbit = MagicMock()
+    qbit.get_client.return_value.rss_rules.return_value = {}
+    qbit.set_rss_rule.side_effect = QbitConnectionError("connection reset by peer")
+
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    with pytest.raises(QbitConnectionError):
+        supervisor.sync_active_rules()
+
+    assert qbit.set_rss_rule.call_count == 1
+
+
+def test_sync_active_rules_keeps_going_for_rule_specific_failures():
+    """A single malformed rule must not block the others."""
+    session, settings, shows = _rule_sync_fixture(4)
+
+    qbit = MagicMock()
+    qbit.get_client.return_value.rss_rules.return_value = {}
+    qbit.set_rss_rule.side_effect = [QbitClientError("bad regex"), None, None, None]
+
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.sync_active_rules()
+
+    assert qbit.set_rss_rule.call_count == 4
+    assert sum(1 for l in logs if "Failed updating rule" in l) == 1
+    assert any("Synchronized 3 updated rules" in l for l in logs)
+
+
+def test_sync_active_rules_commits_rules_written_before_a_lost_connection():
+    """A rule that made it into qBittorrent must stay recorded in the database."""
+    session, settings, shows = _rule_sync_fixture(3)
+
+    qbit = MagicMock()
+    qbit.get_client.return_value.rss_rules.return_value = {}
+    qbit.set_rss_rule.side_effect = [None, QbitConnectionError("connection reset by peer")]
+
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    with pytest.raises(QbitConnectionError):
+        supervisor.sync_active_rules()
+
+    session.expire_all()
+    committed = [s.qbit_rule_name for s in session.exec(select(Monitored)).all()]
+    assert committed[0] is not None
+    assert committed[1] is None

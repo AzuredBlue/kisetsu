@@ -4,7 +4,7 @@ from datetime import timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
 from sqlmodel import Session, select
 from qbit_seasonal_anime.clients.anilist import AniListClient, AniListError, get_current_and_next_season
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
+from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
 from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents, has_downloaded_final_episode
 from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from qbit_seasonal_anime.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
@@ -418,38 +418,48 @@ class Supervisor:
             existing_rules = {}
 
         refreshed = 0
-        for show in active_shows:
-            feed = feeds_map.get(show.current_feed_id)
-            if not feed:
-                continue
+        try:
+            for show in active_shows:
+                feed = feeds_map.get(show.current_feed_id)
+                if not feed:
+                    continue
 
-            rule_name = show.qbit_rule_name or build_rule_name(show.id or 0, show.display_name)
-            current_def = existing_rules.get(rule_name)
-            desired_def = build_rule_definition(
-                monitored=show,
-                feed_url=feed.qbit_feed_url,
-                base_dir=self.settings.base_dir,
-                category=self.settings.default_category,
-                ratio_limit=self.settings.default_seed_ratio,
-                release_group=show.matched_release_group,
-                title_language=getattr(self.settings, "title_language", "english"),
-                previous_rule=current_def,
-            )
+                rule_name = show.qbit_rule_name or build_rule_name(show.id or 0, show.display_name)
+                current_def = existing_rules.get(rule_name)
+                desired_def = build_rule_definition(
+                    monitored=show,
+                    feed_url=feed.qbit_feed_url,
+                    base_dir=self.settings.base_dir,
+                    category=self.settings.default_category,
+                    ratio_limit=self.settings.default_seed_ratio,
+                    release_group=show.matched_release_group,
+                    title_language=getattr(self.settings, "title_language", "english"),
+                    previous_rule=current_def,
+                )
 
-            if current_def and _rules_are_equivalent(current_def, desired_def):
-                continue
+                if current_def and _rules_are_equivalent(current_def, desired_def):
+                    continue
 
-            try:
-                self.qbit.set_rss_rule(rule_name=rule_name, rule_def=desired_def)
-                show.qbit_rule_name = rule_name
-                self.session.add(show)
-                refreshed += 1
-            except QbitClientError as e:
-                logger.warning(f"Could not refresh rule for '{show.display_name}': {e}")
-                logs.append(f"Warning: Failed updating rule for '{show.display_name}': {e}")
+                try:
+                    self.qbit.set_rss_rule(rule_name=rule_name, rule_def=desired_def)
+                    show.qbit_rule_name = rule_name
+                    self.session.add(show)
+                    refreshed += 1
+                except QbitConnectionError:
+                    # Every remaining show would fail identically against a dead
+                    # socket, so stop and let the caller re-enter its reconnect
+                    # backoff instead of logging one warning per show.
+                    logger.warning(f"qBittorrent connection lost while refreshing '{show.display_name}'; deferring remaining shows")
+                    raise
+                except QbitClientError as e:
+                    logger.warning(f"Could not refresh rule for '{show.display_name}': {e}")
+                    logs.append(f"Warning: Failed updating rule for '{show.display_name}': {e}")
+        finally:
+            # Commit even when bailing out, so rules already written to
+            # qBittorrent and any earlier pending changes are not lost.
+            if had_pending_changes or refreshed > 0:
+                self.session.commit()
 
-        if had_pending_changes or refreshed > 0:
-            self.session.commit()
         if refreshed > 0:
             logs.append(f"Synchronized {refreshed} updated rules in qBittorrent.")
         return logs

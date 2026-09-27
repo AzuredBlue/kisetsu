@@ -1531,13 +1531,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       text.textContent = 'Checking...';
 
       try {
-        const res = await fetch('/api/cycle/run', { method: 'POST' });
-        const data = await res.json();
+        const data = await apiFetch('/api/cycle/run', { method: 'POST' });
         showToast(data.message || 'Check completed.', 'success');
         loadShows();
         updateStatus(true);
       } catch (err) {
-        showToast(`Check error: ${err}`, 'error');
+        showToast(`Check error: ${err.message || err}`, 'error');
       } finally {
         btn.disabled = false;
         spinner.classList.add('hidden');

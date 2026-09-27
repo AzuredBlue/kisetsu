@@ -13,6 +13,31 @@ class QbitClientError(Exception):
     pass
 
 
+class QbitConnectionError(QbitClientError):
+    """qBittorrent is unreachable (still booting, down, or reset mid-cycle)."""
+    pass
+
+
+class QbitAuthenticationError(QbitClientError):
+    """qBittorrent rejected the configured credentials."""
+    pass
+
+
+def _is_auth_failure(exc: BaseException) -> bool:
+    """
+    Distinguish "your password is wrong" from "qBittorrent is not there".
+
+    Depending on the qbittorrent-api version a rejected login surfaces either as
+    LoginFailed or as an HTTP 401/403 (e.g. Forbidden403Error), so check both.
+    """
+    if isinstance(exc, qbittorrentapi.LoginFailed):
+        return True
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if status is None:
+        status = getattr(exc, "status_code", None)
+    return status in (401, 403)
+
+
 class QBitClient:
     def __init__(self, host: str, username: str = "", password: str = "", timeout: int = 10):
         self.host = host
@@ -21,12 +46,21 @@ class QBitClient:
         self.timeout = timeout
         self._client: Optional[qbittorrentapi.Client] = None
 
-    def get_client(self, max_retries: int = 2, backoff_factor: float = 0.5) -> qbittorrentapi.Client:
+    def get_client(
+        self,
+        max_attempts: int = 3,
+        backoff_factor: float = 1.0,
+        *,
+        max_retries: Optional[int] = None,
+    ) -> qbittorrentapi.Client:
+        if max_retries is not None:
+            max_attempts = max_retries
         if self._client is not None:
             return self._client
 
         last_err = None
-        for attempt in range(max_retries):
+        attempts = max(1, max_attempts)
+        for attempt in range(attempts):
             try:
                 client = qbittorrentapi.Client(
                     host=self.host,
@@ -39,18 +73,18 @@ class QBitClient:
                 client.auth_log_in()
                 self._client = client
                 return self._client
-            except qbittorrentapi.LoginFailed as e:
-                self._client = None
-                raise QbitClientError(f"qBittorrent login failed: {e}") from e
             except Exception as e:
                 last_err = e
                 self._client = None
-                if attempt < max_retries - 1:
+                if _is_auth_failure(e):
+                    # A rejected password will not fix itself, so do not retry it.
+                    raise QbitAuthenticationError(f"qBittorrent login failed: {e}") from e
+                if attempt < attempts - 1:
                     sleep_time = min(backoff_factor * (2 ** attempt), 15.0)
-                    logger.info(f"qBittorrent connection attempt {attempt + 1}/{max_retries} failed ({e}), waiting {sleep_time:.1f}s for WebUI/Docker...")
+                    logger.info(f"qBittorrent connection attempt {attempt + 1}/{attempts} failed ({e}), waiting {sleep_time:.1f}s for WebUI/Docker...")
                     time.sleep(sleep_time)
 
-        raise QbitClientError(f"Cannot connect to qBittorrent at {self.host} after {max_retries} attempts: {last_err}")
+        raise QbitConnectionError(f"Cannot connect to qBittorrent at {self.host} after {attempts} attempts: {last_err}")
 
     def ensure_category_exists(self, category: str) -> bool:
         """Ensure a category exists in qBittorrent, creating it if needed."""
@@ -74,9 +108,14 @@ class QBitClient:
             app_version = client.app.version
             api_version = client.app.web_api_version
             return {"app_version": app_version, "api_version": api_version}
+        except QbitClientError:
+            # Preserve the subtype so callers can tell a bad password from an
+            # unreachable qBittorrent and back off accordingly.
+            self._client = None
+            raise
         except Exception as e:
             self._client = None
-            raise QbitClientError(f"Failed to query qBittorrent version: {e}") from e
+            raise QbitConnectionError(f"Failed to query qBittorrent version: {e}") from e
 
     def get_rss_items(self, with_data: bool = True) -> Dict[str, Any]:
         """Fetch all RSS feeds and their cached articles."""
@@ -131,11 +170,22 @@ class QBitClient:
 
     def set_rss_rule(self, rule_name: str, rule_def: Dict[str, Any]) -> None:
         """Create or update an RSS auto-downloading rule."""
-        client = self.get_client()
         try:
+            client = self.get_client()
             client.rss_set_rule(rule_name=rule_name, rule_def=rule_def)
             logger.info(f"Successfully set RSS rule '{rule_name}'")
+        except QbitClientError:
+            self._client = None
+            raise
         except Exception as e:
+            self._client = None
+            # A dropped socket fails every remaining rule identically, so confirm
+            # whether qBittorrent is still reachable before blaming this rule.
+            # That lets callers back off instead of retrying show by show.
+            try:
+                self.get_client()
+            except QbitClientError as unreachable:
+                raise unreachable from e
             raise QbitClientError(f"Failed to set RSS rule '{rule_name}': {e}") from e
 
     def remove_rss_rule(self, rule_name: str) -> None:

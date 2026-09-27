@@ -1,9 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock
+import asyncio
+import importlib
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
+from qbit_seasonal_anime.clients.qbit import QbitAuthenticationError, QbitConnectionError
+app_module = importlib.import_module("qbit_seasonal_anime.server.app")
 from qbit_seasonal_anime.server import api as api_module
 from qbit_seasonal_anime.server.app import create_app
 from qbit_seasonal_anime.db.models import MatchHistory, Monitored, Feed, MonitoredStatus, Settings
@@ -41,7 +45,12 @@ def mock_qbit():
 
 
 @pytest.fixture
-def client(db_engine, mock_qbit):
+def client(db_engine, mock_qbit, monkeypatch):
+    async def idle_background_task():
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(app_module, "background_supervisor_task", idle_background_task)
+    monkeypatch.setattr(app_module, "get_engine", lambda: db_engine)
     app = create_app()
 
     def override_get_db():
@@ -227,6 +236,9 @@ def test_system_status(client, session):
 
 
 def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
+    qbit = MagicMock()
+    qbit.test_connection.return_value = {"app_version": "test", "api_version": "test"}
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock(return_value=qbit))
     supervisor = MagicMock()
     supervisor.run_full_cycle = AsyncMock(return_value=["Cycle complete"])
     monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
@@ -252,10 +264,224 @@ def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
     assert response.json()["next_check_seconds"] == 321
     assert response.json()["next_check_reason"] == "Next cycle"
     supervisor.run_full_cycle.assert_awaited_once_with()
-    to_thread.assert_awaited_once()
-    assert to_thread.await_args.args[0] is scheduler
+    assert [c.args[0] for c in to_thread.await_args_list].count(scheduler) == 1
     scheduler.assert_called_once()
     assert api_module.state.is_running_cycle is False
+
+
+def test_manual_cycle_reports_qbit_unavailable(client, monkeypatch):
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = QbitConnectionError("still starting")
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock(return_value=qbit))
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module.state, "is_running_cycle", False)
+
+    response = client.post("/api/cycle/run")
+
+    assert response.status_code == 503
+    assert "qBittorrent is unavailable" in response.json()["detail"]
+    supervisor.run_full_cycle.assert_not_awaited()
+    assert api_module.state.is_running_cycle is False
+
+
+@pytest.fixture
+def supervisor_engine():
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, qbit_host="http://qbit:8080"))
+        session.commit()
+    return engine
+
+
+def _patch_supervisor_loop(monkeypatch, engine, qbit, supervisor):
+    """Wire the loop to in-memory doubles; returns the Supervisor factory mock."""
+    supervisor_factory = MagicMock(return_value=supervisor)
+    monkeypatch.setattr(app_module, "get_engine", lambda: engine)
+    monkeypatch.setattr(app_module, "QBitClient", MagicMock(return_value=qbit))
+    monkeypatch.setattr(app_module, "Supervisor", supervisor_factory)
+    monkeypatch.setattr(app_module, "calculate_next_poll_interval", MagicMock(return_value=(60, "normal")))
+    monkeypatch.setattr(app_module, "STARTUP_GRACE_SECONDS", 0)
+    return supervisor_factory
+
+
+def _run_loop_until_cancelled(monkeypatch, stop_after=1):
+    """Let the supervisor loop run, recording the delay of each blocking wait."""
+    recorder = {"waits": 0, "delays": []}
+
+    async def stop_wait(awaitable, *args, **kwargs):
+        awaitable.close()
+        recorder["delays"].append(kwargs.get("timeout"))
+        recorder["waits"] += 1
+        if recorder["waits"] >= stop_after:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_module.asyncio, "wait_for", stop_wait)
+    return recorder
+
+
+def _log_messages():
+    return [entry["message"] for entry in list(app_module.state.logs)]
+
+
+async def test_background_supervisor_waits_for_qbit_before_running_a_cycle(supervisor_engine, monkeypatch):
+    """qBittorrent was not up yet, so no cycle may start until a probe succeeds."""
+    events = []
+    probes = {"count": 0}
+
+    def probe():
+        probes["count"] += 1
+        events.append("probe")
+        if probes["count"] < 3:
+            raise QbitConnectionError("connection refused")
+        return {"app_version": "test", "api_version": "test"}
+
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = probe
+    supervisor = MagicMock()
+
+    async def run_cycle():
+        events.append("cycle")
+        return []
+
+    supervisor.run_full_cycle = AsyncMock(side_effect=run_cycle)
+    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (1, 2, 4))
+    _run_loop_until_cancelled(monkeypatch, stop_after=3)
+
+    await app_module.background_supervisor_task()
+
+    assert events == ["probe", "probe", "probe", "cycle"]
+    supervisor.run_full_cycle.assert_awaited_once()
+    assert app_module.state.next_check_reason == "normal"
+    assert app_module.state.next_check_seconds == 60
+
+
+async def test_background_supervisor_escalates_and_then_caps_the_retry_delay(supervisor_engine, monkeypatch):
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = QbitConnectionError("connection refused")
+    supervisor = MagicMock()
+    supervisor_factory = _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (1, 2, 4, 8, 16, 30, 60))
+    recorder = _run_loop_until_cancelled(monkeypatch, stop_after=8)
+
+    await app_module.background_supervisor_task()
+
+    # 8 failures walk the whole ladder, then stay pinned to the last delay.
+    assert recorder["delays"] == [1, 2, 4, 8, 16, 30, 60, 60]
+    supervisor_factory.assert_not_called()
+
+
+async def test_background_supervisor_backs_off_hard_on_authentication_failure(supervisor_engine, monkeypatch):
+    """A wrong password must not be retried on the fast connection ladder."""
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = QbitAuthenticationError("login failed")
+    supervisor = MagicMock()
+    supervisor_factory = _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (1, 2, 4))
+    recorder = _run_loop_until_cancelled(monkeypatch, stop_after=2)
+
+    await app_module.background_supervisor_task()
+
+    assert recorder["delays"] == [app_module.QBIT_AUTH_RETRY_SECONDS] * 2
+    assert "authentication failed" in app_module.state.next_check_reason
+    supervisor_factory.assert_not_called()
+
+
+async def test_background_supervisor_resets_backoff_and_reports_recovery(supervisor_engine, monkeypatch):
+    probes = {"count": 0}
+
+    def probe():
+        probes["count"] += 1
+        if probes["count"] == 1:
+            raise QbitConnectionError("connection refused")
+        return {"app_version": "test", "api_version": "test"}
+
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = probe
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (1, 2, 4))
+    _run_loop_until_cancelled(monkeypatch, stop_after=3)
+
+    await app_module.background_supervisor_task()
+
+    assert "qBittorrent connection restored." in _log_messages()
+    assert app_module.state.next_check_reason == "normal"
+    # A successful cycle resets the ladder, so the next outage starts at 1s again.
+    assert probes["count"] == 3
+
+
+async def test_background_supervisor_reenters_backoff_when_qbit_drops_mid_cycle(supervisor_engine, monkeypatch):
+    """A connection lost during the cycle must not be swallowed as a normal cycle."""
+    probes = {"count": 0}
+
+    def probe():
+        probes["count"] += 1
+        if probes["count"] == 2:
+            raise QbitConnectionError("reset by peer")
+        return {"app_version": "test", "api_version": "test"}
+
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = probe
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(side_effect=QbitConnectionError("reset by peer"))
+    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (1, 2, 4))
+    app_module.state.last_cycle_time = None
+    recorder = _run_loop_until_cancelled(monkeypatch, stop_after=1)
+
+    await app_module.background_supervisor_task()
+
+    assert "became unavailable during the cycle" in app_module.state.next_check_reason
+    assert recorder["delays"] == [1]
+    assert app_module.state.last_cycle_time is None
+    assert app_module.state.is_running_cycle is False
+
+
+async def test_background_supervisor_cancels_cleanly_during_reconnect_wait(supervisor_engine, monkeypatch):
+    qbit = MagicMock()
+    qbit.test_connection.side_effect = QbitConnectionError("connection refused")
+    supervisor = MagicMock()
+    supervisor_factory = _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (60,))
+
+    # Let the startup grace pass, then cancel during the reconnect wait.
+    real_sleep = asyncio.sleep
+
+    async def cancel_sleep(*args, **kwargs):
+        if args and args[0] == 60:
+            raise asyncio.CancelledError
+        await real_sleep(0)
+
+    monkeypatch.setattr(app_module.asyncio, "sleep", cancel_sleep)
+    _run_loop_until_cancelled(monkeypatch, stop_after=1)
+
+    await app_module.background_supervisor_task()
+
+    supervisor_factory.assert_not_called()
+    assert app_module.state.is_running_cycle is False
+    assert "Background supervisor stopped." in _log_messages()
+
+
+def test_format_sleep_switches_to_seconds_below_a_minute():
+    assert app_module._format_sleep(1) == "1s"
+    assert app_module._format_sleep(30) == "30s"
+    assert app_module._format_sleep(59) == "59s"
+    assert app_module._format_sleep(60) == "1m"
+    assert app_module._format_sleep(21600) == "360m"
+
+
+def test_next_qbit_retry_saturates_at_the_last_delay():
+    ladder = (1, 2, 4, 8, 16, 30, 60)
+    assert [app_module._next_qbit_retry(i) for i in range(9)] == [1, 2, 4, 8, 16, 30, 60, 60, 60]
 
 
 def test_delete_show(client, session):
