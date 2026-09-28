@@ -154,6 +154,14 @@ class RuleHistory(SQLModel, table=True):
     note: Optional[str] = Field(default=None, nullable=True)
 
 
+class QbitRuleWatermark(SQLModel, table=True):
+    __tablename__ = "qbit_rule_watermarks"
+
+    rule_name: str = Field(primary_key=True)
+    last_match: str = Field(default="")
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class MatchHistory(SQLModel, table=True):
     __tablename__ = "match_history"
 

@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import logging
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select, or_
 from rapidfuzz import fuzz
@@ -192,6 +193,95 @@ def record_match_event(
         logger.debug(f"Could not record match event: {e}")
         return None
 
+
+ACCEPTANCE_RE = re.compile(r"RSS article '(?P<title>.+?)' is accepted by rule '(?P<rule>.+?)'\.")
+
+
+def parse_acceptance_log_line(message: str) -> Optional[Tuple[str, str]]:
+    """(release_title, rule_name) from a qBittorrent acceptance line, or None."""
+    if not isinstance(message, str) or "is accepted by rule" not in message:
+        return None
+    match = ACCEPTANCE_RE.search(message)
+    if not match:
+        return None
+    return match.group("title"), match.group("rule")
+
+
+def ingest_log_acceptances(
+    session: Session,
+    entries: List[Tuple[int, str, datetime]],
+    rule_patterns: Optional[Dict[str, str]] = None,
+) -> List[str]:
+    """Record releases qBittorrent's log reports it accepted for our rules."""
+    logs: List[str] = []
+
+    shows_by_rule: Dict[str, Monitored] = {}
+    for show in session.exec(select(Monitored)).all():
+        if show.qbit_rule_name:
+            shows_by_rule[show.qbit_rule_name] = show
+    if not shows_by_rule:
+        return logs
+
+    feeds_by_id = {f.id: f.qbit_feed_name for f in session.exec(select(Feed)).all()}
+
+    for _, message, when in entries:
+        parsed = parse_acceptance_log_line(message)
+        if parsed is None:
+            continue
+        release_title, rule_name = parsed
+        show = shows_by_rule.get(rule_name)
+        if show is None:
+            continue
+
+        source_episode = parse_release_title(release_title).get("episode")
+        canonical = _canonical_episode(session, show, show.current_feed_id, source_episode)
+        if canonical is None:
+            logger.debug(
+                f"Accepted release '{release_title}' for '{show.display_name}' has an episode number outside "
+                f"the stored season mapping and was not recorded."
+            )
+            continue
+        if canonical <= (show.last_confirmed_episode or 0):
+            continue
+
+        row = session.exec(
+            select(Episode).where(
+                Episode.monitored_id == show.id,
+                Episode.episode_number == canonical,
+            )
+        ).first()
+        if row:
+            row.status = EpisodeStatus.COMPLETED
+            row.source_episode = source_episode
+            row.release_title = release_title
+            row.downloaded_at = when
+            session.add(row)
+
+        show.last_confirmed_episode = canonical
+        session.add(show)
+
+        record_match_event(
+            session=session,
+            monitored_id=show.id,
+            show_name=show.display_name,
+            rule_name=rule_name,
+            release_title=release_title,
+            feed_name=feeds_by_id.get(show.current_feed_id),
+            episode=canonical,
+            match_time=when,
+            matched_regex=(rule_patterns or {}).get(rule_name),
+        )
+
+        msg = (
+            f"'{show.display_name}': qBittorrent accepted '{release_title}' "
+            f"-> episode {canonical} recorded."
+        )
+        logger.info(msg)
+        logs.append(msg)
+
+    if logs:
+        session.commit()
+    return logs
 
 
 def _best_article_match(

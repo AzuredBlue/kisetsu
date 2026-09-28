@@ -7,6 +7,7 @@ class ServerState:
     def __init__(self):
         self.logs: Deque[Dict[str, Any]] = deque(maxlen=500)
         self.wake_event: asyncio.Event = asyncio.Event()
+        self.log_wake_event: asyncio.Event = asyncio.Event()
         self.is_running_cycle: bool = False
         self.last_cycle_time: Optional[datetime] = None
         self.next_check_reason: str = "Initializing supervisor..."
@@ -24,6 +25,9 @@ class ServerState:
 
     def trigger_immediate_cycle(self):
         self.wake_event.set()
+
+    def trigger_immediate_rule_check(self):
+        self.log_wake_event.set()
 
 
 state = ServerState()

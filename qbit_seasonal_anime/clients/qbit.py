@@ -168,6 +168,62 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to get RSS rules: {e}") from e
 
+    def get_rule_match_markers(self) -> Dict[str, str]:
+        """rule_name -> lastMatch for every RSS rule, as the raw qBittorrent string."""
+        try:
+            rules = self.get_rss_rules()
+        except QbitClientError as e:
+            logger.debug(f"Could not read qBittorrent rule match markers: {e}")
+            return {}
+
+        markers: Dict[str, str] = {}
+        for name, rule in (rules or {}).items():
+            if isinstance(rule, dict):
+                markers[name] = str(rule.get("lastMatch") or "")
+        return markers
+
+    def get_rule_patterns(self) -> Dict[str, str]:
+        """rule_name -> mustContain, for reporting which pattern a match was accepted by."""
+        try:
+            rules = self.get_rss_rules()
+        except QbitClientError as e:
+            logger.debug(f"Could not read qBittorrent rule patterns: {e}")
+            return {}
+
+        patterns: Dict[str, str] = {}
+        for name, rule in (rules or {}).items():
+            if isinstance(rule, dict) and rule.get("mustContain"):
+                patterns[name] = str(rule["mustContain"])
+        return patterns
+
+    def fetch_log_entries(self) -> List[Tuple[int, str, datetime]]:
+        """Every log entry qBittorrent currently holds, oldest first."""
+        try:
+            client = self.get_client()
+            raw = client.log_main(last_known_id=-1)
+        except Exception as e:
+            logger.debug(f"Could not read qBittorrent log: {e}")
+            return []
+
+        entries: List[Tuple[int, str, datetime]] = []
+        for entry in raw or []:
+            message = getattr(entry, "message", None)
+            timestamp = getattr(entry, "timestamp", None)
+            if not isinstance(message, str) or timestamp is None:
+                continue
+            try:
+                when = datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+            except (TypeError, ValueError, OSError):
+                continue
+            try:
+                entry_id = int(getattr(entry, "id", -1))
+            except (TypeError, ValueError):
+                entry_id = -1
+            entries.append((entry_id, message, when))
+
+        entries.sort(key=lambda item: item[0])
+        return entries
+
     def set_rss_rule(self, rule_name: str, rule_def: Dict[str, Any]) -> None:
         """Create or update an RSS auto-downloading rule."""
         try:

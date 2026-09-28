@@ -4,11 +4,14 @@ from datetime import datetime, timezone, timedelta
 import logging
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from qbit_seasonal_anime.config import RULE_OBSERVER_INTERVAL_SECONDS
+from qbit_seasonal_anime.db.models import QbitRuleWatermark
 from qbit_seasonal_anime.db.session import get_engine, get_settings, init_db
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
 from qbit_seasonal_anime.clients.anilist import AniListClient
+from qbit_seasonal_anime.core.confirmation import ingest_log_acceptances
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
 from qbit_seasonal_anime.server.api import router
@@ -145,18 +148,73 @@ async def background_supervisor_task():
             await asyncio.sleep(60)
 
 
+async def qbit_rule_observer_task():
+    """Watch qBittorrent's rule state and record newly accepted releases."""
+    engine = get_engine()
+
+    while True:
+        try:
+            with Session(engine) as session:
+                settings = get_settings(session)
+                qbit = QBitClient(
+                    host=settings.qbit_host,
+                    username=settings.qbit_username,
+                    password=settings.qbit_password,
+                    timeout=10,
+                )
+
+                markers = await asyncio.to_thread(qbit.get_rule_match_markers)
+                if not markers:
+                    raise QbitClientError("No RSS rules returned by qBittorrent")
+
+                stored = {
+                    w.rule_name: w.last_match
+                    for w in session.exec(select(QbitRuleWatermark)).all()
+                }
+                if any(stored.get(name) != value for name, value in markers.items()):
+                    entries = await asyncio.to_thread(qbit.fetch_log_entries)
+                    patterns = await asyncio.to_thread(qbit.get_rule_patterns)
+                    for message in ingest_log_acceptances(session, entries, patterns):
+                        state.add_log(message, "INFO")
+
+                    for name, value in markers.items():
+                        watermark = session.get(QbitRuleWatermark, name)
+                        if watermark is None:
+                            watermark = QbitRuleWatermark(rule_name=name)
+                            session.add(watermark)
+                        watermark.last_match = value
+                        watermark.updated_at = datetime.now(timezone.utc)
+                    session.commit()
+
+        except QbitClientError as e:
+            state.add_log(f"Rule check skipped: {e}", "WARNING")
+        except Exception as e:
+            state.add_log(f"Rule check error: {e}", "ERROR")
+            logger.error(f"Rule observer error: {e}", exc_info=True)
+
+        try:
+            await asyncio.wait_for(state.log_wake_event.wait(), timeout=RULE_OBSERVER_INTERVAL_SECONDS)
+        except asyncio.TimeoutError:
+            pass
+        finally:
+            state.log_wake_event.clear()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     engine = get_engine()
     init_db(engine)
 
     bg_task = asyncio.create_task(background_supervisor_task())
+    observer_task = asyncio.create_task(qbit_rule_observer_task())
     yield
-    bg_task.cancel()
-    try:
-        await bg_task
-    except asyncio.CancelledError:
-        pass
+    for task in (bg_task, observer_task):
+        task.cancel()
+    for task in (bg_task, observer_task):
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def create_app() -> FastAPI:

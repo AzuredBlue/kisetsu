@@ -701,6 +701,7 @@ async def run_cycle_now(session: Session = Depends(get_db)):
 
     state.is_running_cycle = True
     state.add_log("Manual supervision cycle initiated from WebUI.", "INFO")
+    state.trigger_immediate_rule_check()
     try:
         logs = await sup.run_full_cycle()
         state.last_cycle_time = datetime.now(timezone.utc)
