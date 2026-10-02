@@ -194,18 +194,10 @@ def _effective_display_name(show: Monitored, settings: Settings) -> str:
 
 
 def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Settings, display_name: str) -> Dict[str, Any]:
-    """
-    How a show's RSS rule would download a release, read from the live rule.
-
-    Whatever the rule leaves blank is filled in the same way create_or_update_rule
-    would have filled it in, so a manual download is indistinguishable from the
-    automatic one. Ratio 0 is meaningful ("seed forever"), so only None falls back.
-    """
     from qbit_seasonal_anime.core.rules import resolve_save_path, sanitize_folder_name
 
     torrent_params = rule.get("torrentParams") or {}
 
-    # A save_folder that merely restates the show's own name is not a custom folder.
     default_names = {
         sanitize_folder_name(show.display_name),
         sanitize_folder_name(show.title_romaji or ""),
@@ -223,18 +215,10 @@ def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Setti
         "category": torrent_params.get("category") or rule.get("assignedCategory") or settings.default_category,
         "ratio_limit": ratio_limit,
         "is_paused": bool(rule.get("addPaused")),
-        "auto_tmm": torrent_params.get("operating_mode") == "AutoManaged",
     }
 
 
 def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> Optional[str]:
-    """
-    The torrent URL of a cached RSS article, looked up by its exact title.
-
-    Resolved here instead of being sent by the browser so a modal left open for
-    hours still downloads: the article is the only thing that knows the URL, and
-    an unmatched title must not turn into an arbitrary download.
-    """
     from qbit_seasonal_anime.core.discovery import flatten_rss_articles
 
     try:
@@ -380,13 +364,6 @@ class QuickDownloadRequest(BaseModel):
 
 @router.post("/shows/{show_id}/quick-download")
 def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
-    """
-    Add one currently-matching RSS article by hand, with the show rule's own settings.
-
-    This is deliberately manual: qBittorrent never logs an acceptance for it, so no
-    episode bookkeeping moves and the supervisor may later treat the release as
-    missing. That is the intended trade-off for grabbing a release early.
-    """
     show = session.get(Monitored, show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
@@ -405,8 +382,6 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
     if not rule:
         raise HTTPException(status_code=400, detail="This show's RSS rule no longer exists in qBittorrent.")
 
-    # The rule's own feeds first, then whatever the modal showed, so a release
-    # found on a fallback feed is still downloadable.
     feed_urls = [feed.qbit_feed_url] if feed else []
     feed_urls += [u for u in (rule.get("affectedFeeds") or []) if u and u not in feed_urls]
 
@@ -426,7 +401,6 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
             category=params["category"],
             ratio_limit=params["ratio_limit"],
             is_paused=params["is_paused"],
-            auto_tmm=params["auto_tmm"],
         )
     except qbittorrentapi.Conflict409Error:
         raise HTTPException(status_code=409, detail="That release is already in qBittorrent.")

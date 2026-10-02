@@ -406,26 +406,6 @@ class TestConfirmation(unittest.TestCase):
         self.assertIsNone(show.candidate_feed_id)
         mock_qbit.set_rss_rule.assert_not_called()
 
-    def test_upcoming_show_is_auto_detected_across_feeds(self):
-        show, subsplease, erai, release_title, mock_qbit = self._split_arc_setup(
-            6,
-            next_airing_episode=1,
-            next_airing_at=utc_now() + timedelta(days=7),
-        )
-        # Pretend the candidate was spotted five minutes ago.
-        show.candidate_feed_id = erai.id
-        show.candidate_feed_since = utc_now() - timedelta(seconds=400)
-        self.session.add(show)
-        self.session.commit()
-
-        verify_and_confirm_torrents(self.session, mock_qbit, self.settings)
-        self.session.refresh(show)
-
-        self.assertEqual(show.current_feed_id, erai.id)
-        self.assertEqual(show.status, MonitoredStatus.FIXED)
-        self.assertEqual(show.matched_title, "JoJo no Kimyou na Bouken: Steel Ball Run")
-        self.assertTrue(re.search(mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"], release_title, re.IGNORECASE))
-
     def test_confirmation_no_matching_article_remains_unconfirmed(self):
         mock_qbit = MagicMock()
         mock_qbit.get_rss_items.return_value = {

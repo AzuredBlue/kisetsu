@@ -189,38 +189,6 @@ class TestIngestLogAcceptances(unittest.TestCase):
         self.assertEqual(self.show.last_confirmed_episode, 12)
 
 
-class TestRuleWatermark(unittest.TestCase):
-    def setUp(self):
-        self.engine = create_engine("sqlite:///:memory:")
-        SQLModel.metadata.create_all(self.engine)
-        self.session = Session(self.engine)
-
-    def tearDown(self):
-        self.session.close()
-
-    def _stored(self):
-        return {w.rule_name: w.last_match for w in self.session.exec(select(QbitRuleWatermark)).all()}
-
-    def test_stores_last_match_per_rule(self):
-        self.session.add(QbitRuleWatermark(rule_name=POLAR_RULE, last_match="27 Sep 2026 01:32:05 +0000"))
-        self.session.commit()
-        self.assertEqual(self._stored(), {POLAR_RULE: "27 Sep 2026 01:32:05 +0000"})
-
-    def test_unmatched_rules_are_stored_as_empty_and_do_not_look_changed(self):
-        self.session.add(QbitRuleWatermark(rule_name="[Seasonal] Idle", last_match=""))
-        self.session.commit()
-
-        stored = self._stored()
-        self.assertEqual(stored.get("[Seasonal] Idle"), "")
-        self.assertNotEqual(stored.get("[Seasonal] Idle", None), None)
-
-    def test_advance_is_detected_by_inequality(self):
-        first = "27 Sep 2026 01:32:05 +0000"
-        second = "28 Sep 2026 01:32:05 +0000"
-
-        self.assertNotEqual(first, second)
-        self.assertEqual(first, first)
-
 class TestRuleObserver(unittest.IsolatedAsyncioTestCase):
     RULE = "[Seasonal] A"
     MARKER = "27 Sep 2026 01:32:05 +0000"

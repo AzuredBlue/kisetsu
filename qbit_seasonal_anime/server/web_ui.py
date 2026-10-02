@@ -1270,7 +1270,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         });
         showToast(data.message || 'Download started.', 'success');
       } catch (err) {
-        // A release qBittorrent already holds is an expected outcome here, not a failure.
         showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
       } finally {
         btn.disabled = false;

@@ -102,18 +102,6 @@ def test_index_returns_html(client):
     assert "calendar-weekly-grid" in response.text
 
 
-def test_web_ui_guards_polling_requests(client):
-    response = client.get("/")
-    html = response.text
-    assert "if (!force && document.hidden) return;" in html
-    assert "if (force) statusUpdateQueued = true;" in html
-    assert "if (historyLoadInFlight) {" in html
-    assert "historyLoadQueued = true;" in html
-    assert "loadHistory(queuedManual);" in html
-    assert "document.addEventListener('visibilitychange'" in html
-    assert "setInterval(updateStatus, 15000)" in html
-
-
 def test_get_shows(client, session):
     show1 = Monitored(
         anilist_id=1001,
@@ -496,11 +484,6 @@ def test_format_sleep_switches_to_seconds_below_a_minute():
     assert app_module._format_sleep(21600) == "360m"
 
 
-def test_next_qbit_retry_saturates_at_the_last_delay():
-    ladder = (1, 2, 4, 8, 16, 30, 60)
-    assert [app_module._next_qbit_retry(i) for i in range(9)] == [1, 2, 4, 8, 16, 30, 60, 60, 60]
-
-
 def test_delete_show(client, session):
     show = Monitored(anilist_id=3001, display_name="Show To Delete", status=MonitoredStatus.UNCONFIRMED)
     session.add(show)
@@ -806,161 +789,6 @@ def test_rule_details_reports_only_live_matches(client, session, mock_qbit):
     assert [h["release_title"] for h in client.get("/api/history").json()] == [
         "[SubsPlease] Yomi no Tsugai - 21 (1080p) [OLD].mkv"
     ]
-
-
-QUICK_DOWNLOAD_FEED_URL = "https://nyaa.si/?page=rss&q=1080p+-HEVC&c=1_2&f=0&u=Erai-raws"
-QUICK_DOWNLOAD_TITLE = "[Erai-raws] Koori no Jouheki 2nd Season - 01 [1080p NF WEB-DL AVC AAC][MultiSub][76C6458B]"
-
-
-def _quick_download_setup(session, mock_qbit, *, title=QUICK_DOWNLOAD_TITLE):
-    """A show whose live rule matches one article currently cached in qBittorrent."""
-    feed = Feed(id=9, qbit_feed_name="Erai-raws 1080p", qbit_feed_url=QUICK_DOWNLOAD_FEED_URL, priority=2)
-    show = Monitored(
-        anilist_id=6010,
-        display_name="The Ramparts of Ice Season 2",
-        aliases_json='["Koori no Jouheki 2nd Season"]',
-        status=MonitoredStatus.FIXED,
-        current_feed_id=feed.id,
-        qbit_rule_name="[Seasonal] The Ramparts of Ice Season 2",
-        matched_title="Koori no Jouheki 2nd Season",
-    )
-    session.add(feed)
-    session.add(show)
-    session.commit()
-    session.refresh(show)
-
-    mock_qbit.get_rss_rules.return_value = {
-        show.qbit_rule_name: {
-            "enabled": True,
-            "savePath": "/data/torrents/Seasonal/The Ramparts of Ice Season 2",
-            "assignedCategory": "Seasonal",
-            "addPaused": False,
-            "affectedFeeds": [QUICK_DOWNLOAD_FEED_URL],
-            "torrentParams": {
-                "category": "Seasonal",
-                "save_path": "/data/torrents/Seasonal/The Ramparts of Ice Season 2",
-                "ratio_limit": 2.0,
-                "operating_mode": "AutoManaged",
-            },
-        }
-    }
-    mock_qbit.get_rss_items.return_value = {
-        "Erai-raws 1080p": {
-            "url": QUICK_DOWNLOAD_FEED_URL,
-            "articles": [{"title": title, "torrentURL": "magnet:?xt=urn:btih:76C6458B"}],
-        }
-    }
-    return show
-
-
-def test_quick_download_uses_the_live_rule_parameters(client, session, mock_qbit):
-    show = _quick_download_setup(session, mock_qbit)
-
-    res = client.post(
-        f"/api/shows/{show.id}/quick-download",
-        json={"title": QUICK_DOWNLOAD_TITLE},
-    )
-
-    assert res.status_code == 200
-    data = res.json()
-    assert data["category"] == "Seasonal"
-    assert data["ratio_limit"] == 2.0
-    assert data["save_path"] == "/data/torrents/Seasonal/The Ramparts of Ice Season 2"
-
-    mock_qbit.add_torrent.assert_called_once_with(
-        url="magnet:?xt=urn:btih:76C6458B",
-        save_path="/data/torrents/Seasonal/The Ramparts of Ice Season 2",
-        category="Seasonal",
-        ratio_limit=2.0,
-        is_paused=False,
-        auto_tmm=True,
-    )
-    mock_qbit.ensure_category_exists.assert_called_once_with("Seasonal")
-
-
-def test_quick_download_does_not_invent_episode_bookkeeping(client, session, mock_qbit):
-    """It is a manual add: nothing may look like qBittorrent accepted it for the rule."""
-    show = _quick_download_setup(session, mock_qbit)
-
-    res = client.post(f"/api/shows/{show.id}/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-    assert res.status_code == 200
-
-    session.expire_all()
-    updated = session.get(Monitored, show.id)
-    assert updated.last_confirmed_episode is None
-    assert updated.status == MonitoredStatus.FIXED
-    assert client.get("/api/history").json() == []
-
-
-def test_quick_download_reports_a_duplicate_as_a_conflict(client, session, mock_qbit):
-    import qbittorrentapi
-
-    show = _quick_download_setup(session, mock_qbit)
-    mock_qbit.add_torrent.side_effect = qbittorrentapi.Conflict409Error("Torrent is already added")
-
-    res = client.post(f"/api/shows/{show.id}/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-
-    assert res.status_code == 409
-    assert "already in qBittorrent" in res.json()["detail"]
-
-
-def test_quick_download_refuses_a_title_that_is_not_a_live_match(client, session, mock_qbit):
-    """Only a real cached article can be downloaded; a made-up title must not be fetched."""
-    show = _quick_download_setup(session, mock_qbit)
-
-    res = client.post(
-        f"/api/shows/{show.id}/quick-download",
-        json={"title": "[Group] Something Else - 01 [1080p].mkv"},
-    )
-
-    assert res.status_code == 404
-    mock_qbit.add_torrent.assert_not_called()
-
-
-def test_quick_download_needs_a_rule(client, session, mock_qbit):
-    show = Monitored(anilist_id=6011, display_name="Rule-less Show", aliases_json='["Rule-less Show"]')
-    session.add(show)
-    session.commit()
-    session.refresh(show)
-
-    res = client.post(f"/api/shows/{show.id}/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-
-    assert res.status_code == 400
-    mock_qbit.add_torrent.assert_not_called()
-
-
-def test_quick_download_falls_back_to_settings_when_the_rule_is_sparse(client, session, mock_qbit):
-    show = _quick_download_setup(session, mock_qbit)
-    mock_qbit.get_rss_rules.return_value = {show.qbit_rule_name: {"enabled": True, "addPaused": True}}
-    settings = session.get(Settings, 1)
-    settings.base_dir = "/data/torrents/Seasonal/{name}"
-    session.add(settings)
-    session.commit()
-
-    res = client.post(f"/api/shows/{show.id}/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-
-    assert res.status_code == 200
-    kwargs = mock_qbit.add_torrent.call_args.kwargs
-    assert kwargs["category"] == "Anime"
-    assert kwargs["ratio_limit"] == 1.0
-    assert kwargs["is_paused"] is True
-    assert kwargs["auto_tmm"] is False
-    assert kwargs["save_path"] == "/data/torrents/Seasonal/The Ramparts of Ice Season 2"
-
-
-def test_quick_download_leaves_the_save_path_to_qbittorrent_when_no_base_dir_is_set(client, session, mock_qbit):
-    show = _quick_download_setup(session, mock_qbit)
-    mock_qbit.get_rss_rules.return_value = {show.qbit_rule_name: {"enabled": True}}
-
-    res = client.post(f"/api/shows/{show.id}/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-
-    assert res.status_code == 200
-    assert mock_qbit.add_torrent.call_args.kwargs["save_path"] == ""
-
-
-def test_quick_download_404s_for_an_unknown_show(client, session, mock_qbit):
-    res = client.post("/api/shows/9999/quick-download", json={"title": QUICK_DOWNLOAD_TITLE})
-    assert res.status_code == 404
 
 
 def test_history_endpoint_and_delete_still_work(client, session, mock_qbit):

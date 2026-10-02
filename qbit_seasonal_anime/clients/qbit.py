@@ -251,9 +251,8 @@ class QBitClient:
         category: str = "",
         ratio_limit: Optional[float] = None,
         is_paused: bool = False,
-        auto_tmm: bool = False,
     ) -> None:
-        """Add a torrent by URL, mirroring how an RSS rule would have added it."""
+        """Add a torrent by URL to an explicit path, the way an RSS rule's savePath behaves."""
         try:
             client = self.get_client()
             client.torrents_add(
@@ -262,12 +261,10 @@ class QBitClient:
                 category=category or None,
                 ratio_limit=ratio_limit,
                 is_paused=is_paused,
-                use_auto_torrent_management=auto_tmm,
+                use_auto_torrent_management=False,
             )
             logger.info(f"Successfully added torrent '{url}'")
         except qbittorrentapi.Conflict409Error:
-            # Already in qBittorrent. Not a failure of qBittorrent, so keep the
-            # connection and let the caller report it as a duplicate.
             logger.debug(f"Torrent '{url}' is already added")
             raise
         except QbitClientError:
