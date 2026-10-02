@@ -113,18 +113,10 @@ def build_regex_pattern(
     If matched_title is known, use it as the rule; otherwise build an alternation from aliases.
     """
     if matched_title and matched_title.strip():
-        patterns: List[str] = []
-        for variant in [matched_title, *generate_season_variants(matched_title)]:
-            pattern = build_release_name_pattern(variant)
-            if pattern:
-                patterns.append(pattern)
-
-        unique_patterns = list(dict.fromkeys(patterns))
-        if not unique_patterns:
-            return ".*"
-        if len(unique_patterns) == 1:
-            return unique_patterns[0]
-        return rf"({'|'.join(unique_patterns)})"
+        # The release group has already shown its naming, so the learned rule is
+        # exactly that name. Season hedges ("S2", "Season 2", "II") belong on the
+        # armed path below, where the naming is still unknown.
+        return build_release_name_pattern(matched_title) or ".*"
 
     valid_aliases = [a.strip() for a in aliases if a and a.strip()]
     latin_aliases = [a for a in valid_aliases if any(c.isascii() and c.isalnum() for c in a)]

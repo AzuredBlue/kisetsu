@@ -47,9 +47,22 @@ class TestRules(unittest.TestCase):
         )
         self.assertIn(f"Mushoku{RELEASE_NAME_JOINER}Tensei{RELEASE_NAME_JOINER}S3", pattern)
         self.assertTrue(re.search(pattern, "[SubsPlease] Mushoku Tensei S3 - 09 (1080p) [DDF202A0].mkv", re.IGNORECASE))
-        self.assertTrue(re.search(pattern, "[SubsPlease] Mushoku Tensei Season 3 - 09 (1080p).mkv", re.IGNORECASE))
         self.assertTrue(re.search(pattern, "[Erai-raws] Mushoku Tensei S3 - 09 (1080p).mkv", re.IGNORECASE))
         self.assertFalse(re.search(pattern, "[SubsPlease] Bleach - 45.mkv", re.IGNORECASE))
+
+    def test_learned_rule_does_not_invent_season_variants(self):
+        pattern = build_regex_pattern(
+            aliases=["Koori no Jouheki 2nd Season"],
+            matched_title="Koori no Jouheki 2nd Season",
+        )
+        self.assertNotIn("|", pattern)
+        self.assertTrue(
+            re.search(pattern, "[Erai-raws] Koori no Jouheki 2nd Season - 02 [1080p NF WEB-DL][MultiSub].mkv", re.IGNORECASE)
+        )
+        # Separator tolerance is still needed: groups are inconsistent about joining words.
+        self.assertTrue(re.search(pattern, "[Erai-raws] Koori.no.Jouheki.2nd.Season - 03 [1080p].mkv", re.IGNORECASE))
+        # The un-numbered season 1 release must not be pulled in by the hedged "2" variant.
+        self.assertFalse(re.search(pattern, "[Erai-raws] Koori no Jouheki - 01 [1080p].mkv", re.IGNORECASE))
 
     def test_build_release_name_pattern_tolerates_separators(self):
         pattern = build_release_name_pattern("Sousou no Frieren")
