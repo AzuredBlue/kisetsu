@@ -244,6 +244,43 @@ class QBitClient:
                 raise unreachable from e
             raise QbitClientError(f"Failed to set RSS rule '{rule_name}': {e}") from e
 
+    def add_torrent(
+        self,
+        url: str,
+        save_path: str = "",
+        category: str = "",
+        ratio_limit: Optional[float] = None,
+        is_paused: bool = False,
+        auto_tmm: bool = False,
+    ) -> None:
+        """Add a torrent by URL, mirroring how an RSS rule would have added it."""
+        try:
+            client = self.get_client()
+            client.torrents_add(
+                urls=url,
+                save_path=save_path or None,
+                category=category or None,
+                ratio_limit=ratio_limit,
+                is_paused=is_paused,
+                use_auto_torrent_management=auto_tmm,
+            )
+            logger.info(f"Successfully added torrent '{url}'")
+        except qbittorrentapi.Conflict409Error:
+            # Already in qBittorrent. Not a failure of qBittorrent, so keep the
+            # connection and let the caller report it as a duplicate.
+            logger.debug(f"Torrent '{url}' is already added")
+            raise
+        except QbitClientError:
+            self._client = None
+            raise
+        except Exception as e:
+            self._client = None
+            try:
+                self.get_client()
+            except QbitClientError as unreachable:
+                raise unreachable from e
+            raise QbitClientError(f"Failed to add torrent '{url}': {e}") from e
+
     def remove_rss_rule(self, rule_name: str) -> None:
         """Delete an RSS auto-downloading rule."""
         client = self.get_client()

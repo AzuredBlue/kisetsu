@@ -462,7 +462,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         data = { detail: text || res.statusText };
       }
       if (!res.ok) {
-        throw new Error(data.detail || data.message || `HTTP ${res.status}: ${res.statusText}`);
+        const err = new Error(data.detail || data.message || `HTTP ${res.status}: ${res.statusText}`);
+        err.status = res.status;
+        throw err;
       }
       return data;
     }
@@ -1067,7 +1069,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const matchCountLabel = countMatched === 1 ? '1 match' : `${countMatched} matches`;
         const listRows = (items, emptyText) => (items && items.length > 0)
           ? items.map(a => `
-              <li class="text-[11px] font-mono text-zinc-400 py-1.5 border-t border-[#1c1c22] first:border-t-0 first:pt-0 truncate select-all" title="${escapeHtml(a)}">${escapeHtml(a)}</li>
+              <li class="text-[11px] font-mono text-zinc-400 py-1.5 border-t border-[#1c1c22] first:border-t-0 first:pt-0 flex items-center gap-2">
+                <span class="truncate select-all flex-1" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
+                <button type="button" data-title="${escapeHtml(a)}" onclick="quickDownloadMatch(${showId}, this)"
+                  class="shrink-0 w-6 h-6 rounded flex items-center justify-center bg-[#1e1e26] hover:bg-emerald-600 border border-[#2e2e38] hover:border-emerald-500 text-zinc-400 hover:text-white transition-colors active:scale-90"
+                  title="Download this release now with the same save path, category and ratio as the rule">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+                </button>
+              </li>
             `).join('')
           : `<li class="text-[11px] font-mono text-zinc-600 py-1.5">${emptyText}</li>`;
         const articlesHtml = listRows(data.matched_articles, 'No cached RSS articles currently match this rule pattern.');
@@ -1244,6 +1253,29 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const showId = currentInspectedShowId;
       closeRuleModal();
       await rediscoverShow(showId);
+    }
+
+    async function quickDownloadMatch(showId, btn) {
+      const title = btn.dataset.title;
+      if (!title) return;
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'pointer-events-none');
+
+      try {
+        const data = await apiFetch(`/api/shows/${showId}/quick-download`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title })
+        });
+        showToast(data.message || 'Download started.', 'success');
+      } catch (err) {
+        // A release qBittorrent already holds is an expected outcome here, not a failure.
+        showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
+      } finally {
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'pointer-events-none');
+      }
     }
 
     async function togglePauseShow(id) {

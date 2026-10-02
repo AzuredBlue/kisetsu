@@ -6,8 +6,10 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+import qbittorrentapi
+
 from qbit_seasonal_anime.db.session import get_engine, get_settings
-from qbit_seasonal_anime.db.models import Monitored, Feed, RuleHistory, MonitoredStatus, RuleOutcome, MatchHistory, utc_now
+from qbit_seasonal_anime.db.models import Monitored, Feed, RuleHistory, MonitoredStatus, RuleOutcome, MatchHistory, Settings, utc_now
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.core.supervisor import Supervisor
@@ -186,6 +188,68 @@ def rediscover_show(show_id: int, session: Session = Depends(get_db), qbit: QBit
     return {"status": "success", "message": f"Reset rule for '{show.display_name}'. Will rediscover on next cycle."}
 
 
+def _effective_display_name(show: Monitored, settings: Settings) -> str:
+    prefer_english = (getattr(settings, "title_language", "english") == "english")
+    return show.title_english if (prefer_english and show.title_english) else (show.title_romaji or show.display_name)
+
+
+def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Settings, display_name: str) -> Dict[str, Any]:
+    """
+    How a show's RSS rule would download a release, read from the live rule.
+
+    Whatever the rule leaves blank is filled in the same way create_or_update_rule
+    would have filled it in, so a manual download is indistinguishable from the
+    automatic one. Ratio 0 is meaningful ("seed forever"), so only None falls back.
+    """
+    from qbit_seasonal_anime.core.rules import resolve_save_path, sanitize_folder_name
+
+    torrent_params = rule.get("torrentParams") or {}
+
+    # A save_folder that merely restates the show's own name is not a custom folder.
+    default_names = {
+        sanitize_folder_name(show.display_name),
+        sanitize_folder_name(show.title_romaji or ""),
+        sanitize_folder_name(show.title_english or ""),
+    }
+    save_folder = show.save_folder if (show.save_folder and show.save_folder not in default_names) else None
+
+    ratio_limit = torrent_params.get("ratio_limit")
+    if ratio_limit is None:
+        ratio_limit = settings.default_seed_ratio
+
+    return {
+        "save_path": rule.get("savePath") or resolve_save_path(settings.base_dir, display_name, save_folder),
+        "custom_save_folder": save_folder or "",
+        "category": torrent_params.get("category") or rule.get("assignedCategory") or settings.default_category,
+        "ratio_limit": ratio_limit,
+        "is_paused": bool(rule.get("addPaused")),
+        "auto_tmm": torrent_params.get("operating_mode") == "AutoManaged",
+    }
+
+
+def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> Optional[str]:
+    """
+    The torrent URL of a cached RSS article, looked up by its exact title.
+
+    Resolved here instead of being sent by the browser so a modal left open for
+    hours still downloads: the article is the only thing that knows the URL, and
+    an unmatched title must not turn into an arbitrary download.
+    """
+    from qbit_seasonal_anime.core.discovery import flatten_rss_articles
+
+    try:
+        articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
+    except Exception as e:
+        state.add_log(f"Warning resolving RSS article '{title}' for manual download: {e}", "DEBUG")
+        return None
+
+    for feed_url in feed_urls:
+        for article in articles_by_url.get(feed_url) or []:
+            if isinstance(article, dict) and article.get("title") == title:
+                return article.get("torrentURL") or None
+    return None
+
+
 @router.get("/shows/{show_id}/rule")
 def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
     show = session.get(Monitored, show_id)
@@ -261,16 +325,13 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         except Exception as e:
             state.add_log(f"Warning matching against cached articles: {e}", "DEBUG")
 
-    prefer_english = (getattr(settings, "title_language", "english") == "english")
-    effective_display_name = show.title_english if (prefer_english and show.title_english) else (show.title_romaji or show.display_name)
+    effective_display_name = _effective_display_name(show, settings)
 
-    from qbit_seasonal_anime.core.rules import build_rule_name, is_show_rule_enabled, is_show_rule_unreleased, compress_home_path, resolve_save_path, sanitize_folder_name
+    from qbit_seasonal_anime.core.rules import build_rule_name, is_show_rule_enabled, is_show_rule_unreleased, compress_home_path
     expected_rule_name = build_rule_name(show.id or 0, effective_display_name)
     rule_is_enabled = qbit_rule_data.get("enabled") if "enabled" in qbit_rule_data else is_show_rule_enabled(show)
-    
-    is_custom_folder = bool(show.save_folder and show.save_folder != sanitize_folder_name(show.display_name) and show.save_folder != sanitize_folder_name(show.title_romaji or "") and show.save_folder != sanitize_folder_name(show.title_english or ""))
-    default_save_path = resolve_save_path(settings.base_dir, effective_display_name, show.save_folder if is_custom_folder else None)
-    raw_save_path = qbit_rule_data.get("savePath") or default_save_path
+
+    download_params = _rule_download_params(qbit_rule_data, show, settings, effective_display_name)
 
     # A pattern is only trustworthy once it was learned from a real release.
     # Before that the feed it sits on is just a default, not an assignment.
@@ -288,11 +349,11 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "feed_url": feed.qbit_feed_url if feed else None,
         "must_contain": saved_regex,
         "must_not_contain": saved_must_not,
-        "save_path": compress_home_path(raw_save_path),
-        "save_folder": (show.save_folder if is_custom_folder else "") or "",
+        "save_path": compress_home_path(download_params["save_path"]),
+        "save_folder": download_params["custom_save_folder"],
         "current_feed_id": show.current_feed_id or 0,
-        "category": qbit_rule_data.get("assignedCategory", settings.default_category),
-        "ratio_limit": (qbit_rule_data.get("torrentParams") or {}).get("ratio_limit", settings.default_seed_ratio),
+        "category": download_params["category"],
+        "ratio_limit": download_params["ratio_limit"],
         "status": show.status.value,
         "matched_title": show.matched_title,
         "matched_release_group": show.matched_release_group,
@@ -311,6 +372,78 @@ def feeds_map_name(session: Session, feed_id: Optional[int]) -> Optional[str]:
         return None
     candidate = session.get(Feed, feed_id)
     return candidate.qbit_feed_name if candidate else None
+
+
+class QuickDownloadRequest(BaseModel):
+    title: str
+
+
+@router.post("/shows/{show_id}/quick-download")
+def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    """
+    Add one currently-matching RSS article by hand, with the show rule's own settings.
+
+    This is deliberately manual: qBittorrent never logs an acceptance for it, so no
+    episode bookkeeping moves and the supervisor may later treat the release as
+    missing. That is the intended trade-off for grabbing a release early.
+    """
+    show = session.get(Monitored, show_id)
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    if not show.qbit_rule_name:
+        raise HTTPException(status_code=400, detail="This show has no RSS rule yet, so there is nothing to download with.")
+
+    settings = get_settings(session)
+    feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
+
+    try:
+        rule = (qbit.get_rss_rules() or {}).get(show.qbit_rule_name) or {}
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    if not rule:
+        raise HTTPException(status_code=400, detail="This show's RSS rule no longer exists in qBittorrent.")
+
+    # The rule's own feeds first, then whatever the modal showed, so a release
+    # found on a fallback feed is still downloadable.
+    feed_urls = [feed.qbit_feed_url] if feed else []
+    feed_urls += [u for u in (rule.get("affectedFeeds") or []) if u and u not in feed_urls]
+
+    title = req.title.strip()
+    url = _resolve_article_url(qbit, title, feed_urls)
+    if not url:
+        raise HTTPException(status_code=404, detail="That release is no longer in qBittorrent's RSS cache, so it cannot be downloaded.")
+
+    params = _rule_download_params(rule, show, settings, _effective_display_name(show, settings))
+    if params["category"]:
+        qbit.ensure_category_exists(params["category"])
+
+    try:
+        qbit.add_torrent(
+            url=url,
+            save_path=params["save_path"],
+            category=params["category"],
+            ratio_limit=params["ratio_limit"],
+            is_paused=params["is_paused"],
+            auto_tmm=params["auto_tmm"],
+        )
+    except qbittorrentapi.Conflict409Error:
+        raise HTTPException(status_code=409, detail="That release is already in qBittorrent.")
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+    destination = params["save_path"] or "qBittorrent's default save path"
+    msg = f"Manual download: '{title}' -> {destination} (category '{params['category']}', ratio {params['ratio_limit']})."
+    state.add_log(msg, "INFO")
+
+    return {
+        "status": "success",
+        "message": f"Downloading '{title}' with this rule's settings.",
+        "save_path": params["save_path"],
+        "category": params["category"],
+        "ratio_limit": params["ratio_limit"],
+    }
 
 
 class EditShowRequest(BaseModel):
