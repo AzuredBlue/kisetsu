@@ -2,7 +2,7 @@ import unittest
 from datetime import timedelta
 from sqlmodel import Session, SQLModel, create_engine
 from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, utc_now
-from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
+from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval, is_hunting
 
 
 class TestScheduler(unittest.TestCase):
@@ -181,6 +181,69 @@ class TestScheduler(unittest.TestCase):
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 21600)
         self.assertNotIn("Hunting mode", reason)
+
+
+class TestIsHunting(unittest.TestCase):
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        SQLModel.metadata.create_all(self.engine)
+        self.session = Session(self.engine)
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss/?r=1080", priority=1)
+        self.session.add(feed)
+        self.session.commit()
+
+    def tearDown(self):
+        self.session.close()
+
+    def _add(self, **kwargs):
+        show = Monitored(
+            anilist_id=kwargs.pop("anilist_id"),
+            display_name=kwargs.pop("display_name", "Airing Anime"),
+            aliases_json='["Airing Anime"]',
+            **kwargs,
+        )
+        self.session.add(show)
+        self.session.commit()
+        return show
+
+    def test_overdue_show_is_hunting(self):
+        self._add(
+            anilist_id=101,
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=None,
+            next_airing_episode=1,
+            next_airing_at=utc_now() - timedelta(minutes=15),
+        )
+        self.assertTrue(is_hunting(self.session))
+        dur, reason = calculate_next_poll_interval(self.session, hunting_interval_seconds=300)
+        self.assertEqual(dur, 300)
+        self.assertIn("Hunting mode", reason)
+
+    def test_working_rules_are_not_hunting(self):
+        self._add(
+            anilist_id=102,
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            next_airing_episode=6,
+            next_airing_at=utc_now() - timedelta(days=1),
+        )
+        self.assertFalse(is_hunting(self.session))
+        dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
+        self.assertEqual(dur, 21600)
+        self.assertIn("working rules", reason)
+
+    def test_upcoming_premiere_is_not_hunting(self):
+        self._add(
+            anilist_id=103,
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=None,
+            next_airing_episode=1,
+            next_airing_at=utc_now() + timedelta(hours=3),
+        )
+        self.assertFalse(is_hunting(self.session))
+
+    def test_no_shows_is_not_hunting(self):
+        self.assertFalse(is_hunting(self.session))
 
 
 if __name__ == "__main__":

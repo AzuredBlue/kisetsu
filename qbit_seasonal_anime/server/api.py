@@ -197,7 +197,6 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
     qbit_rule_data = {}
     matched_articles = []
-    history_articles: List[str] = []
     if show.qbit_rule_name:
         try:
             qrules = qbit.get_rss_rules()
@@ -262,17 +261,6 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         except Exception as e:
             state.add_log(f"Warning matching against cached articles: {e}", "DEBUG")
 
-    if show.id:
-        hist_records = session.exec(
-            select(MatchHistory)
-            .where(MatchHistory.monitored_id == show.id)
-            .order_by(MatchHistory.created_at.desc())
-        ).all()
-        # Deliberately not de-duplicated against matched_articles: a release can be
-        # both currently matching and already recorded, and both facts are useful.
-        history_articles = [hr.release_title for hr in hist_records if hr.release_title]
-
-
     prefer_english = (getattr(settings, "title_language", "english") == "english")
     effective_display_name = show.title_english if (prefer_english and show.title_english) else (show.title_romaji or show.display_name)
 
@@ -309,7 +297,6 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "matched_title": show.matched_title,
         "matched_release_group": show.matched_release_group,
         "matched_articles": matched_articles[:15],
-        "history_articles": history_articles[:15],
         "has_learned_pattern": has_learned_pattern,
         "is_upcoming": is_upcoming,
         "feed_pinned": bool(show.feed_pinned),
@@ -632,7 +619,7 @@ async def sync_anilist_now(session: Session = Depends(get_db)):
     try:
         logs = []
         logs.extend(sup.sync_feeds())
-        sync_logs = await sup.sync_anilist_schedule()
+        sync_logs = await sup.sync_anilist_schedule(force=True)
         logs.extend(sync_logs)
         bootstrap_logs = sup.bootstrap_unassigned_shows()
         logs.extend(bootstrap_logs)

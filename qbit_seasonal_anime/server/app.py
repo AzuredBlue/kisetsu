@@ -13,7 +13,7 @@ from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.core.confirmation import ingest_log_acceptances
 from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
+from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval, is_hunting
 from qbit_seasonal_anime.server.api import router
 from qbit_seasonal_anime.server.state import state
 from qbit_seasonal_anime.server.web_ui import get_web_ui_html
@@ -55,6 +55,7 @@ async def background_supervisor_task():
     retry_index = 0
 
     await asyncio.sleep(STARTUP_GRACE_SECONDS)
+    hunting_next = False
     while True:
         connection_ready = False
         sleep_seconds = 60
@@ -86,7 +87,7 @@ async def background_supervisor_task():
                     state.is_running_cycle = True
                     state.add_log("Executing background supervision check...", "INFO")
                     try:
-                        logs = await supervisor.run_full_cycle()
+                        logs = await supervisor.run_full_cycle(hunting=hunting_next)
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
                         for l in logs:
@@ -127,6 +128,7 @@ async def background_supervisor_task():
                             retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
                             _set_next_check(sleep_seconds, f"qBittorrent became unavailable while scheduling the next check: {e}")
                         else:
+                            hunting_next = await asyncio.to_thread(is_hunting, session)
                             _set_next_check(sleep_seconds, reason)
 
             state.wake_event.clear()

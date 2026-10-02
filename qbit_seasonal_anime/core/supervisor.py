@@ -14,6 +14,17 @@ from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, Rule
 logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
 
 
+def _format_age(seconds: float) -> str:
+    """Render a duration as '45s', '12m' or '3h 20m' for log lines."""
+    seconds = int(max(0, seconds))
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    hours, minutes = divmod(seconds // 60, 60)
+    return f"{hours}h" if not minutes else f"{hours}h {minutes}m"
+
+
 def _rules_are_equivalent(current: Dict[str, Any], desired: Dict[str, Any]) -> bool:
     """Return True if an existing qBittorrent rule matches the desired definition.
 
@@ -265,11 +276,25 @@ class Supervisor:
 
         return logs
 
-    async def sync_anilist_schedule(self) -> List[str]:
-        """Fetch updated episode numbers, air dates, and status from AniList. Also imports newly added shows."""
+    async def sync_anilist_schedule(self, *, force: bool = False, hunting: bool = False) -> List[str]:
+        """Fetch updated episode numbers, air dates, and status from AniList. Also imports newly added shows.
+
+        Skips the query until the cached schedule is older than the routine refresh
+        interval, unless force is set.
+        """
         logs = []
         if not self.settings.anilist_username.strip():
             return logs
+
+        min_age_seconds = max(0, self.settings.refresh_interval_minutes) * 60
+        if not force and not self.anilist.is_sync_due(min_age_seconds):
+            age_seconds = self.anilist.seconds_since_last_sync() or 0.0
+            remaining = min_age_seconds - age_seconds
+            reason = "hunting" if hunting else "routine"
+            return [
+                f"AniList schedule sync deferred ({reason} pass): last synced {_format_age(age_seconds)} ago, "
+                f"next due in {_format_age(remaining)} (refresh interval {self.settings.refresh_interval_minutes}m)."
+            ]
 
         existing_shows = {s.anilist_id: s for s in self.session.exec(select(Monitored)).all()}
         try:
@@ -602,8 +627,11 @@ class Supervisor:
 
         return logs
 
-    async def run_full_cycle(self) -> List[str]:
-        """Execute one complete supervision iteration."""
+    async def run_full_cycle(self, *, hunting: bool = False) -> List[str]:
+        """Execute one complete supervision iteration.
+
+        hunting marks a short release-polling pass for the AniList sync log line.
+        """
         all_logs: List[str] = []
         rss_snapshot = RssSnapshot(self.qbit)
         parsed_articles: Dict[str, Dict[str, Any]] = {}
@@ -611,7 +639,7 @@ class Supervisor:
 
         all_logs.extend(await asyncio.to_thread(self.sync_feeds))
 
-        all_logs.extend(await self.sync_anilist_schedule())
+        all_logs.extend(await self.sync_anilist_schedule(hunting=hunting))
 
         all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
 

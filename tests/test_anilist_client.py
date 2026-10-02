@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock, patch
-from qbit_seasonal_anime.clients.anilist import AniListClient, get_current_and_next_season
+from qbit_seasonal_anime.clients.anilist import AniListClient, AniListError, get_current_and_next_season
 
 
 def test_season_calculation():
@@ -280,3 +280,43 @@ async def test_fetch_user_seasonal_anime_never_introduces_a_list_completed_show(
         shows = await client.fetch_user_seasonal_anime("TestUser", monitored_anilist_ids={9})
         assert [s["anilist_id"] for s in shows] == [9]
 
+
+def test_sync_is_due_until_the_window_elapses():
+    """A client that has just synced is not due again; one that never has is."""
+    client = AniListClient()
+    assert client.last_sync_at is None
+    assert client.seconds_since_last_sync() is None
+    assert client.is_sync_due(3600) is True
+    client.last_sync_at = datetime.now(timezone.utc)
+    assert client.is_sync_due(3600) is False
+
+    synced_at = client.last_sync_at
+    assert client.is_sync_due(3600, now=synced_at + timedelta(minutes=30)) is False
+    assert client.is_sync_due(3600, now=synced_at + timedelta(hours=1)) is True
+
+
+@pytest.mark.asyncio
+async def test_successful_query_stamps_the_sync_time():
+    client = AniListClient()
+    payload = {"MediaListCollection": {"lists": []}}
+
+    with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = payload
+        await client.fetch_user_seasonal_anime("TestUser")
+
+    assert client.last_sync_at is not None
+    assert client.is_sync_due(3600) is False
+
+
+@pytest.mark.asyncio
+async def test_failed_query_leaves_the_schedule_marked_stale():
+    """A rate-limited or offline call must not throttle the retry on the next cycle."""
+    client = AniListClient()
+
+    with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post:
+        mock_post.side_effect = AniListError("rate limited")
+        with pytest.raises(AniListError):
+            await client.fetch_user_seasonal_anime("TestUser")
+
+    assert client.last_sync_at is None
+    assert client.is_sync_due(3600) is True

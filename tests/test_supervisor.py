@@ -1,10 +1,11 @@
 from datetime import timedelta
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.core.supervisor import Supervisor
+from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
 from qbit_seasonal_anime.db.models import Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
 from qbit_seasonal_anime.db.session import get_settings
@@ -287,3 +288,109 @@ def test_sync_active_rules_commits_rules_written_before_a_lost_connection():
     committed = [s.qbit_rule_name for s in session.exec(select(Monitored)).all()]
     assert committed[0] is not None
     assert committed[1] is None
+
+
+def _throttle_fixture(refresh_interval_minutes=360):
+    """Real AniListClient so the cadence stamp is genuine."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    settings = Settings(id=1, anilist_username="TestUser", refresh_interval_minutes=refresh_interval_minutes)
+    session.add(settings)
+    session.add(
+        Monitored(
+            anilist_id=4242,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.UNCONFIRMED,
+        )
+    )
+    session.commit()
+
+    anilist = AniListClient()
+    anilist.last_sync_at = utc_now()
+    return session, settings, anilist
+
+
+@pytest.mark.asyncio
+async def test_anilist_sync_is_deferred_inside_the_refresh_window():
+    """No AniList request while the cached schedule is still inside its window."""
+    session, settings, anilist = _throttle_fixture()
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+    with patch.object(anilist, "_post_query", new_callable=AsyncMock) as mock_post:
+        logs = await supervisor.sync_anilist_schedule()
+
+    mock_post.assert_not_called()
+    assert len(logs) == 1
+    assert "deferred" in logs[0]
+    assert "refresh interval 360m" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_forced_anilist_sync_ignores_the_refresh_window():
+    """force=True ignores the window."""
+    session, settings, anilist = _throttle_fixture()
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+    with patch.object(anilist, "_post_query", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"MediaListCollection": {"lists": []}}
+        logs = await supervisor.sync_anilist_schedule(force=True)
+
+    mock_post.assert_awaited_once()
+    assert not any("deferred" in l for l in logs)
+
+
+@pytest.mark.asyncio
+async def test_anilist_sync_runs_again_once_the_window_expires():
+    session, settings, anilist = _throttle_fixture(refresh_interval_minutes=10)
+    anilist.last_sync_at = utc_now() - timedelta(minutes=11)
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+    with patch.object(anilist, "_post_query", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = {"MediaListCollection": {"lists": []}}
+        logs = await supervisor.sync_anilist_schedule()
+
+    mock_post.assert_awaited_once()
+    assert not any("deferred" in l for l in logs)
+
+
+@pytest.mark.asyncio
+async def test_hunting_cycle_defers_anilist_but_still_verifies_and_syncs_rules():
+    """A hunting pass still discovers rules and confirms releases."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    settings = Settings(id=1, anilist_username="TestUser", default_category="Anime", base_dir="/tmp/Anime")
+    session.add(settings)
+    show = Monitored(
+        anilist_id=154587,
+        display_name="Sousou no Frieren",
+        aliases_json='["Sousou no Frieren", "Frieren"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        next_airing_episode=1,
+        next_airing_at=utc_now() - timedelta(minutes=15),
+    )
+    session.add(show)
+    session.commit()
+
+    mock_qbit = MagicMock()
+    mock_qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": "https://subsplease.org/rss/?r=1080"}]
+    mock_qbit.get_rss_items.return_value = MOCK_QBIT_RSS_ITEMS
+    mock_qbit.get_client.return_value.rss_rules.return_value = {}
+
+    anilist = AniListClient()
+    anilist.last_sync_at = utc_now()
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=anilist, settings=settings)
+
+    with patch.object(anilist, "_post_query", new_callable=AsyncMock) as mock_post:
+        logs = await supervisor.run_full_cycle(hunting=True)
+
+    mock_post.assert_not_called()
+    assert any("deferred (hunting pass)" in l for l in logs)
+    assert any("Created verified rule for 'Sousou no Frieren'" in l for l in logs)
+    assert any(l.startswith("Summary:") for l in logs)
+    session.refresh(show)
+    assert show.status == MonitoredStatus.FIXED

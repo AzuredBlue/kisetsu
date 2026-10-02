@@ -346,7 +346,7 @@ async def test_background_supervisor_waits_for_qbit_before_running_a_cycle(super
     qbit.test_connection.side_effect = probe
     supervisor = MagicMock()
 
-    async def run_cycle():
+    async def run_cycle(**kwargs):
         events.append("cycle")
         return []
 
@@ -361,6 +361,23 @@ async def test_background_supervisor_waits_for_qbit_before_running_a_cycle(super
     supervisor.run_full_cycle.assert_awaited_once()
     assert app_module.state.next_check_reason == "normal"
     assert app_module.state.next_check_seconds == 60
+
+
+async def test_background_supervisor_marks_the_second_pass_as_hunting(supervisor_engine, monkeypatch):
+    """A hunt reported by the scheduler must label the following pass as hunting."""
+    qbit = MagicMock()
+    qbit.test_connection.return_value = {"app_version": "test", "api_version": "test"}
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    monkeypatch.setattr(app_module, "is_hunting", MagicMock(return_value=True))
+    _run_loop_until_cancelled(monkeypatch, stop_after=2)
+
+    await app_module.background_supervisor_task()
+
+    first_call, second_call = supervisor.run_full_cycle.await_args_list
+    assert first_call.kwargs["hunting"] is False
+    assert second_call.kwargs["hunting"] is True
 
 
 async def test_background_supervisor_escalates_and_then_caps_the_retry_delay(supervisor_engine, monkeypatch):
@@ -741,7 +758,6 @@ def test_get_show_rule_is_read_only_when_a_article_matches(client, session, mock
     data = res.json()
     # The article is still reported as currently matching...
     assert len(data["matched_articles"]) == 1
-    assert data["history_articles"] == []
 
     # ...but nothing was mutated and no match was invented from the cache.
     session.expire_all()
@@ -753,7 +769,7 @@ def test_get_show_rule_is_read_only_when_a_article_matches(client, session, mock
     assert client.get("/api/history").json() == []
 
 
-def test_rule_details_separates_live_matches_from_recorded_history(client, session, mock_qbit):
+def test_rule_details_reports_only_live_matches(client, session, mock_qbit):
     feed = Feed(id=3, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
     show = Monitored(
         anilist_id=6002,
@@ -784,23 +800,11 @@ def test_rule_details_separates_live_matches_from_recorded_history(client, sessi
 
     data = client.get(f"/api/shows/{show.id}/rule").json()
     assert data["matched_articles"] == ["[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv"]
-    assert data["history_articles"] == ["[SubsPlease] Yomi no Tsugai - 21 (1080p) [OLD].mkv"]
-
-    # A release that is both currently matching and already recorded shows up in both.
-    session.add(MatchHistory(
-        monitored_id=show.id,
-        show_name=show.display_name,
-        rule_name=show.qbit_rule_name,
-        release_title="[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv",
-        episode=22,
-    ))
-    session.commit()
-
-    data = client.get(f"/api/shows/{show.id}/rule").json()
-    assert data["matched_articles"] == ["[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv"]
-    assert data["history_articles"] == [
-        "[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv",
-        "[SubsPlease] Yomi no Tsugai - 21 (1080p) [OLD].mkv",
+    # Already-recorded releases are not re-listed alongside live matches; the
+    # History tab is their only home.
+    assert "history_articles" not in data
+    assert [h["release_title"] for h in client.get("/api/history").json()] == [
+        "[SubsPlease] Yomi no Tsugai - 21 (1080p) [OLD].mkv"
     ]
 
 

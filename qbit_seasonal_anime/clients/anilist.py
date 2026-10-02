@@ -105,6 +105,22 @@ def get_current_and_next_season(dt: Optional[datetime] = None):
 class AniListClient:
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
+        self.last_sync_at: Optional[datetime] = None
+
+    def seconds_since_last_sync(self, now: Optional[datetime] = None) -> Optional[float]:
+        """Seconds since the last successful query, or None if there has not been one."""
+        if self.last_sync_at is None:
+            return None
+        if now is None:
+            now = datetime.now(timezone.utc)
+        return (now - self.last_sync_at).total_seconds()
+
+    def is_sync_due(self, min_age_seconds: float, now: Optional[datetime] = None) -> bool:
+        """True when the cached schedule is older than min_age_seconds, or absent."""
+        age = self.seconds_since_last_sync(now)
+        if age is None:
+            return True
+        return age >= min_age_seconds
 
     async def _post_query(self, query: str, variables: Dict[str, Any], max_retries: int = 3) -> Dict[str, Any]:
         """Execute GraphQL query with exponential backoff on rate limits (HTTP 429)."""
@@ -163,6 +179,7 @@ class AniListClient:
             return []
 
         data = await self._post_query(USER_SEASONAL_QUERY, {"userName": username.strip()})
+        self.last_sync_at = datetime.now(timezone.utc)
         collection = data.get("MediaListCollection") or {}
         lists = collection.get("lists", [])
 

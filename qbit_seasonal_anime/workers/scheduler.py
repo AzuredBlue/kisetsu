@@ -1,8 +1,9 @@
 import asyncio
 import logging
 import signal
-from datetime import timedelta, timezone
-from typing import Optional, Tuple
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import List, Optional, Tuple
 from sqlmodel import Session, select
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.clients.qbit import QBitClient
@@ -13,30 +14,23 @@ from qbit_seasonal_anime.db.session import get_engine, get_settings
 logger = logging.getLogger("qbit_seasonal_anime.workers.scheduler")
 
 
-def calculate_next_poll_interval(
-    session: Session,
-    default_interval_seconds: int = 21600,
-    hunting_interval_seconds: Optional[int] = None,
-    qbit_client: Optional[QBitClient] = None,
-) -> Tuple[int, str]:
-    """
-    Dynamically calculate the optimal sleep duration until the next check:
-    - Shows whose RSS rules already work (FIXED) are ignored, as qBittorrent downloads them automatically.
-    - Shows without release dates (next_airing_at is None) are ignored from hunting; they wait for AniList schedule.
-    - If any upcoming/unconfirmed show has aired recently (next_airing_at <= now) -> Hunting mode (qBittorrent RSS refresh rate + 15s).
-    - If the next upcoming unconfirmed show airs sooner than default interval -> Sleep until its TV air time to bind rule.
-    - Otherwise (all active shows have working rules or are waiting for air dates) -> Sleep default interval (e.g. 6 hours).
-    """
+@dataclass(frozen=True)
+class PollClassification:
+    """Which monitored shows make the next pass urgent."""
+
+    has_shows: bool
+    hunting: List[Monitored]
+    unresolved_upcoming: List[Tuple[datetime, Monitored]]
+    now: datetime
+
+
+def classify_shows(session: Session) -> PollClassification:
+    """Split active shows into hunting and not-yet-aired."""
     now = utc_now()
+    hunting_shows: List[Monitored] = []
+    unresolved_upcoming: List[Tuple[datetime, Monitored]] = []
+
     shows = session.exec(select(Monitored)).all()
-
-    if not shows:
-        return default_interval_seconds, "No monitored shows. Sleeping default interval."
-
-    effective_hunting_interval = hunting_interval_seconds
-    hunting_shows = []
-    unresolved_upcoming = []
-
     for s in shows:
         if s.status in (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED, MonitoredStatus.FIXED):
             continue
@@ -65,6 +59,43 @@ def calculate_next_poll_interval(
                 hunting_shows.append(s)
             else:
                 unresolved_upcoming.append((airing_at, s))
+
+    return PollClassification(
+        has_shows=bool(shows),
+        hunting=hunting_shows,
+        unresolved_upcoming=unresolved_upcoming,
+        now=now,
+    )
+
+
+def is_hunting(session: Session) -> bool:
+    """True when at least one show is waiting on a release we have not confirmed."""
+    return bool(classify_shows(session).hunting)
+
+
+def calculate_next_poll_interval(
+    session: Session,
+    default_interval_seconds: int = 21600,
+    hunting_interval_seconds: Optional[int] = None,
+    qbit_client: Optional[QBitClient] = None,
+) -> Tuple[int, str]:
+    """
+    Dynamically calculate the optimal sleep duration until the next check:
+    - Shows whose RSS rules already work (FIXED) are ignored, as qBittorrent downloads them automatically.
+    - Shows without release dates (next_airing_at is None) are ignored from hunting; they wait for AniList schedule.
+    - If any upcoming/unconfirmed show has aired recently (next_airing_at <= now) -> Hunting mode (qBittorrent RSS refresh rate + 15s).
+    - If the next upcoming unconfirmed show airs sooner than default interval -> Sleep until its TV air time to bind rule.
+    - Otherwise (all active shows have working rules or are waiting for air dates) -> Sleep default interval (e.g. 6 hours).
+    """
+    classification = classify_shows(session)
+    hunting_shows = classification.hunting
+    unresolved_upcoming = classification.unresolved_upcoming
+    now = classification.now
+
+    if not classification.has_shows:
+        return default_interval_seconds, "No monitored shows. Sleeping default interval."
+
+    effective_hunting_interval = hunting_interval_seconds
 
     if hunting_shows:
         if effective_hunting_interval is None:
@@ -111,6 +142,8 @@ async def run_daemon_loop(poll_interval_seconds: Optional[int] = None) -> None:
         except NotImplementedError:
             pass
 
+    hunting_next = False
+
     while not stop_event.is_set():
         with Session(engine) as session:
             settings = get_settings(session)
@@ -126,7 +159,7 @@ async def run_daemon_loop(poll_interval_seconds: Optional[int] = None) -> None:
 
             try:
                 logger.info("Executing supervisor cycle...")
-                logs = await supervisor.run_full_cycle()
+                logs = await supervisor.run_full_cycle(hunting=hunting_next)
                 for l in logs:
                     logger.info(f"Supervisor: {l}")
             except Exception as e:
@@ -137,6 +170,7 @@ async def run_daemon_loop(poll_interval_seconds: Optional[int] = None) -> None:
                 default_interval_seconds=default_interval,
                 qbit_client=qbit,
             )
+            hunting_next = is_hunting(session)
             logger.info(f"{reason} (Next check in {sleep_duration}s / {sleep_duration // 60}m)")
 
         try:
