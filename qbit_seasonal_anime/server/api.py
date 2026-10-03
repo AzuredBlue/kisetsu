@@ -704,10 +704,19 @@ def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_d
     return {"status": "success", "message": "Settings updated."}
 
 
+class TestQbitConnectionRequest(BaseModel):
+    qbit_host: Optional[str] = None
+    qbit_username: Optional[str] = None
+    qbit_password: Optional[str] = None
+
+
 @router.post("/settings/test-qbit")
-def test_qbit_connection(session: Session = Depends(get_db)):
+def test_qbit_connection(req: Optional[TestQbitConnectionRequest] = None, session: Session = Depends(get_db)):
     s = get_settings(session)
-    client = QBitClient(host=s.qbit_host, username=s.qbit_username, password=s.qbit_password, timeout=6)
+    host = (req.qbit_host.strip() if req and req.qbit_host else "") or s.qbit_host
+    username = (req.qbit_username.strip() if req and req.qbit_username else "") or s.qbit_username
+    password = (req.qbit_password if req and req.qbit_password else "") or s.qbit_password
+    client = QBitClient(host=host, username=username, password=password, timeout=6)
     try:
         res = client.test_connection()
         return {"status": "success", "app_version": res.get("app_version"), "api_version": res.get("api_version")}

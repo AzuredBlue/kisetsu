@@ -1495,8 +1495,18 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const statusEl = document.getElementById('test-qbit-status');
       statusEl.textContent = 'Testing...';
       statusEl.className = 'text-xs font-mono text-zinc-400';
+      const payload = {
+        qbit_host: document.getElementById('set-qbit-host').value,
+        qbit_username: document.getElementById('set-qbit-user').value,
+      };
+      const pwd = document.getElementById('set-qbit-pass').value;
+      if (pwd) payload.qbit_password = pwd;
       try {
-        const res = await fetch('/api/settings/test-qbit', { method: 'POST' });
+        const res = await fetch('/api/settings/test-qbit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
         const data = await res.json();
         if (res.ok) {
           statusEl.textContent = `Connected (qBit ${data.app_version})`;
