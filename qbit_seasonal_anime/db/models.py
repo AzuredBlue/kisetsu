@@ -166,7 +166,7 @@ class MatchHistory(SQLModel, table=True):
     __tablename__ = "match_history"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    monitored_id: Optional[int] = Field(default=None, foreign_key="monitored.id", ondelete="CASCADE", nullable=True, index=True)
+    monitored_id: Optional[int] = Field(default=None, foreign_key="monitored.id", ondelete="SET NULL", nullable=True, index=True)
     show_name: str = Field(index=True)
     rule_name: str
     feed_name: Optional[str] = None

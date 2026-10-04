@@ -557,7 +557,51 @@ class TestConfirmation(unittest.TestCase):
         # Even though last_confirmed is 13 and ep 13 is completed, ep 1 is WANTED -> not finished
         self.assertFalse(has_downloaded_final_episode(self.session, show))
 
+    def test_has_downloaded_final_episode_empty_ledger_respects_schedule(self):
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        # Empty ledger (no Episode rows exist)
+        show = Monitored(
+            anilist_id=210031,
+            display_name="Polar Opposites",
+            status=MonitoredStatus.FIXED,
+            total_episodes=13,
+            last_confirmed_episode=13,
+            next_airing_episode=13,  # Episode 13 is scheduled next in the future -> finale has not aired
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
+
+    def test_has_downloaded_final_episode_handles_legacy_raw(self):
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        # Show with raw last_confirmed_episode (e.g. 23) and offset 11, total 12
+        show = Monitored(
+            anilist_id=210031,
+            display_name="Legacy Show",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=12,
+            last_confirmed_episode=23,
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=11))
+        self.session.commit()
+
+        # 23 - 11 = 12 == total_episodes -> True and canonicalized
+        self.assertTrue(has_downloaded_final_episode(self.session, show))
+        self.session.refresh(show)
+        self.assertEqual(show.last_confirmed_episode, 12)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

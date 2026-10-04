@@ -675,6 +675,16 @@ def verify_and_confirm_rules_from_feeds(
             canonical_row.release_title = matched_title
             canonical_row.downloaded_at = live_at
             session.add(canonical_row)
+        else:
+            canonical_row = Episode(
+                monitored_id=event["show_id"],
+                episode_number=canonical_episode,
+                status=EpisodeStatus.COMPLETED,
+                source_episode=event["episode"],
+                release_title=matched_title,
+                downloaded_at=live_at,
+            )
+            session.add(canonical_row)
 
         record_match_event(
             session=session,
@@ -702,12 +712,23 @@ def has_downloaded_final_episode(session: Session, show: Monitored) -> bool:
     if not show.total_episodes or show.total_episodes <= 0 or not show.id:
         return False
 
-    # If AniList indicates an episode before the finale is still to air, the finale cannot be downloaded
-    if show.next_airing_episode and show.next_airing_episode < show.total_episodes:
-        return False
+    # If AniList indicates an earlier episode is still to air, or finale has not aired yet, it cannot be completed
+    now = utc_now()
+    if show.next_airing_episode and show.total_episodes:
+        if show.next_airing_episode < show.total_episodes:
+            return False
+        if show.next_airing_episode == show.total_episodes:
+            air_at = show.next_airing_at
+            if air_at and air_at.tzinfo is None:
+                air_at = air_at.replace(tzinfo=timezone.utc)
+            if air_at and air_at > now:
+                return False
 
     episodes = session.exec(
-        select(Episode).where(Episode.monitored_id == show.id)
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.episode_number <= show.total_episodes,
+        )
     ).all()
     if episodes:
         if any(ep.status == EpisodeStatus.WANTED for ep in episodes):
@@ -719,6 +740,15 @@ def has_downloaded_final_episode(session: Session, show: Monitored) -> bool:
     last_episode = show.last_confirmed_episode or 0
     if last_episode == show.total_episodes:
         return True
+
+    # Legacy raw fallback: handle un-migrated raw last_confirmed_episode
+    offset = _episode_offset(session, show, show.current_feed_id)
+    if offset is not None and last_episode > show.total_episodes:
+        if (last_episode - offset) == show.total_episodes:
+            show.last_confirmed_episode = last_episode - offset
+            session.add(show)
+            session.commit()
+            return True
 
     match_conditions = [MatchHistory.monitored_id == show.id]
     if show.display_name:

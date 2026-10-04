@@ -524,6 +524,41 @@ def test_delete_show(client, session):
     assert session.exec(select(Episode).where(Episode.monitored_id == show_id)).all() == []
 
 
+def test_init_db_canonicalizes_legacy_raw_confirmed(session):
+    from qbit_seasonal_anime.db.session import init_db
+
+    feed = Feed(qbit_feed_name="SubsPlease", qbit_feed_url="https://feed.url", priority=1)
+    session.add(feed)
+    session.commit()
+    session.refresh(feed)
+
+    show = Monitored(
+        anilist_id=210031,
+        display_name="Legacy Init Show",
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        total_episodes=12,
+        last_confirmed_episode=23,
+    )
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=feed.id, offset=11))
+    session.commit()
+
+    engine = session.get_bind()
+    init_db(engine)
+
+    session.expire_all()
+    updated = session.get(Monitored, show.id)
+    assert updated.last_confirmed_episode == 12
+
+
+
+
+
+
 def test_edit_show_endpoint(client, session, mock_qbit):
     mock_qbit.get_rss_items.return_value = {
         "Feed 1": {

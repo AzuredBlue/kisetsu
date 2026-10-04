@@ -615,7 +615,10 @@ class Supervisor:
 
             # Check episode ledger: if any episode is not COMPLETED, do not prune
             episodes = self.session.exec(
-                select(Episode).where(Episode.monitored_id == show.id)
+                select(Episode).where(
+                    Episode.monitored_id == show.id,
+                    Episode.episode_number <= (show.total_episodes or 9999),
+                )
             ).all()
             if any(ep.status != EpisodeStatus.COMPLETED for ep in episodes):
                 continue
