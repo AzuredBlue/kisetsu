@@ -1001,7 +1001,7 @@ class Supervisor:
         candidate_shows = self.session.exec(
             select(Monitored).where(
                 Monitored.current_feed_id.is_not(None),
-                Monitored.feed_pinned == False,  # noqa: E712
+                Monitored.feed_pinned.isnot(True),
                 Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.STALLED]),
             )
         ).all()
@@ -1032,9 +1032,8 @@ class Supervisor:
                 self.session.commit()
                 continue
             since = show.candidate_feed_since
-            if since is None or (since.tzinfo is None and since.replace(tzinfo=timezone.utc) + timedelta(
-                seconds=FEED_SWITCH_GRACE_SECONDS
-            ) > now):
+            since_utc = since.replace(tzinfo=timezone.utc) if (since and since.tzinfo is None) else since
+            if since_utc is None or since_utc + timedelta(seconds=FEED_SWITCH_GRACE_SECONDS) > now:
                 continue
             show.current_feed_id = chosen_feed.id
             show.candidate_feed_id = None

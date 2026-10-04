@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import logging
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import qbittorrentapi
@@ -307,8 +308,21 @@ class QBitClient:
             if share_limit_action:
                 kwargs["share_limit_action"] = share_limit_action
             result = client.torrents_add(**kwargs)
-            if result is not None and "fail" in str(result).strip().lower():
-                raise QbitClientError(f"qBittorrent rejected torrent {urls}: {result}")
+            if result is not None:
+                failure_count = getattr(result, "failure_count", None)
+                if failure_count is None and isinstance(result, dict):
+                    failure_count = result.get("failure_count")
+                if failure_count is not None:
+                    if int(failure_count) > 0:
+                        raise QbitClientError(f"qBittorrent rejected torrent {urls}: {result}")
+                else:
+                    res_str = str(result).strip().lower()
+                    if res_str in ("fails.", "fails"):
+                        raise QbitClientError(f"qBittorrent rejected torrent {urls}: {result}")
+                    if "failure_count" in res_str:
+                        m = re.search(r"[\'\"]?failure_count[\'\"]?\s*:\s*(\d+)", res_str)
+                        if m and int(m.group(1)) > 0:
+                            raise QbitClientError(f"qBittorrent rejected torrent {urls}: {result}")
             logger.info(f"Successfully added torrent '{urls}'")
             return True
         except qbittorrentapi.Conflict409Error:

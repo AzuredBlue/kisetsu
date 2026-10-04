@@ -1171,7 +1171,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               ${episodes.length ? episodes.map(ep => `
                 <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${ep.version > 1 ? 'bg-amber-950/50 text-amber-300' : 'text-zinc-400'}">
                   <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
-                  <span class="truncate">${escapeHtml(ep.status)}${ep.last_error ? ` · ${escapeHtml(ep.last_error)}` : ''}</span>
+                  <span class="truncate">${escapeHtml(ep.status)}</span>
                 </div>
               `).join('') : '<div class="text-zinc-500 text-xs text-center py-2">No episode records yet.</div>'}
             </div>

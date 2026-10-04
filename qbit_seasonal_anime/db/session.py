@@ -277,6 +277,8 @@ def init_db(engine=None):
                 "WHERE pinned_feed_id IS NOT NULL AND (feed_pinned IS NULL OR feed_pinned = 0)"
             ))
             session.commit()
+        session.exec(text("UPDATE monitored SET feed_pinned = 0 WHERE feed_pinned IS NULL"))
+        session.commit()
 
         settings_cols = get_table_columns(session, "settings")
         if "title_language" not in settings_cols:
