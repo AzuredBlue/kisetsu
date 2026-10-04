@@ -23,6 +23,11 @@ class QbitAuthenticationError(QbitClientError):
     pass
 
 
+class QbitRSSRefreshError(QbitClientError):
+    """A forced RSS feed refresh did not produce usable articles."""
+    pass
+
+
 def _is_auth_failure(exc: BaseException) -> bool:
     """
     Distinguish "your password is wrong" from "qBittorrent is not there".
@@ -349,14 +354,35 @@ class QBitClient:
             logger.debug(f"Could not fetch matching articles for {rule_name}: {e}")
             return {}
 
-    def refresh_rss_feeds(self, feed_name: str = "") -> None:
-        """Trigger an immediate background refresh of all RSS feeds (or a specific feed) in qBittorrent."""
-        client = self.get_client()
+    def refresh_rss_feeds(self, feed_name: str = "") -> bool:
+        """Trigger an immediate background refresh of all RSS feeds (or a specific feed) in qBittorrent.
+
+        Returns whether qBittorrent accepted the request, so a caller that needs
+        fresh articles can tell a refusal from an accepted-but-empty refresh.
+        """
         try:
+            client = self.get_client()
             client.rss_refresh_item(item_path=feed_name)
             logger.debug("Triggered immediate RSS feeds refresh in qBittorrent.")
+            return True
+        except QbitClientError:
+            self._client = None
+            raise
         except Exception as e:
+            self._client = None
             logger.debug(f"Could not trigger RSS refresh in qBittorrent: {e}")
+            return False
+
+    def get_rss_fetch_delay(self) -> int:
+        """Fetch delay between requests to the same host in seconds from qBittorrent preferences."""
+        try:
+            client = self.get_client()
+            prefs = client.app_preferences()
+            val = prefs.get("rss_fetch_delay")
+            return int(val) if val is not None else 0
+        except Exception as e:
+            logger.debug(f"Could not read rss_fetch_delay from qBittorrent preferences: {e}")
+            return 0
 
     def get_rule_match_times(
         self,
