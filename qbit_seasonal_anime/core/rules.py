@@ -283,7 +283,7 @@ def build_rule_definition(
         else (
             getattr(monitored, "custom_regex", None)
             or build_regex_pattern(
-                monitored.aliases,
+                monitored.effective_aliases,
                 matched_title=monitored.matched_title,
                 release_group=effective_group,
             )

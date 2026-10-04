@@ -106,7 +106,7 @@ def get_shows(session: Session = Depends(get_db)):
             "save_folder": s.save_folder,
             "save_path": resolved_save_path,
             "is_released": is_released,
-            "aliases": s.aliases,
+            "custom_aliases": s.custom_aliases,
         })
     return result
 
@@ -297,13 +297,13 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
     if not saved_regex and show.matched_title:
         saved_regex = build_regex_pattern(
-            show.aliases,
+            show.effective_aliases,
             matched_title=show.matched_title,
             release_group=show.matched_release_group,
         )
 
     if not saved_regex and feed:
-        saved_regex = build_regex_pattern(show.aliases)
+        saved_regex = build_regex_pattern(show.effective_aliases)
 
     if not matched_articles and feed_items and saved_regex:
         try:
@@ -351,7 +351,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "category": download_params["category"],
         "ratio_limit": download_params["ratio_limit"],
         "status": show.status.value,
-        "aliases": show.aliases,
+        "custom_aliases": show.custom_aliases,
         "matched_title": show.matched_title,
         "matched_release_group": show.matched_release_group,
         "matched_articles": matched_articles[:15],
@@ -465,11 +465,9 @@ def edit_show(show_id: int, req: EditShowRequest, session: Session = Depends(get
     if req.must_not_contain is not None:
         show.custom_must_not = req.must_not_contain.strip() if req.must_not_contain.strip() else None
     if req.aliases is not None:
-        # Union, never replace: AniList re-supplies its own aliases on every
-        # schedule sync, and a stale form must not be able to drop them.
-        show.aliases = list(show.aliases) + [
-            alias.strip() for alias in req.aliases if alias and alias.strip()
-        ]
+        # Only the hand-written set is replaced; AniList re-supplies its own
+        # aliases on every schedule sync and those must stay untouched.
+        show.custom_aliases = [alias.strip() for alias in req.aliases if alias and alias.strip()]
 
     if req.current_feed_id is not None:
         # An explicit pick pins the feed; auto-detect must not move it afterwards.
@@ -514,7 +512,7 @@ def edit_show(show_id: int, req: EditShowRequest, session: Session = Depends(get
     show.current_feed_id = feed.id
 
     matched_article = None
-    aliases = show.aliases
+    aliases = show.effective_aliases
     test_pattern = build_regex_pattern(aliases)
     prepared_aliases = prepare_aliases(aliases)
     parsed_articles = {}
@@ -943,7 +941,7 @@ def get_match_history(limit: int = 100, session: Session = Depends(get_db)):
         if not matched_reg and item.monitored_id and item.monitored_id in shows_map:
             s_obj = shows_map[item.monitored_id]
             matched_reg = s_obj.custom_regex or build_regex_pattern(
-                s_obj.aliases,
+                s_obj.effective_aliases,
                 matched_title=s_obj.matched_title,
                 release_group=s_obj.matched_release_group,
             )
