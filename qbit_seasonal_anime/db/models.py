@@ -165,6 +165,14 @@ class Feed(SQLModel, table=True):
     priority: int = Field(default=1, index=True)  # Lower number = higher priority (1 is top)
 
 
+def _decode_aliases(raw: Optional[str]) -> List[str]:
+    try:
+        data = json.loads(raw or "[]")
+    except Exception:
+        return []
+    return data if isinstance(data, list) else []
+
+
 class Monitored(SQLModel, table=True):
     __tablename__ = "monitored"
 
@@ -174,6 +182,7 @@ class Monitored(SQLModel, table=True):
     title_romaji: Optional[str] = Field(default=None, nullable=True)
     title_english: Optional[str] = Field(default=None, nullable=True)
     aliases_json: str = Field(default="[]")
+    custom_aliases_json: str = Field(default="[]")
     status: MonitoredStatus = Field(default=MonitoredStatus.UNCONFIRMED, index=True)
     current_feed_id: Optional[int] = Field(default=None, foreign_key="feeds.id", ondelete="SET NULL", nullable=True, index=True)
     qbit_rule_name: Optional[str] = Field(default=None, nullable=True)
@@ -199,15 +208,25 @@ class Monitored(SQLModel, table=True):
 
     @property
     def aliases(self) -> List[str]:
-        try:
-            data = json.loads(self.aliases_json)
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
+        return _decode_aliases(self.aliases_json)
 
     @aliases.setter
     def aliases(self, val: List[str]) -> None:
         self.aliases_json = json.dumps(list(dict.fromkeys(val)))  # unique while preserving order
+
+    @property
+    def custom_aliases(self) -> List[str]:
+        """Aliases typed in by hand, kept apart from the ones AniList supplies."""
+        return _decode_aliases(self.custom_aliases_json)
+
+    @custom_aliases.setter
+    def custom_aliases(self, val: List[str]) -> None:
+        self.custom_aliases_json = json.dumps(list(dict.fromkeys(val)))
+
+    @property
+    def effective_aliases(self) -> List[str]:
+        """Everything a release may be matched against."""
+        return list(dict.fromkeys(self.aliases + self.custom_aliases))
 
 
 class EpisodeNumberMapping(SQLModel, table=True):

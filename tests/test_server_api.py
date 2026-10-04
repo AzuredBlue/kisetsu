@@ -597,6 +597,32 @@ def test_editing_other_fields_leaves_the_feed_and_pin_alone(client, session, moc
     assert written["ratioLimit"] == 2.5
 
 
+def test_init_db_adds_the_custom_aliases_column_to_a_legacy_monitored_table(tmp_path):
+    """An existing database gains the hand-written alias column instead of erroring."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        show = Monitored(
+            anilist_id=191788,
+            display_name="Aoashi Season 2",
+            aliases_json='["Aoashi Season 2"]',
+            status=MonitoredStatus.FIXED,
+        )
+        session.add(show)
+        session.commit()
+        session.exec(text("ALTER TABLE monitored DROP COLUMN custom_aliases_json"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        show = session.exec(select(Monitored)).first()
+        assert show.custom_aliases == []
+        assert show.effective_aliases == ["Aoashi Season 2"]
+    engine.dispose()
+
+
 def test_edit_show_can_add_an_alias(client, session, mock_qbit):
     feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
     show = Monitored(
@@ -616,11 +642,12 @@ def test_edit_show_can_add_an_alias(client, session, mock_qbit):
 
     session.expire_all()
     updated = session.get(Monitored, show.id)
-    assert "Ao Ashi" in updated.aliases
-    assert "Aoashi Season 2" in updated.aliases
+    assert updated.custom_aliases == ["Ao Ashi"]
+    assert updated.aliases == ["Aoashi Season 2", "Aoashi 2nd Season"]
+    assert "Ao Ashi" in updated.effective_aliases
 
 
-def test_edit_show_never_removes_existing_aliases(client, session, mock_qbit):
+def test_edit_show_replaces_only_the_hand_written_aliases(client, session, mock_qbit):
     feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
     show = Monitored(
         anilist_id=191788,
@@ -634,12 +661,14 @@ def test_edit_show_never_removes_existing_aliases(client, session, mock_qbit):
     session.commit()
     session.refresh(show)
 
-    res = client.post(f"/api/shows/{show.id}/edit", json={"aliases": ["Ao Ashi", "Aoashi Season 2"]})
+    res = client.post(f"/api/shows/{show.id}/edit", json={"aliases": ["Ao Ashi", "Ao Ashi"]})
     assert res.status_code == 200
 
     session.expire_all()
     updated = session.get(Monitored, show.id)
-    assert updated.aliases == ["Aoashi Season 2", "Ao Ashi"]
+    # Deduped, and the AniList alias the form happened to resubmit is not absorbed.
+    assert updated.custom_aliases == ["Ao Ashi"]
+    assert updated.aliases == ["Aoashi Season 2"]
 
 
 def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
@@ -675,6 +704,7 @@ def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
 
     session.expire_all()
     updated = session.get(Monitored, show.id)
+    assert updated.custom_aliases == ["Ao Ashi"]
     assert updated.matched_title == "Ao Ashi"
     assert updated.status == MonitoredStatus.FIXED
     must_contain = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"]
@@ -682,12 +712,13 @@ def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
     assert re.search(must_contain, "[SubsPlease] Ao.Ashi S2 - 02 (1080p) [11111111].mkv", re.IGNORECASE)
 
 
-def test_show_rule_endpoint_returns_aliases(client, session, mock_qbit):
+def test_show_rule_endpoint_returns_only_hand_written_aliases(client, session, mock_qbit):
     feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
     show = Monitored(
         anilist_id=191788,
         display_name="Aoashi Season 2",
-        aliases_json='["Aoashi Season 2", "Ao Ashi"]',
+        aliases_json='["Aoashi Season 2", "アオアシ 第2期"]',
+        custom_aliases_json='["Ao Ashi"]',
         status=MonitoredStatus.UNCONFIRMED,
         current_feed_id=feed.id,
     )
@@ -698,7 +729,7 @@ def test_show_rule_endpoint_returns_aliases(client, session, mock_qbit):
 
     res = client.get(f"/api/shows/{show.id}/rule")
     assert res.status_code == 200
-    assert res.json()["aliases"] == ["Aoashi Season 2", "Ao Ashi"]
+    assert res.json()["custom_aliases"] == ["Ao Ashi"]
 
 
 def test_picking_auto_discover_feed_unpins_the_show(client, session, mock_qbit):

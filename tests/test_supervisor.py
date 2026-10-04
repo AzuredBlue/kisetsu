@@ -25,6 +25,48 @@ from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
 
 @pytest.mark.asyncio
+async def test_anilist_sync_leaves_hand_written_aliases_alone():
+    """AniList re-supplies its own aliases and must not absorb the hand-written ones."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    settings = Settings(id=1, anilist_username="TestUser", base_dir="/tmp/Anime")
+    show = Monitored(
+        id=1,
+        anilist_id=191788,
+        display_name="Aoashi Season 2",
+        aliases_json='["Aoashi Season 2"]',
+        custom_aliases_json='["Ao Ashi"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=24,
+    )
+    session.add(settings)
+    session.add(show)
+    session.commit()
+
+    mock_anilist = MagicMock()
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[{
+        "anilist_id": 191788,
+        "display_name": "Aoashi Season 2",
+        "status": "RELEASING",
+        "total_episodes": 24,
+        "next_airing_episode": 1,
+        "next_airing_at": None,
+        "aliases": ["Aoashi Season 2", "アオアシ 第2期"],
+    }])
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=mock_anilist, settings=settings)
+
+    await supervisor.sync_anilist_schedule()
+    session.refresh(show)
+
+    assert show.custom_aliases == ["Ao Ashi"]
+    assert "アオアシ 第2期" in show.aliases
+    assert "Ao Ashi" not in show.aliases
+    assert "Ao Ashi" in show.effective_aliases
+
+
+@pytest.mark.asyncio
 async def test_supervisor_full_cycle():
     engine = create_engine(
         "sqlite:///:memory:",

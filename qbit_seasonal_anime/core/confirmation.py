@@ -420,7 +420,7 @@ def verify_and_confirm_rules_from_feeds(
         if not feed:
             continue
 
-        aliases = show.aliases
+        aliases = show.effective_aliases
         prepared_aliases = prepare_aliases(aliases)
         test_pattern = build_regex_pattern(aliases)
         found = _find_release_on_feed(feed, articles_by_url, aliases, test_pattern, prepared_aliases, parsed_articles)

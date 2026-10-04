@@ -238,7 +238,7 @@ def discover_feed_for_show(
 
     sorted_feeds = sorted(available_feeds, key=lambda f: f.priority)
     top_feed = sorted_feeds[0]
-    aliases = monitored.aliases
+    aliases = monitored.effective_aliases
     test_pattern = build_regex_pattern(aliases)
     prepared_aliases = prepare_aliases(aliases)
     if parsed_articles is None:

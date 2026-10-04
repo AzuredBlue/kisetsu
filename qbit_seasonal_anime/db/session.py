@@ -255,6 +255,7 @@ def init_db(engine=None):
             ("feed_pinned", "BOOLEAN"),
             ("candidate_feed_id", "INTEGER"),
             ("candidate_feed_since", "DATETIME"),
+            ("custom_aliases_json", "VARCHAR"),
         ]:
             if col_name not in monitored_cols:
                 session.exec(text(f"ALTER TABLE monitored ADD COLUMN {col_name} {col_type}"))

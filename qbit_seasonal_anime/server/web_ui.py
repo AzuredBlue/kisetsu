@@ -1139,9 +1139,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
         const regexSections = data.has_rule ? `
           <div class="space-y-1">
-            <label for="modal-aliases" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Aliases</label>
-            <input type="text" id="modal-aliases" value="${(data.aliases || []).join(', ')}" placeholder="Ao Ashi" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
-            <p class="text-[11px] text-zinc-500">Comma separated. Add how the release group spells the title when it differs from AniList.</p>
+            <label for="modal-aliases" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Custom Aliases</label>
+            <input type="text" id="modal-aliases" value="${(data.custom_aliases || []).join(', ')}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
+            <p class="text-[11px] text-zinc-500">Comma separated. Extra names the release group uses. AniList titles and synonyms are always matched too.</p>
           </div>
 
           <div class="space-y-1">
@@ -1230,7 +1230,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           ratio_limit: data.ratio_limit !== undefined && data.ratio_limit !== null ? parseFloat(data.ratio_limit) : undefined,
           must_contain: (data.must_contain || '').trim(),
           must_not_contain: (data.must_not_contain || '').trim(),
-          aliases: (data.aliases || []).join(', '),
+          aliases: (data.custom_aliases || []).join(', '),
         };
       } catch (err) {
         contentEl.innerHTML = `<div class="text-rose-400 py-4 text-center">Failed loading show details: ${err}</div>`;
