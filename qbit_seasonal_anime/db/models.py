@@ -40,6 +40,7 @@ class EpisodeStatus(str, Enum):
     COMPLETED = "completed"
     REPLACING = "replacing"
     FAILED = "failed"
+    MISSED = "missed"
 
 
 class TorrentOperationStatus(str, Enum):

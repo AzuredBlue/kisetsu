@@ -749,7 +749,10 @@ def has_downloaded_final_episode(
     ).all()
     if episodes:
         if (download_mode or DEFAULT_DOWNLOAD_MODE) in ("direct", "observe"):
-            return all(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
+            return (
+                all(episode.status in (EpisodeStatus.COMPLETED, EpisodeStatus.MISSED) for episode in episodes)
+                and any(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
+            )
         if any(episode.status == EpisodeStatus.WANTED for episode in episodes):
             return False
         final_episode = next((ep for ep in episodes if ep.episode_number == show.total_episodes), None)

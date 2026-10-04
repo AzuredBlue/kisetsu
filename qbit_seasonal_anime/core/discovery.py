@@ -142,8 +142,8 @@ class RssSnapshot:
 
         qBittorrent processes feeds on the same domain sequentially, pausing
         `rss_fetch_delay` seconds between each request. If multiple feeds share
-        a host (e.g. 4 nyaa.si feeds), refreshing them takes at least
-        `feed_count * delay` seconds before qBittorrent marks them settled.
+        a host, refreshing them takes at least `feed_count * delay` seconds before
+        qBittorrent marks them settled.
         """
         delay = 0
         try:
@@ -220,7 +220,7 @@ class RssSnapshot:
                 effective_timeout = (
                     timeout_seconds
                     if timeout_seconds is not None
-                    else self.calculate_settle_timeout(states)
+                    else self.calculate_settle_timeout(states, base_timeout=45.0)
                 )
                 deadline = time.monotonic() + effective_timeout
                 if any(loading for _, _, loading, _ in states):

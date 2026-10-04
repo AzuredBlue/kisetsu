@@ -130,6 +130,7 @@ def get_shows(session: Session = Depends(get_db)):
         show_episodes = episodes_by_show.get(s.id, [])
         downloaded_count = sum(1 for e in show_episodes if e.status == EpisodeStatus.COMPLETED)
         wanted_count = sum(1 for e in show_episodes if e.status == EpisodeStatus.WANTED)
+        missed_count = sum(1 for e in show_episodes if e.status == EpisodeStatus.MISSED)
         failed_count = sum(1 for e in show_episodes if e.status == EpisodeStatus.FAILED)
         v2_count = sum(
             1 for e in show_episodes
@@ -174,6 +175,7 @@ def get_shows(session: Session = Depends(get_db)):
             "candidate_feed_id": s.candidate_feed_id,
             "downloaded_episodes_count": downloaded_count,
             "wanted_episodes_count": wanted_count,
+            "missed_episodes_count": missed_count,
             "failed_episodes_count": failed_count,
             "v2_episodes_count": v2_count,
             "schedule_stale": bool(s.schedule_stale),

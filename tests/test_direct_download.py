@@ -166,7 +166,7 @@ def test_backfill_window_keeps_old_canonical_episode_manual_only():
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 7)
     ).first()
-    assert episode.status == EpisodeStatus.WANTED
+    assert episode.status == EpisodeStatus.MISSED
     qbit.add_torrent.assert_not_called()
     session.close()
     engine.dispose()
@@ -1925,7 +1925,7 @@ def test_the_backfill_window_still_rejects_a_genuinely_stale_release():
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
     qbit.add_torrent.assert_not_called()
-    assert episode9.status == EpisodeStatus.WANTED
+    assert episode9.status == EpisodeStatus.MISSED
     session.close()
     engine.dispose()
 
@@ -2144,6 +2144,57 @@ def test_initial_v2_release_is_grabbed_directly_without_v1():
     assert ops[0].kind == "grab"
     assert ops[0].version == 2
     assert episode1.version == 2
+
+    session.close()
+    engine.dispose()
+
+
+def test_older_wanted_episode_not_in_feed_transitions_to_missed():
+    from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
+
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    now = datetime.now(timezone.utc)
+    show = _show(
+        session,
+        display_name="Steel Ball Run",
+        aliases_json='["Steel Ball Run"]',
+        total_episodes=12,
+        next_airing_episode=4,
+        next_airing_at=now + timedelta(days=5),
+        status=MonitoredStatus.FIXED,
+        last_confirmed_episode=3,
+    )
+    # Episode 1 was wanted and aired in the past
+    ep1 = Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.WANTED, air_at=now - timedelta(days=9))
+    ep2 = Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.COMPLETED, air_at=now - timedelta(days=2))
+    ep3 = Episode(monitored_id=show.id, episode_number=3, status=EpisodeStatus.COMPLETED, air_at=now + timedelta(days=5))
+    session.add(ep1)
+    session.add(ep2)
+    session.add(ep3)
+    session.commit()
+
+    # Feed has articles, but none for ep 1
+    articles = [
+        {"id": "sbr3", "title": "[SubsPlease] Steel Ball Run - 03 (1080p).mkv", "torrentURL": "magnet:sbr3"},
+    ]
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": articles}}
+
+    logs = evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    session.refresh(ep1)
+    assert ep1.status == EpisodeStatus.MISSED
+    assert any("marked as missed" in l for l in logs)
+
+    # Verify scheduler does not log backlog
+    duration, reason = calculate_next_poll_interval(session, default_interval_seconds=21600, download_mode="direct")
+    assert duration == 21600
+    assert "Direct backlog" not in reason
+    assert "direct ownership" in reason
 
     session.close()
     engine.dispose()

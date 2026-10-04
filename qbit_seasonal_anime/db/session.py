@@ -323,6 +323,8 @@ def init_db(engine=None):
                 suffix = f" DEFAULT {default}" if default else ""
                 session.exec(text(f"ALTER TABLE episodes ADD COLUMN {col_name} {col_type}{suffix}"))
                 session.commit()
+        session.exec(text("UPDATE episodes SET status = UPPER(status) WHERE status != UPPER(status)"))
+        session.commit()
 
         operation_cols = get_table_columns(session, "torrent_operations")
         for col_name, col_type, default in [

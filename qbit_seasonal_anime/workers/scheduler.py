@@ -154,16 +154,6 @@ def classify_shows(
                 ).first()
                 if newest_wanted is not None and latest_is_recent:
                     hunting_shows.append(s)
-                else:
-                    backlog = session.exec(
-                        select(Episode.id).where(
-                            Episode.monitored_id == s.id,
-                            Episode.status == EpisodeStatus.WANTED,
-                            Episode.episode_number <= latest_aired_episode,
-                        ).limit(1)
-                    ).first()
-                    if backlog is not None:
-                        backlog_shows.append(s)
             future_airings = [air for air in air_times.values() if air and air > horizon]
             next_airing = min(future_airings, default=None)
             if next_airing is None and airing_at is not None and airing_at > now:
@@ -301,7 +291,7 @@ def calculate_next_poll_interval(
 
 
 def _idle_reason(
-    backlog: List[Monitored],
+    backlog: Optional[List[Monitored]] = None,
     *,
     mode: str,
     uses_direct_engine: bool,
@@ -309,14 +299,6 @@ def _idle_reason(
 ) -> str:
     """Explain a routine-length sleep: nothing is due before the next pass."""
     minutes = default_interval_seconds // 60
-    if backlog and uses_direct_engine:
-        names = ", ".join(f"'{s.display_name}'" for s in backlog[:3])
-        if len(backlog) > 3:
-            names += f" and {len(backlog) - 3} more"
-        return (
-            f"Direct backlog: {len(backlog)} show(s) retain older wanted episodes "
-            f"({names}). Retrying every {minutes}m."
-        )
     if mode == "direct":
         return f"All active shows have direct ownership or are waiting for air dates. Sleeping {minutes}m until next routine check."
     if mode == "observe":

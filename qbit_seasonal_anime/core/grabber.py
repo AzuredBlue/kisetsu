@@ -776,7 +776,11 @@ def _restore_episode_before_operation(
         episode.torrent_hash = operation.old_torrent_hash
         episode.operation_tag = operation.old_operation_tag
     else:
-        episode.status = EpisodeStatus.WANTED
+        old_status = str(operation.old_episode_status or "").strip().lower()
+        if old_status in EpisodeStatus._value2member_map_:
+            episode.status = EpisodeStatus(old_status)
+        else:
+            episode.status = EpisodeStatus.WANTED
         episode.version = max(1, operation.old_version)
         episode.feed_id = None
         episode.release_title = None
@@ -1113,10 +1117,14 @@ def evaluate_and_grab_releases(
         )
         candidate_feeds = _grab_feeds(session, show, feeds)
         grabbed_from: Optional[int] = None
+        has_feed_articles = False
         for feed in candidate_feeds:
+            feed_articles = articles_by_url.get(feed.qbit_feed_url, [])
+            if feed_articles:
+                has_feed_articles = True
             if grabbed_from is not None:
                 break
-            for article in articles_by_url.get(feed.qbit_feed_url, []):
+            for article in feed_articles:
                 title = article.get("title", "")
                 if not title:
                     continue
@@ -1176,8 +1184,49 @@ def evaluate_and_grab_releases(
                         logs.append(f"Queued replacement for {show.display_name} Ep {episode_number} v{version}: {title}")
                     else:
                         logs.append(f"Queued {show.display_name} Ep {episode_number} v{version}: {title}")
+        if mode == "direct" and has_feed_articles:
+            backfill_window_days = max(0, int(getattr(settings, "backfill_window_days", 14)))
+            for episode in episodes:
+                if episode.status != EpisodeStatus.WANTED:
+                    continue
+                episode_air_at = _aware(episode.air_at)
+                # An episode MUST have reached its air time to ever be considered missed.
+                # Future scheduled episodes must remain WANTED.
+                has_aired = False
+                if episode_air_at is not None:
+                    has_aired = (episode_air_at <= air_horizon)
+                elif latest_aired is not None:
+                    has_aired = (episode.episode_number <= latest_aired)
+
+                if not has_aired:
+                    continue
+
+                is_stale_air = (
+                    episode_air_at is not None
+                    and now - episode_air_at > timedelta(days=backfill_window_days)
+                )
+                is_older_than_latest = (
+                    latest_aired is not None
+                    and episode.episode_number < latest_aired
+                )
+                has_newer_downloaded = any(
+                    e.episode_number > episode.episode_number
+                    and e.status in {
+                        EpisodeStatus.COMPLETED,
+                        EpisodeStatus.DOWNLOADING,
+                        EpisodeStatus.QUEUED,
+                        EpisodeStatus.REPLACING,
+                    }
+                    for e in episodes
+                )
+                if is_stale_air or is_older_than_latest or has_newer_downloaded:
+                    episode.status = EpisodeStatus.MISSED
+                    session.add(episode)
+                    msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
+                    logs.append(msg)
+                    logger.info(msg)
         if grabbed_from is not None and show.current_feed_id != grabbed_from:
             show.current_feed_id = grabbed_from
             session.add(show)
-            session.commit()
+        session.commit()
     return logs

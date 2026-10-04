@@ -329,7 +329,7 @@ class TestDirectScheduler(unittest.TestCase):
         self.assertIn("Direct hunting", reason)
         self.assertIn("Link Click Season 3", reason)
 
-    def test_direct_fixed_show_uses_backlog_cadence_outside_window(self):
+    def test_direct_fixed_show_uses_routine_cadence_outside_window(self):
         now = utc_now()
         show = Monitored(
             id=76,
@@ -346,7 +346,7 @@ class TestDirectScheduler(unittest.TestCase):
         self.session.add(Episode(
             monitored_id=show.id,
             episode_number=8,
-            status=EpisodeStatus.WANTED,
+            status=EpisodeStatus.MISSED,
             air_at=now - timedelta(days=30),
         ))
         self.session.commit()
@@ -360,7 +360,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("Direct backlog", reason)
+        self.assertIn("direct ownership", reason)
 
     def test_direct_fixed_show_retains_old_canonical_episode_gap(self):
         show = Monitored(
@@ -376,7 +376,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
         self.session.add(show)
         self.session.flush()
-        self.session.add(Episode(monitored_id=show.id, episode_number=12, status=EpisodeStatus.WANTED))
+        self.session.add(Episode(monitored_id=show.id, episode_number=12, status=EpisodeStatus.MISSED))
         self.session.add(Episode(monitored_id=show.id, episode_number=18, status=EpisodeStatus.COMPLETED))
         self.session.add(Episode(monitored_id=show.id, episode_number=19, status=EpisodeStatus.WANTED))
         self.session.commit()
@@ -388,7 +388,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("Direct backlog", reason)
+        self.assertIn("direct ownership", reason)
 
     def test_direct_fixed_show_ignores_future_wanted_episode(self):
         from unittest.mock import MagicMock

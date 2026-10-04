@@ -1169,7 +1169,13 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             </div>
             <div class="bg-[#121215] border border-[#2e2e38] rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
               ${episodes.length ? episodes.map(ep => `
-                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${ep.version > 1 ? 'bg-amber-950/50 text-amber-300' : 'text-zinc-400'}">
+                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${
+                  ep.version > 1
+                    ? 'bg-amber-950/50 text-amber-300'
+                    : String(ep.status).toLowerCase() === 'completed'
+                    ? 'bg-emerald-950/50 text-emerald-300'
+                    : 'text-zinc-400'
+                }">
                   <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
                   <span class="truncate">${escapeHtml(ep.status)}</span>
                 </div>

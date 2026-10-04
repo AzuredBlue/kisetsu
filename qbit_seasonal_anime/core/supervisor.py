@@ -1267,19 +1267,23 @@ class Supervisor:
                 ))
                 refreshed_articles = await asyncio.to_thread(rss_snapshot.refresh)
                 all_logs.append("Refreshed qBittorrent RSS feeds before direct evaluation.")
-                expected_urls = {
-                    feed.qbit_feed_url for feed in self.session.exec(select(Feed)).all()
+                all_feeds = self.session.exec(select(Feed)).all()
+                expected_urls = {feed.qbit_feed_url for feed in all_feeds}
+                failed_feed_urls = {
+                    feed.qbit_feed_url
+                    for feed in all_feeds
+                    if feed.qbit_feed_name in rss_snapshot.failed_feed_names
                 }
-                missing_feeds = expected_urls - set(refreshed_articles)
+                unexplained_missing = (expected_urls - set(refreshed_articles)) - failed_feed_urls
                 if rss_snapshot.failed_feed_names:
                     all_logs.append(
                         "Warning: RSS feeds unavailable after refresh: "
                         + ", ".join(rss_snapshot.failed_feed_names)
                     )
-                if missing_feeds:
+                if unexplained_missing:
                     all_logs.append(
                         "Warning: RSS feeds missing from the refreshed response: "
-                        + str(len(missing_feeds))
+                        + str(len(unexplained_missing))
                     )
             all_logs.extend(await asyncio.to_thread(
                 self.bootstrap_unassigned_shows,
