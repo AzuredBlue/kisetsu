@@ -674,11 +674,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         ? `<svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
         : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
-      // Surface upgraded releases: a v2 episode means a replacement was verified.
-      const versionLabel = show.v2_episodes_count > 0
-        ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border border-amber-800 bg-amber-950/90 text-amber-300">${show.v2_episodes_count} v2</span>`
-        : '';
-
       return `
         <div onclick="viewShowRule(${show.id})" class="bg-[#18181c] border ${isDimmed ? 'border-zinc-800' : 'border-[#26262e]'} hover:border-[#444452] hover:-translate-y-1 hover:shadow-lg hover:shadow-black/50 rounded flex flex-col overflow-hidden group cursor-pointer transition-all duration-200 ease-out">
           
@@ -716,7 +711,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
             <div class="pt-2 border-t border-[#222228] flex items-center justify-between gap-2.5 text-xs font-mono">
               <span class="truncate text-zinc-400 font-medium min-w-0" title="${feedName}">${feedName}</span>
-              ${versionLabel}
               <span class="show-countdown flex-shrink-0 text-zinc-200 font-semibold ml-auto" ${countdownAttr} title="${show.next_airing_formatted ? show.next_airing_formatted : ''}">${airInfo}</span>
             </div>
           </div>
@@ -1167,6 +1161,23 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
         ` : '';
 
+        const episodeSection = isDirect ? `
+          <div class="space-y-1 pt-1">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Episode Ownership</span>
+              <span class="text-[11px] font-mono text-zinc-500">${episodes.length} tracked</span>
+            </div>
+            <div class="bg-[#121215] border border-[#2e2e38] rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
+              ${episodes.length ? episodes.map(ep => `
+                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${ep.version > 1 ? 'bg-amber-950/50 text-amber-300' : 'text-zinc-400'}">
+                  <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
+                  <span class="truncate">${escapeHtml(ep.status)}${ep.last_error ? ` · ${escapeHtml(ep.last_error)}` : ''}</span>
+                </div>
+              `).join('') : '<div class="text-zinc-500 text-xs text-center py-2">No episode records yet.</div>'}
+            </div>
+          </div>
+        ` : '';
+
         contentEl.innerHTML = `
           <div class="space-y-1">
             <div class="flex items-center justify-between">
@@ -1199,23 +1210,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               <input type="number" step="0.1" min="0" id="modal-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
             </div>
           </div>
-
-        const episodeSection = isDirect ? `
-          <div class="space-y-1 pt-1">
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Episode Ownership</span>
-              <span class="text-[11px] font-mono text-zinc-500">${episodes.length} tracked</span>
-            </div>
-            <div class="bg-[#121215] border border-[#2e2e38] rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
-              ${episodes.length ? episodes.map(ep => `
-                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${ep.version > 1 ? 'bg-amber-950/50 text-amber-300' : 'text-zinc-400'}">
-                  <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
-                  <span class="truncate">${escapeHtml(ep.status)}${ep.last_error ? ` · ${escapeHtml(ep.last_error)}` : ''}</span>
-                </div>
-              `).join('') : '<div class="text-zinc-500 text-xs text-center py-2">No episode records yet.</div>'}
-            </div>
-          </div>
-        ` : '';
 
           ${articlesSection}
           ${episodeSection}
