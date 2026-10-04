@@ -479,6 +479,17 @@ class QBitClient:
             logger.debug(f"Could not trigger RSS refresh in qBittorrent: {e}")
             return False
 
+    def get_rss_fetch_delay(self) -> int:
+        """Fetch delay between requests to the same host in seconds from qBittorrent preferences."""
+        try:
+            client = self.get_client()
+            prefs = client.app_preferences()
+            val = prefs.get("rss_fetch_delay")
+            return int(val) if val is not None else 0
+        except Exception as e:
+            logger.debug(f"Could not read rss_fetch_delay from qBittorrent preferences: {e}")
+            return 0
+
     def get_rule_match_times(
         self,
         pairs: List[Tuple[str, str]],

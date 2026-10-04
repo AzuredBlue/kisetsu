@@ -173,6 +173,16 @@ class TestSetRssRule(unittest.TestCase):
 
         self.assertNotIsInstance(ctx.exception, QbitConnectionError)
 
+    def test_get_rss_fetch_delay_reads_preferences(self):
+        api = MagicMock()
+        api.app_preferences.return_value = {"rss_fetch_delay": 5}
+        with patch.object(self.client, "get_client", return_value=api):
+            self.assertEqual(self.client.get_rss_fetch_delay(), 5)
+
+        api.app_preferences.side_effect = Exception("network error")
+        with patch.object(self.client, "get_client", return_value=api):
+            self.assertEqual(self.client.get_rss_fetch_delay(), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

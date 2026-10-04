@@ -1,14 +1,33 @@
+from collections import Counter
 from datetime import datetime, timezone
 import logging
 import time
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlsplit
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
 from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
 from qbit_seasonal_anime.core.rules import build_regex_pattern
 from qbit_seasonal_anime.db.models import Feed, Monitored
 
 logger = logging.getLogger("qbit_seasonal_anime.core.discovery")
+
+
+def get_max_same_host_feed_count(feed_urls: List[str]) -> int:
+    """Return the maximum number of feeds that share the same network domain/host."""
+    hosts = []
+    for url in feed_urls:
+        if not url:
+            continue
+        try:
+            host = urlsplit(url).netloc.lower()
+            if host:
+                hosts.append(host)
+        except Exception:
+            pass
+    if not hosts:
+        return 1
+    return max(Counter(hosts).values())
 
 
 def parse_article_date(art: Dict[str, Any]) -> datetime:
@@ -100,7 +119,8 @@ class RssSnapshot:
             except QbitRSSRefreshError:
                 states = []
             if any(loading for _, _, loading, _ in states):
-                rss_tree, states = self._wait_for_settled_feeds(time.monotonic() + 10.0, 0.25)
+                settle_timeout = self.calculate_settle_timeout(states)
+                rss_tree, states = self._wait_for_settled_feeds(time.monotonic() + settle_timeout, 0.25)
             articles = flatten_rss_articles(rss_tree)
             self.failed_feed_names = [name for name, _, _, has_error in states if has_error]
             for name, feed_url, _, has_error in states:
@@ -112,6 +132,36 @@ class RssSnapshot:
             self._load_error = e
             raise
         return articles
+
+    def calculate_settle_timeout(
+        self,
+        states: Optional[List[Tuple[str, str, bool, bool]]] = None,
+        base_timeout: float = 10.0,
+    ) -> float:
+        """Calculate a timeout dynamically scaled to qBittorrent's same-host fetch delay.
+
+        qBittorrent processes feeds on the same domain sequentially, pausing
+        `rss_fetch_delay` seconds between each request. If multiple feeds share
+        a host (e.g. 4 nyaa.si feeds), refreshing them takes at least
+        `feed_count * delay` seconds before qBittorrent marks them settled.
+        """
+        delay = 0
+        try:
+            fn = getattr(self.qbit_client, "get_rss_fetch_delay", None)
+            if callable(fn):
+                raw = fn()
+                if isinstance(raw, (int, float)):
+                    delay = int(raw)
+        except Exception:
+            delay = 0
+
+        max_same_host = 1
+        if states:
+            urls = [url for _, url, _, _ in states if url]
+            max_same_host = get_max_same_host_feed_count(urls)
+
+        required = float(max_same_host * delay) + base_timeout
+        return max(base_timeout, required)
 
     def invalidate(self) -> None:
         self._articles_by_url = None
@@ -148,7 +198,7 @@ class RssSnapshot:
         *,
         max_attempts: int = 3,
         poll_interval_seconds: float = 0.5,
-        timeout_seconds: float = 10.0,
+        timeout_seconds: Optional[float] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Force a refresh and return articles only once the feeds have settled.
 
@@ -161,20 +211,25 @@ class RssSnapshot:
         self.invalidate()
         attempts = max(1, max_attempts)
         poll_interval = max(0.0, poll_interval_seconds)
-        timeout = max(0.0, timeout_seconds)
         last_error: Optional[Exception] = None
 
         for attempt in range(attempts):
-            deadline = time.monotonic() + timeout
             try:
                 rss_tree = self.qbit_client.get_rss_items(with_data=True)
                 states = _rss_feed_states(rss_tree)
+                effective_timeout = (
+                    timeout_seconds
+                    if timeout_seconds is not None
+                    else self.calculate_settle_timeout(states)
+                )
+                deadline = time.monotonic() + effective_timeout
                 if any(loading for _, _, loading, _ in states):
                     rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
 
                 if not self.qbit_client.refresh_rss_feeds():
                     raise QbitRSSRefreshError("qBittorrent rejected the RSS refresh request")
 
+                deadline = time.monotonic() + effective_timeout
                 rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
                 failed_feeds = [
                     (name, feed_url)

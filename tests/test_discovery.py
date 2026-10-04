@@ -238,6 +238,43 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(feed.id, 2)
         self.assertEqual(feed.qbit_feed_name, "Erai-raws")
 
+    def test_get_max_same_host_feed_count(self):
+        from qbit_seasonal_anime.core.discovery import get_max_same_host_feed_count
+
+        urls = [
+            "https://nyaa.si/?page=rss&u=Erai-raws",
+            "https://subsplease.org/rss/?r=1080",
+            "https://nyaa.si/?page=rss&u=Toonshub",
+            "https://nyaa.si/?page=rss&u=varyg1",
+            "https://nyaa.si/?page=rss&u=varyg2",
+        ]
+        self.assertEqual(get_max_same_host_feed_count(urls), 4)
+        self.assertEqual(get_max_same_host_feed_count(["https://subsplease.org/rss"]), 1)
+        self.assertEqual(get_max_same_host_feed_count([]), 1)
+
+    def test_rss_snapshot_calculate_settle_timeout_scales_with_same_host_delay(self):
+        mock_qbit = MagicMock()
+        mock_qbit.get_rss_fetch_delay.return_value = 4
+        snapshot = RssSnapshot(mock_qbit)
+
+        states = [
+            ("Feed 1", "https://nyaa.si/1", True, False),
+            ("Feed 2", "https://nyaa.si/2", True, False),
+            ("Feed 3", "https://nyaa.si/3", True, False),
+            ("Feed 4", "https://nyaa.si/4", True, False),
+            ("Feed 5", "https://subsplease.org/rss", False, False),
+        ]
+        # 4 nyaa.si feeds * 4s delay + 10s base = 26s
+        self.assertEqual(snapshot.calculate_settle_timeout(states), 26.0)
+
+        # When delay is 0, falls back to base_timeout
+        mock_qbit.get_rss_fetch_delay.return_value = 0
+        self.assertEqual(snapshot.calculate_settle_timeout(states), 10.0)
+
+        # When client does not provide get_rss_fetch_delay, safe fallback
+        del mock_qbit.get_rss_fetch_delay
+        self.assertEqual(snapshot.calculate_settle_timeout(states), 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()
