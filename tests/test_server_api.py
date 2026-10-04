@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 import asyncio
 import importlib
+import re
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect
@@ -662,6 +663,111 @@ def test_editing_other_fields_leaves_the_feed_and_pin_alone(client, session, moc
     # The edit still applied — to the rule, which is where ratio lives.
     written = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]
     assert written["ratioLimit"] == 2.5
+
+
+def test_edit_show_can_add_an_alias(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=191788,
+        display_name="Aoashi Season 2",
+        aliases_json='["Aoashi Season 2", "Aoashi 2nd Season"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        current_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"aliases": ["Ao Ashi"]})
+    assert res.status_code == 200
+
+    session.expire_all()
+    updated = session.get(Monitored, show.id)
+    assert "Ao Ashi" in updated.aliases
+    assert "Aoashi Season 2" in updated.aliases
+
+
+def test_edit_show_never_removes_existing_aliases(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=191788,
+        display_name="Aoashi Season 2",
+        aliases_json='["Aoashi Season 2"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        current_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"aliases": ["Ao Ashi", "Aoashi Season 2"]})
+    assert res.status_code == 200
+
+    session.expire_all()
+    updated = session.get(Monitored, show.id)
+    assert updated.aliases == ["Aoashi Season 2", "Ao Ashi"]
+
+
+def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
+    """An alias that matches a real release puts the show on the learned path."""
+    mock_qbit.get_rss_items.return_value = {
+        "SubsPlease RSS": {
+            "uid": "1",
+            "url": "https://subsplease.org/rss",
+            "articles": [
+                {
+                    "id": "1",
+                    "title": "[SubsPlease] Ao Ashi S2 - 01 (1080p) [6DCF3E95].mkv",
+                    "date": "Sun, 04 Oct 2026 14:30:00 +0000",
+                }
+            ],
+        }
+    }
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=191788,
+        display_name="Aoashi Season 2",
+        aliases_json='["Aoashi Season 2"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        current_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"aliases": ["Ao Ashi"]})
+    assert res.status_code == 200
+
+    session.expire_all()
+    updated = session.get(Monitored, show.id)
+    assert updated.matched_title == "Ao Ashi"
+    assert updated.status == MonitoredStatus.FIXED
+    must_contain = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"]
+    assert re.search(must_contain, "[SubsPlease] Ao Ashi S2 - 01 (1080p) [6DCF3E95].mkv", re.IGNORECASE)
+    # Separator tolerant, so a differently punctuated announcement still matches.
+    assert re.search(must_contain, "[SubsPlease] Ao.Ashi S2 - 02 (1080p) [11111111].mkv", re.IGNORECASE)
+
+
+def test_show_rule_endpoint_returns_aliases(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=191788,
+        display_name="Aoashi Season 2",
+        aliases_json='["Aoashi Season 2", "Ao Ashi"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        current_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.get(f"/api/shows/{show.id}/rule")
+    assert res.status_code == 200
+    assert res.json()["aliases"] == ["Aoashi Season 2", "Ao Ashi"]
 
 
 def test_picking_auto_discover_feed_unpins_the_show(client, session, mock_qbit):

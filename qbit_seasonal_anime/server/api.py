@@ -106,6 +106,7 @@ def get_shows(session: Session = Depends(get_db)):
             "save_folder": s.save_folder,
             "save_path": resolved_save_path,
             "is_released": is_released,
+            "aliases": s.aliases,
         })
     return result
 
@@ -350,6 +351,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "category": download_params["category"],
         "ratio_limit": download_params["ratio_limit"],
         "status": show.status.value,
+        "aliases": show.aliases,
         "matched_title": show.matched_title,
         "matched_release_group": show.matched_release_group,
         "matched_articles": matched_articles[:15],
@@ -438,6 +440,7 @@ class EditShowRequest(BaseModel):
     ratio_limit: Optional[float] = None
     must_contain: Optional[str] = None
     must_not_contain: Optional[str] = None
+    aliases: Optional[List[str]] = None
 
 
 @router.post("/shows/{show_id}/edit")
@@ -461,6 +464,12 @@ def edit_show(show_id: int, req: EditShowRequest, session: Session = Depends(get
         show.custom_regex = req.must_contain.strip() if req.must_contain.strip() else None
     if req.must_not_contain is not None:
         show.custom_must_not = req.must_not_contain.strip() if req.must_not_contain.strip() else None
+    if req.aliases is not None:
+        # Union, never replace: AniList re-supplies its own aliases on every
+        # schedule sync, and a stale form must not be able to drop them.
+        show.aliases = list(show.aliases) + [
+            alias.strip() for alias in req.aliases if alias and alias.strip()
+        ]
 
     if req.current_feed_id is not None:
         # An explicit pick pins the feed; auto-detect must not move it afterwards.

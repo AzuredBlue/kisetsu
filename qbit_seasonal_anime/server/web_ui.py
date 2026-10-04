@@ -1103,6 +1103,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
         const regexSections = data.has_rule ? `
           <div class="space-y-1">
+            <label for="modal-aliases" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Aliases</label>
+            <input type="text" id="modal-aliases" value="${(data.aliases || []).join(', ')}" placeholder="Ao Ashi" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
+            <p class="text-[11px] text-zinc-500">Comma separated. Add how the release group spells the title when it differs from AniList.</p>
+          </div>
+
+          <div class="space-y-1">
             <label for="modal-must-contain" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Must Contain (Regex Filter)</label>
             <input type="text" id="modal-must-contain" value="${data.must_contain || ''}" placeholder=".*" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-emerald-400 focus:outline-none focus:border-zinc-500 shadow-inner select-all">
           </div>
@@ -1170,6 +1176,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           ratio_limit: data.ratio_limit !== undefined && data.ratio_limit !== null ? parseFloat(data.ratio_limit) : undefined,
           must_contain: (data.must_contain || '').trim(),
           must_not_contain: (data.must_not_contain || '').trim(),
+          aliases: (data.aliases || []).join(', '),
         };
       } catch (err) {
         contentEl.innerHTML = `<div class="text-rose-400 py-4 text-center">Failed loading show details: ${err}</div>`;
@@ -1191,6 +1198,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const ratioInput = document.getElementById('modal-ratio-limit');
       const mustContainInput = document.getElementById('modal-must-contain');
       const mustNotContainInput = document.getElementById('modal-must-not-contain');
+      const aliasesInput = document.getElementById('modal-aliases');
 
       const currentFeedId = feedSelect ? parseInt(feedSelect.value) : 0;
       const currentSaveFolder = savePathInput ? savePathInput.value.trim() : '';
@@ -1198,6 +1206,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const currentRatio = ratioInput && ratioInput.value !== '' ? parseFloat(ratioInput.value) : undefined;
       const currentMustContain = mustContainInput ? mustContainInput.value.trim() : '';
       const currentMustNotContain = mustNotContainInput ? mustNotContainInput.value.trim() : '';
+      const currentAliases = aliasesInput ? aliasesInput.value.trim() : '';
 
       const hasChanged = !modalInitialState || (
         currentFeedId !== modalInitialState.current_feed_id ||
@@ -1205,7 +1214,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         currentCategory !== modalInitialState.category ||
         currentRatio !== modalInitialState.ratio_limit ||
         currentMustContain !== modalInitialState.must_contain ||
-        currentMustNotContain !== modalInitialState.must_not_contain
+        currentMustNotContain !== modalInitialState.must_not_contain ||
+        currentAliases !== modalInitialState.aliases
       );
 
       if (!hasChanged) {
@@ -1219,6 +1229,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       const isRegexChanged = modalInitialState && currentMustContain !== modalInitialState.must_contain;
       const isMustNotChanged = modalInitialState && currentMustNotContain !== modalInitialState.must_not_contain;
+      const isAliasesChanged = modalInitialState && currentAliases !== modalInitialState.aliases;
+      const parsedAliases = currentAliases
+        ? currentAliases.split(',').map(a => a.trim()).filter(a => a.length > 0)
+        : [];
 
       const payload = {
         // Only sent when the feed was actually changed: an explicit pick pins the
@@ -1229,6 +1243,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         ratio_limit: currentRatio,
         must_contain: isRegexChanged ? currentMustContain : undefined,
         must_not_contain: isMustNotChanged ? currentMustNotContain : undefined,
+        aliases: isAliasesChanged ? parsedAliases : undefined,
       };
 
       try {
