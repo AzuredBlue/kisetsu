@@ -2115,3 +2115,36 @@ def test_mapped_episode_rejects_when_offset_maps_beyond_latest_aired():
     session.close()
     engine.dispose()
 
+
+def test_initial_v2_release_is_grabbed_directly_without_v1():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=12, next_airing_episode=1)
+    episodes = sync_show_episodes(session, show)
+    episode1 = next(e for e in episodes if e.episode_number == 1)
+    assert episode1.status == EpisodeStatus.WANTED
+
+    # Feed has v2 first (newer pubDate), then v1 (older pubDate)
+    articles = [
+        {"id": "v2", "title": "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [B].mkv", "torrentURL": "magnet:v2", "pubDate": "Sat, 03 Oct 2026 12:00:00 +0000"},
+        {"id": "v1", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [A].mkv", "torrentURL": "magnet:v1", "pubDate": "Fri, 02 Oct 2026 09:00:00 +0000"},
+    ]
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": articles}}
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    # Only the v2 torrent should be added, as a fresh "grab", never downloading v1
+    assert [c.kwargs["urls"] for c in qbit.add_torrent.call_args_list] == ["magnet:v2"]
+    ops = session.exec(select(TorrentOperation)).all()
+    assert len(ops) == 1
+    assert ops[0].kind == "grab"
+    assert ops[0].version == 2
+    assert episode1.version == 2
+
+    session.close()
+    engine.dispose()
+

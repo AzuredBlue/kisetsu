@@ -69,6 +69,7 @@ def client(db_engine, mock_qbit, monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(app_module, "background_supervisor_task", idle_background_task)
+    monkeypatch.setattr(app_module, "qbit_rule_observer_task", idle_background_task)
     monkeypatch.setattr(app_module, "get_engine", lambda: db_engine)
     app = create_app()
 

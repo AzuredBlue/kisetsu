@@ -922,8 +922,14 @@ def _start_operation(
     if not torrent_url:
         return None
     previous_version = episode.version
-    old_torrent_hash = _find_old_hash(qbit, settings, show, episode) if version > previous_version else None
-    if version > previous_version and not old_torrent_hash:
+    has_existing = bool(
+        episode.torrent_hash
+        or episode.release_title
+        or episode.status in {EpisodeStatus.DOWNLOADING, EpisodeStatus.COMPLETED, EpisodeStatus.REPLACING}
+    )
+    is_replace = (version > previous_version) and has_existing
+    old_torrent_hash = _find_old_hash(qbit, settings, show, episode) if is_replace else None
+    if is_replace and not old_torrent_hash:
         episode.last_error = "Cannot safely replace an episode without a verified torrent hash."
         episode.retry_after = None
         session.add(episode)
@@ -933,7 +939,7 @@ def _start_operation(
     item_id = str(article.get("id") or torrent_url or article.get("title", ""))
     operation = TorrentOperation(
         episode_id=episode.id,
-        kind="replace" if version > previous_version else "grab",
+        kind="replace" if is_replace else "grab",
         status=TorrentOperationStatus.PREPARING,
         operation_tag=operation_tag,
         release_title=article.get("title", ""),
