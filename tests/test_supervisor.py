@@ -1,13 +1,24 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.core.supervisor import Supervisor
+from qbit_seasonal_anime.core.supervisor import FEED_SWITCH_GRACE_SECONDS, Supervisor
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
-from qbit_seasonal_anime.db.models import Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeStatus,
+    Feed,
+    MatchHistory,
+    Monitored,
+    MonitoredStatus,
+    RuleHistory,
+    RuleOutcome,
+    Settings,
+    utc_now,
+)
 from qbit_seasonal_anime.db.session import get_settings
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
@@ -394,3 +405,366 @@ async def test_hunting_cycle_defers_anilist_but_still_verifies_and_syncs_rules()
     assert any(l.startswith("Summary:") for l in logs)
     session.refresh(show)
     assert show.status == MonitoredStatus.FIXED
+
+@pytest.mark.asyncio
+async def test_sync_anilist_persists_per_episode_airing_schedule():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=20,
+            next_airing_episode=20,
+            next_airing_at=datetime.now(timezone.utc) + timedelta(days=7),
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        now = datetime.now(timezone.utc)
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[{
+            "anilist_id": 42,
+            "display_name": "Re:ZERO Season 4",
+            "title_romaji": "Re:ZERO Season 4",
+            "title_english": "Re:ZERO Season 4",
+            "aliases": ["Re:ZERO"],
+            "status": "RELEASING",
+            "total_episodes": 20,
+            "next_airing_episode": 20,
+            "next_airing_at": now + timedelta(days=7),
+            "season": "FALL",
+            "season_year": 2026,
+        }])
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={
+            42: [
+                {"episode": 17, "airing_at": now - timedelta(days=21)},
+                {"episode": 18, "airing_at": now - timedelta(days=14)},
+                {"episode": 19, "airing_at": now - timedelta(days=7)},
+                {"episode": 20, "airing_at": now + timedelta(days=7)},
+            ]
+        })
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        await supervisor.sync_anilist_schedule(direct_mode=True)
+
+        episodes = session.exec(
+            select(Episode).where(
+                Episode.monitored_id == show.id,
+                Episode.episode_number.in_([17, 18, 19, 20]),
+            )
+        ).all()
+        assert supervisor.anilist_sync_succeeded is True
+        assert show.anilist_status == "RELEASING"
+        assert show.schedule_stale is False
+        # The direct engine gates every backfill on a known air date, so the
+        # per-episode schedule is what it acts on.
+        assert {episode.episode_number: episode.schedule_state for episode in episodes} == {
+            17: "aired",
+            18: "aired",
+            19: "aired",
+            20: "scheduled",
+        }
+        anilist.fetch_media_airing_schedules.assert_awaited_once_with([42])
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_anilist_skips_episode_schedules_outside_direct_mode():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=20,
+            next_airing_episode=20,
+            next_airing_at=datetime.now(timezone.utc) + timedelta(days=7),
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[])
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={})
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        await supervisor.sync_anilist_schedule(direct_mode=False)
+
+        # Rules mode has no episode ledger to fill, so the extra query (one per
+        # show) is never paid for.
+        anilist.fetch_media_airing_schedules.assert_not_awaited()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_user_completed_show_is_never_reopened_by_a_still_airing_schedule():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        now = datetime.now(timezone.utc)
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Completed But Scheduled",
+            aliases_json='["Completed But Scheduled"]',
+            status=MonitoredStatus.COMPLETED,
+            total_episodes=12,
+            next_airing_episode=13,
+            next_airing_at=now + timedelta(days=7),
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[{
+            "anilist_id": 42,
+            "display_name": "Completed But Scheduled",
+            "aliases": ["Completed But Scheduled"],
+            # The user marked it COMPLETED on their list while the broadcast
+            # status still says RELEASING.
+            "list_status": "COMPLETED",
+            "status": "RELEASING",
+            "total_episodes": 13,
+            "next_airing_episode": 13,
+            "next_airing_at": now + timedelta(days=7),
+        }])
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={})
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        await supervisor.sync_anilist_schedule(direct_mode=True)
+
+        session.refresh(show)
+        # A deliberate user completion stands, whatever the schedule says.
+        assert show.status == MonitoredStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_sync_anilist_failure_marks_schedule_stale_without_erasing_pointer():
+    from qbit_seasonal_anime.clients.anilist import AniListError
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        air_at = datetime.now(timezone.utc) + timedelta(days=7)
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=20,
+            next_airing_episode=20,
+            next_airing_at=air_at,
+            schedule_stale=False,
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(side_effect=AniListError("offline"))
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        logs = await supervisor.sync_anilist_schedule()
+
+        session.refresh(show)
+        assert "AniList schedule sync error" in logs[0]
+        assert supervisor.anilist_sync_succeeded is False
+        # A failed sync must not read as "the show moved on": the last known
+        # pointer is kept, and the data is flagged as not fresh.
+        assert show.schedule_stale is True
+        assert show.next_airing_episode == 20
+        assert show.next_airing_at.replace(tzinfo=timezone.utc) == air_at
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_sync_anilist_deferral_does_not_block_the_rollover():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Deferred",
+            aliases_json='["Deferred"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=12,
+            next_airing_episode=12,
+            next_airing_at=datetime.now(timezone.utc) - timedelta(days=1),
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[])
+        anilist.last_sync_at = datetime.now(timezone.utc)
+        anilist.seconds_since_last_sync = lambda now=None: 60.0
+        anilist.is_sync_due = lambda *args, **kwargs: False
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={})
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        logs = await supervisor.sync_anilist_schedule()
+
+        assert any("deferred" in line for line in logs)
+        # A deferred pass says nothing about quality, so the rollover may still
+        # act on the data we already have.
+        assert supervisor.anilist_sync_succeeded is None
+    engine.dispose()
+
+
+def _direct_supervisor(session, settings, qbit):
+    anilist = MagicMock()
+    anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[])
+    anilist.is_sync_due = lambda *a, **k: False
+    anilist.seconds_since_last_sync = lambda now=None: 60.0
+    return Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
+
+
+def test_direct_show_moves_to_the_feed_that_carries_its_release():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=subs.id,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": [{
+                "id": "erai-ep8",
+                "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+                "torrentURL": "magnet:erai-ep8",
+            }]},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        # The first sighting only nominates the candidate.
+        logs = supervisor._reassign_direct_feeds([subs, erai])
+        session.refresh(show)
+        assert show.current_feed_id == subs.id
+        assert show.candidate_feed_id == erai.id
+        assert logs == []
+
+        # The move only happens once the same candidate holds for the window.
+        show.candidate_feed_since = utc_now() - timedelta(seconds=FEED_SWITCH_GRACE_SECONDS + 30)
+        session.add(show)
+        session.commit()
+        logs = supervisor._reassign_direct_feeds([subs, erai])
+        session.refresh(show)
+        assert show.current_feed_id == erai.id
+        assert show.candidate_feed_id is None
+        assert any("Erai" in line for line in logs)
+    engine.dispose()
+
+
+def test_direct_show_stays_put_once_it_has_downloaded_from_its_feed():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=subs.id,
+        )
+        session.add(show)
+        session.flush()
+        session.add(Episode(
+            monitored_id=show.id,
+            episode_number=1,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=subs.id,
+            torrent_hash="hash-1",
+        ))
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": [{
+                "id": "erai-ep8",
+                "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+                "torrentURL": "magnet:erai-ep8",
+            }]},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        logs = supervisor._reassign_direct_feeds([subs, erai])
+        session.refresh(show)
+
+        assert show.current_feed_id == subs.id
+        assert logs == []
+    engine.dispose()
+
+
+def test_pinned_direct_show_is_never_moved_between_feeds():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=subs.id,
+            feed_pinned=True,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": [{
+                "id": "erai-ep8",
+                "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+                "torrentURL": "magnet:erai-ep8",
+            }]},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        assert supervisor._reassign_direct_feeds([subs, erai]) == []
+        session.refresh(show)
+        assert show.current_feed_id == subs.id
+    engine.dispose()

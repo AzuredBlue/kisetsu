@@ -386,17 +386,25 @@ def create_or_update_rule(
     return rule_name
 
 
-def delete_rule(qbit_client: QBitClient, rule_name: str) -> None:
-    """Remove a rule from qBittorrent."""
+def delete_rule(qbit_client: QBitClient, rule_name: str, *, raise_on_error: bool = False) -> None:
+    """Remove a rule from qBittorrent.
+
+    A failure is logged and swallowed by default, because most callers are on a
+    cleanup path where a leftover rule is not worth aborting for. Callers that
+    would be left with an orphaned rule still downloading pass
+    ``raise_on_error`` so they can refuse to continue.
+    """
     if not rule_name:
         return
     try:
         qbit_client.remove_rss_rule(rule_name=rule_name)
     except QbitClientError as e:
+        if raise_on_error:
+            raise
         logger.warning(f"Could not delete rule '{rule_name}': {e}")
 
 
-def disable_rule(qbit_client: QBitClient, rule_name: str) -> None:
+def disable_rule(qbit_client: QBitClient, rule_name: str, *, raise_on_error: bool = False) -> None:
     """Disable an RSS auto-downloading rule in qBittorrent without deleting it."""
     if not rule_name:
         return
@@ -409,4 +417,6 @@ def disable_rule(qbit_client: QBitClient, rule_name: str) -> None:
                 qbit_client.set_rss_rule(rule_name=rule_name, rule_def=rdef)
                 logger.info(f"Disabled RSS rule '{rule_name}' in qBittorrent.")
     except Exception as e:
+        if raise_on_error:
+            raise
         logger.debug(f"Could not disable rule '{rule_name}': {e}")

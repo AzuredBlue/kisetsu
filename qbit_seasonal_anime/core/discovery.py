@@ -1,8 +1,9 @@
 from datetime import datetime, timezone
 import logging
+import time
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
+from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
 from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
 from qbit_seasonal_anime.core.rules import build_regex_pattern
 from qbit_seasonal_anime.db.models import Feed, Monitored
@@ -49,23 +50,62 @@ def flatten_rss_articles(rss_tree: Dict[str, Any]) -> Dict[str, List[Dict[str, A
     return feed_articles
 
 
+def _rss_feed_states(rss_tree: Dict[str, Any]) -> List[Tuple[str, str, bool, bool]]:
+    """(name, url, is_loading, has_error) for every feed in the RSS tree.
+
+    qBittorrent builds that predate the refresh-state fields simply report no
+    state, which is read here as "settled and healthy" rather than as a failure:
+    the article payload is then trusted exactly as it always was. Genuine
+    refresh problems are caught by the retry-and-raise path in ``refresh()``.
+    """
+    states: List[Tuple[str, str, bool, bool]] = []
+
+    def traverse(node: Dict[str, Any]) -> None:
+        for name, value in node.items():
+            if not isinstance(value, dict):
+                continue
+            if "url" in value:
+                states.append((
+                    name,
+                    str(value["url"]),
+                    bool(value.get("isLoading")),
+                    bool(value.get("hasError")),
+                ))
+            else:
+                traverse(value)
+
+    traverse(rss_tree)
+    return states
+
+
 class RssSnapshot:
     def __init__(self, qbit_client: QBitClient):
         self.qbit_client = qbit_client
         self._articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None
         self._load_error: Optional[Exception] = None
         self._load_attempted = False
+        self.failed_feed_names: List[str] = []
 
     def get(self) -> Dict[str, List[Dict[str, Any]]]:
         if self._load_attempted:
             if self._load_error is not None:
                 raise self._load_error
-            return self._articles_by_url or {}
+            return self._articles_by_url if self._articles_by_url is not None else {}
 
         self._load_attempted = True
         try:
             rss_tree = self.qbit_client.get_rss_items(with_data=True)
+            try:
+                states = _rss_feed_states(rss_tree)
+            except QbitRSSRefreshError:
+                states = []
+            if any(loading for _, _, loading, _ in states):
+                rss_tree, states = self._wait_for_settled_feeds(time.monotonic() + 10.0, 0.25)
             articles = flatten_rss_articles(rss_tree)
+            self.failed_feed_names = [name for name, _, _, has_error in states if has_error]
+            for name, feed_url, _, has_error in states:
+                if has_error:
+                    articles.pop(feed_url, None)
             self._articles_by_url = articles
         except Exception as e:
             self._articles_by_url = {}
@@ -77,12 +117,96 @@ class RssSnapshot:
         self._articles_by_url = None
         self._load_error = None
         self._load_attempted = False
+        self.failed_feed_names = []
 
-    def refresh(self) -> Dict[str, List[Dict[str, Any]]]:
+    def _wait_for_settled_feeds(
+        self,
+        deadline: float,
+        poll_interval_seconds: float,
+    ) -> Tuple[Dict[str, Any], List[Tuple[str, str, bool, bool]]]:
+        """Wait for loading feeds, isolating the ones that never settle.
+
+        A single stuck feed must not discard the articles of every healthy
+        feed, so a feed that is still loading at the deadline is reported as
+        failed instead of failing the whole snapshot.
+        """
+        while True:
+            rss_tree = self.qbit_client.get_rss_items(with_data=True)
+            states = _rss_feed_states(rss_tree)
+            if not any(loading for _, _, loading, _ in states):
+                return rss_tree, states
+            if time.monotonic() >= deadline:
+                return rss_tree, [
+                    (name, feed_url, loading, True if loading else has_error)
+                    for name, feed_url, loading, has_error in states
+                ]
+            if poll_interval_seconds > 0:
+                time.sleep(poll_interval_seconds)
+
+    def refresh(
+        self,
+        *,
+        max_attempts: int = 3,
+        poll_interval_seconds: float = 0.5,
+        timeout_seconds: float = 10.0,
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Force a refresh and return articles only once the feeds have settled.
+
+        The direct engine decides what to download from these articles, so a
+        silently empty result would be acted upon. Rather than return stale or
+        half-fetched articles, a refresh that cannot settle within its attempts
+        raises and caches the failure so ``get()`` re-raises instead of
+        returning ``{}``.
+        """
         self.invalidate()
-        self.qbit_client.refresh_rss_feeds()
-        rss_tree = self.qbit_client.get_rss_items(with_data=True)
-        return flatten_rss_articles(rss_tree)
+        attempts = max(1, max_attempts)
+        poll_interval = max(0.0, poll_interval_seconds)
+        timeout = max(0.0, timeout_seconds)
+        last_error: Optional[Exception] = None
+
+        for attempt in range(attempts):
+            deadline = time.monotonic() + timeout
+            try:
+                rss_tree = self.qbit_client.get_rss_items(with_data=True)
+                states = _rss_feed_states(rss_tree)
+                if any(loading for _, _, loading, _ in states):
+                    rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
+
+                if not self.qbit_client.refresh_rss_feeds():
+                    raise QbitRSSRefreshError("qBittorrent rejected the RSS refresh request")
+
+                rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
+                failed_feeds = [
+                    (name, feed_url)
+                    for name, feed_url, _, has_error in states
+                    if has_error
+                ]
+                if failed_feeds and attempt + 1 < attempts:
+                    raise QbitRSSRefreshError(
+                        "qBittorrent RSS refresh failed for: "
+                        + ", ".join(name for name, _ in failed_feeds)
+                    )
+
+                articles = flatten_rss_articles(rss_tree)
+                for _, feed_url in failed_feeds:
+                    articles.pop(feed_url, None)
+                self.failed_feed_names = [name for name, _ in failed_feeds]
+                self._articles_by_url = articles
+                self._load_error = None
+                self._load_attempted = True
+                return articles
+            except QbitRSSRefreshError as e:
+                last_error = e
+                if attempt + 1 < attempts and poll_interval > 0:
+                    time.sleep(poll_interval)
+
+        error = QbitRSSRefreshError(
+            f"Failed to refresh qBittorrent RSS feeds after {attempts} attempts: {last_error}"
+        )
+        self._articles_by_url = {}
+        self._load_error = error
+        self._load_attempted = True
+        raise error from last_error
 
 
 def discover_feed_for_show(

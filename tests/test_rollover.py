@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.db.models import Monitored, MonitoredStatus, Settings, utc_now
+from qbit_seasonal_anime.db.models import Episode, Monitored, MonitoredStatus, Settings, utc_now
 
 
 @pytest.fixture
@@ -248,3 +248,77 @@ def test_stale_fixed_show_overdue_advance(session):
     assert show.next_airing_at is not None
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
     assert air_at > now
+
+
+def test_direct_mode_never_rolls_the_schedule_forward(session):
+    """An overdue episode stays put against its real air time.
+
+    Guessing a weekly rollover renumbers a whole season against feeds that
+    carry absolute numbering, which is what the direct engine would then
+    download against.
+    """
+    now = utc_now()
+    show = Monitored(
+        id=2,
+        anilist_id=1002,
+        display_name="Re:ZERO Season 4",
+        aliases_json='["Re:ZERO"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=19,
+        next_airing_episode=8,
+        next_airing_at=now - timedelta(hours=3),
+        # Continuous franchise number, which is not the canonical episode.
+        last_confirmed_episode=82,
+        qbit_rule_name="[Seasonal] Re:ZERO",
+    )
+    session.add(show)
+    session.commit()
+
+    settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.reconcile_schedule_rollover()
+    session.refresh(show)
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert any("Episode 8 remains overdue" in log for log in logs)
+    assert show.status == MonitoredStatus.FIXED
+    assert show.next_airing_episode == 8
+    assert episode.schedule_state == "aired"
+    air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
+    assert air_at <= now
+
+
+def test_direct_mode_keeps_an_overdue_episode_retryable_in_direct_mode(session):
+    """A show overdue by more than a day is still just overdue, not advanced."""
+    now = utc_now()
+    show = Monitored(
+        id=4,
+        anilist_id=1004,
+        display_name="Stale Show",
+        aliases_json='["Stale Show"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=12,
+        next_airing_episode=3,
+        next_airing_at=now - timedelta(hours=30),
+        last_confirmed_episode=2,
+    )
+    session.add(show)
+    session.commit()
+
+    settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.reconcile_schedule_rollover()
+    session.refresh(show)
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 3)
+    ).first()
+    assert any("Episode 3 remains overdue" in log for log in logs)
+    assert show.next_airing_episode == 3
+    assert episode.schedule_state == "aired"
+    air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
+    assert air_at <= now

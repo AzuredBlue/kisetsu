@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select, or_
 from rapidfuzz import fuzz
+from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
 from qbit_seasonal_anime.core.matching import (
     match_release_to_show,
@@ -568,8 +569,6 @@ def verify_and_confirm_rules_from_feeds(
         if event["matched_title"]
     ]
 
-    # Evidence that qBittorrent actually accepted each release, not just that our own
-    # fuzzy matcher liked a cached article.
     log_acceptances: Dict[Tuple[str, str], Optional[datetime]] = {}
     if match_pairs:
         lookup = getattr(qbit_client, "find_log_acceptances", None)
@@ -665,9 +664,37 @@ def verify_and_confirm_rules_from_feeds(
 verify_and_confirm_torrents = verify_and_confirm_rules_from_feeds
 
 
-def has_downloaded_final_episode(session: Session, show: Monitored) -> bool:
+def has_downloaded_final_episode(
+    session: Session,
+    show: Monitored,
+    download_mode: str = DEFAULT_DOWNLOAD_MODE,
+) -> bool:
+    """Whether every episode of a finished season is accounted for.
+
+    The two download engines have to answer this differently.
+
+    ``rules`` mode lets qBittorrent own the downloads, so the only evidence the
+    app has is a scalar plus the match log, and the historical checks stand.
+
+    ``direct``/``observe`` mode makes this app the owner of an episode ledger,
+    so the ledger is authoritative and *every* episode from 1 to
+    ``total_episodes`` must be COMPLETED. A single wanted or failed episode
+    therefore keeps the season open instead of letting a match log for the last
+    episode retire it. An empty ledger falls through to the historical checks so
+    that a show right after a mode switch still completes correctly.
+    """
     if not show.total_episodes or show.total_episodes <= 0 or not show.id:
         return False
+
+    if (download_mode or DEFAULT_DOWNLOAD_MODE) in ("direct", "observe"):
+        episodes = session.exec(
+            select(Episode).where(
+                Episode.monitored_id == show.id,
+                Episode.episode_number <= show.total_episodes,
+            )
+        ).all()
+        if episodes:
+            return all(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
 
     final_episode = session.exec(
         select(Episode).where(

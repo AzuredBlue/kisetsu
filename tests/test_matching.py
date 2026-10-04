@@ -1,6 +1,7 @@
 import unittest
 from qbit_seasonal_anime.core.matching import (
     calculate_match_score,
+    extract_release_version,
     match_release_to_show,
     normalize_title,
     parse_release_title,
@@ -19,6 +20,14 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(parsed["release_group"], "SubsPlease")
         self.assertEqual(parsed["episode"], 8)
         self.assertIn("sousou no frieren", parsed["title"].lower())
+
+    def test_release_versions(self):
+        self.assertEqual(extract_release_version("[Group] Show - 01 (1080p).mkv"), 1)
+        self.assertEqual(extract_release_version("[Group] Show - 01v2 (1080p).mkv"), 2)
+        self.assertEqual(extract_release_version("[Group] Show - 01 [v3] (1080p).mkv"), 3)
+        self.assertEqual(extract_release_version("[Group] Show - 01 REPACK (1080p).mkv"), 2)
+        self.assertEqual(extract_release_version("[Group] Show - 01 REPACK2 (1080p).mkv"), 3)
+        self.assertEqual(parse_release_title("[Group] Show - 01v2 (1080p).mkv")["version"], 2)
 
     def test_match_release_to_show_positive(self):
         aliases = [

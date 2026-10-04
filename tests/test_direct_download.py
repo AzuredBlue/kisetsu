@@ -1,0 +1,2066 @@
+import json
+from datetime import datetime, timedelta, timezone
+from unittest.mock import MagicMock
+
+import pytest
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
+from qbit_seasonal_anime.clients.qbit import QbitClientError
+from qbit_seasonal_anime.core.discovery import RssSnapshot
+from qbit_seasonal_anime.core.grabber import cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
+from qbit_seasonal_anime.core.supervisor import Supervisor
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeNumberMapping,
+    EpisodeStatus,
+    Feed,
+    GrabDecision,
+    Monitored,
+    MonitoredStatus,
+    SeenFeedItem,
+    Settings,
+    TorrentOperation,
+    TorrentOperationStatus,
+    utc_now,
+)
+
+
+def _database():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    return engine, Session(engine)
+
+
+def _show(session, **kwargs):
+    values = {
+        "id": 1,
+        "anilist_id": 154587,
+        "display_name": "Sousou no Frieren",
+        "aliases_json": '["Sousou no Frieren", "Frieren"]',
+        "status": MonitoredStatus.UNCONFIRMED,
+        "total_episodes": 8,
+        "next_airing_episode": 8,
+        "next_airing_at": datetime.now(timezone.utc) - timedelta(minutes=5),
+    }
+    values.update(kwargs)
+    show = Monitored(**values)
+    session.add(show)
+    session.commit()
+    return show
+
+
+def _qbit(title="[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", events=None):
+    qbit = MagicMock()
+    torrent = MagicMock(hash="hash-1", progress=0.1, state="downloading", name=title)
+    qbit.ensure_category_exists.return_value = True
+    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed" else []
+    qbit.add_torrent.side_effect = lambda **kwargs: events.append("add") if events is not None else True
+    qbit.pause_torrents.side_effect = lambda *args: events.append("pause") if events is not None else None
+    qbit.stop_torrents.side_effect = lambda *args: events.append("stop") if events is not None else None
+    qbit.delete_torrents.side_effect = lambda *args, **kwargs: events.append("delete") if events is not None else None
+    qbit.recheck_torrents.side_effect = lambda *args: events.append("recheck") if events is not None else None
+    qbit.resume_torrents.side_effect = lambda *args: events.append("resume") if events is not None else None
+    return qbit, torrent
+
+
+def test_direct_grab_is_idempotent_across_cycles():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.torrent_hash == "hash-1"
+    assert qbit.add_torrent.call_count == 1
+    assert show.status == MonitoredStatus.FIXED
+    session.close()
+    engine.dispose()
+
+
+def test_duplicate_feed_item_ids_are_ingested_once():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    _show(session)
+    qbit, _ = _qbit()
+    article = {
+        "id": "duplicate-id",
+        "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv",
+        "torrentURL": "magnet:ep8",
+    }
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [article, dict(article)],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert len(session.exec(select(SeenFeedItem)).all()) == 1
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_backfill_window_keeps_old_canonical_episode_manual_only():
+    engine, session = _database()
+    settings = Settings(
+        id=1,
+        default_category="Anime",
+        download_mode="direct",
+        backfill_window_days=14,
+    )
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    now = datetime.now(timezone.utc)
+    show = _show(
+        session,
+        total_episodes=8,
+        next_airing_episode=9,
+        next_airing_at=now + timedelta(days=7),
+    )
+    session.flush()
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=7,
+        status=EpisodeStatus.WANTED,
+        air_at=now - timedelta(days=30),
+    ))
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "old-ep7",
+                "title": "[SubsPlease] Sousou no Frieren - 07 (1080p).mkv",
+                "torrentURL": "magnet:old-ep7",
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 7)
+    ).first()
+    assert episode.status == EpisodeStatus.WANTED
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_two_week_outage_without_retained_articles_preserves_canonical_backlog():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    now = datetime.now(timezone.utc)
+    show = _show(
+        session,
+        total_episodes=8,
+        next_airing_episode=9,
+        next_airing_at=now + timedelta(days=7),
+    )
+    session.flush()
+    for episode_number in (7, 8):
+        session.add(Episode(
+            monitored_id=show.id,
+            episode_number=episode_number,
+            status=EpisodeStatus.WANTED,
+            air_at=now - timedelta(days=14 - episode_number),
+        ))
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episodes = session.exec(
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.episode_number.in_([7, 8]),
+        )
+    ).all()
+    assert all(episode.status == EpisodeStatus.WANTED for episode in episodes)
+    assert qbit.add_torrent.call_count == 0
+    session.close()
+    engine.dispose()
+
+
+def test_direct_cycle_queues_two_backlog_episodes_once():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        last_confirmed_episode=6,
+        next_airing_episode=9,
+        next_airing_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    torrents = {}
+
+    def add_torrent(**kwargs):
+        tags = kwargs["tags"]
+        operation_tag = next(tag for tag in tags if tag.startswith("qsa-op-"))
+        torrent = MagicMock(
+            hash=f"hash-{operation_tag[-4:]}",
+            progress=0.1,
+            state="downloading",
+            name=kwargs["urls"],
+        )
+        torrents[operation_tag] = torrent
+        return True
+
+    qbit = MagicMock()
+    qbit.ensure_category_exists.return_value = True
+    qbit.add_torrent.side_effect = add_torrent
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrents[kwargs["tag"]]]
+        if kwargs.get("tag", "").startswith("qsa-op-") and kwargs["tag"] in torrents
+        else list(torrents.values())
+        if kwargs.get("tag") == "qsa-managed"
+        else [torrent for torrent in torrents.values() if torrent.hash in kwargs.get("hashes", [])]
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [
+                {"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:ep8"},
+                {"id": "ep7", "title": "[SubsPlease] Sousou no Frieren - 07 (1080p).mkv", "torrentURL": "magnet:ep7"},
+            ],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episodes = session.exec(
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.episode_number.in_([7, 8]),
+        )
+    ).all()
+    operations = session.exec(select(TorrentOperation)).all()
+    assert {episode.episode_number for episode in episodes} == {7, 8}
+    assert all(episode.status == EpisodeStatus.DOWNLOADING for episode in episodes)
+    assert len(operations) == 2
+    assert qbit.add_torrent.call_count == 2
+    session.close()
+    engine.dispose()
+
+
+def test_ambiguous_direct_add_retries_after_reconciliation_window():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, torrent = _qbit()
+    visible = {"value": False}
+    attempts = {"count": 0}
+
+    def add_torrent(**kwargs):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("response lost")
+        visible["value"] = True
+        return True
+
+    qbit.add_torrent.side_effect = add_torrent
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent]
+        if visible["value"] and (kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed")
+        else [torrent]
+        if visible["value"] and torrent.hash in kwargs.get("hashes", [])
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    operation = session.exec(select(TorrentOperation)).first()
+    operation.next_retry_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    episode = session.get(Episode, operation.episode_id)
+    episode.retry_after = operation.next_retry_at
+    session.add(operation)
+    session.add(episode)
+    session.commit()
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    session.refresh(operation)
+    session.refresh(episode)
+    assert operation.status == TorrentOperationStatus.COMPLETED
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert qbit.add_torrent.call_count == 2
+    assert session.exec(select(TorrentOperation)).all() == [operation]
+    session.close()
+    engine.dispose()
+
+
+def test_delayed_hash_after_restart_is_found_before_timeout_failure():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct")
+    show = _show(session)
+    episode = Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.QUEUED,
+        operation_tag="qsa-op-delayed",
+    )
+    session.add(episode)
+    session.flush()
+    operation = TorrentOperation(
+        episode_id=episode.id,
+        kind="grab",
+        status=TorrentOperationStatus.PREPARING,
+        operation_tag="qsa-op-delayed",
+        release_title="[SubsPlease] Sousou no Frieren - 08 (1080p).mkv",
+        version=1,
+        new_torrent_url="magnet:ep8",
+        created_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        updated_at=datetime.now(timezone.utc) - timedelta(hours=2),
+    )
+    session.add(operation)
+    session.commit()
+    torrent = MagicMock(hash="delayed-hash", progress=0.2, state="downloading", name=operation.release_title)
+    qbit = MagicMock()
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent]
+        if kwargs.get("tag") == operation.operation_tag
+        or kwargs.get("tag") == "qsa-managed"
+        or torrent.hash in kwargs.get("hashes", [])
+        else []
+    )
+
+    update_episode_status(session, qbit, settings)
+
+    session.refresh(operation)
+    session.refresh(episode)
+    assert operation.status == TorrentOperationStatus.COMPLETED
+    assert operation.new_torrent_hash == "delayed-hash"
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.torrent_hash == "delayed-hash"
+    session.close()
+    engine.dispose()
+
+
+def test_torrent_read_error_preserves_active_episode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct")
+    show = _show(session)
+    episode = Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.DOWNLOADING,
+        torrent_hash="active-hash",
+    )
+    session.add(episode)
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_torrents.side_effect = QbitClientError("temporary read failure")
+
+    try:
+        update_episode_status(session, qbit, settings)
+    except QbitClientError:
+        pass
+    else:
+        raise AssertionError("Expected torrent lookup failure")
+
+    session.refresh(episode)
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.torrent_hash == "active-hash"
+    session.close()
+    engine.dispose()
+
+
+def test_direct_infers_absolute_feed_offset_from_latest_anilist_episode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        display_name="Re:ZERO -Starting Life in Another World- Season 4",
+        aliases_json='["Re:ZERO -Starting Life in Another World- Season 4", "Re Zero kara Hajimeru Isekai Seikatsu"]',
+        total_episodes=19,
+        next_airing_episode=19,
+        next_airing_at=datetime.now(timezone.utc) + timedelta(days=1),
+        last_confirmed_episode=84,
+    )
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "absolute-78",
+                "title": "[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 78 (1080p) [30D08902].mkv",
+                "torrentURL": "magnet:absolute-78",
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 18)).first()
+    mapping = session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.source_episode == 78
+    assert mapping.offset == 60
+    qbit.add_torrent.assert_called_once()
+    session.close()
+    engine.dispose()
+
+
+def test_confirmed_rezero_offset_maps_feed_84_to_local_18():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        display_name="Re:ZERO Season 4",
+        aliases_json='["Re:ZERO Season 4", "Re Zero kara Hajimeru Isekai Seikatsu"]',
+        total_episodes=19,
+        next_airing_episode=19,
+        next_airing_at=datetime.now(timezone.utc) + timedelta(days=5),
+    )
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=feed.id, offset=66, evidence_count=2))
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "raw-84",
+                "title": "[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 84 (1080p).mkv",
+                "torrentURL": "magnet:raw-84",
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 18)
+    ).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.source_episode == 84
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_direct_grab_recovers_when_hash_appears_after_restart():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, torrent = _qbit()
+    visible = {"value": False}
+    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if visible["value"] and (kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed") else []
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    visible["value"] = True
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.torrent_hash == "hash-1"
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_observe_mode_records_decisions_without_adding_torrents():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="observe")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+
+    logs = evaluate_and_grab_releases(session, qbit, settings, [feed], mode="observe")
+
+    assert any("Would grab" in log for log in logs)
+    assert session.exec(select(GrabDecision)).first() is not None
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_pinned_feed_is_strict_in_direct_mode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    other = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    pinned = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(other)
+    session.add(pinned)
+    # A pinned show is pinned to its current feed, and that pin is strict: the
+    # higher-priority feed must not be considered at all.
+    show = _show(session, current_feed_id=pinned.id, feed_pinned=True)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": other.qbit_feed_url, "articles": [{"id": "sub", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:sub"}]},
+        "Erai": {"url": pinned.qbit_feed_url, "articles": [{"id": "erai", "title": "[Erai-raws] Frieren - 08 [1080p].mkv", "torrentURL": "magnet:erai"}]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [other, pinned], mode="direct")
+
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:erai"
+    assert show.current_feed_id == pinned.id
+    session.close()
+    engine.dispose()
+
+
+def test_v2_add_is_paused_and_old_torrent_is_stopped_only_after_new_hash_is_verified():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    events = []
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title, events=events)
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    new_torrent.hash = "new-hash"
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent]
+        if kwargs.get("tag", "").startswith("qsa-op-")
+        else [new_torrent]
+        if kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent]
+        if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent]
+        if kwargs.get("tag") == "qsa-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert events == ["add", "recheck", "resume"]
+    assert episode.version == 1
+    assert episode.torrent_hash == "old-hash"
+    assert episode.status == EpisodeStatus.REPLACING
+    qbit.delete_torrents.assert_not_called()
+    qbit.stop_torrents.assert_not_called()
+
+    # The replacement is still downloading: the previous files must stay.
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert events == ["add", "recheck", "resume"]
+    assert episode.version == 1
+    assert episode.torrent_hash == "old-hash"
+    qbit.delete_torrents.assert_not_called()
+    operation = session.exec(select(TorrentOperation)).first()
+    assert operation.status == TorrentOperationStatus.SEEDING
+
+    # Only once the replacement is verified is the superseded one stopped.
+    new_torrent.progress = 1
+    new_torrent.state = "stalledUP"
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert events == ["add", "recheck", "resume", "stop"]
+    assert episode.version == 2
+    assert episode.torrent_hash == "new-hash"
+    assert episode.status == EpisodeStatus.COMPLETED
+    # The superseded torrent is stopped and left in place so it can be removed
+    # with its files from the client.
+    qbit.stop_torrents.assert_called_once_with(["old-hash"])
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_stopped_seeding_torrent_is_completed_without_regrab():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, torrent = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    torrent.progress = 1
+    torrent.state = "stoppedUP"
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_missing_accepted_torrent_is_requeued_without_false_completion():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    qbit.get_torrents.side_effect = lambda **kwargs: []
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    assert episode.status == EpisodeStatus.WANTED
+    assert episode.retry_after is not None
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_ambiguous_direct_add_failure_remains_retryable():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: []
+    qbit.add_torrent.side_effect = RuntimeError("add failed")
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    operation = session.exec(select(TorrentOperation).where(TorrentOperation.episode_id == episode.id)).first()
+    assert episode.status == EpisodeStatus.WANTED
+    assert operation.status == TorrentOperationStatus.UNKNOWN
+    assert operation.next_retry_at is not None
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_v2_replacement_continues_when_v1_was_already_removed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    events = []
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title, events=events)
+    new_torrent.hash = "new-hash"
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent]
+        if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"] or kwargs.get("tag") == "qsa-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert events == ["add", "recheck", "resume"]
+    assert episode.version == 1
+    assert episode.torrent_hash == "old-hash"
+    assert episode.status == EpisodeStatus.REPLACING
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_failed_v2_add_keeps_old_episode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    qbit, _ = _qbit(title="[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv")
+    qbit.add_torrent.side_effect = RuntimeError("add failed")
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "v2", "title": "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv", "torrentURL": "magnet:v2"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert episode.torrent_hash == "old-hash"
+    assert qbit.add_torrent.call_count == 1
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_rules_transition_marks_owned_articles_read():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="rules")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id, total_episodes=1, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.release_title = "[Group] Sousou no Frieren - 01 (1080p).mkv"
+    session.add(episode)
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_rss_feed_paths.return_value = {feed.qbit_feed_url: "SubsPlease"}
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "ep1", "title": episode.release_title}]}
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.shield_owned_articles()
+    second_logs = supervisor.shield_owned_articles()
+
+    assert any("previously downloaded RSS" in log for log in logs)
+    assert second_logs == []
+    qbit.mark_rss_article_read.assert_called_once_with("SubsPlease", "ep1")
+    session.close()
+    engine.dispose()
+
+
+def test_shield_owned_articles_is_scoped_to_each_show():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="observe")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    first = _show(session, id=1, anilist_id=1001, display_name="First Show", aliases_json='["First Show"]', current_feed_id=feed.id)
+    second = _show(session, id=2, anilist_id=1002, display_name="Second Show", aliases_json='["Second Show"]', current_feed_id=feed.id)
+    sync_show_episodes(session, first)
+    sync_show_episodes(session, second)
+    first_episode = session.exec(select(Episode).where(Episode.monitored_id == first.id, Episode.episode_number == 1)).first()
+    second_episode = session.exec(select(Episode).where(Episode.monitored_id == second.id, Episode.episode_number == 1)).first()
+    first_episode.status = EpisodeStatus.COMPLETED
+    first_episode.release_title = "First release"
+    second_episode.status = EpisodeStatus.COMPLETED
+    second_episode.release_title = "Second release"
+    session.add(first_episode)
+    session.add(second_episode)
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_rss_feed_paths.return_value = {feed.qbit_feed_url: "SubsPlease"}
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [
+                {"id": "first-item", "title": "First release"},
+                {"id": "second-item", "title": "Second release"},
+            ],
+        }
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.shield_owned_articles()
+
+    marked_ids = {call.args[1] for call in qbit.mark_rss_article_read.call_args_list}
+    assert marked_ids == {"first-item", "second-item"}
+    session.close()
+    engine.dispose()
+
+
+def test_shield_does_not_treat_hashless_queued_release_as_owned():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="observe")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.QUEUED
+    episode.release_title = "Queued but unconfirmed release"
+    session.add(episode)
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_rss_feed_paths.return_value = {feed.qbit_feed_url: "SubsPlease"}
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "queued-item", "title": episode.release_title}],
+        }
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.shield_owned_articles()
+
+    qbit.mark_rss_article_read.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_observe_mode_disables_managed_rules_without_creating_new_ones():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="observe", anilist_username="")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id, qbit_rule_name="[Seasonal] Sousou no Frieren")
+    rules = {"[Seasonal] Sousou no Frieren": {"enabled": True}}
+    qbit = MagicMock()
+    qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": feed.qbit_feed_url}]
+    qbit.get_rss_rules.side_effect = lambda: dict(rules)
+    qbit.set_rss_rule.side_effect = lambda name, definition: rules.__setitem__(name, definition)
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [],
+        }
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    await supervisor.run_full_cycle()
+
+    assert qbit.set_rss_rule.call_count == 1
+    assert qbit.set_rss_rule.call_args.args[1]["enabled"] is False
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_direct_preflight_disables_and_verifies_managed_rules():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="direct")
+    show = _show(session)
+    show.qbit_rule_name = "[Seasonal] Sousou no Frieren"
+    session.add(show)
+    session.commit()
+    qbit = MagicMock()
+    rules = {"[Seasonal] Sousou no Frieren": {"enabled": True, "mustContain": "Frieren"}}
+    qbit.get_rss_rules.return_value = rules
+    qbit.set_rss_rule.side_effect = lambda name, rule_def: rules.__setitem__(name, rule_def)
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.disable_managed_rules()
+
+    assert rules["[Seasonal] Sousou no Frieren"]["enabled"] is False
+    assert qbit.set_rss_rule.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_direct_preflight_blocks_when_rule_cannot_be_disabled():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="direct")
+    session.add(settings)
+    qbit = MagicMock()
+    qbit.get_rss_rules.return_value = {"[Seasonal] Show": {"enabled": True}}
+    qbit.set_rss_rule.side_effect = RuntimeError("busy")
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    try:
+        supervisor.disable_managed_rules()
+    except QbitClientError:
+        pass
+    else:
+        raise AssertionError("Expected direct ownership preflight to fail")
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_direct_cycle_keeps_rules_disabled():
+    engine, session = _database()
+    settings = Settings(
+        id=1,
+        default_category="Anime",
+        base_dir="/tmp/Anime",
+        download_mode="direct",
+        anilist_username="",
+    )
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    _show(session)
+    qbit, torrent = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+    )
+    qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": feed.qbit_feed_url}]
+    qbit.get_rss_rules.return_value = {}
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    await supervisor.run_full_cycle()
+
+    qbit.add_torrent.assert_called()
+    qbit.refresh_rss_feeds.assert_not_called()
+    qbit.set_rss_rule.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_forced_direct_cycle_refreshes_before_grabbing():
+    engine, session = _database()
+    settings = Settings(
+        id=1,
+        default_category="Anime",
+        base_dir="/tmp/Anime",
+        download_mode="direct",
+        anilist_username="",
+    )
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        last_confirmed_episode=7,
+        next_airing_episode=9,
+        next_airing_at=datetime.now(timezone.utc) + timedelta(days=7),
+    )
+    stale_tree = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [],
+        }
+    }
+    loading_tree = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "isLoading": True,
+            "hasError": False,
+            "articles": [],
+        }
+    }
+    fresh_tree = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+    events = []
+    qbit, torrent = _qbit(events=events)
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+    )
+    qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": feed.qbit_feed_url}]
+    qbit.get_rss_rules.return_value = {}
+    qbit.get_rss_items.side_effect = [stale_tree, loading_tree, fresh_tree]
+    qbit.refresh_rss_feeds.side_effect = lambda: events.append("refresh") or True
+    qbit.add_torrent.side_effect = lambda **kwargs: events.append("add") or True
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = await supervisor.run_full_cycle(force_rss_refresh=True)
+
+    episode = session.exec(
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.episode_number == 8,
+        )
+    ).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert events == ["refresh", "add"]
+    assert "Refreshed qBittorrent RSS feeds before direct evaluation." in logs
+    assert qbit.get_rss_items.call_count == 3
+    qbit.set_rss_rule.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_partial_feed_failure_still_uses_healthy_feed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", download_mode="direct", anilist_username="")
+    healthy = Feed(id=1, qbit_feed_name="Healthy", qbit_feed_url="https://healthy.example/rss", priority=1)
+    broken = Feed(id=2, qbit_feed_name="Broken", qbit_feed_url="https://broken.example/rss", priority=2)
+    session.add(settings)
+    session.add(healthy)
+    session.add(broken)
+    show = _show(session, current_feed_id=healthy.id)
+    settled = {
+        "Healthy": {
+            "url": healthy.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        },
+        "Broken": {
+            "url": broken.qbit_feed_url,
+            "isLoading": False,
+            "hasError": True,
+            "articles": [],
+        },
+    }
+    qbit, torrent = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+    )
+    qbit.get_rss_feeds_flat.return_value = [
+        {"name": "Healthy", "url": healthy.qbit_feed_url},
+        {"name": "Broken", "url": broken.qbit_feed_url},
+    ]
+    qbit.get_rss_rules.return_value = {}
+    qbit.get_rss_items.return_value = settled
+    qbit.refresh_rss_feeds.return_value = True
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = await supervisor.run_full_cycle(force_rss_refresh=True)
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert any("RSS feeds unavailable after refresh: Broken" in log for log in logs)
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_forced_direct_cycle_preserves_retry_when_preflight_fails():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="direct", anilist_username="")
+    session.add(settings)
+    qbit = MagicMock()
+    qbit.get_rss_feeds_flat.return_value = []
+    qbit.get_rss_rules.return_value = {"[Seasonal] Show": {"enabled": True}}
+    qbit.set_rss_rule.side_effect = RuntimeError("busy")
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    with pytest.raises(QbitClientError):
+        await supervisor.run_full_cycle(force_rss_refresh=True)
+
+    qbit.refresh_rss_feeds.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_supervisor_ordinary_direct_cycle_also_fails_closed_on_preflight():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="direct", anilist_username="")
+    session.add(settings)
+    qbit = MagicMock()
+    qbit.get_rss_feeds_flat.return_value = []
+    qbit.get_rss_rules.return_value = {"[Seasonal] Show": {"enabled": True}}
+    qbit.set_rss_rule.side_effect = RuntimeError("busy")
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    with pytest.raises(QbitClientError):
+        await supervisor.run_full_cycle()
+
+    assert qbit.get_rss_rules.call_count == 2
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_direct_preflight_disables_legacy_managed_rule_prefix():
+    engine, session = _database()
+    settings = Settings(id=1, download_mode="direct")
+    session.add(settings)
+    qbit = MagicMock()
+    rules = {"[qbit-seasonal-anime] Legacy Show": {"enabled": True}}
+    qbit.get_rss_rules.side_effect = lambda: dict(rules)
+    qbit.set_rss_rule.side_effect = lambda name, definition: rules.__setitem__(name, definition)
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.disable_managed_rules()
+
+    assert rules["[qbit-seasonal-anime] Legacy Show"]["enabled"] is False
+    session.close()
+    engine.dispose()
+
+
+def test_unknown_air_date_only_takes_the_freshest_wanted_episode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=8, next_airing_episode=8, next_airing_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+    sync_show_episodes(session, show)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [
+                {"id": "ep3", "title": "[SubsPlease] Sousou no Frieren - 03 (1080p).mkv", "torrentURL": "magnet:ep3"},
+                {"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:ep8"},
+            ],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    grabbed = session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
+    assert [episode.episode_number for episode in grabbed] == [8]
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_backfilled_episode_outside_window_is_skipped():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct", backfill_window_days=14)
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=8, next_airing_episode=8, next_airing_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+    episodes = sync_show_episodes(session, show)
+    for episode in episodes:
+        episode.air_at = datetime.now(timezone.utc) - timedelta(days=60)
+    session.add_all(episodes)
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:ep8"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.call_count == 0
+    session.close()
+    engine.dispose()
+
+
+def test_paused_show_does_not_resume_operations_and_is_not_reopened():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    events = []
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title, events=events)
+    new_torrent.hash = "new-hash"
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    operation = session.exec(select(TorrentOperation)).first()
+    assert operation.status == TorrentOperationStatus.NEW_VERIFIED
+
+    show.status = MonitoredStatus.PAUSED
+    show.status_before_pause = MonitoredStatus.FIXED.value
+    session.add(show)
+    session.commit()
+    new_torrent.progress = 1
+    new_torrent.state = "stalledUP"
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    session.refresh(operation)
+    assert operation.status == TorrentOperationStatus.NEW_VERIFIED
+    assert show.status == MonitoredStatus.PAUSED
+    assert episode.torrent_hash == "old-hash"
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_completed_show_operation_is_not_resumed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    events = []
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title, events=events)
+    new_torrent.hash = "new-hash"
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    operation = session.exec(select(TorrentOperation)).first()
+
+    show.status = MonitoredStatus.COMPLETED
+    session.add(show)
+    session.commit()
+    new_torrent.progress = 1
+    new_torrent.state = "stalledUP"
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    session.refresh(operation)
+    assert operation.status == TorrentOperationStatus.NEW_VERIFIED
+    assert show.status == MonitoredStatus.COMPLETED
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_cancel_episode_operations_restores_previous_release():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    events = []
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title, events=events)
+    new_torrent.hash = "new-hash"
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    operation = session.exec(select(TorrentOperation)).first()
+
+    canceled = cancel_episode_operations(session, qbit, show, episode, "Show paused.")
+
+    assert canceled == 1
+    session.refresh(operation)
+    assert operation.status == TorrentOperationStatus.CANCELED
+    assert operation.next_retry_at is None
+    assert episode.torrent_hash == "old-hash"
+    assert episode.version == 1
+    qbit.delete_torrents.assert_called_once_with(["new-hash"], delete_files=True)
+    session.close()
+    engine.dispose()
+
+
+def test_direct_imports_existing_qbit_torrents_before_deciding():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    existing = MagicMock(
+        hash="existing-hash",
+        name="[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+        progress=1,
+        state="stoppedUP",
+    )
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "qsa-managed" else []
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.prepare_download_mode("direct")
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode.torrent_hash == "existing-hash"
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert any("Imported 1 existing torrent" in log for log in logs)
+    session.close()
+    engine.dispose()
+
+
+def test_stuck_loading_feed_does_not_discard_healthy_feed_articles():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    healthy = Feed(id=1, qbit_feed_name="Healthy", qbit_feed_url="https://healthy.example/rss", priority=1)
+    stuck = Feed(id=2, qbit_feed_name="Stuck", qbit_feed_url="https://stuck.example/rss", priority=2)
+    session.add(settings)
+    session.add(healthy)
+    session.add(stuck)
+    show = _show(session, current_feed_id=healthy.id)
+    tree = {
+        "Healthy": {
+            "url": healthy.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [{"id": "ep8", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", "torrentURL": "magnet:ep8"}],
+        },
+        "Stuck": {
+            "url": stuck.qbit_feed_url,
+            "isLoading": True,
+            "hasError": False,
+            "articles": [],
+        },
+    }
+    qbit, torrent = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+    )
+    qbit.get_rss_items.return_value = tree
+    qbit.refresh_rss_feeds.return_value = True
+    snapshot = RssSnapshot(qbit)
+
+    articles = snapshot.refresh(max_attempts=1, poll_interval_seconds=0, timeout_seconds=0)
+
+    assert [item["id"] for item in articles[healthy.qbit_feed_url]] == ["ep8"]
+    assert stuck.qbit_feed_url not in articles
+    assert snapshot.failed_feed_names == ["Stuck"]
+
+    evaluate_and_grab_releases(session, qbit, settings, [healthy, stuck], mode="direct", rss_snapshot=snapshot)
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode.torrent_hash == "hash-1"
+    session.close()
+    engine.dispose()
+
+
+SBR_ALIASES = [
+    "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd - 3rd STAGE",
+    "STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE",
+    "SBR",
+    "JoJo's Bizarre Adventure: Part 7–Steel Ball Run",
+]
+
+
+def test_split_cour_show_rejects_bare_arc_title():
+    from qbit_seasonal_anime.core.matching import match_release_to_show
+
+    def decide(title, aliases):
+        # The direct engine opts into arc enforcement: it chooses what to spend
+        # bandwidth on, so it must not claim a previous cour's bare title.
+        return match_release_to_show(title, aliases, ignore_arc_marker=False)[0]
+
+    # The prior cour shares the same bare title, so it must not be claimed.
+    assert decide(
+        "[SubsPlease] JoJo no Kimyou na Bouken: Steel Ball Run - 01 (1080p) [A1B2C3].mkv",
+        SBR_ALIASES,
+    ) is False
+    assert decide(
+        "[Erai-raws] SBR - 01v2 [1080p].mkv",
+        SBR_ALIASES,
+    ) is False
+    # Releases that name the cour are still matched.
+    assert decide(
+        "[SubsPlease] STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE - 02 [1080p].mkv",
+        SBR_ALIASES,
+    ) is True
+    assert decide(
+        "[SubsPlease] JoJo no Kimyou na Bouken: Steel Ball Run 3rd STAGE - 02 [1080p].mkv",
+        SBR_ALIASES,
+    ) is True
+    # A different cour of the same arc is still rejected.
+    assert decide(
+        "[SubsPlease] JoJo no Kimyou na Bouken: Steel Ball Run 1st STAGE - 02 [1080p].mkv",
+        SBR_ALIASES,
+    ) is False
+    # Plain season markers keep working as before.
+    assert decide(
+        "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv",
+        ["Sousou no Frieren", "Sousou no Frieren 2nd Season"],
+    ) is True
+
+
+def test_arc_enforcement_is_opt_in_for_interpretation_callers():
+    from qbit_seasonal_anime.core.matching import match_release_to_show
+
+    # Callers that only interpret an already-downloaded release (RSS rule mode)
+    # keep the historical permissive fuzzy behaviour by default.
+    bare = "[SubsPlease] JoJo no Kimyou na Bouken: Steel Ball Run - 01 (1080p) [A1B2C3].mkv"
+    assert match_release_to_show(bare, SBR_ALIASES)[0] is True
+    assert match_release_to_show(bare, SBR_ALIASES, ignore_arc_marker=False)[0] is False
+
+
+def test_direct_does_not_queue_past_cour_release():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        display_name="STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE",
+        aliases_json=json.dumps(SBR_ALIASES),
+        total_episodes=24,
+        next_airing_episode=2,
+        next_airing_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [
+                {
+                    "id": "old",
+                    "title": "[SubsPlease] JoJo no Kimyou na Bouken: Steel Ball Run - 01 (1080p) [A1B2C3].mkv",
+                    "torrentURL": "magnet:old",
+                },
+                {
+                    "id": "current",
+                    "title": "[SubsPlease] STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE - 02 (1080p).mkv",
+                    "torrentURL": "magnet:current",
+                },
+            ],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    grabbed = session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
+    assert [episode.episode_number for episode in grabbed] == [2]
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()
+
+
+def test_article_date_maps_to_nearest_scheduled_episode():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        display_name="Re:ZERO Season 4",
+        aliases_json='["Re:ZERO Season 4", "Re Zero kara Hajimeru Isekai Seikatsu"]',
+        total_episodes=25,
+        next_airing_episode=26,
+        next_airing_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+    )
+    episodes = sync_show_episodes(session, show)
+    anchor = datetime.now(timezone.utc) - timedelta(hours=2)
+    for index, episode in enumerate(episodes, start=1):
+        episode.air_at = anchor - timedelta(days=(len(episodes) - index))
+        session.add(episode)
+    session.commit()
+    qbit, _ = _qbit()
+    target = episodes[-1]
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "renumbered",
+                "title": "[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 80 (1080p).mkv",
+                "link": "https://subsplease.org/renumbered",
+                "torrentURL": "magnet:renumbered",
+                "pubDate": target.air_at.strftime("%a, %d %b %Y %H:%M:%S +0000"),
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    grabbed = session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
+    assert [episode.episode_number for episode in grabbed] == [target.episode_number]
+    mapping = session.exec(select(EpisodeNumberMapping)).first()
+    assert mapping is not None
+    assert mapping.offset == 80 - target.episode_number
+    session.close()
+    engine.dispose()
+
+
+def test_article_date_far_from_any_schedule_is_ignored():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=4, next_airing_episode=5, next_airing_at=datetime.now(timezone.utc) - timedelta(minutes=5))
+    episodes = sync_show_episodes(session, show)
+    for episode in episodes:
+        episode.air_at = datetime.now(timezone.utc) - timedelta(days=200)
+        session.add(episode)
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "stale",
+                "title": "[SubsPlease] Sousou no Frieren - 99 (1080p).mkv",
+                "date": datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S +0000"),
+                "torrentURL": "magnet:stale",
+            }],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.call_count == 0
+    session.close()
+    engine.dispose()
+
+
+def test_a_show_only_ever_downloads_from_its_assigned_feed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session, current_feed_id=subs.id)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    assert show.current_feed_id == subs.id
+    session.close()
+    engine.dispose()
+
+
+def test_the_first_feed_with_a_release_wins_and_becomes_the_assigned_feed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:erai-ep8"
+    assert show.current_feed_id == erai.id
+    session.close()
+    engine.dispose()
+
+
+def test_two_releases_of_the_same_episode_download_only_once():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    _show(session, current_feed_id=feed.id)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [
+                {"id": "a", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [A].mkv", "torrentURL": "magnet:a"},
+                {"id": "b", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [B].mkv", "torrentURL": "magnet:b"},
+                {"id": "c", "title": "[SubsPlease] Sousou no Frieren - 08 [1080p].mkv", "torrentURL": "magnet:c"},
+            ],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.call_count == 1
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:a"
+    assert len(session.exec(select(TorrentOperation)).all()) == 1
+    session.close()
+    engine.dispose()
+
+
+def test_a_second_release_is_taken_once_it_is_a_higher_version():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    _show(session, current_feed_id=feed.id)
+    qbit, _ = _qbit()
+    articles = [
+        {"id": "a", "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [A].mkv", "torrentURL": "magnet:a"},
+        {"id": "b", "title": "[SubsPlease] Sousou no Frieren - 08v2 (1080p) [B].mkv", "torrentURL": "magnet:b"},
+    ]
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": articles}}
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    # v1 then the upgrade for the same episode, and nothing beyond that.
+    assert [c.kwargs["urls"] for c in qbit.add_torrent.call_args_list] == ["magnet:a", "magnet:b"]
+    session.close()
+    engine.dispose()
+
+
+def test_a_pinned_show_never_moves_off_its_feed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session, current_feed_id=subs.id, feed_pinned=True)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    assert show.current_feed_id == subs.id
+    session.close()
+    engine.dispose()
+
+
+AIR = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
+REAL_AIR = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)
+EP9_TITLE = "[SubsPlease] Sousou no Frieren - 09 (1080p) [E9].mkv"
+
+
+def _early_airing_show(session, anilist_offset_hours=1.0, tolerance=6):
+    """A show whose ninth episode really aired an hour before AniList says."""
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(feed)
+    show = _show(
+        session,
+        current_feed_id=feed.id,
+        status=MonitoredStatus.FIXED,
+        total_episodes=12,
+        next_airing_episode=9,
+        last_confirmed_episode=8,
+        next_airing_at=AIR + timedelta(hours=anilist_offset_hours - 1),
+    )
+    episodes = sync_show_episodes(session, show)
+    for episode in episodes:
+        episode.air_at = AIR + timedelta(hours=anilist_offset_hours - 1) - timedelta(days=7 * (9 - episode.episode_number))
+        if episode.episode_number < 9:
+            episode.status = EpisodeStatus.COMPLETED
+        session.add(episode)
+    episode9 = next(e for e in episodes if e.episode_number == 9)
+    episode9.status = EpisodeStatus.WANTED
+    session.commit()
+    return show, feed, episode9
+
+
+def _early_release_qbit(feed):
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep9",
+                "title": EP9_TITLE,
+                "torrentURL": "magnet:ep9",
+                "date": "Sun, 04 Oct 2026 22:05:00 +0000",
+            }],
+        }
+    }
+    return qbit
+
+
+def test_a_release_that_lands_before_anilist_says_is_still_grabbed():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    show, feed, episode9 = _early_airing_show(session, anilist_offset_hours=1.0)
+    qbit = _early_release_qbit(feed)
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.called, "the release was available and must be taken"
+    assert episode9.status == EpisodeStatus.DOWNLOADING
+    assert episode9.torrent_hash is not None
+    assert session.exec(select(TorrentOperation)).one().kind == "grab"
+    session.close()
+    engine.dispose()
+
+
+def test_a_full_day_of_anilist_drift_still_gets_the_release():
+    """AniList can be a whole day late, which no hour-scale tolerance would cover."""
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    show, feed, episode9 = _early_airing_show(session, anilist_offset_hours=26.0)
+    qbit = _early_release_qbit(feed)
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.called
+    session.close()
+    engine.dispose()
+
+
+def test_a_release_before_the_season_premiere_is_not_grabbed():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(feed)
+    show = _show(
+        session,
+        current_feed_id=feed.id,
+        next_airing_episode=1,
+        next_airing_at=AIR,
+    )
+    qbit = _early_release_qbit(feed)
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_the_backfill_window_still_rejects_a_genuinely_stale_release():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", backfill_window_days=14,
+        early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    show, feed, episode9 = _early_airing_show(session, anilist_offset_hours=1.0)
+    episode9.air_at = REAL_AIR - timedelta(days=30)
+    session.add(episode9)
+    session.commit()
+    qbit = _early_release_qbit(feed)
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    assert episode9.status == EpisodeStatus.WANTED
+    session.close()
+    engine.dispose()
+
+
+PREMIERE_TITLE = "[SubsPlease] Ao Ashi S2 - 01 (1080p) [6DCF3E95].mkv"
+
+
+def _premiere_release_qbit(feed, published_at, title=PREMIERE_TITLE):
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "premiere",
+                "title": title,
+                "torrentURL": "magnet:premiere",
+                "pubDate": published_at.strftime("%a, %d %b %Y %H:%M:%S +0000"),
+            }],
+        }
+    }
+    return qbit
+
+
+def _premiere_show(session, anilist_air, total=12):
+    """A show about to premiere: AniList points at episode 1 with a future air time."""
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(feed)
+    show = _show(
+        session,
+        display_name="Ao Ashi",
+        aliases_json=json.dumps(["Ao Ashi Season 2", "Ao Ashi S2"]),
+        current_feed_id=feed.id,
+        status=MonitoredStatus.FIXED,
+        total_episodes=total,
+        next_airing_episode=1,
+        next_airing_at=anilist_air,
+    )
+    episodes = sync_show_episodes(session, show)
+    for episode in episodes:
+        episode.air_at = anilist_air
+        session.add(episode)
+    session.commit()
+    return show, feed, episodes
+
+
+def test_a_premiere_that_lands_early_is_grabbed_inside_the_tolerance_window():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    now = utc_now()
+    # The release is already out, but AniList still points three hours ahead.
+    show, feed, episodes = _premiere_show(session, anilist_air=now + timedelta(hours=3))
+    qbit = _premiere_release_qbit(feed, published_at=now - timedelta(hours=1))
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode1 = next(e for e in episodes if e.episode_number == 1)
+    assert qbit.add_torrent.called, "the premiere is already published and must be taken"
+    assert episode1.torrent_hash is not None
+    session.close()
+    engine.dispose()
+
+
+def test_a_premiere_is_not_grabbed_before_the_tolerance_window_opens():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    now = utc_now()
+    show, feed, episodes = _premiere_show(session, anilist_air=now + timedelta(hours=10))
+    qbit = _premiere_release_qbit(feed, published_at=now - timedelta(hours=1))
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_zero_tolerance_keeps_a_premiere_strict():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=0,
+    )
+    session.add(settings)
+    now = utc_now()
+    show, feed, episodes = _premiere_show(session, anilist_air=now + timedelta(hours=3))
+    qbit = _premiere_release_qbit(feed, published_at=now - timedelta(hours=1))
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_an_early_mid_season_release_is_grabbed():
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(feed)
+    now = utc_now()
+    show = _show(
+        session,
+        current_feed_id=feed.id,
+        status=MonitoredStatus.FIXED,
+        total_episodes=12,
+        next_airing_episode=5,
+        next_airing_at=now + timedelta(hours=3),
+    )
+    episodes = sync_show_episodes(session, show)
+    for episode in episodes:
+        episode.air_at = now + timedelta(hours=3) - timedelta(days=7 * (5 - episode.episode_number))
+        if episode.episode_number < 5:
+            episode.status = EpisodeStatus.COMPLETED
+        session.add(episode)
+    session.commit()
+    qbit = _premiere_release_qbit(
+        feed,
+        published_at=now - timedelta(hours=1),
+        title="[SubsPlease] Sousou no Frieren - 05 (1080p) [F5].mkv",
+    )
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.called
+    session.close()
+    engine.dispose()

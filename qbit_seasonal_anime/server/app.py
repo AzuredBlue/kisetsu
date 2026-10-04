@@ -1,6 +1,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 import logging
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -9,7 +10,7 @@ from sqlmodel import Session, select
 from qbit_seasonal_anime.config import RULE_OBSERVER_INTERVAL_SECONDS
 from qbit_seasonal_anime.db.models import QbitRuleWatermark
 from qbit_seasonal_anime.db.session import get_engine, get_settings, init_db
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
+from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.core.confirmation import ingest_log_acceptances
 from qbit_seasonal_anime.core.supervisor import Supervisor
@@ -56,9 +57,11 @@ async def background_supervisor_task():
 
     await asyncio.sleep(STARTUP_GRACE_SECONDS)
     hunting_next = False
+    needs_rss_refresh = True
     while True:
         connection_ready = False
         sleep_seconds = 60
+        deferred_reason: Optional[str] = None
         try:
             with Session(engine) as session:
                 settings = get_settings(session)
@@ -82,12 +85,20 @@ async def background_supervisor_task():
                     _set_next_check(sleep_seconds, f"qBittorrent is unavailable: {e}")
 
                 if connection_ready:
+                    state.daemon_active = True
+                    if not state.try_begin_cycle("background"):
+                        state.add_log("Another supervision or show mutation is already in progress; skipping this pass.", "INFO")
+                        await asyncio.sleep(1)
+                        continue
                     supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
 
-                    state.is_running_cycle = True
                     state.add_log("Executing background supervision check...", "INFO")
                     try:
-                        logs = await supervisor.run_full_cycle(hunting=hunting_next)
+                        logs = await supervisor.run_full_cycle(
+                            hunting=hunting_next,
+                            force_rss_refresh=needs_rss_refresh,
+                        )
+                        needs_rss_refresh = False
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
                         for l in logs:
@@ -96,18 +107,25 @@ async def background_supervisor_task():
                             state.add_log("Supervisor: All shows and rules up to date.", "INFO")
                     except QbitAuthenticationError as e:
                         connection_ready = False
+                        needs_rss_refresh = True
                         sleep_seconds = QBIT_AUTH_RETRY_SECONDS
                         _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
+                    except QbitRSSRefreshError as e:
+                        needs_rss_refresh = True
+                        deferred_reason = f"qBittorrent RSS refresh failed; direct evaluation deferred: {e}"
+                        sleep_seconds = min(_next_qbit_retry(retry_index), 60)
                     except QbitClientError as e:
                         connection_ready = False
+                        needs_rss_refresh = True
                         sleep_seconds = _next_qbit_retry(retry_index)
                         retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
                         _set_next_check(sleep_seconds, f"qBittorrent became unavailable during the cycle: {e}")
                     except Exception as e:
+                        needs_rss_refresh = True
                         state.add_log(f"Supervisor cycle error: {e}", "ERROR")
                         logger.error(f"Supervisor error: {e}", exc_info=True)
                     finally:
-                        state.is_running_cycle = False
+                        state.end_cycle("background")
 
                     if connection_ready:
                         default_interval = max(60, settings.refresh_interval_minutes * 60)
@@ -117,6 +135,9 @@ async def background_supervisor_task():
                                 session,
                                 default_interval_seconds=default_interval,
                                 qbit_client=qbit,
+                                download_mode=settings.download_mode,
+                                backfill_window_days=settings.backfill_window_days,
+                                early_air_tolerance_hours=settings.early_air_tolerance_hours,
                             )
                         except QbitAuthenticationError as e:
                             connection_ready = False
@@ -128,8 +149,16 @@ async def background_supervisor_task():
                             retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
                             _set_next_check(sleep_seconds, f"qBittorrent became unavailable while scheduling the next check: {e}")
                         else:
-                            hunting_next = await asyncio.to_thread(is_hunting, session)
-                            _set_next_check(sleep_seconds, reason)
+                            hunting_next = await asyncio.to_thread(
+                                is_hunting,
+                                session,
+                                download_mode=settings.download_mode,
+                                backfill_window_days=settings.backfill_window_days,
+                                early_air_tolerance_hours=settings.early_air_tolerance_hours,
+                            )
+                            _set_next_check(sleep_seconds, deferred_reason or reason)
+                else:
+                    state.daemon_active = False
 
             state.wake_event.clear()
             try:
@@ -151,13 +180,21 @@ async def background_supervisor_task():
 
 
 async def qbit_rule_observer_task():
-    """Watch qBittorrent's rule state and record newly accepted releases."""
+    """Watch qBittorrent's rule state and record newly accepted releases.
+
+    Only relevant in rules mode: the direct engines own their downloads and keep
+    no RSS rules, so there is nothing for the rule log to confirm.
+    """
     engine = get_engine()
 
     while True:
         try:
             with Session(engine) as session:
                 settings = get_settings(session)
+                if (settings.download_mode or "rules") != "rules":
+                    await _wait_for_log_wakeup()
+                    continue
+
                 qbit = QBitClient(
                     host=settings.qbit_host,
                     username=settings.qbit_username,
@@ -167,7 +204,9 @@ async def qbit_rule_observer_task():
 
                 markers = await asyncio.to_thread(qbit.get_rule_match_markers)
                 if not markers:
-                    raise QbitClientError("No RSS rules returned by qBittorrent")
+                    logger.debug("No RSS rules to observe yet.")
+                    await _wait_for_log_wakeup()
+                    continue
 
                 stored = {
                     w.rule_name: w.last_match
@@ -194,12 +233,16 @@ async def qbit_rule_observer_task():
             state.add_log(f"Rule check error: {e}", "ERROR")
             logger.error(f"Rule observer error: {e}", exc_info=True)
 
-        try:
-            await asyncio.wait_for(state.log_wake_event.wait(), timeout=RULE_OBSERVER_INTERVAL_SECONDS)
-        except asyncio.TimeoutError:
-            pass
-        finally:
-            state.log_wake_event.clear()
+        await _wait_for_log_wakeup()
+
+
+async def _wait_for_log_wakeup() -> None:
+    try:
+        await asyncio.wait_for(state.log_wake_event.wait(), timeout=RULE_OBSERVER_INTERVAL_SECONDS)
+    except asyncio.TimeoutError:
+        pass
+    finally:
+        state.log_wake_event.clear()
 
 
 @asynccontextmanager

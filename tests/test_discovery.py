@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
+from qbit_seasonal_anime.clients.qbit import QbitRSSRefreshError
 from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from qbit_seasonal_anime.db.models import Feed, Monitored
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
@@ -22,8 +23,12 @@ class TestDiscovery(unittest.TestCase):
         mock_qbit.get_rss_items.assert_called_once()
 
         snapshot.refresh()
-        self.assertEqual(mock_qbit.get_rss_items.call_count, 2)
+        # A refresh reads twice: once to drain a refresh qBittorrent may already
+        # be running, then once more to confirm ours settled.
+        self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
         mock_qbit.refresh_rss_feeds.assert_called_once()
+        # refresh() leaves the settled snapshot cached, so get() must not
+        # re-read the whole RSS tree.
         snapshot.get()
         self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
 
@@ -57,7 +62,86 @@ class TestDiscovery(unittest.TestCase):
 
         mock_qbit.refresh_rss_feeds.side_effect = None
         snapshot.get()
-        self.assertEqual(mock_qbit.get_rss_items.call_count, 2)
+        # The failed refresh must not leave a cached empty result behind, so
+        # get() reads again instead.
+        self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
+
+    def _feed_tree(self, **overrides):
+        node = {
+            "url": self.feed_top.qbit_feed_url,
+            "isLoading": False,
+            "hasError": False,
+            "articles": [],
+        }
+        node.update(overrides)
+        return {"SubsPlease": node}
+
+    def test_rss_snapshot_caches_refresh_failure(self):
+        mock_qbit = MagicMock()
+        mock_qbit.get_rss_items.return_value = MOCK_QBIT_RSS_ITEMS
+        mock_qbit.refresh_rss_feeds.return_value = False
+        snapshot = RssSnapshot(mock_qbit)
+        snapshot.get()
+
+        with self.assertRaises(QbitRSSRefreshError):
+            snapshot.refresh(max_attempts=1, poll_interval_seconds=0, timeout_seconds=1)
+        # A refresh that could not settle must not leave an empty cache behind,
+        # because the direct engine would act on "no articles".
+        with self.assertRaises(QbitRSSRefreshError):
+            snapshot.get()
+
+    def test_rss_snapshot_refresh_waits_for_existing_refresh_and_caches_result(self):
+        mock_qbit = MagicMock()
+        feed_url = self.feed_top.qbit_feed_url
+        mock_qbit.get_rss_items.side_effect = [
+            self._feed_tree(isLoading=True),
+            self._feed_tree(),
+            self._feed_tree(articles=[{"id": "ep8", "title": "Link Click S3 - 08"}]),
+        ]
+        mock_qbit.refresh_rss_feeds.return_value = True
+        snapshot = RssSnapshot(mock_qbit)
+
+        articles = snapshot.refresh(poll_interval_seconds=0, timeout_seconds=1)
+
+        self.assertEqual(articles[feed_url][0]["id"], "ep8")
+        # An in-flight refresh is drained before ours is requested, then the
+        # result is confirmed settled.
+        self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
+        self.assertIs(snapshot.get(), articles)
+        self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
+
+    def test_rss_snapshot_refresh_retries_rejected_request(self):
+        mock_qbit = MagicMock()
+        feed_url = self.feed_top.qbit_feed_url
+        mock_qbit.get_rss_items.side_effect = [
+            self._feed_tree(),
+            self._feed_tree(),
+            self._feed_tree(articles=[{"id": "ep8", "title": "Link Click S3 - 08"}]),
+        ]
+        mock_qbit.refresh_rss_feeds.side_effect = [False, True]
+        snapshot = RssSnapshot(mock_qbit)
+
+        articles = snapshot.refresh(max_attempts=2, poll_interval_seconds=0, timeout_seconds=1)
+
+        self.assertEqual(articles[feed_url][0]["id"], "ep8")
+        self.assertEqual(mock_qbit.refresh_rss_feeds.call_count, 2)
+
+    def test_rss_snapshot_refresh_isolates_feed_errors(self):
+        mock_qbit = MagicMock()
+        feed_url = self.feed_top.qbit_feed_url
+        mock_qbit.get_rss_items.side_effect = [
+            self._feed_tree(),
+            self._feed_tree(hasError=True),
+        ]
+        mock_qbit.refresh_rss_feeds.return_value = True
+        snapshot = RssSnapshot(mock_qbit)
+
+        articles = snapshot.refresh(max_attempts=1, poll_interval_seconds=0, timeout_seconds=1)
+
+        # One broken feed must not discard the healthy feeds' articles.
+        self.assertNotIn(feed_url, articles)
+        self.assertEqual(snapshot.failed_feed_names, ["SubsPlease"])
+        self.assertIs(snapshot.get(), articles)
 
     def test_flatten_rss_articles(self):
         articles_by_url = flatten_rss_articles(MOCK_QBIT_RSS_ITEMS)

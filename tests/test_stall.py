@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock
 from sqlmodel import Session, create_engine, SQLModel
 from qbit_seasonal_anime.core.stall import check_and_handle_stalls
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
+from qbit_seasonal_anime.db.models import Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
 
 
 def _utc_now():
@@ -49,6 +49,66 @@ class TestStall(unittest.TestCase):
 
         self.assertEqual(show.status, MonitoredStatus.COMPLETED)
         self.assertTrue(any("completed all 12 episodes" in log for log in logs))
+
+    def test_direct_mode_requires_every_episode_before_completing(self):
+        """A wanted episode keeps the season open even with a match on the last one."""
+        self.settings.download_mode = "direct"
+        self.session.add(self.settings)
+        show = Monitored(
+            id=90,
+            anilist_id=1090,
+            display_name="Partly Downloaded",
+            aliases_json='["Partly Downloaded"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=3,
+            last_confirmed_episode=3,
+            next_airing_episode=None,
+            next_airing_at=None,
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(
+            monitored_id=show.id, episode_number=2, status=EpisodeStatus.WANTED
+        ))
+        self.session.add(Episode(
+            monitored_id=show.id, episode_number=3, status=EpisodeStatus.COMPLETED
+        ))
+        self.session.commit()
+
+        check_and_handle_stalls(self.session, MagicMock(), self.settings)
+        self.session.refresh(show)
+
+        self.assertEqual(show.status, MonitoredStatus.FIXED)
+
+    def test_direct_mode_completes_once_every_episode_is_done(self):
+        self.settings.download_mode = "direct"
+        self.session.add(self.settings)
+        show = Monitored(
+            id=91,
+            anilist_id=1091,
+            display_name="Fully Downloaded",
+            aliases_json='["Fully Downloaded"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=2,
+            last_confirmed_episode=2,
+            next_airing_episode=None,
+            next_airing_at=None,
+        )
+        self.session.add(show)
+        self.session.flush()
+        for episode_number in (1, 2):
+            self.session.add(Episode(
+                monitored_id=show.id,
+                episode_number=episode_number,
+                status=EpisodeStatus.COMPLETED,
+            ))
+        self.session.commit()
+
+        logs = check_and_handle_stalls(self.session, MagicMock(), self.settings)
+        self.session.refresh(show)
+
+        self.assertEqual(show.status, MonitoredStatus.COMPLETED)
+        self.assertTrue(any("completed all 2 episodes" in log for log in logs))
 
     def test_stall_triggers_fallback_to_next_feed(self):
         show = Monitored(

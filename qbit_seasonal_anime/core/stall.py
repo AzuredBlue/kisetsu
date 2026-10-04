@@ -47,7 +47,7 @@ def check_and_handle_stalls(
         )
 
         if is_finished_broadcast or has_aired_finale:
-            if has_downloaded_final_episode(session, show):
+            if has_downloaded_final_episode(session, show, settings.download_mode):
                 if show.qbit_rule_name:
                     disable_rule(qbit_client, show.qbit_rule_name)
                 show.next_airing_at = None

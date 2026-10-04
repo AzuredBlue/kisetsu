@@ -271,6 +271,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <label class="block text-xs text-zinc-300 font-medium mb-1.5">Routine Refresh (Minutes)</label>
                 <input type="number" min="5" id="set-interval" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
               </div>
+              <div>
+                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Automatic Backfill Window (Days)</label>
+                <input type="number" min="0" max="365" id="set-backfill-window" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
+              </div>
+              <div>
+                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Early Air Tolerance (Hours)</label>
+                <input type="number" min="0" max="168" id="set-early-air-tolerance" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
+                <p class="text-xs text-zinc-500 mt-1.5">Start looking this many hours before AniList's air time. AniList times are often late, and a release is taken as soon as it appears. Use 0 to only act after the stated time.</p>
+              </div>
             </div>
 
             <div class="pt-2 border-t border-[#26262e] space-y-2">
@@ -287,6 +296,19 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                   </div>
                   <input type="hidden" id="set-title-language" value="english">
                 </div>
+              </div>
+
+              <div class="space-y-2">
+                <div class="flex items-center justify-between gap-3">
+                  <span class="text-xs text-zinc-300 font-medium">Download Engine</span>
+                  <div class="inline-flex items-center bg-[#121215] border border-[#30303a] rounded-lg p-0.5 text-xs font-mono select-none">
+                    <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm">Rules</button>
+                    <button type="button" onclick="setDownloadMode('observe')" id="btn-mode-observe" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">Observe</button>
+                    <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">Direct</button>
+                  </div>
+                  <input type="hidden" id="set-download-mode" value="rules">
+                </div>
+                <p class="text-xs text-zinc-500">Rules owns downloads. Observe logs direct decisions without adding torrents. Direct manages episodes and verified replacements.</p>
               </div>
 
               <div id="sync-anilist-status" class="text-xs font-mono empty:hidden"></div>
@@ -394,7 +416,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       'UNCONFIRMED': { label: 'Testing', bg: 'bg-[#2b2208] text-[#c2a03f] border-[#55430a]' },
       'UPCOMING': { label: 'Upcoming', bg: 'bg-[#101a3d] text-[#6c93c9] border-[#1f3a6b]' },
       'STALLED': { label: 'Stalled', bg: 'bg-[#2b1111] text-[#c26a6a] border-[#5e2323]' },
-      'COMPLETED': { label: 'Completed', bg: 'bg-[#201338] text-[#a992d6] border-[#402c66]' },
+      'COMPLETED': { label: 'Completed', bg: 'bg-[#312e81] text-[#c4b5fd] border-[#6366f1]' },
       'PAUSED': { label: 'Paused', bg: 'bg-[#1b1b1f] text-[#91919a] border-[#2e2e35]' },
     };
 
@@ -652,6 +674,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         ? `<svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
         : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
+      // Surface upgraded releases: a v2 episode means a replacement was verified.
+      const versionLabel = show.v2_episodes_count > 0
+        ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border border-amber-800 bg-amber-950/90 text-amber-300">${show.v2_episodes_count} v2</span>`
+        : '';
+
       return `
         <div onclick="viewShowRule(${show.id})" class="bg-[#18181c] border ${isDimmed ? 'border-zinc-800' : 'border-[#26262e]'} hover:border-[#444452] hover:-translate-y-1 hover:shadow-lg hover:shadow-black/50 rounded flex flex-col overflow-hidden group cursor-pointer transition-all duration-200 ease-out">
           
@@ -689,6 +716,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
             <div class="pt-2 border-t border-[#222228] flex items-center justify-between gap-2.5 text-xs font-mono">
               <span class="truncate text-zinc-400 font-medium min-w-0" title="${feedName}">${feedName}</span>
+              ${versionLabel}
               <span class="show-countdown flex-shrink-0 text-zinc-200 font-semibold ml-auto" ${countdownAttr} title="${show.next_airing_formatted ? show.next_airing_formatted : ''}">${airInfo}</span>
             </div>
           </div>
@@ -1017,19 +1045,27 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       modal.classList.remove('hidden');
 
       try {
-        const res = await fetch(`/api/shows/${showId}/rule`);
+        // The rule panel and the episode ledger are independent, so fetch both.
+        const [res, episodeRes] = await Promise.all([
+          fetch(`/api/shows/${showId}/rule`),
+          fetch(`/api/shows/${showId}/episodes`)
+        ]);
         const data = await res.json();
+        const episodes = episodeRes.ok ? await episodeRes.json() : [];
 
         const isCompleted = (data.status === 'completed');
         const isPaused = (data.status === 'paused');
         const isRuleActive = data.enabled === true;
+        const isDirect = data.download_mode === 'direct';
 
         titleEl.textContent = data.display_name;
-        ruleNameEl.textContent = data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured');
+        ruleNameEl.textContent = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
 
         let ruleStatusText = '';
-        if (isCompleted) {
-          ruleStatusText = '<span class="text-[11px] font-medium text-[#a992d6]">Completed</span>';
+        if (isDirect) {
+          ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Direct Engine Active</span>';
+        } else if (isCompleted) {
+          ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>Completed</span>';
         } else if (isPaused) {
           ruleStatusText = '<span class="text-[11px] font-medium text-zinc-400">Paused</span>';
         } else if (isRuleActive) {
@@ -1158,7 +1194,25 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             </div>
           </div>
 
+        const episodeSection = isDirect ? `
+          <div class="space-y-1 pt-1">
+            <div class="flex items-center justify-between">
+              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Episode Ownership</span>
+              <span class="text-[11px] font-mono text-zinc-500">${episodes.length} tracked</span>
+            </div>
+            <div class="bg-[#121215] border border-[#2e2e38] rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
+              ${episodes.length ? episodes.map(ep => `
+                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${ep.version > 1 ? 'bg-amber-950/50 text-amber-300' : 'text-zinc-400'}">
+                  <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
+                  <span class="truncate">${escapeHtml(ep.status)}${ep.last_error ? ` · ${escapeHtml(ep.last_error)}` : ''}</span>
+                </div>
+              `).join('') : '<div class="text-zinc-500 text-xs text-center py-2">No episode records yet.</div>'}
+            </div>
+          </div>
+        ` : '';
+
           ${articlesSection}
+          ${episodeSection}
         `;
         modalInitialState = {
           // Tracks what the selector shows, not the internal feed id: while a show
@@ -1426,6 +1480,50 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
+    function updateDownloadModeUi(mode) {
+      const selected = mode || 'rules';
+      const hidden = document.getElementById('set-download-mode');
+      if (hidden) hidden.value = selected;
+
+      ['rules', 'observe', 'direct'].forEach(name => {
+        const button = document.getElementById(`btn-mode-${name}`);
+        if (!button) return;
+        const active = name === selected;
+        button.className = active
+          ? 'px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm'
+          : 'px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200';
+      });
+    }
+
+    async function setDownloadMode(mode) {
+      if (!['rules', 'observe', 'direct'].includes(mode)) return;
+      if (mode === 'direct' && !confirm(
+        'Switch to Direct downloads? Managed RSS rules will be disabled before Direct mode is enabled. Episode replacement operations will be managed by the application.'
+      )) {
+        // The user backed out, so the control has to show the real mode again.
+        updateDownloadModeUi(currentSettings.download_mode || 'rules');
+        return;
+      }
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ download_mode: mode })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          updateDownloadModeUi(currentSettings.download_mode || 'rules');
+          throw new Error(data.detail || data.message || 'Mode switch failed');
+        }
+        showToast(data.message || `Download engine switched to ${mode}.`, 'success');
+        await loadSettings();
+        await loadShows();
+        updateStatus(true);
+      } catch (err) {
+        showToast(`Mode switch failed: ${err}`, 'error');
+      }
+    }
+
     async function setTitleLanguage(lang) {
       updateTitleLanguageUi(lang);
       try {
@@ -1454,7 +1552,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         document.getElementById('set-stall-window').value = s.stall_wait_hours ?? 24;
         document.getElementById('set-anilist-user').value = s.anilist_username || '';
         document.getElementById('set-interval').value = s.refresh_interval_minutes ?? 360;
+        document.getElementById('set-backfill-window').value = s.backfill_window_days ?? 14;
+        document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
         updateTitleLanguageUi(s.title_language || 'english');
+        updateDownloadModeUi(s.download_mode || 'rules');
       } catch (err) {
         showToast(`Failed loading settings: ${err}`, 'error');
       }
@@ -1471,7 +1572,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         stall_wait_hours: parseInt(document.getElementById('set-stall-window').value),
         anilist_username: document.getElementById('set-anilist-user').value,
         refresh_interval_minutes: parseInt(document.getElementById('set-interval').value),
+        backfill_window_days: parseInt(document.getElementById('set-backfill-window').value),
+        early_air_tolerance_hours: parseInt(document.getElementById('set-early-air-tolerance').value),
         title_language: document.getElementById('set-title-language').value,
+        download_mode: document.getElementById('set-download-mode').value,
       };
       const pwd = document.getElementById('set-qbit-pass').value;
       if (pwd) payload.qbit_password = pwd;
@@ -1483,6 +1587,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           body: JSON.stringify(payload)
         });
         const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to save settings.');
         showToast(data.message || 'Settings saved.', 'success');
         await loadSettings();
         await loadShows();
@@ -1566,7 +1671,13 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         loadShows();
         updateStatus(true);
       } catch (err) {
-        showToast(`Check error: ${err.message || err}`, 'error');
+        // A busy cycle is a conflict, not a failure: something is already
+        // running, so report it as information.
+        if (err.status === 409) {
+          showToast(err.message || 'A supervision cycle is already in progress.', 'info');
+        } else {
+          showToast(`Check error: ${err.message || err}`, 'error');
+        }
       } finally {
         btn.disabled = false;
         spinner.classList.add('hidden');

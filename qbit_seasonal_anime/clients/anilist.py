@@ -1,12 +1,15 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
+import time
 from typing import Any, Dict, List, Optional, Set
 import httpx2
 
 logger = logging.getLogger("qbit_seasonal_anime.clients.anilist")
 
 ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
+
+MAX_SCHEDULE_PAGES = 20
 
 USER_SEASONAL_QUERY = """
 query ($userName: String) {
@@ -63,9 +66,29 @@ query ($id: Int) {
 """
 
 
+AIRING_SCHEDULE_QUERY = """
+query ($mediaId: Int, $page: Int) {
+  Page(page: $page, perPage: 50) {
+    pageInfo {
+      hasNextPage
+      currentPage
+    }
+    airingSchedules(mediaId: $mediaId, sort: TIME) {
+      episode
+      airingAt
+    }
+  }
+}
+"""
+
+
 class AniListError(Exception):
     """Base exception for AniList API errors."""
     pass
+
+
+class AniListRateLimited(AniListError):
+    """Raised when AniList keeps rate limiting this client."""
 
 
 def get_current_and_next_season(dt: Optional[datetime] = None):
@@ -106,6 +129,12 @@ class AniListClient:
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
         self.last_sync_at: Optional[datetime] = None
+        self._rate_limited_until = 0.0
+
+    @property
+    def rate_limited(self) -> bool:
+        """True while a previously observed Retry-After window is still open."""
+        return time.monotonic() < self._rate_limited_until
 
     def seconds_since_last_sync(self, now: Optional[datetime] = None) -> Optional[float]:
         """Seconds since the last successful query, or None if there has not been one."""
@@ -122,8 +151,19 @@ class AniListClient:
             return True
         return age >= min_age_seconds
 
-    async def _post_query(self, query: str, variables: Dict[str, Any], max_retries: int = 3) -> Dict[str, Any]:
-        """Execute GraphQL query with exponential backoff on rate limits (HTTP 429)."""
+    async def _post_query(
+        self,
+        query: str,
+        variables: Dict[str, Any],
+        max_retries: int = 3,
+        allow_partial: bool = False,
+    ) -> Dict[str, Any]:
+        """Execute GraphQL query with exponential backoff on rate limits (HTTP 429).
+
+        With ``allow_partial`` a GraphQL response that carries both ``data`` and
+        ``errors`` returns the usable part instead of raising, so one bad alias
+        cannot discard the whole batch.
+        """
         backoff = 2.0
         async with httpx2.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(max_retries):
@@ -140,6 +180,11 @@ class AniListClient:
                         except (ValueError, TypeError):
                             retry_after = backoff
                         logger.warning(f"AniList rate limited (429). Waiting {retry_after} seconds...")
+                        self._rate_limited_until = time.monotonic() + retry_after
+                        if attempt == max_retries - 1:
+                            raise AniListRateLimited(
+                                "AniList is rate limiting this client; schedule sync is deferred."
+                            )
                         await asyncio.sleep(retry_after)
                         backoff *= 2
                         continue
@@ -147,6 +192,10 @@ class AniListClient:
                     resp.raise_for_status()
                     data = resp.json()
                     if "errors" in data:
+                        if allow_partial:
+                            payload = data.get("data") or {}
+                            payload["__errors__"] = data["errors"]
+                            return payload
                         raise AniListError(f"AniList GraphQL error: {data['errors']}")
                     return data.get("data") or {}
                 except httpx2.HTTPStatusError as e:
@@ -271,6 +320,65 @@ class AniListClient:
                 }
 
         return list(anime_dict.values())
+
+    async def fetch_media_airing_schedules(
+        self,
+        media_ids: List[int],
+    ) -> Dict[int, List[Dict[str, Any]]]:
+        """Fetch complete airing schedules, isolating per-show failures.
+
+        A single unusable media ID, or an AniList-wide rate limit, must not cost
+        the schedules of every other show, so failures are logged and skipped
+        and only a rate limit aborts the whole pass.
+        """
+        unique_ids = list(dict.fromkeys(int(media_id) for media_id in media_ids))
+        if not unique_ids:
+            return {}
+        schedules: Dict[int, List[Dict[str, Any]]] = {}
+        for media_id in unique_ids:
+            schedule: List[Dict[str, Any]] = []
+            page = 1
+            seen_episodes = set()
+            try:
+                while True:
+                    data = await self._post_query(
+                        AIRING_SCHEDULE_QUERY,
+                        {"mediaId": media_id, "page": page},
+                        allow_partial=True,
+                    )
+                    block = data.get("Page") or {}
+                    nodes = block.get("airingSchedules") or []
+                    for node in nodes:
+                        episode = node.get("episode")
+                        airing_at = node.get("airingAt")
+                        if episode is None or airing_at is None:
+                            continue
+                        episode = int(episode)
+                        if episode in seen_episodes:
+                            continue
+                        seen_episodes.add(episode)
+                        schedule.append({
+                            "episode": episode,
+                            "airing_at": datetime.fromtimestamp(airing_at, tz=timezone.utc),
+                        })
+                    page_info = block.get("pageInfo") or {}
+                    if not page_info.get("hasNextPage") or page >= MAX_SCHEDULE_PAGES:
+                        break
+                    page += 1
+            except AniListRateLimited:
+                raise
+            except AniListError as e:
+                logger.warning(f"Could not fetch airing schedule for media {media_id}: {e}")
+                continue
+            except Exception as e:
+                logger.warning(f"Unexpected airing schedule failure for media {media_id}: {e}")
+                continue
+            schedules[media_id] = schedule
+        return schedules
+
+    async def fetch_media_airing_schedule(self, media_id: int) -> List[Dict[str, Any]]:
+        schedules = await self.fetch_media_airing_schedules([media_id])
+        return schedules.get(int(media_id), [])
 
     async def fetch_media_details(self, media_id: int) -> Optional[Dict[str, Any]]:
         """Fetch updated episode and airing details for a specific media ID."""

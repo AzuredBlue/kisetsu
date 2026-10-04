@@ -3,16 +3,30 @@ import asyncio
 import importlib
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.clients.qbit import QbitAuthenticationError, QbitConnectionError
+from qbit_seasonal_anime.clients.qbit import (
+    QbitAuthenticationError,
+    QbitClientError,
+    QbitConnectionError,
+    QbitRSSRefreshError,
+)
 app_module = importlib.import_module("qbit_seasonal_anime.server.app")
 from qbit_seasonal_anime.server import api as api_module
 from qbit_seasonal_anime.server.app import create_app
-from qbit_seasonal_anime.db.models import MatchHistory, Monitored, Feed, MonitoredStatus, Settings
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeNumberMapping,
+    EpisodeStatus,
+    MatchHistory,
+    Monitored,
+    Feed,
+    MonitoredStatus,
+    Settings,
+)
 from qbit_seasonal_anime.server.api import get_db, get_qbit
-from qbit_seasonal_anime.db.session import init_db
+from qbit_seasonal_anime.db.session import acquire_supervision_lease, init_db, release_supervision_lease
 
 
 @pytest.fixture
@@ -71,6 +85,7 @@ def test_init_db_adds_query_indexes_to_legacy_schema(db_engine):
     expected_indexes = {
         "ix_monitored_current_feed_id",
         "ix_monitored_status_current_feed",
+        "ix_episode_status_version",
         "ix_rule_history_feed_id",
         "ix_rule_history_created_at",
         "ix_rule_history_monitored_created",
@@ -84,7 +99,7 @@ def test_init_db_adds_query_indexes_to_legacy_schema(db_engine):
 
     actual_indexes = {
         index["name"]
-        for table_name in ("monitored", "rule_history")
+        for table_name in ("monitored", "episodes", "rule_history")
         for index in inspect(db_engine).get_indexes(table_name)
     }
     assert expected_indexes <= actual_indexes
@@ -210,7 +225,10 @@ def test_system_status(client, session):
     res = client.get("/api/status")
     assert res.status_code == 200
     st = res.json()
-    assert st["daemon_active"] is True
+    # daemon_active reports the real supervisor task state, so it is False here:
+    # no background task runs without the app lifespan.
+    assert st["daemon_active"] is api_module.state.daemon_active
+    assert st["download_mode"] == "rules"
     assert st["total_shows"] == 5
     assert st["counts"] == {
         "works": 1,
@@ -251,7 +269,8 @@ def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["next_check_seconds"] == 321
     assert response.json()["next_check_reason"] == "Next cycle"
-    supervisor.run_full_cycle.assert_awaited_once_with()
+    # A manual cycle always re-reads the RSS feeds first.
+    supervisor.run_full_cycle.assert_awaited_once_with(force_rss_refresh=True)
     assert [c.args[0] for c in to_thread.await_args_list].count(scheduler) == 1
     scheduler.assert_called_once()
     assert api_module.state.is_running_cycle is False
@@ -814,5 +833,651 @@ def test_history_endpoint_and_delete_still_work(client, session, mock_qbit):
     assert client.get("/api/history").json() == []
 
 
+# ---------------------------------------------------------------------------
+# Direct download engine: schema, settings and endpoints
+# ---------------------------------------------------------------------------
 
 
+def test_init_db_repairs_active_numbering_without_reopening_completed_shows(tmp_path):
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        rezero = Monitored(
+            id=1,
+            anilist_id=101,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO", "Re Zero kara Hajimeru Isekai Seikatsu"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=19,
+            last_confirmed_episode=84,
+            current_feed_id=1,
+        )
+        false_completed = Monitored(
+            id=2,
+            anilist_id=102,
+            display_name="False Completed Anime",
+            aliases_json='["False Completed Anime"]',
+            status=MonitoredStatus.COMPLETED,
+            total_episodes=3,
+            last_confirmed_episode=10,
+            current_feed_id=1,
+        )
+        session.add(feed)
+        session.add(rezero)
+        session.add(false_completed)
+        session.flush()
+        session.add(Episode(monitored_id=rezero.id, episode_number=1, status=EpisodeStatus.COMPLETED))
+        session.add(Episode(
+            monitored_id=rezero.id,
+            episode_number=16,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=feed.id,
+            release_title="[Erai-raws] Re:Zero kara Hajimeru Isekai Seikatsu 4th Season - 16 (1080p).mkv",
+        ))
+        session.add(Episode(
+            monitored_id=rezero.id,
+            episode_number=17,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=feed.id,
+            release_title="[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 83 (1080p).mkv",
+        ))
+        session.add(Episode(
+            monitored_id=rezero.id,
+            episode_number=18,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=feed.id,
+            release_title="[SubsPlease] Re Zero kara Hajimeru Isekai Seikatsu - 84 (1080p).mkv",
+        ))
+        session.add(Episode(monitored_id=false_completed.id, episode_number=1, status=EpisodeStatus.WANTED))
+        session.commit()
+        session.exec(text("PRAGMA user_version = 0"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        mapping = session.exec(
+            select(EpisodeNumberMapping).where(
+                EpisodeNumberMapping.monitored_id == 1,
+                EpisodeNumberMapping.feed_id == 1,
+            )
+        ).first()
+        inferred_gap = session.exec(
+            select(Episode).where(Episode.monitored_id == 1, Episode.episode_number == 1)
+        ).first()
+        rezero = session.get(Monitored, 1)
+        preserved = session.get(Monitored, 2)
+        # Migration must not invent a mapping; numbering is resolved on first use.
+        assert mapping is None
+        assert inferred_gap.status == EpisodeStatus.WANTED
+        assert rezero.last_confirmed_episode == 18
+        assert preserved.status == MonitoredStatus.COMPLETED
+        assert preserved.last_confirmed_episode == 10
+        assert session.exec(text("PRAGMA user_version")).one()[0] == 1
+    assert list(tmp_path.glob("anime.db.*.bak"))
+    engine.dispose()
+
+
+def test_init_db_keeps_manual_feed_pin_from_main(tmp_path):
+    """A feed pinned before the direct engine existed must survive migration."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        session.add(feed)
+        session.add(Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            feed_pinned=True,
+        ))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        show = session.get(Monitored, 1)
+        assert show.feed_pinned is True
+        assert show.current_feed_id == 1
+    engine.dispose()
+
+
+def test_init_db_migrates_the_legacy_pinned_feed_id_column(tmp_path):
+    """An early direct-download build's pin must not be silently dropped."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.exec(text("ALTER TABLE monitored ADD COLUMN pinned_feed_id INTEGER"))
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        session.add(feed)
+        session.flush()
+        session.add(Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+        ))
+        session.commit()
+        # The legacy column is not part of the model, so it is written directly.
+        session.connection().execute(
+            text("UPDATE monitored SET pinned_feed_id = :fid WHERE id = 1"),
+            {"fid": feed.id},
+        )
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        show = session.get(Monitored, 1)
+        assert show.feed_pinned is True
+        assert show.current_feed_id == 1
+    engine.dispose()
+
+
+def test_supervision_lease_allows_only_one_owner():
+    engine = create_engine("sqlite:///:memory:", poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    assert acquire_supervision_lease(engine, "owner-a") is True
+    assert acquire_supervision_lease(engine, "owner-b") is False
+    release_supervision_lease(engine, "owner-a")
+    assert acquire_supervision_lease(engine, "owner-b") is True
+    release_supervision_lease(engine, "owner-b")
+    engine.dispose()
+
+
+def test_init_db_adds_rules_default_to_legacy_settings(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'legacy.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""
+            CREATE TABLE settings (
+                id INTEGER PRIMARY KEY,
+                qbit_host VARCHAR,
+                qbit_username VARCHAR,
+                qbit_password VARCHAR,
+                base_dir VARCHAR,
+                default_category VARCHAR,
+                default_seed_ratio FLOAT,
+                anilist_username VARCHAR,
+                refresh_interval_minutes INTEGER,
+                stall_wait_hours INTEGER,
+                title_language VARCHAR
+            )
+        """)
+        connection.exec_driver_sql("INSERT INTO settings (id, title_language) VALUES (1, 'english')")
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        settings = session.exec(select(Settings)).first()
+        # An existing install must not silently switch download engines.
+        assert settings.download_mode == "rules"
+        assert settings.backfill_window_days == 14
+    engine.dispose()
+
+
+def test_settings_switch_to_direct_verifies_rule_ownership(client, session, monkeypatch):
+    supervisor = MagicMock()
+    supervisor.prepare_download_mode.return_value = ["Disabled managed RSS rules."]
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock())
+
+    response = client.post("/api/settings", json={"download_mode": "direct"})
+
+    assert response.status_code == 200
+    assert response.json()["download_mode"] == "direct"
+    supervisor.prepare_download_mode.assert_called_once_with("direct")
+    session.expire_all()
+    assert session.exec(select(Settings)).first().download_mode == "direct"
+
+
+def test_settings_switch_failure_keeps_rules_mode(client, session, monkeypatch):
+    supervisor = MagicMock()
+    supervisor.prepare_download_mode.side_effect = RuntimeError("rule still active")
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock())
+
+    response = client.post("/api/settings", json={"download_mode": "direct"})
+
+    assert response.status_code == 409
+    session.expire_all()
+    assert session.exec(select(Settings)).first().download_mode == "rules"
+
+
+def test_settings_rejects_unknown_download_mode(client):
+    assert client.post("/api/settings", json={"download_mode": "yolo"}).status_code == 400
+
+
+def test_settings_rejects_out_of_range_backfill_window(client):
+    assert client.post("/api/settings", json={"backfill_window_days": -1}).status_code == 400
+    assert client.post("/api/settings", json={"backfill_window_days": 400}).status_code == 400
+    assert client.post("/api/settings", json={"backfill_window_days": 0}).status_code == 200
+
+
+def test_manual_cycle_rejects_overlapping_supervision(client, monkeypatch):
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    assert app_module.state.try_begin_cycle("test-owner")
+
+    try:
+        response = client.post("/api/cycle/run")
+    finally:
+        app_module.state.end_cycle("test-owner")
+
+    assert response.status_code == 409
+    supervisor.run_full_cycle.assert_not_awaited()
+    assert app_module.state.is_running_cycle is False
+
+
+def test_edit_show_sets_manual_episode_offset(client, session):
+    feed = Feed(id=8, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4080,
+        display_name="Re:ZERO Season 4",
+        aliases_json='["Re:ZERO Season 4"]',
+        status=MonitoredStatus.FIXED,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    response = client.post(f"/api/shows/{show.id}/edit", json={
+        "current_feed_id": feed.id,
+        "episode_offset": 66,
+    })
+
+    assert response.status_code == 200
+    session.expire_all()
+    mapping = session.exec(
+        select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)
+    ).first()
+    assert mapping.offset == 66
+    # Stored by name, matching how the column is persisted.
+    assert mapping.source == "MANUAL"
+
+
+def test_direct_rule_details_do_not_create_qbit_rules(client, session, mock_qbit):
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    feed = Feed(id=3, qbit_feed_name="Direct Feed", qbit_feed_url="https://direct.example/rss", priority=1)
+    show = Monitored(
+        anilist_id=4100,
+        display_name="Direct Show",
+        aliases_json='["Direct Show"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        current_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    mock_qbit.get_rss_items.return_value = {
+        "Direct Feed": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "1", "title": "[Group] Direct Show - 01 [1080p].mkv"}],
+        }
+    }
+
+    response = client.get(f"/api/shows/{show.id}/rule")
+
+    assert response.status_code == 200
+    assert response.json()["download_mode"] == "direct"
+    mock_qbit.set_rss_rule.assert_not_called()
+
+
+def test_get_direct_episode_records(client, session):
+    show = Monitored(
+        anilist_id=4200,
+        display_name="Episode Show",
+        aliases_json='["Episode Show"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=2,
+    )
+    session.add(show)
+    session.flush()
+    session.add(Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.COMPLETED))
+    session.add(Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.WANTED))
+    session.commit()
+
+    response = client.get(f"/api/shows/{show.id}/episodes")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [episode["episode_number"] for episode in payload] == [1, 2]
+    assert [episode["status"] for episode in payload] == ["completed", "wanted"]
+
+
+def test_shows_report_direct_engine_counters(client, session):
+    feed = Feed(id=9, qbit_feed_name="Counter", qbit_feed_url="https://counter.example/rss", priority=1)
+    show = Monitored(
+        anilist_id=4300,
+        display_name="Counter Show",
+        aliases_json='["Counter Show"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=9,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.flush()
+    session.add(Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.COMPLETED, version=2))
+    session.add(Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.WANTED))
+    session.add(Episode(monitored_id=show.id, episode_number=3, status=EpisodeStatus.FAILED))
+    session.commit()
+
+    payload = client.get("/api/shows").json()
+    entry = next(item for item in payload if item["anilist_id"] == 4300)
+
+    assert entry["downloaded_episodes_count"] == 1
+    assert entry["wanted_episodes_count"] == 1
+    assert entry["failed_episodes_count"] == 1
+    assert entry["v2_episodes_count"] == 1
+
+
+def test_sync_anilist_stands_rules_down_before_grabbing(client, session, monkeypatch):
+    """The grabber must never run while managed rules are still active."""
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    settings.anilist_username = "TestUser"
+    session.commit()
+
+    supervisor = MagicMock()
+    supervisor.prepare_download_mode.return_value = ["Disabled managed RSS rule."]
+    supervisor.sync_feeds.return_value = []
+    supervisor.anilist_sync_succeeded = True
+    supervisor.sync_anilist_schedule = AsyncMock(return_value=[])
+    supervisor.bootstrap_unassigned_shows.return_value = []
+    supervisor.reconcile_schedule_rollover.return_value = []
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock())
+    monkeypatch.setattr("qbit_seasonal_anime.core.grabber.evaluate_and_grab_releases", MagicMock(return_value=[]))
+
+    response = client.post("/api/settings/sync-anilist")
+
+    assert response.status_code == 200
+    supervisor.prepare_download_mode.assert_called_once_with("direct")
+    # The preflight has to happen before anything can add a torrent.
+    order = [c[0] for c in supervisor.method_calls]
+    assert order.index("prepare_download_mode") < order.index("bootstrap_unassigned_shows")
+
+
+def test_sync_anilist_aborts_when_rules_cannot_be_stood_down(client, session, monkeypatch):
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    settings.anilist_username = "TestUser"
+    session.commit()
+
+    supervisor = MagicMock()
+    supervisor.prepare_download_mode.side_effect = QbitClientError("managed RSS rules remain active")
+    supervisor.sync_feeds.return_value = []
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock())
+    grab = MagicMock(return_value=[])
+    monkeypatch.setattr("qbit_seasonal_anime.core.grabber.evaluate_and_grab_releases", grab)
+
+    response = client.post("/api/settings/sync-anilist")
+
+    assert response.status_code == 409
+    grab.assert_not_called()
+
+
+def test_pause_in_observe_mode_does_not_enable_rules():
+    app = create_app()
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, download_mode="observe", default_category="Anime", base_dir="/tmp/Anime"))
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        session.add(feed)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            qbit_rule_name="[Seasonal] Sousou no Frieren",
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_rules.return_value = {"[Seasonal] Sousou no Frieren": {"enabled": False}}
+        app.dependency_overrides[get_db] = lambda: session
+        app.dependency_overrides[get_qbit] = lambda: qbit
+        try:
+            client = TestClient(app)
+            paused = client.post("/api/shows/1/pause")
+            assert paused.status_code == 200
+            assert session.get(Monitored, 1).status == MonitoredStatus.PAUSED
+            qbit.set_rss_rule.assert_not_called()
+            resumed = client.post("/api/shows/1/pause")
+            assert resumed.status_code == 200
+            assert session.get(Monitored, 1).status == MonitoredStatus.FIXED
+            qbit.set_rss_rule.assert_not_called()
+        finally:
+            app.dependency_overrides.clear()
+    engine.dispose()
+
+
+def test_delete_show_reports_a_rule_that_cannot_be_deleted(client, session, mock_qbit):
+    show = Monitored(
+        anilist_id=4400,
+        display_name="Stubborn Show",
+        aliases_json='["Stubborn Show"]',
+        status=MonitoredStatus.FIXED,
+        qbit_rule_name="[Seasonal] Stubborn Show",
+    )
+    session.add(show)
+    session.commit()
+    # The real client wraps any failure as QbitClientError.
+    mock_qbit.remove_rss_rule.side_effect = QbitClientError("qBittorrent said no")
+
+    response = client.delete(f"/api/shows/{show.id}")
+
+    assert response.status_code == 409
+    session.expire_all()
+    # The show must survive, or its rule would be left downloading it.
+    assert session.get(Monitored, show.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_background_supervisor_forces_rss_refresh_only_on_first_healthy_cycle(monkeypatch):
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.commit()
+
+    qbit = MagicMock()
+    qbit.test_connection.return_value = {"app_version": "test", "api_version": "test"}
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    monkeypatch.setattr(app_module, "get_engine", lambda: engine)
+    monkeypatch.setattr(app_module, "QBitClient", MagicMock(return_value=qbit))
+    monkeypatch.setattr(app_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(app_module, "calculate_next_poll_interval", MagicMock(return_value=(60, "normal")))
+
+    wait_calls = 0
+
+    async def stop_after_second_cycle(awaitable, *args, **kwargs):
+        nonlocal wait_calls
+        awaitable.close()
+        wait_calls += 1
+        if wait_calls == 2:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_module.asyncio, "wait_for", stop_after_second_cycle)
+    await app_module.background_supervisor_task()
+
+    # Only the first pass needs a forced refresh; the cache is then reused, and
+    # paying for a refresh on every pass would slow the fast cadence down.
+    assert [c.kwargs["force_rss_refresh"] for c in supervisor.run_full_cycle.await_args_list] == [
+        True,
+        False,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_background_supervisor_retries_failed_startup_rss_refresh(monkeypatch):
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.commit()
+
+    qbit = MagicMock()
+    qbit.test_connection.return_value = {"app_version": "test", "api_version": "test"}
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(side_effect=QbitRSSRefreshError("feed unavailable"))
+    app_module.state.last_cycle_time = None
+    monkeypatch.setattr(app_module, "get_engine", lambda: engine)
+    monkeypatch.setattr(app_module, "QBitClient", MagicMock(return_value=qbit))
+    monkeypatch.setattr(app_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(app_module, "QBIT_RETRY_DELAYS", (0,))
+
+    async def cancel_after_first_cycle(awaitable, *args, **kwargs):
+        awaitable.close()
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_module.asyncio, "wait_for", cancel_after_first_cycle)
+    await app_module.background_supervisor_task()
+
+    # A feed that would not settle is not a lost connection: the next pass has
+    # to force a refresh again rather than trust the stale snapshot.
+    assert supervisor.run_full_cycle.await_args.kwargs["force_rss_refresh"] is True
+    assert "RSS refresh failed" in app_module.state.next_check_reason
+    assert app_module.state.last_cycle_time is None
+
+
+@pytest.mark.asyncio
+async def test_background_supervisor_reports_no_rules_without_warning(monkeypatch):
+    """No RSS rules yet is a normal pre-bootstrap state, not an error."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, qbit_host="http://qbit:8080"))
+        session.commit()
+
+    qbit = MagicMock()
+    qbit.get_rule_match_markers.return_value = {}
+    # state.logs is shared process-wide, so only entries this run adds count.
+    already_logged = len(app_module.state.logs)
+
+    async def cancel_wait():
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_module, "get_engine", lambda: engine)
+    monkeypatch.setattr(app_module, "QBitClient", MagicMock(return_value=qbit))
+    monkeypatch.setattr(app_module, "_wait_for_log_wakeup", cancel_wait)
+    with pytest.raises(asyncio.CancelledError):
+        await app_module.qbit_rule_observer_task()
+
+    qbit.fetch_log_entries.assert_not_called()
+    new_entries = list(app_module.state.logs)[already_logged:]
+    assert not any("Rule check skipped" in entry["message"] for entry in new_entries)
+
+
+@pytest.mark.asyncio
+async def test_rule_observer_is_idle_outside_rules_mode(monkeypatch):
+    """Direct mode owns its downloads, so there is no rule log to watch."""
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.commit()
+
+    qbit = MagicMock()
+
+    async def cancel_wait():
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(app_module, "get_engine", lambda: engine)
+    monkeypatch.setattr(app_module, "QBitClient", MagicMock(return_value=qbit))
+    monkeypatch.setattr(app_module, "_wait_for_log_wakeup", cancel_wait)
+    with pytest.raises(asyncio.CancelledError):
+        await app_module.qbit_rule_observer_task()
+
+    qbit.get_rule_match_markers.assert_not_called()
+
+
+
+def test_early_air_tolerance_setting_round_trips(client, session):
+    res = client.get("/api/settings")
+    assert res.status_code == 200
+    assert res.json()["early_air_tolerance_hours"] == 6
+
+    res = client.post("/api/settings", json={"early_air_tolerance_hours": 12})
+    assert res.status_code == 200
+    session.expire_all()
+    assert session.exec(select(Settings)).first().early_air_tolerance_hours == 12
+
+    res = client.get("/api/settings")
+    assert res.json()["early_air_tolerance_hours"] == 12
+
+
+def test_early_air_tolerance_rejects_nonsense(client):
+    assert client.post("/api/settings", json={"early_air_tolerance_hours": -1}).status_code == 400
+    assert client.post("/api/settings", json={"early_air_tolerance_hours": 500}).status_code == 400
+    assert client.post("/api/settings", json={"early_air_tolerance_hours": 0}).status_code == 200
+
+
+def test_init_db_adds_the_early_air_tolerance_column_to_a_legacy_settings_table(tmp_path):
+    engine = create_engine(
+        f"sqlite:///{tmp_path / 'legacy.db'}",
+        connect_args={"check_same_thread": False},
+    )
+    with engine.begin() as connection:
+        connection.exec_driver_sql("""
+            CREATE TABLE settings (
+                id INTEGER PRIMARY KEY,
+                qbit_host VARCHAR,
+                qbit_username VARCHAR,
+                qbit_password VARCHAR,
+                base_dir VARCHAR,
+                default_category VARCHAR,
+                default_seed_ratio FLOAT,
+                anilist_username VARCHAR,
+                refresh_interval_minutes INTEGER,
+                stall_wait_hours INTEGER,
+                title_language VARCHAR
+            )
+        """)
+        connection.exec_driver_sql("INSERT INTO settings (id, title_language) VALUES (1, 'english')")
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        settings = session.exec(select(Settings)).first()
+        assert settings.download_mode == "rules"
+        assert settings.backfill_window_days == 14
+        assert settings.early_air_tolerance_hours == 6
+    engine.dispose()

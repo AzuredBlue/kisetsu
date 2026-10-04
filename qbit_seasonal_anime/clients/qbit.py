@@ -23,6 +23,11 @@ class QbitAuthenticationError(QbitClientError):
     pass
 
 
+class QbitRSSRefreshError(QbitClientError):
+    """A forced RSS feed refresh did not produce usable articles."""
+    pass
+
+
 def _is_auth_failure(exc: BaseException) -> bool:
     """
     Distinguish "your password is wrong" from "qBittorrent is not there".
@@ -77,7 +82,6 @@ class QBitClient:
                 last_err = e
                 self._client = None
                 if _is_auth_failure(e):
-                    # A rejected password will not fix itself, so do not retry it.
                     raise QbitAuthenticationError(f"qBittorrent login failed: {e}") from e
                 if attempt < attempts - 1:
                     sleep_time = min(backoff_factor * (2 ** attempt), 15.0)
@@ -109,8 +113,6 @@ class QBitClient:
             api_version = client.app.web_api_version
             return {"app_version": app_version, "api_version": api_version}
         except QbitClientError:
-            # Preserve the subtype so callers can tell a bad password from an
-            # unreachable qBittorrent and back off accordingly.
             self._client = None
             raise
         except Exception as e:
@@ -122,10 +124,14 @@ class QBitClient:
         try:
             client = self.get_client()
             return client.rss_items(include_feed_data=with_data)
+        except QbitClientError:
+            self._client = None
+            logger.warning("Error fetching RSS items")
+            raise
         except Exception as e:
             self._client = None
             logger.warning(f"Error fetching RSS items: {e}")
-            raise QbitClientError(f"Failed to fetch RSS items: {e}") from e
+            raise QbitConnectionError(f"Failed to fetch RSS items: {e}") from e
 
     def get_rss_refresh_interval_seconds(self) -> int:
         """
@@ -159,6 +165,32 @@ class QBitClient:
 
         extract_feeds(items)
         return feeds
+
+    def get_rss_feed_paths(self) -> Dict[str, str]:
+        """Map each feed URL to the ``\\``-separated item path qBittorrent expects."""
+        items = self.get_rss_items(with_data=False)
+        paths: Dict[str, str] = {}
+
+        def extract(tree: Dict[str, Any], prefix: str = ""):
+            for key, value in tree.items():
+                if not isinstance(value, dict):
+                    continue
+                current = f"{prefix}\\{key}" if prefix else key
+                if "url" in value:
+                    paths[value["url"]] = current
+                else:
+                    extract(value, current)
+
+        extract(items)
+        return paths
+
+    def mark_rss_article_read(self, item_path: str, article_id: str) -> None:
+        """Mark a single cached article as read so qBittorrent will not grab it."""
+        client = self.get_client()
+        try:
+            client.rss_mark_as_read(item_path=item_path, article_id=article_id)
+        except Exception as e:
+            raise QbitClientError(f"Failed to mark RSS article read: {e}") from e
 
     def get_rss_rules(self) -> Dict[str, Any]:
         """Fetch all RSS auto-downloading rules."""
@@ -246,37 +278,54 @@ class QBitClient:
 
     def add_torrent(
         self,
-        url: str,
+        urls: Any,
         save_path: str = "",
         category: str = "",
-        ratio_limit: Optional[float] = None,
+        tags: Optional[Any] = None,
         is_paused: bool = False,
-    ) -> None:
-        """Add a torrent by URL to an explicit path, the way an RSS rule's savePath behaves."""
+        ratio_limit: Optional[float] = None,
+        share_limit_action: Optional[str] = "Stop",
+    ) -> bool:
+        """Add a torrent by URL to an explicit path, the way an RSS rule's savePath behaves.
+
+        ``urls`` accepts a single URL or a list of them. ``ratio_limit`` of 0
+        means "seed forever"; ``None`` leaves qBittorrent's own limit untouched.
+        ``share_limit_action`` is what qBittorrent does once that limit is met.
+        """
         try:
             client = self.get_client()
-            client.torrents_add(
-                urls=url,
-                save_path=save_path or None,
-                category=category or None,
-                ratio_limit=ratio_limit,
-                is_paused=is_paused,
-                use_auto_torrent_management=False,
-            )
-            logger.info(f"Successfully added torrent '{url}'")
+            kwargs: Dict[str, Any] = {
+                "urls": urls,
+                "save_path": save_path or None,
+                "category": category or None,
+                "is_paused": is_paused,
+                "ratio_limit": ratio_limit,
+                "use_auto_torrent_management": False,
+            }
+            if tags:
+                kwargs["tags"] = tags if isinstance(tags, str) else ",".join(str(tag) for tag in tags)
+            if share_limit_action:
+                kwargs["share_limit_action"] = share_limit_action
+            result = client.torrents_add(**kwargs)
+            if result is not None and "fail" in str(result).strip().lower():
+                raise QbitClientError(f"qBittorrent rejected torrent {urls}: {result}")
+            logger.info(f"Successfully added torrent '{urls}'")
+            return True
         except qbittorrentapi.Conflict409Error:
-            logger.debug(f"Torrent '{url}' is already added")
+            logger.debug(f"Torrent '{urls}' is already added")
             raise
         except QbitClientError:
             self._client = None
             raise
         except Exception as e:
             self._client = None
+            # A dropped socket fails every remaining call identically, so confirm
+            # whether qBittorrent is still reachable before blaming this torrent.
             try:
                 self.get_client()
             except QbitClientError as unreachable:
                 raise unreachable from e
-            raise QbitClientError(f"Failed to add torrent '{url}': {e}") from e
+            raise QbitClientError(f"Failed to add torrent '{urls}': {e}") from e
 
     def remove_rss_rule(self, rule_name: str) -> None:
         """Delete an RSS auto-downloading rule."""
@@ -296,13 +345,75 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to get torrents for category '{category}': {e}") from e
 
-    def get_torrents(self) -> List[Any]:
-        """Fetch every torrent in qBittorrent."""
+    def get_torrents(
+        self,
+        hashes: Optional[List[str]] = None,
+        category: Optional[str] = None,
+        tag: Optional[str] = None,
+    ) -> List[Any]:
+        """Fetch torrents, optionally narrowed by hash list, category and/or tag."""
         client = self.get_client()
         try:
-            return list(client.torrents_info())
+            kwargs: Dict[str, Any] = {}
+            if hashes:
+                kwargs["torrent_hashes"] = hashes
+            if category:
+                kwargs["category"] = category
+            if tag:
+                kwargs["tag"] = tag
+            return list(client.torrents_info(**kwargs))
         except Exception as e:
             raise QbitClientError(f"Failed to get torrents: {e}") from e
+
+    def delete_torrents(self, torrent_hashes: List[str], delete_files: bool = True) -> None:
+        if not torrent_hashes:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_delete(delete_files=delete_files, torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to delete torrents: {e}") from e
+
+    def pause_torrents(self, torrent_hashes: List[str]) -> None:
+        if not torrent_hashes:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_pause(torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to pause torrents: {e}") from e
+
+    def stop_torrents(self, torrent_hashes: List[str]) -> None:
+        """Stop torrents for good.
+
+        Unlike pause, qBittorrent does not resume a stopped torrent when it
+        restarts, which is what a superseded release needs.
+        """
+        if not torrent_hashes:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_stop(torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to stop torrents: {e}") from e
+
+    def resume_torrents(self, torrent_hashes: List[str]) -> None:
+        if not torrent_hashes:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_resume(torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to resume torrents: {e}") from e
+
+    def recheck_torrents(self, torrent_hashes: List[str]) -> None:
+        if not torrent_hashes:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_recheck(torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to recheck torrents: {e}") from e
 
     def find_log_acceptances(
         self,
@@ -349,14 +460,24 @@ class QBitClient:
             logger.debug(f"Could not fetch matching articles for {rule_name}: {e}")
             return {}
 
-    def refresh_rss_feeds(self, feed_name: str = "") -> None:
-        """Trigger an immediate background refresh of all RSS feeds (or a specific feed) in qBittorrent."""
-        client = self.get_client()
+    def refresh_rss_feeds(self, feed_name: str = "") -> bool:
+        """Trigger an immediate background refresh of all RSS feeds (or a specific feed) in qBittorrent.
+
+        Returns whether qBittorrent accepted the request, so a caller that needs
+        fresh articles can tell a refusal from an accepted-but-empty refresh.
+        """
         try:
+            client = self.get_client()
             client.rss_refresh_item(item_path=feed_name)
             logger.debug("Triggered immediate RSS feeds refresh in qBittorrent.")
+            return True
+        except QbitClientError:
+            self._client = None
+            raise
         except Exception as e:
+            self._client = None
             logger.debug(f"Could not trigger RSS refresh in qBittorrent: {e}")
+            return False
 
     def get_rule_match_times(
         self,

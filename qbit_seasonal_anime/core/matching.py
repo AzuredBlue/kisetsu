@@ -85,6 +85,24 @@ def extract_release_group_tag(raw_title: str) -> Optional[str]:
     return None
 
 
+def extract_release_version(raw_title: str) -> int:
+    if not raw_title:
+        return 1
+    match = re.search(
+        r"(?:E\d+|\b\d+)v(\d+)\b|[\[(]v(\d+)[\])]|\b(?:v|ver\.?|version)\s*(\d+)\b",
+        raw_title,
+        re.IGNORECASE,
+    )
+    if match:
+        value = match.group(1) or match.group(2) or match.group(3)
+        if value and value.isdigit():
+            return int(value)
+    if re.search(r"\bREPACK\d*\b|\bPROPER\d*\b", raw_title, re.IGNORECASE):
+        repack = re.search(r"\bREPACK(\d+)\b", raw_title, re.IGNORECASE)
+        return 1 + int(repack.group(1)) if repack else 2
+    return 1
+
+
 def parse_release_title(raw_title: str) -> Dict[str, Any]:
     """Parse torrent release filename/title into structured metadata."""
     if not raw_title:
@@ -94,8 +112,10 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
             "episode": None,
             "season": None,
             "release_group": None,
+            "version": 1,
         }
 
+    version = extract_release_version(raw_title)
     release_group = extract_release_group_tag(raw_title)
     cleaned = raw_title.strip()
 
@@ -188,6 +208,7 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
             "episode": episode_num,
             "season": season_num,
             "release_group": release_group,
+            "version": version,
         }
 
     try:
@@ -233,6 +254,7 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
         "episode": episode_num or g_episode,
         "season": season_num or (int(g_season) if str(g_season).isdigit() else None),
         "release_group": release_group or guess.get("release_group"),
+        "version": version,
     }
 
 
@@ -295,6 +317,62 @@ def is_valid_release(raw_title: str) -> bool:
     return True
 
 
+def extract_arc_qualifiers(text: str) -> Optional[str]:
+    """Normalize arc/cours/part markers so split seasons stay distinguishable.
+
+    Returns a canonical token such as ``stage1``, ``stage2``, ``part7`` or
+    ``season4``, or ``None`` when the text carries no arc marker at all.
+    """
+    if not text:
+        return None
+    lowered = text.lower()
+    stage = re.search(r"(\d+)\s*(?:st|nd|rd|th)?\s*(?:-\s*\d+\s*(?:st|nd|rd|th)?\s*)?stage", lowered)
+    if stage:
+        numbers = re.findall(r"\d+", stage.group(0))
+        if numbers:
+            return "stage" + "-".join(numbers)
+    part = re.search(r"part\s*(\d+)", lowered)
+    if part:
+        return f"part{part.group(1)}"
+    season = re.search(r"season\s*(\d+)", lowered)
+    if season:
+        return f"season{season.group(1)}"
+    return None
+
+
+def _alias_arc_requirement(aliases: List[str]) -> Optional[str]:
+    """The arc marker a show's aliases insist on, if any.
+
+    Only cours/stage and part markers are enforced: release groups routinely
+    omit a plain "Season N" marker, but a JoJo-style cour split is exactly the
+    case where a bare title is ambiguous between arcs.
+    """
+    for alias in aliases:
+        qualifier = extract_arc_qualifiers(alias)
+        if qualifier and (qualifier.startswith("stage") or qualifier.startswith("part")):
+            return qualifier
+    return None
+
+
+def _arc_is_compatible(show_requirement: str, title_qualifier: Optional[str]) -> bool:
+    if title_qualifier is None:
+        return False
+    if show_requirement == title_qualifier:
+        return True
+    # "stage2-3" accepts a title that names either half of that cour pair.
+    if show_requirement.startswith("stage") and title_qualifier.startswith("stage"):
+        return set(show_requirement[5:].split("-")) & set(title_qualifier[5:].split("-")) != set()
+    return False
+
+
+def arc_marker_missing(aliases: List[str], raw_title: str) -> bool:
+    """True when a show is split into arcs and the title does not name one."""
+    requirement = _alias_arc_requirement(aliases)
+    if not requirement:
+        return False
+    return not _arc_is_compatible(requirement, extract_arc_qualifiers(raw_title))
+
+
 def match_release_to_show(
     raw_title: str,
     aliases: List[str],
@@ -302,11 +380,18 @@ def match_release_to_show(
     test_pattern: Optional[str] = None,
     prepared_aliases: Optional[List[Tuple[str, str]]] = None,
     parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    ignore_arc_marker: bool = True,
 ) -> Tuple[bool, float, Dict[str, Any]]:
     """
     Evaluate if an RSS item or torrent matches an anime show.
     Rejects batches and lower resolutions, then matches against the show's testing regex or aliases.
     Returns (is_match, score, parsed_metadata).
+
+    ``ignore_arc_marker`` defaults to ``True`` so that callers which merely
+    interpret an already-downloaded release (RSS rule mode) keep the historical
+    fuzzy behaviour. The direct download engine passes ``False`` because it
+    *chooses* which torrents to spend bandwidth on and must not claim a release
+    belonging to a different cour of the same arc.
     """
     if parsed_cache is not None and raw_title in parsed_cache:
         parsed = dict(parsed_cache[raw_title])
@@ -315,6 +400,13 @@ def match_release_to_show(
         if parsed_cache is not None:
             parsed_cache[raw_title] = dict(parsed)
     if not is_valid_release(raw_title):
+        return False, 0.0, parsed
+
+    requirement = _alias_arc_requirement(aliases)
+    if requirement and not ignore_arc_marker and not _arc_is_compatible(requirement, extract_arc_qualifiers(raw_title)):
+        logger.info(
+            f"Rejected '{raw_title}': show requires arc marker '{requirement}'."
+        )
         return False, 0.0, parsed
 
     if test_pattern is None:

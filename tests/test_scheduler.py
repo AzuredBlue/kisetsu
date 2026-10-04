@@ -1,7 +1,16 @@
 import unittest
-from datetime import timedelta
-from sqlmodel import Session, SQLModel, create_engine
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, utc_now
+from datetime import datetime, timedelta, timezone
+from sqlmodel import Session, SQLModel, create_engine, select
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeStatus,
+    Feed,
+    Monitored,
+    MonitoredStatus,
+    TorrentOperation,
+    TorrentOperationStatus,
+    utc_now,
+)
 from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval, is_hunting
 
 
@@ -248,3 +257,345 @@ class TestIsHunting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDirectScheduler(unittest.TestCase):
+    """Cadence for the direct engines, where the app owns the downloads.
+
+    A FIXED show means "the rule works" in rules mode, but in direct mode it
+    only means "a release was matched", so the episode ledger decides whether
+    another pass is needed.
+    """
+
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        SQLModel.metadata.create_all(self.engine)
+        self.session = Session(self.engine)
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss/?r=1080", priority=1)
+        self.session.add(feed)
+        self.session.commit()
+
+    def tearDown(self):
+        self.session.close()
+    def test_direct_mode_uses_direct_ownership_message(self):
+        show = Monitored(
+            id=7,
+            anilist_id=707,
+            display_name="Direct Anime",
+            aliases_json='["Direct Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            next_airing_episode=6,
+            next_airing_at=utc_now() + timedelta(minutes=30),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            download_mode="direct",
+        )
+
+        self.assertAlmostEqual(duration, 1800, delta=10)
+        self.assertIn("Upcoming premiere", reason)
+        self.assertNotIn("working rules", reason)
+
+    def test_direct_fixed_show_hunts_for_post_rollover_wanted_episode(self):
+        show = Monitored(
+            id=71,
+            anilist_id=710,
+            display_name="Link Click Season 3",
+            aliases_json='["Link Click Season 3"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            last_confirmed_episode=7,
+            next_airing_episode=9,
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(monitored_id=show.id, episode_number=8, status=EpisodeStatus.WANTED))
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            hunting_interval_seconds=300,
+            download_mode="direct",
+        )
+
+        self.assertEqual(duration, 300)
+        self.assertIn("Direct hunting", reason)
+        self.assertIn("Link Click Season 3", reason)
+
+    def test_direct_fixed_show_uses_backlog_cadence_outside_window(self):
+        now = utc_now()
+        show = Monitored(
+            id=76,
+            anilist_id=760,
+            display_name="Old Gap Anime",
+            aliases_json='["Old Gap Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            next_airing_episode=9,
+            next_airing_at=now + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(
+            monitored_id=show.id,
+            episode_number=8,
+            status=EpisodeStatus.WANTED,
+            air_at=now - timedelta(days=30),
+        ))
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            hunting_interval_seconds=300,
+            download_mode="direct",
+            backfill_window_days=14,
+        )
+
+        self.assertEqual(duration, 21600)
+        self.assertIn("Direct backlog", reason)
+
+    def test_direct_fixed_show_retains_old_canonical_episode_gap(self):
+        show = Monitored(
+            id=74,
+            anilist_id=740,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO Season 4"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            last_confirmed_episode=18,
+            next_airing_episode=19,
+            next_airing_at=utc_now() + timedelta(days=5),
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(monitored_id=show.id, episode_number=12, status=EpisodeStatus.WANTED))
+        self.session.add(Episode(monitored_id=show.id, episode_number=18, status=EpisodeStatus.COMPLETED))
+        self.session.add(Episode(monitored_id=show.id, episode_number=19, status=EpisodeStatus.WANTED))
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            download_mode="direct",
+        )
+
+        self.assertEqual(duration, 21600)
+        self.assertIn("Direct backlog", reason)
+
+    def test_direct_fixed_show_ignores_future_wanted_episode(self):
+        from unittest.mock import MagicMock
+
+        show = Monitored(
+            id=72,
+            anilist_id=720,
+            display_name="Caught Up Anime",
+            aliases_json='["Caught Up Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            last_confirmed_episode=8,
+            next_airing_episode=9,
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(monitored_id=show.id, episode_number=8, status=EpisodeStatus.COMPLETED))
+        self.session.add(Episode(monitored_id=show.id, episode_number=9, status=EpisodeStatus.WANTED))
+        self.session.commit()
+        mock_qbit = MagicMock()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            qbit_client=mock_qbit,
+            download_mode="direct",
+        )
+
+        self.assertEqual(duration, 21600)
+        self.assertIn("direct ownership", reason)
+        mock_qbit.get_rss_refresh_interval_seconds.assert_not_called()
+
+    def test_rules_fixed_show_ignores_direct_episode_backlog(self):
+        from unittest.mock import MagicMock
+
+        show = Monitored(
+            id=73,
+            anilist_id=730,
+            display_name="Rules Anime",
+            aliases_json='["Rules Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            last_confirmed_episode=7,
+            next_airing_episode=9,
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.flush()
+        self.session.add(Episode(monitored_id=show.id, episode_number=8, status=EpisodeStatus.WANTED))
+        self.session.commit()
+        mock_qbit = MagicMock()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            qbit_client=mock_qbit,
+            download_mode="rules",
+        )
+
+        self.assertEqual(duration, 21600)
+        self.assertIn("working rules", reason)
+        mock_qbit.get_rss_refresh_interval_seconds.assert_not_called()
+
+    def test_direct_pending_operation_forces_fast_recovery_poll(self):
+        show = Monitored(
+            id=75,
+            anilist_id=750,
+            display_name="Pending Operation Anime",
+            aliases_json='["Pending Operation Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            next_airing_episode=7,
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.flush()
+        episode = Episode(
+            monitored_id=show.id,
+            episode_number=6,
+            status=EpisodeStatus.QUEUED,
+        )
+        self.session.add(episode)
+        self.session.flush()
+        self.session.add(TorrentOperation(
+            episode_id=episode.id,
+            kind="grab",
+            status=TorrentOperationStatus.PREPARING,
+            operation_tag="qsa-op-pending",
+            release_title="Pending Release",
+            version=1,
+            new_torrent_url="magnet:pending",
+        ))
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            hunting_interval_seconds=300,
+            download_mode="direct",
+        )
+
+        self.assertEqual(duration, 300)
+        self.assertIn("Direct hunting", reason)
+        self.assertIn("Pending Operation Anime", reason)
+
+    def test_observe_mode_uses_observation_message(self):
+        show = Monitored(
+            id=8,
+            anilist_id=808,
+            display_name="Observed Anime",
+            aliases_json='["Observed Anime"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            next_airing_episode=6,
+            next_airing_at=utc_now() + timedelta(minutes=30),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        duration, reason = calculate_next_poll_interval(
+            self.session,
+            default_interval_seconds=21600,
+            download_mode="observe",
+        )
+
+        self.assertEqual(duration, 21600)
+        self.assertIn("are observed", reason)
+        self.assertNotIn("working rules", reason)
+
+
+AIR = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
+REAL_AIR = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)
+
+
+def _scheduled_show(session, air_at=AIR, wanted_episode=9, done_through=8):
+    """A FIXED direct show whose next episode has a known air time."""
+    show = Monitored(
+        id=90,
+        anilist_id=900,
+        display_name="Early Bird",
+        aliases_json='["Early Bird"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=1,
+        total_episodes=12,
+        last_confirmed_episode=done_through,
+        next_airing_episode=wanted_episode,
+        next_airing_at=air_at,
+    )
+    session.add(show)
+    session.flush()
+    for number in range(1, wanted_episode + 1):
+        session.add(Episode(
+            monitored_id=show.id,
+            episode_number=number,
+            status=EpisodeStatus.COMPLETED if number <= done_through else EpisodeStatus.WANTED,
+            air_at=air_at - timedelta(days=7 * (wanted_episode - number)),
+        ))
+    session.commit()
+    return show
+
+
+class TestEarlyAirTolerance(unittest.TestCase):
+    """Hunting opens before the stated air time, so an early release is caught."""
+
+    def setUp(self):
+        self.engine = create_engine("sqlite:///:memory:")
+        SQLModel.metadata.create_all(self.engine)
+        self.session = Session(self.engine)
+        self.session.add(Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss/?r=1080", priority=1))
+
+    def tearDown(self):
+        self.session.close()
+
+    def _hunting_at(self, when, tolerance):
+        from unittest.mock import patch
+        with patch("qbit_seasonal_anime.workers.scheduler.utc_now", return_value=when):
+            return is_hunting(
+                self.session,
+                download_mode="direct",
+                early_air_tolerance_hours=tolerance,
+            )
+
+    def test_hunting_opens_the_tolerance_window_early(self):
+        _scheduled_show(self.session)
+        # Five hours before the stated air time is inside a six hour window.
+        self.assertFalse(self._hunting_at(AIR - timedelta(hours=7), 6))
+        self.assertTrue(self._hunting_at(AIR - timedelta(hours=5, minutes=30), 6))
+        self.assertTrue(self._hunting_at(AIR - timedelta(hours=1), 6))
+        self.assertTrue(self._hunting_at(AIR + timedelta(hours=1), 6))
+
+    def test_zero_tolerance_keeps_the_strict_window(self):
+        _scheduled_show(self.session)
+        self.assertFalse(self._hunting_at(AIR - timedelta(minutes=30), 0))
+        self.assertTrue(self._hunting_at(AIR + timedelta(minutes=30), 0))
+
+    def test_a_wider_tolerance_starts_hunting_even_earlier(self):
+        _scheduled_show(self.session)
+        self.assertTrue(self._hunting_at(AIR - timedelta(hours=20), 24))
+        self.assertFalse(self._hunting_at(AIR - timedelta(hours=20), 6))
+
+    def test_a_resolved_episode_does_not_keep_the_show_hunting(self):
+        show = _scheduled_show(self.session)
+        episode = self.session.exec(
+            select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 9)
+        ).first()
+        episode.status = EpisodeStatus.COMPLETED
+        self.session.add(episode)
+        self.session.commit()
+        self.assertFalse(self._hunting_at(AIR - timedelta(hours=1), 6))
