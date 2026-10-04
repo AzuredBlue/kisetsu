@@ -60,7 +60,8 @@ def generate_season_variants(alias: str) -> List[str]:
 
     if base and len(base) >= 3:
         roman = INT_TO_ROMAN.get(s_num, "")
-        variants.append(f"{base} S{s_num}")
+        s_tag = f"S0?{s_num}" if s_num < 10 else f"S{s_num}"
+        variants.append(f"{base} {s_tag}")
         variants.append(f"{base} Season {s_num}")
         variants.append(f"{base} {s_num}")
         if roman:
@@ -72,7 +73,9 @@ def sanitize_regex_token(title: str) -> str:
     """Escape true regex metacharacters while keeping spaces and hyphens clean and human-readable."""
     if not title:
         return ""
-    escaped = re.sub(r"([\\^$.|?*+()\[\]{}])", r"\\\1", title.strip())
+    protected = title.replace("(0?)", "\x00ZERO_OPT_P\x00").replace("0?", "\x00ZERO_OPT\x00")
+    escaped = re.sub(r"([\\^$.|?*+()\[\]{}])", r"\\\1", protected.strip())
+    escaped = escaped.replace("\x00ZERO_OPT_P\x00", "(0?)").replace("\x00ZERO_OPT\x00", "0?")
     return re.sub(r"\s+", " ", escaped)
 
 
