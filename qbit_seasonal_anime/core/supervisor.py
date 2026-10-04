@@ -22,6 +22,13 @@ logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
 
 # How stale a show's per-episode air dates may get before they are refetched.
 EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
+
+
+def _aware(value):
+    """SQLite hands back naive datetimes; anything compared to utc_now() must be aware."""
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 # How long another feed has to keep carrying a release before a show moves to it.
 FEED_SWITCH_GRACE_SECONDS = 300
 
@@ -570,7 +577,7 @@ class Supervisor:
                     ])
                 )
             ).all()
-            if show.schedule_synced_at is None or show.schedule_synced_at < cutoff
+            if show.schedule_synced_at is None or _aware(show.schedule_synced_at) < cutoff
         ]
         if not due:
             return logs

@@ -517,6 +517,60 @@ async def test_sync_anilist_persists_per_episode_airing_schedule():
 
 
 @pytest.mark.asyncio
+async def test_stale_episode_schedule_timestamp_is_compared_without_tz_error():
+    """A schedule synced on a previous run comes back naive from SQLite and must still compare."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, anilist_username="TestUser")
+        show = Monitored(
+            id=1,
+            anilist_id=42,
+            display_name="Re:ZERO Season 4",
+            aliases_json='["Re:ZERO"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=20,
+            next_airing_episode=20,
+            next_airing_at=datetime.now(timezone.utc) + timedelta(days=7),
+            # Written by an earlier run: SQLite persists this without an offset.
+            schedule_synced_at=(datetime.now(timezone.utc) - timedelta(days=2)).replace(tzinfo=None),
+        )
+        session.add(settings)
+        session.add(show)
+        session.commit()
+        session.refresh(show)
+        assert show.schedule_synced_at.tzinfo is None
+
+        now = datetime.now(timezone.utc)
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[{
+            "anilist_id": 42,
+            "display_name": "Re:ZERO Season 4",
+            "title_romaji": "Re:ZERO Season 4",
+            "title_english": "Re:ZERO Season 4",
+            "aliases": ["Re:ZERO"],
+            "status": "RELEASING",
+            "total_episodes": 20,
+            "next_airing_episode": 20,
+            "next_airing_at": now + timedelta(days=7),
+            "season": "FALL",
+            "season_year": 2026,
+        }])
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={
+            42: [{"episode": 20, "airing_at": now + timedelta(days=7)}],
+        })
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        await supervisor.sync_anilist_schedule(direct_mode=True)
+
+        # Older than the 6h refresh window, so it is fetched again rather than skipped.
+        anilist.fetch_media_airing_schedules.assert_awaited_once_with([42])
+        session.refresh(show)
+        assert show.schedule_stale is False
+    engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_sync_anilist_skips_episode_schedules_outside_direct_mode():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
