@@ -1409,15 +1409,14 @@ def test_direct_imports_existing_qbit_torrents_before_deciding():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    other = Feed(id=2, qbit_feed_name="Other", qbit_feed_url="https://other.example/rss", priority=2)
     session.add(settings)
     session.add(feed)
-    show = _show(session)
-    existing = MagicMock(
-        hash="existing-hash",
-        name="[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
-        progress=1,
-        state="stoppedUP",
-    )
+    session.add(other)
+    show = _show(session, current_feed_id=other.id)
+    existing = MagicMock(hash="existing-hash", progress=1, state="stoppedUP")
+    # ``name`` is a MagicMock constructor argument, so it has to be set afterwards.
+    existing.name = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
     qbit, _ = _qbit()
     qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "qsa-managed" else []
     qbit.get_rss_items.return_value = {
@@ -1440,6 +1439,39 @@ def test_direct_imports_existing_qbit_torrents_before_deciding():
     assert episode.torrent_hash == "existing-hash"
     assert episode.status == EpisodeStatus.COMPLETED
     assert any("Imported 1 existing torrent" in log for log in logs)
+    # The feed that carries the release is learned, not the show's current guess.
+    assert episode.feed_id == feed.id
+    session.refresh(show)
+    assert show.learned_feed_id == feed.id
+    assert show.current_feed_id == feed.id
+    session.close()
+    engine.dispose()
+
+
+def test_import_of_a_release_no_feed_carries_never_locks_the_guessed_feed():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    existing = MagicMock(hash="existing-hash", progress=1, state="stoppedUP")
+    # ``name`` is a MagicMock constructor argument, so it has to be set afterwards.
+    existing.name = "Sousou.no.Frieren.S01E08.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv"
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "qsa-managed" else []
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": []}}
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.import_existing_torrents()
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode.torrent_hash == "existing-hash"
+    assert episode.feed_id is None
+    session.refresh(show)
+    assert show.learned_feed_id is None
     session.close()
     engine.dispose()
 

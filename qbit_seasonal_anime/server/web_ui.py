@@ -1292,6 +1292,23 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         return;
       }
 
+      // Picking another feed for a show locked to the one that delivered is an
+      // explicit override; confirm it, then tell the server to release the lock.
+      const feedChanged = !modalInitialState || currentFeedId !== modalInitialState.current_feed_id;
+      const inspectedShow = allShows.find(s => s.id === currentInspectedShowId);
+      let releaseLearnedFeed = false;
+      if (feedChanged && inspectedShow && inspectedShow.feed_learned && currentFeedId !== inspectedShow.learned_feed_id) {
+        const lockedName = inspectedShow.learned_feed_name || 'the feed that delivered';
+        const target = allFeeds.find(f => f.id === currentFeedId);
+        const targetName = target ? `'${target.qbit_feed_name}'` : 'auto-detect';
+        const ok = confirm(
+          `'${inspectedShow.display_name}' is locked to '${lockedName}' because a release was recorded from it.\n\n` +
+          `Move it to ${targetName} anyway? The next release downloaded will lock the show to that feed.`
+        );
+        if (!ok) return;
+        releaseLearnedFeed = true;
+      }
+
       const btn = document.getElementById('btn-save-show-modal');
       btn.disabled = true;
       btn.textContent = 'Saving...';
@@ -1306,7 +1323,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const payload = {
         // Only sent when the feed was actually changed: an explicit pick pins the
         // feed, while saving other fields must leave auto-detect in charge.
-        current_feed_id: !modalInitialState || currentFeedId !== modalInitialState.current_feed_id ? currentFeedId : undefined,
+        current_feed_id: feedChanged ? currentFeedId : undefined,
+        release_learned_feed: releaseLearnedFeed || undefined,
         // The field shows the resolved path, so it is only sent when edited;
         // otherwise every save would pin the show to today's absolute path.
         // An emptied field resets the show to the default folder.

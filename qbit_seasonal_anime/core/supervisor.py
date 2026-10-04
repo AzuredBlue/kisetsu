@@ -28,6 +28,18 @@ EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 FEED_SWITCH_GRACE_SECONDS = 300
 
 
+_VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi")
+
+
+def _normalize_release_name(name: str) -> str:
+    """Compare torrent names and RSS titles regardless of case or file extension."""
+    value = name.strip().casefold()
+    for extension in _VIDEO_EXTENSIONS:
+        if value.endswith(extension):
+            return value[: -len(extension)]
+    return value
+
+
 def _format_age(seconds: float) -> str:
     """Render a duration as '45s', '12m' or '3h 20m' for log lines."""
     seconds = int(max(0, seconds))
@@ -1145,7 +1157,32 @@ class Supervisor:
     def shield_owned_articles_from_snapshot(self, rss_snapshot: RssSnapshot) -> List[str]:
         return self.shield_owned_articles(rss_snapshot.get())
 
-    def import_existing_torrents(self) -> List[str]:
+    def _feed_ids_by_release_title(self, rss_snapshot: Optional[RssSnapshot] = None) -> Dict[str, Set[int]]:
+        """Map each normalized RSS article title to the feeds carrying it."""
+        try:
+            articles_by_url = (rss_snapshot or RssSnapshot(self.qbit)).get()
+        except Exception as e:
+            logger.debug(f"Feed attribution for imports skipped: {e}")
+            return {}
+        feed_ids_by_url = {feed.qbit_feed_url: feed.id for feed in self.session.exec(select(Feed)).all()}
+        index: Dict[str, Set[int]] = {}
+        for url, articles in articles_by_url.items():
+            feed_id = feed_ids_by_url.get(url)
+            if feed_id is None:
+                continue
+            for article in articles:
+                title = _normalize_release_name(str(article.get("title") or ""))
+                if title:
+                    index.setdefault(title, set()).add(feed_id)
+        return index
+
+    @staticmethod
+    def _feed_carrying_release(name: str, feed_ids_by_title: Dict[str, Set[int]]) -> Optional[int]:
+        feed_ids = feed_ids_by_title.get(_normalize_release_name(name), set())
+        # A release mirrored on several feeds proves none of them in particular.
+        return next(iter(feed_ids)) if len(feed_ids) == 1 else None
+
+    def import_existing_torrents(self, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
         """Adopt torrents already in qBittorrent into the canonical model.
 
         Direct mode owns its library, so anything already downloaded must be
@@ -1185,6 +1222,9 @@ class Supervisor:
         ).all()
         candidates = [(show, prepare_aliases(show.aliases)) for show in shows]
         parsed_cache: Dict[str, Dict[str, Any]] = {}
+        # Built on first use: this runs every direct cycle, and most cycles
+        # adopt nothing, so the RSS read is skipped unless it is needed.
+        feed_ids_by_title: Optional[Dict[str, Set[int]]] = None
         imported = 0
         for torrent in torrents:
             torrent_hash = str(getattr(torrent, "hash", "") or "")
@@ -1224,7 +1264,22 @@ class Supervisor:
             episode.release_group = parsed.get("release_group")
             episode.torrent_hash = torrent_hash
             episode.source_episode = int(raw_episode)
-            episode.feed_id = matched_show.current_feed_id
+            # Only a feed that actually carries this release is recorded; the
+            # show's current feed is a guess and must never become the lock.
+            if feed_ids_by_title is None:
+                feed_ids_by_title = self._feed_ids_by_release_title(rss_snapshot)
+            source_feed_id = self._feed_carrying_release(name, feed_ids_by_title)
+            episode.feed_id = source_feed_id
+            if (
+                source_feed_id is not None
+                and matched_show.learned_feed_id is None
+                and not matched_show.feed_pinned
+            ):
+                matched_show.learned_feed_id = source_feed_id
+                matched_show.current_feed_id = source_feed_id
+                matched_show.candidate_feed_id = None
+                matched_show.candidate_feed_since = None
+                self.session.add(matched_show)
             episode.version = max(1, int(parsed.get("version") or 1))
             complete = is_seeding_torrent(torrent)
             episode.status = EpisodeStatus.COMPLETED if complete else EpisodeStatus.DOWNLOADING
@@ -1238,13 +1293,13 @@ class Supervisor:
             logs.append(f"Imported {imported} existing torrent(s) into the episode library.")
         return logs
 
-    def prepare_download_mode(self, mode: str) -> List[str]:
+    def prepare_download_mode(self, mode: str, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
         if mode in {"direct", "observe"}:
-            logs = self.import_existing_torrents()
+            logs = self.import_existing_torrents(rss_snapshot)
             logs.extend(self.disable_managed_rules())
             return logs
         logs: List[str] = []
-        snapshot = RssSnapshot(self.qbit)
+        snapshot = rss_snapshot or RssSnapshot(self.qbit)
         logs.extend(self.shield_owned_articles())
         logs.extend(self.bootstrap_unassigned_shows(
             rss_snapshot=snapshot,
@@ -1317,7 +1372,7 @@ class Supervisor:
         beat()
         if mode in {"direct", "observe"}:
             try:
-                all_logs.extend(await asyncio.to_thread(self.prepare_download_mode, mode))
+                all_logs.extend(await asyncio.to_thread(self.prepare_download_mode, mode, rss_snapshot))
             except QbitClientError:
                 raise
             except Exception as e:

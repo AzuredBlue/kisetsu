@@ -590,7 +590,6 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
                 continue
             episode.torrent_hash = _torrent_hash(torrent)
             episode.release_title = name
-            episode.feed_id = show.current_feed_id
             episode.status = EpisodeStatus.COMPLETED if is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
             episode.last_error = None
             session.add(episode)
