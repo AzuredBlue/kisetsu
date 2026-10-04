@@ -22,6 +22,26 @@ class ServerState:
         # it already held the cycle.
         self._rss_refresh_requested = False
         self._cycle_mutex = Lock()
+        # The loop that owns the events. Sync endpoints run in a threadpool and
+        # asyncio.Event is not thread-safe, so they must hand the set() over.
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+    def _set_event(self, event: asyncio.Event) -> None:
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            event.set()
+            return
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            event.set()
+        else:
+            loop.call_soon_threadsafe(event.set)
 
     def try_begin_cycle(self, owner: str) -> bool:
         """Claim the single supervision cycle slot, or report it busy."""
@@ -60,10 +80,10 @@ class ServerState:
         })
 
     def trigger_immediate_cycle(self):
-        self.wake_event.set()
+        self._set_event(self.wake_event)
 
     def trigger_immediate_rule_check(self):
-        self.log_wake_event.set()
+        self._set_event(self.log_wake_event)
 
 
 state = ServerState()

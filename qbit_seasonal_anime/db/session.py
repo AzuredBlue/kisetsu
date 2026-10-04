@@ -10,7 +10,7 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.config import DB_PATH, CONFIG_DIR
-from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, normalize_mapping_source
+from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, as_utc, normalize_mapping_source
 
 _engine = None
 SCHEMA_VERSION = 2
@@ -49,10 +49,6 @@ def _backup_database(engine: Engine) -> Optional[Path]:
 EPISODE_LEAD_TOLERANCE = timedelta(hours=6)
 
 
-def _as_utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
-
-
 def _offset_contradicts_air_schedule(
     episodes: List[Episode],
     candidate_offset: int,
@@ -66,11 +62,11 @@ def _offset_contradicts_air_schedule(
             continue
         if int(episode.source_episode) - episode.episode_number != candidate_offset:
             continue
-        if _as_utc(episode.air_at) > _as_utc(episode.downloaded_at) + EPISODE_LEAD_TOLERANCE:
+        if as_utc(episode.air_at) > as_utc(episode.downloaded_at) + EPISODE_LEAD_TOLERANCE:
             return (
                 f"release {episode.source_episode} was recorded for episode "
-                f"{episode.episode_number} at {_as_utc(episode.downloaded_at).isoformat()}, "
-                f"before it aired at {_as_utc(episode.air_at).isoformat()}"
+                f"{episode.episode_number} at {as_utc(episode.downloaded_at).isoformat()}, "
+                f"before it aired at {as_utc(episode.air_at).isoformat()}"
             )
     return None
 
@@ -320,10 +316,6 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.close()
 
 
-def get_db_path() -> Path:
-    return DB_PATH
-
-
 def get_engine(db_path: Optional[Path] = None):
     global _engine
     if db_path is not None:
@@ -489,8 +481,13 @@ def init_db(engine=None):
         session.exec(text("DELETE FROM episodes WHERE id NOT IN (SELECT MIN(id) FROM episodes GROUP BY monitored_id, episode_number)"))
         session.exec(text("DELETE FROM seen_feed_items WHERE id NOT IN (SELECT MIN(id) FROM seen_feed_items GROUP BY feed_url, item_id)"))
         session.exec(text("DELETE FROM episode_number_mappings WHERE id NOT IN (SELECT MIN(id) FROM episode_number_mappings GROUP BY monitored_id, feed_id)"))
-        # Enums are persisted by name, so every status literal must be uppercase
-        # for the predicate to match rows at all.
+        # Retired status name; mapped before the duplicate check below so the
+        # rows it revives are deduplicated too and the unique index can build.
+        session.exec(text(
+            "UPDATE torrent_operations SET status = 'OLD_STOPPED' WHERE status = 'OLD_REMOVED'"
+        ))
+        # Enum columns store member names, so these predicates use the uppercase
+        # names (column defaults added by ALTER above use values instead).
         active_statuses = ", ".join(f"'{status}'" for status in ACTIVE_OPERATION_STATUSES)
         session.exec(text(
             "UPDATE torrent_operations SET status = 'CANCELED', "
@@ -503,9 +500,6 @@ def init_db(engine=None):
         session.exec(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_seen_feed_item ON seen_feed_items (feed_url, item_id)"))
         session.exec(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_episode_mapping_show_feed ON episode_number_mappings (monitored_id, feed_id)"))
         session.exec(text("DROP INDEX IF EXISTS ux_torrent_operation_active_episode"))
-        session.exec(text(
-            "UPDATE torrent_operations SET status = 'OLD_STOPPED' WHERE status = 'OLD_REMOVED'"
-        ))
 
         for index_name, table_name, columns in [
             ("ix_monitored_current_feed_id", "monitored", "current_feed_id"),
@@ -532,6 +526,10 @@ def init_db(engine=None):
         if needs_migration:
             _repair_legacy_episode_state(session)
             _repair_learned_feed_state(session)
+        current_version = int(session.exec(text("PRAGMA user_version")).one()[0] or 0)
+        if current_version < SCHEMA_VERSION:
+            # Stamped on fresh databases too; otherwise the next start would treat
+            # a brand-new install as legacy, back it up and run the repairs.
             session.exec(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
             session.commit()
 

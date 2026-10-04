@@ -365,14 +365,6 @@ def _arc_is_compatible(show_requirement: str, title_qualifier: Optional[str]) ->
     return False
 
 
-def arc_marker_missing(aliases: List[str], raw_title: str) -> bool:
-    """True when a show is split into arcs and the title does not name one."""
-    requirement = _alias_arc_requirement(aliases)
-    if not requirement:
-        return False
-    return not _arc_is_compatible(requirement, extract_arc_qualifiers(raw_title))
-
-
 def match_release_to_show(
     raw_title: str,
     aliases: List[str],

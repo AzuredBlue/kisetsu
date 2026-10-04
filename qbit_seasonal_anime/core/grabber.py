@@ -27,6 +27,7 @@ from qbit_seasonal_anime.db.models import (
     Settings,
     TorrentOperation,
     TorrentOperationStatus,
+    as_utc,
     normalize_mapping_source,
     utc_now,
 )
@@ -41,19 +42,6 @@ FEED_DISCOVERY_GRACE_SECONDS = 300
 _FAILED_TORRENT_STATES = {"error", "missingfiles", "unknown"}
 MAX_OPERATION_ATTEMPTS = 8
 _INACTIVE_SHOW_STATUSES = (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
-# One-step exit ladder; each entry may be followed only by later entries.
-_RESUME_SUCCESSOR: Dict[str, Optional[str]] = {
-    TorrentOperationStatus.ADDED.name: TorrentOperationStatus.NEW_VERIFIED.name,
-    TorrentOperationStatus.NEW_VERIFIED.name: TorrentOperationStatus.SEEDING.name,
-    TorrentOperationStatus.SEEDING.name: TorrentOperationStatus.OLD_STOPPED.name,
-    TorrentOperationStatus.OLD_STOPPED.name: None,
-}
-
-
-def _aware(value: Optional[datetime]) -> Optional[datetime]:
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def _operation_tag() -> str:
@@ -86,7 +74,7 @@ def _torrent_state(torrent: Any) -> str:
     return str(getattr(torrent, "state", "") or "").lower()
 
 
-def _is_seeding_torrent(torrent: Any) -> bool:
+def is_seeding_torrent(torrent: Any) -> bool:
     return _torrent_progress(torrent) >= 1.0 or _torrent_state(torrent) in {
         "uploading",
         "pausedup",
@@ -182,8 +170,13 @@ def _fail_operation(session: Session, operation: TorrentOperation, episode: Epis
     operation.status = TorrentOperationStatus.FAILED
     operation.last_error = error
     operation.updated_at = utc_now()
-    episode.status = EpisodeStatus.FAILED
-    episode.last_error = error
+    if operation.kind == "replace":
+        # The previous release is still intact, so the episode keeps it rather
+        # than being reported as failed.
+        _restore_episode_before_operation(session, operation, episode, error, None)
+    else:
+        episode.status = EpisodeStatus.FAILED
+        episode.last_error = error
     episode.retry_after = None
     session.add(operation)
     session.add(episode)
@@ -351,22 +344,30 @@ def _delete_torrent_by_hash(qbit: QBitClient, torrent_hash: Optional[str]) -> No
     qbit.delete_torrents([torrent_hash], delete_files=True)
 
 
-def _stop_torrent_by_hash(qbit: QBitClient, torrent_hash: Optional[str]) -> None:
-    if not torrent_hash:
+def _content_path(torrent: Any) -> Optional[str]:
+    value = getattr(torrent, "content_path", None)
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _remove_superseded_torrent(qbit: QBitClient, operation: TorrentOperation, new_torrent: Any) -> None:
+    """Delete the release a finished replacement has superseded.
+
+    The files go with it, unless the replacement occupies the same path (a
+    re-release under the same filename, which is why the new torrent is
+    rechecked first); deleting them then would delete the new download.
+    """
+    old_hash = operation.old_torrent_hash
+    if not old_hash or old_hash == operation.new_torrent_hash:
         return
     try:
-        existing = list(qbit.get_torrents(hashes=[torrent_hash]))
+        existing = list(qbit.get_torrents(hashes=[old_hash]))
     except Exception as e:
-        raise QbitClientError(f"Could not read torrent {torrent_hash}: {e}") from e
+        raise QbitClientError(f"Could not read torrent {old_hash}: {e}") from e
     if not existing:
         return
-    qbit.stop_torrents([torrent_hash])
-
-
-def _stop_superseded_torrent(qbit: QBitClient, operation: TorrentOperation) -> None:
-    if not operation.old_torrent_hash or operation.old_torrent_hash == operation.new_torrent_hash:
-        return
-    _stop_torrent_by_hash(qbit, operation.old_torrent_hash)
+    old_path = _content_path(existing[0])
+    shares_files = old_path is not None and old_path == _content_path(new_torrent)
+    qbit.delete_torrents([old_hash], delete_files=not shares_files)
 
 
 def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOperation, episode: Episode) -> Optional[str]:
@@ -404,15 +405,17 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             if not _is_healthy_torrent(torrent):
                 _operation_retry(session, operation, episode, "Replacement is rechecking; the previous torrent remains untouched.")
                 return None
-            if not _is_seeding_torrent(torrent):
+            if not is_seeding_torrent(torrent):
                 operation.status = TorrentOperationStatus.SEEDING
                 _operation_retry(session, operation, episode, "Replacement is downloading; the previous torrent is kept until it finishes.")
                 return None
             try:
-                _stop_superseded_torrent(qbit, operation)
+                _remove_superseded_torrent(qbit, operation, torrent)
             except Exception as e:
                 _operation_retry(session, operation, episode, str(e))
                 return None
+            # OLD_STOPPED is kept as the stored name for "superseded release
+            # removed" so existing rows keep loading.
             operation.status = TorrentOperationStatus.OLD_STOPPED
             operation.next_retry_at = None
             operation.last_error = None
@@ -421,7 +424,7 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             session.commit()
         elif operation.status == TorrentOperationStatus.OLD_STOPPED:
             try:
-                _stop_superseded_torrent(qbit, operation)
+                _remove_superseded_torrent(qbit, operation, _operation_torrent(qbit, operation))
             except Exception as e:
                 _operation_retry(session, operation, episode, str(e))
                 return None
@@ -456,26 +459,19 @@ def show_name(episode: Episode, session: Session) -> str:
     return show.display_name if show else str(episode.monitored_id)
 
 
-def _resume_step(operation: TorrentOperation) -> Optional[str]:
-    """Ladder a resumed operation forward one step, never backwards."""
+def _normalize_hashed_operation(operation: TorrentOperation) -> None:
+    """Treat a pre-add status that already has a torrent hash as ADDED.
+
+    Only the pre-add states are normalised. Every later step is left to
+    :func:`_finish_operation`, which advances on the torrent's real state, so a
+    replacement is never pushed forward just because a cycle went by.
+    """
     if operation.status == TorrentOperationStatus.PREPARING:
         operation.status = TorrentOperationStatus.ADDED
-        return None
-    if operation.status == TorrentOperationStatus.RETRY_WAIT:
-        if operation.ambiguous:
-            return None
+    elif operation.status == TorrentOperationStatus.RETRY_WAIT and not operation.ambiguous:
         operation.status = TorrentOperationStatus.ADDED
-        return None
-    if operation.status == TorrentOperationStatus.UNKNOWN:
-        if operation.new_torrent_hash:
-            operation.status = TorrentOperationStatus.ADDED
-            return None
-        return None
-    if operation.status == TorrentOperationStatus.ADDED and operation.kind == "replace":
-        if operation.old_torrent_hash and operation.old_torrent_hash != operation.new_torrent_hash:
-            operation.status = TorrentOperationStatus.NEW_VERIFIED
-        return None
-    return _RESUME_SUCCESSOR.get(operation.status.name)
+    elif operation.status == TorrentOperationStatus.UNKNOWN:
+        operation.status = TorrentOperationStatus.ADDED
 
 
 def _pause_show_torrents(qbit: QBitClient, show: Monitored) -> None:
@@ -527,7 +523,7 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                 session.commit()
                 _release_operation_tag(qbit, operation.new_torrent_hash, operation.operation_tag)
             else:
-                retry_at = _aware(operation.next_retry_at)
+                retry_at = as_utc(operation.next_retry_at)
                 if (
                     operation.status in {TorrentOperationStatus.RETRY_WAIT, TorrentOperationStatus.UNKNOWN}
                     and retry_at and retry_at <= now
@@ -547,7 +543,7 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                         continue
                     _attempt_operation_add(session, qbit, settings, operation, episode)
                     continue
-                updated_at = _aware(operation.updated_at) or now
+                updated_at = as_utc(operation.updated_at) or now
                 if operation.status == TorrentOperationStatus.PREPARING and updated_at <= now - timedelta(minutes=15):
                     operation.status = TorrentOperationStatus.UNKNOWN
                     operation.ambiguous = True
@@ -562,17 +558,12 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                     session.commit()
                 continue
         else:
-            stage = _resume_step(operation)
-            if stage and stage != operation.status.name:
-                operation.status = TorrentOperationStatus[stage]
+            previous_status = operation.status
+            _normalize_hashed_operation(operation)
+            if operation.status != previous_status:
                 operation.updated_at = utc_now()
                 session.add(operation)
                 session.commit()
-                if stage == TorrentOperationStatus.OLD_STOPPED.name:
-                    message = _finish_operation(session, qbit, operation, episode)
-                    if message:
-                        logs.append(message)
-                    continue
         message = _finish_operation(session, qbit, operation, episode)
         if message:
             logs.append(message)
@@ -600,7 +591,7 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             episode.torrent_hash = _torrent_hash(torrent)
             episode.release_title = name
             episode.feed_id = show.current_feed_id
-            episode.status = EpisodeStatus.COMPLETED if _is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
+            episode.status = EpisodeStatus.COMPLETED if is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
             episode.last_error = None
             session.add(episode)
             break
@@ -625,14 +616,13 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
                 session.add(episode)
                 logs.append(f"Requeued {show_name(episode, session)} Ep {episode.episode_number} after qBittorrent removal")
             continue
-        episode.torrent_hash = _torrent_hash(torrent)
         if episode.status == EpisodeStatus.REPLACING:
             continue
-        if _is_seeding_torrent(torrent):
+        if is_seeding_torrent(torrent):
             if episode.status != EpisodeStatus.COMPLETED:
                 _complete_episode(session, episode)
                 logs.append(f"Completed {show_name(episode, session)} Ep {episode.episode_number}")
-        elif _torrent_state(torrent) in {"error", "missingfiles", "unknown"}:
+        elif _torrent_state(torrent) in _FAILED_TORRENT_STATES:
             episode.status = EpisodeStatus.FAILED
             episode.last_error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
             session.add(episode)
@@ -743,7 +733,7 @@ def _discovery_window_open(
         )
         return False
 
-    since = _aware(show.candidate_feed_since) or reference
+    since = as_utc(show.candidate_feed_since) or reference
     if since + timedelta(seconds=FEED_DISCOVERY_GRACE_SECONDS) > now:
         return False
 
@@ -776,7 +766,7 @@ def _date_mapped_episode(
         )
     ).all()
     dated = [
-        (episode, _aware(episode.air_at))
+        (episode, as_utc(episode.air_at))
         for episode in scheduled
         if episode.air_at
     ]
@@ -896,7 +886,7 @@ def _restore_episode_before_operation(
     operation: TorrentOperation,
     episode: Episode,
     error: str,
-    retry_at: datetime,
+    retry_at: Optional[datetime],
 ) -> None:
     if operation.kind == "replace":
         episode.status = EpisodeStatus(operation.old_episode_status)
@@ -1240,10 +1230,10 @@ def evaluate_and_grab_releases(
         known_aired = [
             episode.episode_number
             for episode in episodes
-            if episode.air_at and _aware(episode.air_at) <= air_horizon
+            if episode.air_at and as_utc(episode.air_at) <= air_horizon
         ]
         latest_aired = max(known_aired) if known_aired else None
-        airing_at = _aware(show.next_airing_at)
+        airing_at = as_utc(show.next_airing_at)
         if latest_aired is None and show.next_airing_episode:
             latest_aired = show.next_airing_episode if airing_at and airing_at <= now else max(0, show.next_airing_episode - 1)
         if show.next_airing_episode == 1 and airing_at and airing_at > air_horizon:
@@ -1298,7 +1288,7 @@ def evaluate_and_grab_releases(
                 episode = episodes_by_number.get(episode_number)
                 if not episode:
                     continue
-                episode_air_at = _aware(episode.air_at)
+                episode_air_at = as_utc(episode.air_at)
                 backfill_window_days = max(0, int(getattr(settings, "backfill_window_days", 14)))
                 version = int(parsed.get("version") or 1)
                 is_upgrade = version > episode.version
@@ -1308,7 +1298,7 @@ def evaluate_and_grab_releases(
                             continue
                     elif now - episode_air_at > timedelta(days=backfill_window_days):
                         continue
-                if episode.retry_after and _aware(episode.retry_after) > now:
+                if episode.retry_after and as_utc(episode.retry_after) > now:
                     continue
                 if version in failed_versions.get(episode.id, set()):
                     continue
@@ -1343,7 +1333,11 @@ def evaluate_and_grab_releases(
             for episode in episodes:
                 if episode.status != EpisodeStatus.WANTED:
                     continue
-                episode_air_at = _aware(episode.air_at)
+                if episode.retry_after and as_utc(episode.retry_after) > now:
+                    # Requeued moments ago (e.g. its torrent was removed); give
+                    # the retry its chance before calling the episode missed.
+                    continue
+                episode_air_at = as_utc(episode.air_at)
                 # An episode MUST have reached its air time to ever be considered missed.
                 # Future scheduled episodes must remain WANTED.
                 has_aired = False

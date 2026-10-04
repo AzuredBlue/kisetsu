@@ -65,8 +65,9 @@ def uses_direct_engine(mode: str) -> bool:
 def require_exclusive_cycle() -> None:
     """Reject a mutating request while a supervision cycle holds the slot.
 
-    A show edit, pause or settings change applied mid-cycle would be applied on
-    top of a half-finished cycle, so it is refused instead.
+    A change applied mid-cycle would land on top of a half-finished cycle, so
+    endpoints that call this (show edits and deletes) are
+    refused instead.
     """
     if not state.try_begin_cycle("api"):
         raise HTTPException(
@@ -689,6 +690,14 @@ def _set_episode_offset(session: Session, show: Monitored, feed_id: Optional[int
     session.commit()
 
 
+def _set_status_keeping_pause(show: Monitored, status: MonitoredStatus) -> None:
+    """Apply a status change, deferring it until resume when the show is paused."""
+    if show.status == MonitoredStatus.PAUSED:
+        show.status_before_pause = status.value
+    else:
+        show.status = status
+
+
 @router.post("/shows/{show_id}/edit")
 def edit_show(show_id: int, req: EditShowRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
     require_exclusive_cycle()
@@ -706,6 +715,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     settings = get_settings(session)
     mode = normalized_download_mode(session)
     direct = uses_direct_engine(mode)
+    previous_feed_id = show.current_feed_id
     new_feed_id = None if req.current_feed_id is not None and req.current_feed_id <= 0 else (req.current_feed_id if req.current_feed_id is not None else show.current_feed_id)
 
     if req.current_feed_id is not None:
@@ -790,6 +800,34 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
 
+    from qbit_seasonal_anime.core.rules import create_or_update_rule
+
+    title_language = getattr(settings, "title_language", "english")
+    feed_changed = req.current_feed_id is not None and new_feed_id != previous_feed_id
+    matching_changed = req.must_contain is not None or req.aliases is not None
+    if new_feed_id is not None and show.matched_title and not feed_changed and not matching_changed:
+        # Only settings such as category, folder or ratio changed: rewrite the
+        # existing rule in place and keep what the show has already learned.
+        feed = session.get(Feed, new_feed_id)
+        if not feed:
+            raise HTTPException(status_code=400, detail="Selected feed not found")
+        show.qbit_rule_name = create_or_update_rule(
+            qbit_client=qbit,
+            monitored=show,
+            feed=feed,
+            base_dir=settings.base_dir,
+            category=category,
+            ratio_limit=ratio_limit,
+            must_contain=show.custom_regex,
+            must_not_contain=show.custom_must_not,
+            title_language=title_language,
+        )
+        session.add(show)
+        session.commit()
+        msg = f"Updated rule settings on '{feed.qbit_feed_name}'."
+        state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
+        return {"status": "success", "message": msg}
+
     if show.qbit_rule_name:
         try:
             delete_rule(qbit, show.qbit_rule_name)
@@ -805,7 +843,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         show.feed_pinned = False
         show.candidate_feed_id = None
         show.candidate_feed_since = None
-        show.status = MonitoredStatus.UNCONFIRMED
+        _set_status_keeping_pause(show, MonitoredStatus.UNCONFIRMED)
         session.add(show)
         session.commit()
         state.add_log(f"Reset '{show.display_name}' to Auto-Discover mode.", "INFO")
@@ -847,13 +885,10 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     except Exception as e:
         state.add_log(f"Warning searching feed cache: {e}", "WARNING")
 
-    from qbit_seasonal_anime.core.rules import create_or_update_rule
     if matched_article and best_parsed:
         show.matched_title = best_parsed.get("title")
         show.matched_release_group = best_parsed.get("release_group")
-        show.status = MonitoredStatus.FIXED
-        if req.must_contain is None:
-            show.custom_regex = None
+        _set_status_keeping_pause(show, MonitoredStatus.FIXED)
         rname = create_or_update_rule(
             qbit_client=qbit,
             monitored=show,
@@ -863,13 +898,14 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             ratio_limit=ratio_limit,
             must_contain=show.custom_regex,
             must_not_contain=show.custom_must_not,
+            title_language=title_language,
         )
         show.qbit_rule_name = rname
         msg = f"Assigned to '{feed.qbit_feed_name}' and matched cached release: {matched_article.get('title')} (Status: Working)"
     else:
         show.matched_title = None
         show.matched_release_group = None
-        show.status = MonitoredStatus.UNCONFIRMED
+        _set_status_keeping_pause(show, MonitoredStatus.UNCONFIRMED)
         rname = create_or_update_rule(
             qbit_client=qbit,
             monitored=show,
@@ -879,6 +915,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             ratio_limit=ratio_limit,
             must_contain=show.custom_regex,
             must_not_contain=show.custom_must_not,
+            title_language=title_language,
         )
         show.qbit_rule_name = rname
         msg = f"Assigned to '{feed.qbit_feed_name}'. Rule created in Testing mode, waiting for next episode drop."
@@ -921,6 +958,9 @@ def _delete_show(show_id: int, session: Session, qbit: QBitClient):
     for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
         session.delete(mapping)
     for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
+        # Dispose of torrents an in-flight direct grab added; deleting the
+        # episode would otherwise orphan them in qBittorrent.
+        cancel_episode_operations(session, qbit, show, ep, "Show deleted by user.")
         session.delete(ep)
     session.flush()
     session.delete(show)
@@ -1051,7 +1091,8 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
     if req.base_dir is not None:
         raw_base = req.base_dir.strip()
         if raw_base and "{name}" not in raw_base:
-            raw_base = f"{raw_base.rstrip('/\\')}/{{name}}"
+            trimmed = raw_base.rstrip("/\\")
+            raw_base = f"{trimmed}/{{name}}"
         s.base_dir = raw_base
     if req.default_category is not None:
         s.default_category = req.default_category.strip()
@@ -1161,10 +1202,12 @@ async def _sync_anilist_now(session: Session):
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
     try:
         logs = []
-        logs.extend(sup.sync_feeds())
+        # Every step but the AniList fetch is blocking qBittorrent/DB work, so it
+        # runs off the event loop to keep the WebUI responsive.
+        logs.extend(await asyncio.to_thread(sup.sync_feeds))
         if direct:
             try:
-                logs.extend(sup.prepare_download_mode(mode))
+                logs.extend(await asyncio.to_thread(sup.prepare_download_mode, mode))
             except Exception as e:
                 raise HTTPException(
                     status_code=409,
@@ -1172,19 +1215,20 @@ async def _sync_anilist_now(session: Session):
                 ) from e
         sync_logs = await sup.sync_anilist_schedule(force=True, direct_mode=direct)
         logs.extend(sync_logs)
-        bootstrap_logs = sup.bootstrap_unassigned_shows(
+        bootstrap_logs = await asyncio.to_thread(
+            sup.bootstrap_unassigned_shows,
             create_qbit_rules=not direct,
             mark_fixed=not direct,
         )
         logs.extend(bootstrap_logs)
         if direct:
             from qbit_seasonal_anime.core.grabber import evaluate_and_grab_releases
-            logs.extend(evaluate_and_grab_releases(session, qbit, s, mode=mode))
+            logs.extend(await asyncio.to_thread(evaluate_and_grab_releases, session, qbit, s, mode=mode))
         else:
             from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents
-            logs.extend(verify_and_confirm_torrents(session, qbit, s))
+            logs.extend(await asyncio.to_thread(verify_and_confirm_torrents, session, qbit, s))
         if sup.anilist_sync_succeeded is not False:
-            logs.extend(sup.reconcile_schedule_rollover())
+            logs.extend(await asyncio.to_thread(sup.reconcile_schedule_rollover))
 
         for l in logs:
             state.add_log(l, "INFO")
@@ -1231,7 +1275,7 @@ def clear_all_monitored(session: Session = Depends(get_db), qbit: QBitClient = D
 
 @router.post("/cycle/run")
 async def run_cycle_now(session: Session = Depends(get_db)):
-    if state.is_running_cycle or not state.try_begin_cycle("api-cycle"):
+    if not state.try_begin_cycle("api-cycle"):
         raise HTTPException(
             status_code=409,
             detail="Another supervision or show mutation is already in progress",

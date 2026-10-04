@@ -1,6 +1,5 @@
 import unittest
 from qbit_seasonal_anime.core.matching import (
-    calculate_match_score,
     extract_release_version,
     match_release_to_show,
     normalize_title,

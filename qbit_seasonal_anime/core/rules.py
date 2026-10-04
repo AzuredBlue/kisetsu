@@ -118,6 +118,7 @@ def build_regex_pattern(
     """
     Build a case-insensitive qBittorrent RSS rule pattern.
     If matched_title is known, use it as the rule; otherwise build an alternation from aliases.
+    ``release_group`` is accepted for call compatibility but does not affect the pattern.
     """
     if matched_title and matched_title.strip():
         # The release group has already shown its naming, so the learned rule is
@@ -136,7 +137,13 @@ def build_regex_pattern(
     for a in target_aliases:
         expanded_aliases.extend(generate_season_variants(a))
 
-    tokens = [sanitize_regex_token(a) for a in expanded_aliases]
+    # A variant ending in a number ("Foo 3", "Foo S03") must not match a longer
+    # number ("Foo 30"). A digit lookahead rather than \b, so "Foo S03E01" still
+    # matches; it is appended after escaping so it stays a regex.
+    tokens = [
+        sanitize_regex_token(a) + (r"(?!\d)" if a.strip()[-1:].isdigit() else "")
+        for a in expanded_aliases
+    ]
     unique_tokens = list(dict.fromkeys(tokens))
     alternation = "|".join(unique_tokens)
 

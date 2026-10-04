@@ -171,6 +171,26 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(dur, 300)
         self.assertIn("Hunting mode", reason)
 
+    def test_no_hunting_during_a_hiatus_longer_than_a_week(self):
+        now = utc_now()
+        show = Monitored(
+            id=6,
+            anilist_id=606,
+            display_name="Delayed Anime",
+            aliases_json='["Delayed Anime"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=1,
+            last_confirmed_episode=4,
+            next_airing_episode=6,
+            next_airing_at=now + timedelta(days=14),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
+        self.assertEqual(dur, 21600)
+        self.assertNotIn("Hunting mode", reason)
+
     def test_no_hunting_when_unconfirmed_show_next_episode_is_days_away_and_no_recent_air(self):
         now = utc_now()
         show = Monitored(

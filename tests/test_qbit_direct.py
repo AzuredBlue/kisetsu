@@ -54,16 +54,6 @@ def test_add_torrent_can_keep_the_inherited_share_limit_action():
     assert "share_limit_action" not in underlying.torrents_add.call_args.kwargs
 
 
-def test_stop_torrents_is_forwarded():
-    client, underlying = _client()
-
-    client.stop_torrents(["a", "b"])
-    underlying.torrents_stop.assert_called_once_with(torrent_hashes=["a", "b"])
-
-    client.stop_torrents([])
-    underlying.torrents_stop.assert_called_once()
-
-
 def test_add_torrent_reports_a_plain_failure_response():
     client, underlying = _client()
     # qBittorrent answers some rejections with a "Fails." body and no HTTP error.

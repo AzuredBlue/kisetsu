@@ -667,13 +667,10 @@ def verify_and_confirm_rules_from_feeds(
             )
             continue
 
-        current_episode = _canonical_episode(
-            session,
-            show,
-            event.get("feed_id"),
-            show.last_confirmed_episode,
-        )
-        if current_episode is None or canonical_episode > current_episode:
+        # last_confirmed_episode is stored already mapped, so it is compared as
+        # is; mapping it again would apply the offset twice.
+        current_episode = show.last_confirmed_episode or 0
+        if canonical_episode > current_episode:
             show.last_confirmed_episode = canonical_episode
             session.add(show)
 
@@ -737,8 +734,9 @@ def has_downloaded_final_episode(
     app has is a scalar plus the match log, and the historical checks stand.
 
     ``direct``/``observe`` mode makes this app the owner of an episode ledger,
-    so the ledger is authoritative and *every* episode from 1 to
-    ``total_episodes`` must be COMPLETED. A single wanted or failed episode
+    so the ledger is authoritative: every ledger row up to ``total_episodes``
+    must be COMPLETED or MISSED (no longer retrievable), and at least one
+    COMPLETED. A single wanted or failed episode
     therefore keeps the season open instead of letting a match log for the last
     episode retire it. An empty ledger falls through to the historical checks so
     that a show right after a mode switch still completes correctly.

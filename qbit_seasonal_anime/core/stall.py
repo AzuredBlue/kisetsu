@@ -188,10 +188,8 @@ def check_and_handle_stalls(
                             logger.error(f"Failed creating fallback rule for '{show.display_name}': {e}")
                             logs.append(f"Error creating fallback rule: {e}")
                     else:
-                        if show.feed_is_locked:
-                            avail = [f for f in all_feeds if f.id == show.current_feed_id]
-                        else:
-                            avail = [f for f in all_feeds if f.id not in failed_feed_ids]
+                        # Locked shows returned early above, so any feed may be used.
+                        avail = [f for f in all_feeds if f.id not in failed_feed_ids]
                         if avail:
                             fallback_feed = avail[0]
                             try:

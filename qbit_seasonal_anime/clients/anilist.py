@@ -1,7 +1,6 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
-import time
 from typing import Any, Dict, List, Optional, Set
 import httpx2
 
@@ -43,28 +42,6 @@ query ($userName: String) {
   }
 }
 """
-
-MEDIA_DETAILS_QUERY = """
-query ($id: Int) {
-  Media(id: $id, type: ANIME) {
-    id
-    title {
-      romaji
-      english
-      native
-      userPreferred
-    }
-    synonyms
-    status
-    episodes
-    nextAiringEpisode {
-      airingAt
-      episode
-    }
-  }
-}
-"""
-
 
 AIRING_SCHEDULE_QUERY = """
 query ($mediaId: Int, $page: Int) {
@@ -129,12 +106,6 @@ class AniListClient:
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
         self.last_sync_at: Optional[datetime] = None
-        self._rate_limited_until = 0.0
-
-    @property
-    def rate_limited(self) -> bool:
-        """True while a previously observed Retry-After window is still open."""
-        return time.monotonic() < self._rate_limited_until
 
     def seconds_since_last_sync(self, now: Optional[datetime] = None) -> Optional[float]:
         """Seconds since the last successful query, or None if there has not been one."""
@@ -180,7 +151,6 @@ class AniListClient:
                         except (ValueError, TypeError):
                             retry_after = backoff
                         logger.warning(f"AniList rate limited (429). Waiting {retry_after} seconds...")
-                        self._rate_limited_until = time.monotonic() + retry_after
                         if attempt == max_retries - 1:
                             raise AniListRateLimited(
                                 "AniList is rate limiting this client; schedule sync is deferred."
@@ -375,40 +345,3 @@ class AniListClient:
                 continue
             schedules[media_id] = schedule
         return schedules
-
-    async def fetch_media_airing_schedule(self, media_id: int) -> List[Dict[str, Any]]:
-        schedules = await self.fetch_media_airing_schedules([media_id])
-        return schedules.get(int(media_id), [])
-
-    async def fetch_media_details(self, media_id: int) -> Optional[Dict[str, Any]]:
-        """Fetch updated episode and airing details for a specific media ID."""
-        data = await self._post_query(MEDIA_DETAILS_QUERY, {"id": media_id})
-        media = data.get("Media")
-        if not media:
-            return None
-
-        titles = media.get("title", {})
-        aliases = set()
-        for key in ["romaji", "english", "native", "userPreferred"]:
-            val = titles.get(key)
-            if val and isinstance(val, str) and val.strip():
-                aliases.add(val.strip())
-        for syn in media.get("synonyms", []):
-            if syn and isinstance(syn, str) and syn.strip():
-                aliases.add(syn.strip())
-
-        next_airing = media.get("nextAiringEpisode")
-        next_airing_episode = next_airing["episode"] if next_airing else None
-        next_airing_at = None
-        if next_airing and next_airing.get("airingAt"):
-            next_airing_at = datetime.fromtimestamp(next_airing["airingAt"], tz=timezone.utc)
-
-        return {
-            "anilist_id": media_id,
-            "display_name": titles.get("userPreferred") or titles.get("english") or titles.get("romaji"),
-            "aliases": list(aliases),
-            "status": media.get("status"),
-            "total_episodes": media.get("episodes"),
-            "next_airing_episode": next_airing_episode,
-            "next_airing_at": next_airing_at,
-        }

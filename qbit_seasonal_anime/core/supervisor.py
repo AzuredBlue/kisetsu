@@ -11,11 +11,11 @@ from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitCo
 from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
 from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents, has_downloaded_final_episode
 from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from qbit_seasonal_anime.core.grabber import evaluate_and_grab_releases, sync_show_episodes, update_episode_status
+from qbit_seasonal_anime.core.grabber import is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
 from qbit_seasonal_anime.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from qbit_seasonal_anime.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
 from qbit_seasonal_anime.core.stall import check_and_handle_stalls
-from qbit_seasonal_anime.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, utc_now
+from qbit_seasonal_anime.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from qbit_seasonal_anime.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 
 logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
@@ -24,11 +24,6 @@ logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
 EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 
 
-def _aware(value):
-    """SQLite hands back naive datetimes; anything compared to utc_now() must be aware."""
-    if value is None:
-        return None
-    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 # How long another feed has to keep carrying a release before a show moves to it.
 FEED_SWITCH_GRACE_SECONDS = 300
 
@@ -582,7 +577,7 @@ class Supervisor:
                     ])
                 )
             ).all()
-            if show.schedule_synced_at is None or _aware(show.schedule_synced_at) < cutoff
+            if show.schedule_synced_at is None or as_utc(show.schedule_synced_at) < cutoff
         ]
         if not due:
             return logs
@@ -1172,6 +1167,13 @@ class Supervisor:
             episode.torrent_hash
             for episode in self.session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
         }
+        # A release a replacement superseded is accounted for: adopting it again
+        # would roll the episode back and trigger the same replacement forever.
+        known_hashes.update(
+            self.session.exec(
+                select(TorrentOperation.old_torrent_hash).where(TorrentOperation.old_torrent_hash.is_not(None))
+            ).all()
+        )
         shows = self.session.exec(
             select(Monitored).where(
                 Monitored.status.in_([
@@ -1211,7 +1213,12 @@ class Supervisor:
                 (item for item in episodes if item.episode_number == int(raw_episode)),
                 None,
             )
-            if not episode:
+            if not episode or episode.torrent_hash or episode.status in {
+                EpisodeStatus.QUEUED,
+                EpisodeStatus.DOWNLOADING,
+                EpisodeStatus.REPLACING,
+            }:
+                # Only fill gaps; never overwrite a release that is tracked.
                 continue
             episode.release_title = name
             episode.release_group = parsed.get("release_group")
@@ -1219,11 +1226,7 @@ class Supervisor:
             episode.source_episode = int(raw_episode)
             episode.feed_id = matched_show.current_feed_id
             episode.version = max(1, int(parsed.get("version") or 1))
-            progress = float(getattr(torrent, "progress", 0) or 0)
-            state_name = str(getattr(torrent, "state", "") or "").lower()
-            complete = progress >= 1 or state_name in {
-                "uploading", "pausedup", "stoppedup", "queuedup", "forcedup", "stalledup",
-            }
+            complete = is_seeding_torrent(torrent)
             episode.status = EpisodeStatus.COMPLETED if complete else EpisodeStatus.DOWNLOADING
             if complete:
                 episode.downloaded_at = episode.downloaded_at or utc_now()
@@ -1322,12 +1325,6 @@ class Supervisor:
 
         if mode == "direct":
             if force_rss_refresh:
-                all_logs.extend(await asyncio.to_thread(
-                    update_episode_status,
-                    self.session,
-                    self.qbit,
-                    self.settings,
-                ))
                 refreshed_articles = await asyncio.to_thread(rss_snapshot.refresh)
                 all_logs.append("Refreshed qBittorrent RSS feeds before direct evaluation.")
                 all_feeds = self.session.exec(select(Feed)).all()

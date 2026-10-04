@@ -1,18 +1,14 @@
-import asyncio
 import logging
-import signal
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 from sqlmodel import Session, select
-from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.clients.qbit import QBitClient
 from qbit_seasonal_anime.config import (
     DEFAULT_BACKFILL_WINDOW_DAYS,
     DEFAULT_DOWNLOAD_MODE,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
-from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.db.models import (
     ACTIVE_OPERATION_STATUSES,
     Episode,
@@ -20,9 +16,9 @@ from qbit_seasonal_anime.db.models import (
     Monitored,
     MonitoredStatus,
     TorrentOperation,
+    as_utc,
     utc_now,
 )
-from qbit_seasonal_anime.db.session import get_engine, get_settings
 
 logger = logging.getLogger("qbit_seasonal_anime.workers.scheduler")
 
@@ -37,13 +33,6 @@ class PollClassification:
     hunting: List[Monitored]
     unresolved_upcoming: List[Tuple[datetime, Monitored]]
     now: datetime
-    backlog: List[Monitored] = field(default_factory=list)
-
-
-def _aware(value: Optional[datetime]) -> Optional[datetime]:
-    if value is None:
-        return None
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
 
 def earliest_scheduled_retry(session: Session, now: Optional[datetime] = None) -> Optional[int]:
@@ -63,7 +52,7 @@ def earliest_scheduled_retry(session: Session, now: Optional[datetime] = None) -
     ).all() if value]
     if not deadlines:
         return None
-    soonest = min(_aware(value) for value in deadlines)
+    soonest = min(as_utc(value) for value in deadlines)
     return max(0, int((soonest - now).total_seconds()))
 
 
@@ -74,7 +63,7 @@ def classify_shows(
     backfill_window_days: int = DEFAULT_BACKFILL_WINDOW_DAYS,
     early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> PollClassification:
-    """Split active shows into hunting, not-yet-aired and backlog.
+    """Split active shows into hunting and not-yet-aired.
 
     In rules mode a ``FIXED`` show is ignored, because qBittorrent downloads it
     on its own. The direct engines own their downloads, so a ``FIXED`` show
@@ -83,7 +72,6 @@ def classify_shows(
     now = utc_now()
     hunting_shows: List[Monitored] = []
     unresolved_upcoming: List[Tuple[datetime, Monitored]] = []
-    backlog_shows: List[Monitored] = []
 
     mode = str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower()
     is_direct = mode == "direct"
@@ -91,7 +79,7 @@ def classify_shows(
     shows = session.exec(select(Monitored)).all()
     if not shows:
         return PollClassification(
-            has_shows=False, hunting=[], unresolved_upcoming=[], now=now, backlog=[]
+            has_shows=False, hunting=[], unresolved_upcoming=[], now=now
         )
 
     operation_shows: set = set()
@@ -108,7 +96,7 @@ def classify_shows(
             operation_shows = {s.id for s in shows if s.id in pending_show_ids}
 
     for s in shows:
-        airing_at = _aware(s.next_airing_at)
+        airing_at = as_utc(s.next_airing_at)
         suspended = s.status in (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
 
         if s.id in operation_shows and not suspended:
@@ -127,7 +115,7 @@ def classify_shows(
                     Episode.air_at.is_not(None),
                 )
             ).all()
-            air_times = {episode.episode_number: _aware(episode.air_at) for episode in scheduled}
+            air_times = {episode.episode_number: as_utc(episode.air_at) for episode in scheduled}
             # Start hunting a little before the stated air time, so a release
             # that lands early is still picked up promptly.
             horizon = now + timedelta(hours=max(0, early_air_tolerance_hours))
@@ -175,7 +163,13 @@ def classify_shows(
             if not is_near and (s.next_airing_episode or 1) > 1:
                 previous_air = airing_at - timedelta(days=7)
                 expected_ep = (s.next_airing_episode or 1) - 1
-                if (now - previous_air) <= timedelta(hours=24) and (s.last_confirmed_episode or 0) < expected_ep:
+                # previous_air lies in the future when the next airing is more
+                # than a week out (hiatus or delay); that is not "just aired".
+                since_previous = now - previous_air
+                if (
+                    timedelta(0) <= since_previous <= timedelta(hours=24)
+                    and (s.last_confirmed_episode or 0) < expected_ep
+                ):
                     is_near = True
 
             if is_near:
@@ -188,7 +182,6 @@ def classify_shows(
         hunting=hunting_shows,
         unresolved_upcoming=unresolved_upcoming,
         now=now,
-        backlog=backlog_shows,
     )
 
 
@@ -277,9 +270,7 @@ def calculate_next_poll_interval(
                 reason = f"Upcoming premiere: '{earliest_show.display_name}' airs on {air_str} (in {sleep_duration // 60}m). Sleeping until air time to {verb}."
         if reason is None:
             reason = _idle_reason(
-                classification.backlog,
                 mode=mode,
-                uses_direct_engine=uses_direct_engine,
                 default_interval_seconds=default_interval_seconds,
             )
 
@@ -291,10 +282,8 @@ def calculate_next_poll_interval(
 
 
 def _idle_reason(
-    backlog: Optional[List[Monitored]] = None,
     *,
     mode: str,
-    uses_direct_engine: bool,
     default_interval_seconds: int,
 ) -> str:
     """Explain a routine-length sleep: nothing is due before the next pass."""
@@ -304,76 +293,3 @@ def _idle_reason(
     if mode == "observe":
         return f"All active shows are observed or waiting for air dates. Sleeping {minutes}m until next routine check."
     return f"All active shows have working rules or are waiting for air dates. Sleeping {minutes}m until next routine check."
-
-
-async def run_daemon_loop(poll_interval_seconds: Optional[int] = None) -> None:
-    """Run the supervisor indefinitely in smart-adaptive background daemon mode."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    )
-    logger.info("Starting qbit-seasonal-anime supervisor in daemon mode...")
-
-    engine = get_engine()
-    anilist = AniListClient()
-    stop_event = asyncio.Event()
-
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        try:
-            loop.add_signal_handler(sig, stop_event.set)
-        except NotImplementedError:
-            pass
-
-    hunting_next = False
-    force_rss_refresh = True
-
-    while not stop_event.is_set():
-        with Session(engine) as session:
-            settings = get_settings(session)
-            default_interval = poll_interval_seconds or (settings.refresh_interval_minutes * 60)
-            default_interval = max(60, default_interval)
-
-            qbit = QBitClient(
-                host=settings.qbit_host,
-                username=settings.qbit_username,
-                password=settings.qbit_password,
-            )
-            supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
-
-            try:
-                logger.info("Executing supervisor cycle...")
-                logs = await supervisor.run_full_cycle(
-                    hunting=hunting_next,
-                    force_rss_refresh=force_rss_refresh,
-                )
-                force_rss_refresh = False
-                for l in logs:
-                    logger.info(f"Supervisor: {l}")
-            except Exception as e:
-                force_rss_refresh = True
-                logger.error(f"Error in supervisor cycle: {e}", exc_info=True)
-
-            sleep_duration, reason = await asyncio.to_thread(
-                calculate_next_poll_interval,
-                session,
-                default_interval_seconds=default_interval,
-                qbit_client=qbit,
-                download_mode=settings.download_mode,
-                backfill_window_days=settings.backfill_window_days,
-                early_air_tolerance_hours=settings.early_air_tolerance_hours,
-            )
-            hunting_next = is_hunting(
-                session,
-                download_mode=settings.download_mode,
-                backfill_window_days=settings.backfill_window_days,
-                early_air_tolerance_hours=settings.early_air_tolerance_hours,
-            )
-            logger.info(f"{reason} (Next check in {sleep_duration}s / {sleep_duration // 60}m)")
-
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=sleep_duration)
-        except asyncio.TimeoutError:
-            pass
-
-    logger.info("qbit-seasonal-anime supervisor daemon stopped gracefully.")

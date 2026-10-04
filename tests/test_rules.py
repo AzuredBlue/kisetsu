@@ -58,6 +58,12 @@ class TestRules(unittest.TestCase):
         self.assertTrue(re.search(pattern, "[Erai-raws] Frieren: Beyond Journey's End - 08.mkv", re.IGNORECASE))
         self.assertFalse(re.search(pattern, "[SubsPlease] Dandadan - 01.mkv", re.IGNORECASE))
 
+    def test_numeric_season_variants_do_not_match_a_longer_number(self):
+        pattern = build_regex_pattern(["Mushoku Tensei Season 3"])
+        self.assertTrue(re.search(pattern, "[X] Mushoku Tensei 3 - 02 (1080p).mkv", re.IGNORECASE))
+        self.assertTrue(re.search(pattern, "Mushoku Tensei S03E01 1080p", re.IGNORECASE))
+        self.assertFalse(re.search(pattern, "[X] Mushoku Tensei 30 - 02 (1080p).mkv", re.IGNORECASE))
+
     def test_build_regex_pattern_simple_matched_title(self):
         pattern = build_regex_pattern(
             aliases=["Mushoku Tensei: Isekai Ittara Honki Dasu 3rd Season", "Mushoku Tensei S3"],

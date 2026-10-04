@@ -245,7 +245,7 @@ class TestStall(unittest.TestCase):
         self.session.commit()
 
         mock_qbit = MagicMock()
-        logs = check_and_handle_stalls(self.session, mock_qbit, self.settings)
+        check_and_handle_stalls(self.session, mock_qbit, self.settings)
         self.session.refresh(show)
 
         self.assertEqual(show.status, MonitoredStatus.FIXED)

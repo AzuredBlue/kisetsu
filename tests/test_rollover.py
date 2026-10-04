@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -38,7 +38,7 @@ def test_continuous_numbering_never_falsely_completed(session):
     settings = Settings(id=1, base_dir="/tmp")
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
-    logs = supervisor.reconcile_schedule_rollover()
+    supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
     assert show.status == MonitoredStatus.FIXED
@@ -107,7 +107,7 @@ def test_finale_completes_when_all_episodes_confirmed(session):
     settings = Settings(id=1, base_dir="/tmp")
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
-    logs = supervisor.reconcile_schedule_rollover()
+    supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
     assert show.status == MonitoredStatus.COMPLETED
@@ -143,7 +143,7 @@ def test_finale_waits_for_download_when_not_confirmed(session):
     settings = Settings(id=1, base_dir="/tmp")
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
-    logs = supervisor.reconcile_schedule_rollover()
+    supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
     assert show.status == MonitoredStatus.FIXED

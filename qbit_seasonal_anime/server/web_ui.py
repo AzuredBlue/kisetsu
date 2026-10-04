@@ -1040,24 +1040,26 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       try {
         // The rule panel and the episode ledger are independent, so fetch both.
-        const [res, episodeRes] = await Promise.all([
-          fetch(`/api/shows/${showId}/rule`),
+        const [data, episodeRes] = await Promise.all([
+          apiFetch(`/api/shows/${showId}/rule`),
           fetch(`/api/shows/${showId}/episodes`)
         ]);
-        const data = await res.json();
         const episodes = episodeRes.ok ? await episodeRes.json() : [];
 
         const isCompleted = (data.status === 'completed');
         const isPaused = (data.status === 'paused');
         const isRuleActive = data.enabled === true;
-        const isDirect = data.download_mode === 'direct';
+        // Observe runs the direct engine without downloading, so it shares the
+        // episode ledger rather than the rule panel.
+        const isObserve = data.download_mode === 'observe';
+        const isDirect = data.download_mode === 'direct' || isObserve;
 
         titleEl.textContent = data.display_name;
-        ruleNameEl.textContent = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
+        ruleNameEl.textContent = isDirect ? (isObserve ? 'Observe mode (no downloads)' : 'Direct download engine') : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
 
         let ruleStatusText = '';
         if (isDirect) {
-          ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Direct Engine Active</span>';
+          ruleStatusText = `<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>${isObserve ? 'Observing' : 'Direct Engine Active'}</span>`;
         } else if (isCompleted) {
           ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>Completed</span>';
         } else if (isPaused) {
@@ -1305,7 +1307,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         // Only sent when the feed was actually changed: an explicit pick pins the
         // feed, while saving other fields must leave auto-detect in charge.
         current_feed_id: !modalInitialState || currentFeedId !== modalInitialState.current_feed_id ? currentFeedId : undefined,
-        save_folder: currentSaveFolder || undefined,
+        // The field shows the resolved path, so it is only sent when edited;
+        // otherwise every save would pin the show to today's absolute path.
+        // An emptied field resets the show to the default folder.
+        save_folder: !modalInitialState || currentSaveFolder !== modalInitialState.save_folder ? currentSaveFolder : undefined,
         category: currentCategory || undefined,
         ratio_limit: currentRatio,
         must_contain: isRegexChanged ? currentMustContain : undefined,
@@ -1446,12 +1451,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       };
 
       try {
-        const res = await fetch('/api/feeds/reorder', {
+        const data = await apiFetch('/api/feeds/reorder', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(reorderPayload)
         });
-        const data = await res.json();
         showToast(data.message || 'Feed priorities updated.', 'success');
       } catch (err) {
         showToast(`Failed updating priority: ${err}`, 'error');
@@ -1463,8 +1467,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function loadFeeds() {
       try {
-        const res = await fetch('/api/feeds');
-        allFeeds = await res.json();
+        allFeeds = await apiFetch('/api/feeds');
         renderFeedsTable();
       } catch (err) {
         showToast(`Failed loading feeds: ${err}`, 'error');
@@ -1495,8 +1498,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function syncFeeds() {
       try {
-        const res = await fetch('/api/feeds/sync', { method: 'POST' });
-        const data = await res.json();
+        const data = await apiFetch('/api/feeds/sync', { method: 'POST' });
         showToast(data.message || 'Feeds synced.', 'success');
         loadFeeds();
       } catch (err) {
@@ -1567,16 +1569,19 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     }
 
     async function setTitleLanguage(lang) {
+      const previous = currentSettings && currentSettings.title_language;
       updateTitleLanguageUi(lang);
       try {
-        await fetch('/api/settings', {
+        await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title_language: lang })
         });
+        if (currentSettings) currentSettings.title_language = lang;
         await loadShows();
       } catch (err) {
-        console.error('Failed to update title language:', err);
+        if (previous) updateTitleLanguageUi(previous);
+        showToast(`Failed to update title language: ${err.message || err}`, 'error');
       }
     }
 
@@ -1673,8 +1678,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       statusEl.textContent = 'Syncing...';
       statusEl.className = 'text-xs font-mono text-zinc-400';
       try {
-        const res = await fetch('/api/settings/sync-anilist', { method: 'POST' });
-        const data = await res.json();
+        const data = await apiFetch('/api/settings/sync-anilist', { method: 'POST' });
         statusEl.textContent = data.message || 'Synced.';
         statusEl.className = 'text-xs font-mono text-emerald-400 font-semibold';
         showToast(data.message || 'AniList synced.', 'success');
@@ -1689,9 +1693,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     async function clearAllShows() {
       if (!confirm('Delete ALL monitored shows and remove all qBittorrent RSS rules?')) return;
       try {
-        const res = await fetch('/api/settings/clear-all', { method: 'POST' });
-        const data = await res.json();
-        showToast(data.message, 'success');
+        const data = await apiFetch('/api/settings/clear-all', { method: 'POST' });
+        showToast(data.message || 'All shows cleared.', 'success');
         loadShows();
       } catch (err) {
         showToast(`Clear failed: ${err}`, 'error');
@@ -1832,7 +1835,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     async function clearHistory() {
       if (!confirm('Clear all match history?')) return;
       try {
-        await fetch('/api/history', { method: 'DELETE' });
+        await apiFetch('/api/history', { method: 'DELETE' });
         showToast('Match history cleared.', 'success');
         loadHistory();
       } catch (err) {

@@ -600,6 +600,44 @@ def test_editing_other_fields_leaves_the_feed_and_pin_alone(client, session, moc
     assert written["ratioLimit"] == 2.5
 
 
+def test_a_category_only_edit_keeps_the_learned_match_and_pause(client, session, mock_qbit):
+    # The cached feed no longer carries the show, so a re-match would find nothing.
+    mock_qbit.get_rss_items.return_value = {
+        "Feed 1": {"uid": "1", "url": "https://feed1.org/rss", "articles": []}
+    }
+    feed = Feed(id=1, qbit_feed_name="Feed 1", qbit_feed_url="https://feed1.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4011,
+        display_name="Bleach",
+        aliases_json='["Bleach"]',
+        status=MonitoredStatus.PAUSED,
+        status_before_pause=MonitoredStatus.FIXED.value,
+        current_feed_id=feed.id,
+        matched_title="Bleach",
+        matched_release_group="SubsPlease",
+        custom_regex="Bleach.*1080p",
+        qbit_rule_name="[Seasonal] Bleach",
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"category": "Anime Custom"})
+    assert res.status_code == 200
+
+    session.expire_all()
+    updated = session.get(Monitored, show.id)
+    assert updated.matched_title == "Bleach"
+    assert updated.custom_regex == "Bleach.*1080p"
+    assert updated.status == MonitoredStatus.PAUSED
+    assert updated.qbit_rule_name == "[Seasonal] Bleach"
+    mock_qbit.remove_rss_rule.assert_not_called()
+    written = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]
+    assert written["assignedCategory"] == "Anime Custom"
+    assert written["enabled"] is False
+
+
 def test_init_db_adds_the_custom_aliases_column_to_a_legacy_monitored_table(tmp_path):
     """An existing database gains the hand-written alias column instead of erroring."""
     database_path = tmp_path / "anime.db"
@@ -1256,6 +1294,18 @@ def test_init_db_repairs_active_numbering_without_reopening_completed_shows(tmp_
         assert preserved.last_confirmed_episode == 10
         assert session.exec(text("PRAGMA user_version")).one()[0] == SCHEMA_VERSION
     assert list(tmp_path.glob("anime.db.*.bak"))
+    engine.dispose()
+
+
+def test_a_fresh_database_is_stamped_and_not_treated_as_legacy_on_restart(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'anime.db'}")
+
+    init_db(engine)
+    init_db(engine)
+
+    with Session(engine) as session:
+        assert session.exec(text("PRAGMA user_version")).one()[0] == SCHEMA_VERSION
+    assert not list(tmp_path.glob("anime.db.*.bak"))
     engine.dispose()
 
 

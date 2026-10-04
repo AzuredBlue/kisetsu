@@ -177,6 +177,23 @@ class TestConfirmation(unittest.TestCase):
         history = self.session.exec(select(MatchHistory)).first()
         self.assertEqual(history.episode, 12)
 
+    def test_an_older_mapped_release_never_moves_the_confirmed_episode_back(self):
+        release_title = "[SubsPlease] Sousou no Frieren - 22 (1080p) [A03549C5].mkv"
+        self.show.total_episodes = 13
+        self.show.last_confirmed_episode = 12
+        self.session.add(EpisodeNumberMapping(monitored_id=1, feed_id=1, offset=11))
+        mock_qbit = MagicMock()
+        self._frieren_feed(mock_qbit, release_title)
+        rule_name = "[Seasonal] Sousou no Frieren"
+        mock_qbit.find_log_acceptances.return_value = {
+            (rule_name, release_title): utc_now(),
+        }
+
+        verify_and_confirm_torrents(self.session, mock_qbit, self.settings)
+        self.session.refresh(self.show)
+
+        self.assertEqual(self.show.last_confirmed_episode, 12)
+
     def test_history_row_falls_back_to_an_existing_torrent_when_log_rotated(self):
         mock_qbit = MagicMock()
         release_title = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
@@ -216,49 +233,39 @@ class TestConfirmation(unittest.TestCase):
 
         self.assertEqual(self.session.exec(select(MatchHistory)).all(), [])
 
-    def test_qbit_match_time_lookup_batches_log_and_rules_requests(self):
+    def test_log_acceptance_lookup_requires_the_same_rule(self):
         from qbit_seasonal_anime.clients.qbit import QBitClient
 
         client = QBitClient(host="http://localhost:8080")
         underlying = MagicMock()
         underlying.log_main.return_value = [
             MagicMock(spec=["timestamp"], timestamp=1700000001),
-            MagicMock(message="RSS article release-a is accepted by rule rule-a", timestamp="invalid"),
-            MagicMock(message="RSS article release-a is accepted by rule rule-a", timestamp=1699999999),
-            MagicMock(message="RSS article release-b is accepted by rule rule-b", timestamp=1700000000),
+            MagicMock(message="RSS article 'release-a' is accepted by rule 'rule-a'.", timestamp="invalid"),
+            MagicMock(message="RSS article 'release-a' is accepted by rule 'rule-a'.", timestamp=1699999999),
+            MagicMock(message="RSS article 'release-b' is accepted by rule 'other-rule'.", timestamp=1700000000),
         ]
-        underlying.rss_rules.return_value = {
-            "rule-c": {"lastMatch": "03 Sep 2026 12:00:00 +0000"},
-        }
         client.get_client = MagicMock(return_value=underlying)
 
-        result = client.get_rule_match_times([
+        result = client.find_log_acceptances([
             ("rule-a", "release-a"),
             ("rule-b", "release-b"),
-            ("rule-c", "release-c"),
         ])
 
-        assert result is not None
         self.assertIsNotNone(result[("rule-a", "release-a")])
-        self.assertIsNotNone(result[("rule-b", "release-b")])
-        self.assertIsNotNone(result[("rule-c", "release-c")])
+        self.assertIsNone(result[("rule-b", "release-b")])
         underlying.log_main.assert_called_once()
-        underlying.rss_rules.assert_called_once()
 
-    def test_qbit_match_time_batch_reports_total_source_failure(self):
+    def test_log_acceptance_lookup_survives_an_unreadable_log(self):
         from qbit_seasonal_anime.clients.qbit import QBitClient
 
         client = QBitClient(host="http://localhost:8080")
         underlying = MagicMock()
         underlying.log_main.side_effect = RuntimeError("logs unavailable")
-        underlying.rss_rules.side_effect = RuntimeError("rules unavailable")
         client.get_client = MagicMock(return_value=underlying)
 
-        result = client.get_rule_match_times([("rule-a", "release-a")])
+        result = client.find_log_acceptances([("rule-a", "release-a")])
 
-        self.assertIsNone(result)
-        underlying.log_main.assert_called_once()
-        underlying.rss_rules.assert_called_once()
+        self.assertEqual(result, {("rule-a", "release-a"): None})
 
     def _split_arc_setup(self, show_id, **overrides):
         """Show armed on the #1 feed while the release only exists on the #2 feed."""
@@ -417,7 +424,7 @@ class TestConfirmation(unittest.TestCase):
             }
         }
 
-        logs = verify_and_confirm_torrents(self.session, mock_qbit, self.settings)
+        verify_and_confirm_torrents(self.session, mock_qbit, self.settings)
         self.session.refresh(self.show)
 
         self.assertEqual(self.show.status, MonitoredStatus.UNCONFIRMED)

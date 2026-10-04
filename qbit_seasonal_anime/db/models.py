@@ -25,6 +25,17 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Return ``value`` as an aware UTC datetime.
+
+    SQLite hands datetimes back naive; they are stored as UTC, so a naive value
+    is labelled UTC and an aware one is converted.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
 class MonitoredStatus(str, Enum):
     UNCONFIRMED = "unconfirmed"
     FIXED = "fixed"
@@ -52,11 +63,13 @@ class TorrentOperationStatus(str, Enum):
     UNKNOWN = "unknown"
     COMPLETED = "completed"
     FAILED = "failed"
+    # Historical name: a replacement that is still downloading, waiting to
+    # finish before the release it supersedes is removed.
     SEEDING = "seeding"
     CANCELED = "canceled"
 
 
-# Ordered so that the latest resume stage wins when an operation is resumed.
+# Statuses of an operation that is still in flight, in lifecycle order.
 RESUME_STATUS_ORDER: Tuple[TorrentOperationStatus, ...] = (
     TorrentOperationStatus.PREPARING,
     TorrentOperationStatus.ADDED,
@@ -70,12 +83,8 @@ RESUME_STATUS_ORDER: Tuple[TorrentOperationStatus, ...] = (
 ACTIVE_OPERATION_STATUSES: Tuple[str, ...] = tuple(
     status.name for status in RESUME_STATUS_ORDER
 )
-TERMINAL_OPERATION_STATUSES: Tuple[str, ...] = (
-    TorrentOperationStatus.COMPLETED.name,
-    TorrentOperationStatus.FAILED.name,
-    TorrentOperationStatus.CANCELED.name,
-)
-# A one-step exit ladder: a retried failure is cancellable but not failed.
+# In-flight statuses a user action may cancel. FAILED is terminal, and SEEDING
+# (a replacement still downloading) is left to finish.
 CANCELLABLE_OPERATION_STATUSES: Tuple[str, ...] = (
     TorrentOperationStatus.ADDED.name,
     TorrentOperationStatus.NEW_VERIFIED.name,

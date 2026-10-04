@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from email.utils import parsedate_to_datetime
 import logging
 import re
 import time
@@ -42,6 +41,22 @@ def _is_auth_failure(exc: BaseException) -> bool:
     if status is None:
         status = getattr(exc, "status_code", None)
     return status in (401, 403)
+
+
+_ACCEPTED_BY_RULE = "is accepted by rule"
+
+
+def _is_acceptance(message: Any, rule_name: str, release_title: str) -> bool:
+    """Whether a log line reports *this* rule accepting *this* release.
+
+    qBittorrent logs "RSS article '<title>' is accepted by rule '<rule>'", so the
+    title must sit before the marker and the rule after it; another rule
+    accepting the same title is not evidence for this one.
+    """
+    if not isinstance(message, str) or _ACCEPTED_BY_RULE not in message:
+        return False
+    article_part, rule_part = message.split(_ACCEPTED_BY_RULE, 1)
+    return release_title in article_part and rule_name in rule_part
 
 
 class QBitClient:
@@ -351,14 +366,6 @@ class QBitClient:
             logger.warning(f"Failed to remove RSS rule '{rule_name}': {e}")
             raise QbitClientError(f"Failed to remove RSS rule '{rule_name}': {e}") from e
 
-    def get_torrents_by_category(self, category: str) -> List[Any]:
-        """Fetch torrents belonging to a specific category."""
-        client = self.get_client()
-        try:
-            return client.torrents_info(category=category)
-        except Exception as e:
-            raise QbitClientError(f"Failed to get torrents for category '{category}': {e}") from e
-
     def get_torrents(
         self,
         hashes: Optional[List[str]] = None,
@@ -407,20 +414,6 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to pause torrents: {e}") from e
 
-    def stop_torrents(self, torrent_hashes: List[str]) -> None:
-        """Stop torrents for good.
-
-        Unlike pause, qBittorrent does not resume a stopped torrent when it
-        restarts, which is what a superseded release needs.
-        """
-        if not torrent_hashes:
-            return
-        client = self.get_client()
-        try:
-            client.torrents_stop(torrent_hashes=torrent_hashes)
-        except Exception as e:
-            raise QbitClientError(f"Failed to stop torrents: {e}") from e
-
     def resume_torrents(self, torrent_hashes: List[str]) -> None:
         if not torrent_hashes:
             return
@@ -446,9 +439,9 @@ class QBitClient:
         """
         Timestamps of articles qBittorrent's log reports it accepted for a rule.
 
-        Unlike get_rule_match_times this has no lastMatch fallback: lastMatch only
-        proves the rule matched *something*, not that it accepted this article, so it
-        must not be used as evidence that a specific release was downloaded.
+        There is no lastMatch fallback: lastMatch only proves the rule matched
+        *something*, not that it accepted this article, so it must not be used as
+        evidence that a specific release was downloaded.
         """
         result: Dict[Tuple[str, str], Optional[datetime]] = {pair: None for pair in dict.fromkeys(pairs)}
         if not result:
@@ -464,8 +457,7 @@ class QBitClient:
         for pair, _ in result.items():
             rule_name, release_title = pair
             for entry in logs:
-                msg = getattr(entry, "message", None)
-                if not isinstance(msg, str) or "is accepted by rule" not in msg or release_title not in msg:
+                if not _is_acceptance(getattr(entry, "message", None), rule_name, release_title):
                     continue
                 try:
                     result[pair] = datetime.fromtimestamp(entry.timestamp, tz=timezone.utc)
@@ -513,101 +505,4 @@ class QBitClient:
         except Exception as e:
             logger.debug(f"Could not read rss_fetch_delay from qBittorrent preferences: {e}")
             return 0
-
-    def get_rule_match_times(
-        self,
-        pairs: List[Tuple[str, str]],
-    ) -> Optional[Dict[Tuple[str, str], Optional[datetime]]]:
-        unique_pairs = list(dict.fromkeys(pairs))
-        result: Dict[Tuple[str, str], Optional[datetime]] = {pair: None for pair in unique_pairs}
-        if not unique_pairs:
-            return result
-
-        log_lookup_succeeded = False
-        try:
-            client = self.get_client()
-            logs = client.log_main(last_known_id=-1)
-            log_lookup_succeeded = True
-        except Exception as e:
-            logger.debug(f"Could not search qBittorrent log for match events: {e}")
-            logs = []
-
-        try:
-            reversed_logs = list(reversed(logs))
-        except Exception as e:
-            logger.debug(f"Could not iterate qBittorrent match events: {e}")
-            reversed_logs = []
-            log_lookup_succeeded = False
-
-        for rule_name, release_title in unique_pairs:
-            for entry in reversed_logs:
-                try:
-                    msg = entry.message
-                except Exception as e:
-                    logger.debug(f"Could not read qBittorrent match event: {e}")
-                    continue
-                if not isinstance(msg, str) or "is accepted by rule" not in msg or release_title not in msg:
-                    continue
-                try:
-                    result[(rule_name, release_title)] = datetime.fromtimestamp(
-                        entry.timestamp,
-                        tz=timezone.utc,
-                    )
-                except Exception as e:
-                    logger.debug(f"Could not parse qBittorrent match timestamp: {e}")
-                else:
-                    break
-
-        unresolved = [pair for pair in unique_pairs if result[pair] is None]
-        if not unresolved:
-            return result
-
-        rule_lookup_succeeded = False
-        try:
-            rules = self.get_rss_rules()
-            rule_lookup_succeeded = True
-        except Exception as e:
-            logger.debug(f"Could not read rule lastMatch values: {e}")
-            rules = {}
-
-        for rule_name, release_title in unresolved:
-            rule_def = rules.get(rule_name)
-            if rule_def and rule_def.get("lastMatch"):
-                try:
-                    dt = parsedate_to_datetime(rule_def["lastMatch"])
-                    result[(rule_name, release_title)] = dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-                except Exception as e:
-                    logger.debug(f"Could not parse qBittorrent rule lastMatch: {e}")
-
-        if not log_lookup_succeeded and not rule_lookup_succeeded:
-            return None
-        return result
-
-    def get_rule_match_time(self, rule_name: str, release_title: str) -> Optional[datetime]:
-        """
-        Find the exact time when qBittorrent accepted/matched this release for this rule.
-        1. Searches qBittorrent client application log for:
-           'RSS article <release_title> is accepted by rule <rule_name>'
-        2. If not in log (e.g. rolled over or client restarted), checks rule's lastMatch in qBittorrent.
-        """
-        try:
-            client = self.get_client()
-            logs = client.log_main(last_known_id=-1)
-            for entry in reversed(logs):
-                msg = entry.message
-                if "is accepted by rule" in msg and release_title in msg:
-                    return datetime.fromtimestamp(entry.timestamp, tz=timezone.utc)
-        except Exception as e:
-            logger.debug(f"Could not search qBittorrent log for match event: {e}")
-
-        try:
-            rules = self.get_rss_rules()
-            rule_def = rules.get(rule_name)
-            if rule_def and rule_def.get("lastMatch"):
-                dt = parsedate_to_datetime(rule_def["lastMatch"])
-                return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-        except Exception as e:
-            logger.debug(f"Could not read rule lastMatch: {e}")
-
-        return None
 

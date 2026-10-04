@@ -114,10 +114,7 @@ class RssSnapshot:
         self._load_attempted = True
         try:
             rss_tree = self.qbit_client.get_rss_items(with_data=True)
-            try:
-                states = _rss_feed_states(rss_tree)
-            except QbitRSSRefreshError:
-                states = []
+            states = _rss_feed_states(rss_tree)
             if any(loading for _, _, loading, _ in states):
                 settle_timeout = self.calculate_settle_timeout(states)
                 rss_tree, states = self._wait_for_settled_feeds(time.monotonic() + settle_timeout, 0.25)

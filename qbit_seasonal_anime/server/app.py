@@ -28,6 +28,7 @@ QBIT_RETRY_DELAYS = (1, 2, 4, 8, 16, 30, 60)
 # A rejected password will not fix itself, so stop hammering it quickly.
 QBIT_AUTH_RETRY_SECONDS = 300
 STARTUP_GRACE_SECONDS = 5
+BUSY_RETRY_SECONDS = 5
 
 
 def _format_sleep(seconds: int) -> str:
@@ -58,6 +59,7 @@ async def background_supervisor_task():
     await asyncio.sleep(STARTUP_GRACE_SECONDS)
     hunting_next = False
     needs_rss_refresh = True
+    busy_logged = False
     while True:
         connection_ready = False
         sleep_seconds = 60
@@ -87,9 +89,16 @@ async def background_supervisor_task():
                 if connection_ready:
                     state.daemon_active = True
                     if not state.try_begin_cycle("background"):
-                        state.add_log("Another supervision or show mutation is already in progress; skipping this pass.", "INFO")
-                        await asyncio.sleep(1)
+                        # A manual cycle or show edit holds the slot. Wait for it
+                        # briefly instead of re-probing and logging every second.
+                        if not busy_logged:
+                            state.add_log("Another supervision or show mutation is already in progress; waiting for it to finish.", "INFO")
+                            busy_logged = True
+                        await asyncio.sleep(BUSY_RETRY_SECONDS)
                         continue
+                    busy_logged = False
+                    # A switch to the direct engine asks for fresh feeds first.
+                    needs_rss_refresh = state.consume_rss_refresh_request() or needs_rss_refresh
                     supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
 
                     state.add_log("Executing background supervision check...", "INFO")
@@ -249,6 +258,7 @@ async def _wait_for_log_wakeup() -> None:
 async def lifespan(app: FastAPI):
     engine = get_engine()
     init_db(engine)
+    state.bind_loop(asyncio.get_running_loop())
 
     bg_task = asyncio.create_task(background_supervisor_task())
     observer_task = asyncio.create_task(qbit_rule_observer_task())
