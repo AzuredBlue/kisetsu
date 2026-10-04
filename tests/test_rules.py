@@ -308,6 +308,31 @@ class TestRules(unittest.TestCase):
         v2 = generate_season_variants("Mushoku Tensei III")
         self.assertIn("Mushoku Tensei S3", v2)
 
+    def test_generate_season_variants_preserves_colon_titles(self):
+        """Separators inside a title are part of the name, not a cut point."""
+        from qbit_seasonal_anime.core.rules import generate_season_variants
+        v = generate_season_variants("Re:Zero kara Hajimeru Isekai Seikatsu 4th Season")
+        self.assertIn("Re:Zero kara Hajimeru Isekai Seikatsu S4", v)
+        self.assertIn("Re:Zero kara Hajimeru Isekai Seikatsu Season 4", v)
+
+        v2 = generate_season_variants("Kaguya-sama: Love Is War Season 2")
+        self.assertIn("Kaguya-sama: Love Is War S2", v2)
+
+        v3 = generate_season_variants("Fate/stay night: Unlimited Blade Works 2nd Season")
+        self.assertIn("Fate/stay night: Unlimited Blade Works S2", v3)
+
+    def test_generate_season_variants_keeps_hyphenated_titles_whole(self):
+        from qbit_seasonal_anime.core.rules import generate_season_variants
+        v = generate_season_variants("Akane-banashi 2nd Season")
+        self.assertIn("Akane-banashi S2", v)
+        self.assertIn("Akane-banashi Season 2", v)
+
+    def test_generate_season_variants_strips_dangling_punctuation(self):
+        from qbit_seasonal_anime.core.rules import generate_season_variants
+        v = generate_season_variants("Show Name - Season 2")
+        self.assertIn("Show Name S2", v)
+        self.assertNotIn("Show Name - S2", v)
+
     def test_monitored_aliases_property_safe_json(self):
         show = Monitored(anilist_id=999, display_name="Test", aliases_json="invalid json")
         self.assertEqual(show.aliases, [])

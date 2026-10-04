@@ -46,13 +46,17 @@ def generate_season_variants(alias: str) -> List[str]:
     if s_num == 0:
         return variants
 
-    base = re.split(r"[:\-_–]", alias)[0].strip()
+    # Cut the season off the whole alias. Separators inside a title ("Re:Zero",
+    # "Kaguya-sama", "Fate/stay night") are part of the name, so the base is never
+    # truncated at one; only dangling ones left by the removal are trimmed.
     base = re.sub(
         r"\b(?:season|s)\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(?:I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
         "",
-        base,
+        alias,
         flags=re.IGNORECASE,
-    ).strip()
+    )
+    base = re.sub(r"\s+", " ", base).strip()
+    base = re.sub(r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", "", base).strip()
 
     if base and len(base) >= 3:
         roman = INT_TO_ROMAN.get(s_num, "")
