@@ -731,24 +731,19 @@ def has_downloaded_final_episode(session: Session, show: Monitored) -> bool:
         )
     ).all()
     if episodes:
-        if any(ep.status == EpisodeStatus.WANTED for ep in episodes):
-            return False
-        final_ep = next((ep for ep in episodes if ep.episode_number == show.total_episodes), None)
-        if final_ep and final_ep.status == EpisodeStatus.COMPLETED:
-            return True
+        completed = {
+            episode.episode_number
+            for episode in episodes
+            if episode.status == EpisodeStatus.COMPLETED
+        }
+        # A season is only accounted for when every episode of it is. A row that
+        # was never written means we have no evidence for that episode, which is
+        # not the same as it being downloaded, so it blocks completion.
+        return all(number in completed for number in range(1, show.total_episodes + 1))
 
     last_episode = show.last_confirmed_episode or 0
     if last_episode == show.total_episodes:
         return True
-
-    # Legacy raw fallback: handle un-migrated raw last_confirmed_episode
-    offset = _episode_offset(session, show, show.current_feed_id)
-    if offset is not None and last_episode > show.total_episodes:
-        if (last_episode - offset) == show.total_episodes:
-            show.last_confirmed_episode = last_episode - offset
-            session.add(show)
-            session.commit()
-            return True
 
     match_conditions = [MatchHistory.monitored_id == show.id]
     if show.display_name:

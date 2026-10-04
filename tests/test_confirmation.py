@@ -576,10 +576,8 @@ class TestConfirmation(unittest.TestCase):
 
         self.assertFalse(has_downloaded_final_episode(self.session, show))
 
-    def test_has_downloaded_final_episode_handles_legacy_raw(self):
-        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
-
-        # Show with raw last_confirmed_episode (e.g. 23) and offset 11, total 12
+    def test_has_downloaded_final_episode_leaves_legacy_raw_to_the_migration(self):
+        """A raw value is translated by init_db, never inside this predicate."""
         show = Monitored(
             anilist_id=210031,
             display_name="Legacy Show",
@@ -595,10 +593,43 @@ class TestConfirmation(unittest.TestCase):
         self.session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=11))
         self.session.commit()
 
-        # 23 - 11 = 12 == total_episodes -> True and canonicalized
-        self.assertTrue(has_downloaded_final_episode(self.session, show))
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
         self.session.refresh(show)
-        self.assertEqual(show.last_confirmed_episode, 12)
+        self.assertEqual(show.last_confirmed_episode, 23)
+
+    def test_has_downloaded_final_episode_requires_every_episode_of_the_season(self):
+        """Episodes with no ledger row were never downloaded, so they block completion."""
+        show = Monitored(
+            anilist_id=210032,
+            display_name="Tracked Late",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=13,
+            last_confirmed_episode=13,
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        for episode_number in (11, 12, 13):
+            self.session.add(Episode(
+                monitored_id=show.id,
+                episode_number=episode_number,
+                status=EpisodeStatus.COMPLETED,
+            ))
+        self.session.commit()
+
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
+
+        for episode_number in range(1, 11):
+            self.session.add(Episode(
+                monitored_id=show.id,
+                episode_number=episode_number,
+                status=EpisodeStatus.COMPLETED,
+            ))
+        self.session.commit()
+
+        self.assertTrue(has_downloaded_final_episode(self.session, show))
 
 
 if __name__ == "__main__":

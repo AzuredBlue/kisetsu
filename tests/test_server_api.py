@@ -555,6 +555,51 @@ def test_init_db_canonicalizes_legacy_raw_confirmed(session):
     assert updated.last_confirmed_episode == 12
 
 
+def test_init_db_canonicalizes_legacy_raw_match_history(session):
+    """Match rows recorded before the offset existed hold raw feed numbers too."""
+    from qbit_seasonal_anime.db.session import init_db
+
+    feed = Feed(qbit_feed_name="SubsPlease", qbit_feed_url="https://feed.url", priority=1)
+    session.add(feed)
+    session.commit()
+    session.refresh(feed)
+
+    show = Monitored(
+        anilist_id=210031,
+        display_name="Legacy History Show",
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        total_episodes=12,
+    )
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=feed.id, offset=11))
+    session.add(MatchHistory(
+        monitored_id=show.id,
+        show_name=show.display_name,
+        rule_name="[Seasonal] Legacy History Show",
+        release_title="[SubsPlease] Legacy - 23 (1080p).mkv",
+        episode=23,
+    ))
+    session.add(MatchHistory(
+        monitored_id=show.id,
+        show_name=show.display_name,
+        rule_name="[Seasonal] Legacy History Show",
+        release_title="[SubsPlease] Legacy - 12 (1080p).mkv",
+        episode=12,
+    ))
+    session.commit()
+
+    init_db(session.get_bind())
+
+    session.expire_all()
+    episodes = sorted(
+        history.episode
+        for history in session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all()
+    )
+    assert episodes == [12, 12]
 
 
 

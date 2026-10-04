@@ -96,26 +96,38 @@ def init_db(engine=None):
             session.exec(text(f"CREATE INDEX IF NOT EXISTS {index_name} ON {table_name} ({columns})"))
         session.commit()
 
-        # Canonicalize legacy raw last_confirmed_episode values
+        # Builds before the feed offset existed stored raw feed episode numbers in
+        # these columns, so they read above total_episodes. The mapping is the only
+        # thing that can translate them back.
         shows_to_check = session.exec(
-            select(Monitored).where(
-                Monitored.total_episodes.is_not(None),
-                Monitored.last_confirmed_episode.is_not(None),
-            )
+            select(Monitored).where(Monitored.total_episodes.is_not(None))
         ).all()
         for show in shows_to_check:
-            if show.total_episodes and show.last_confirmed_episode and show.last_confirmed_episode > show.total_episodes:
-                mapping = session.exec(
-                    select(EpisodeNumberMapping).where(
-                        EpisodeNumberMapping.monitored_id == show.id,
-                        EpisodeNumberMapping.feed_id == show.current_feed_id,
-                    )
-                ).first() if show.current_feed_id else None
-                if mapping and mapping.offset:
-                    canonical = show.last_confirmed_episode - mapping.offset
-                    if 1 <= canonical <= show.total_episodes:
-                        show.last_confirmed_episode = canonical
-                        session.add(show)
+            if not show.total_episodes or not show.current_feed_id:
+                continue
+            mapping = session.exec(
+                select(EpisodeNumberMapping).where(
+                    EpisodeNumberMapping.monitored_id == show.id,
+                    EpisodeNumberMapping.feed_id == show.current_feed_id,
+                )
+            ).first()
+            if not mapping or not mapping.offset:
+                continue
+            offset = mapping.offset
+            if show.last_confirmed_episode and show.last_confirmed_episode > show.total_episodes:
+                canonical = show.last_confirmed_episode - offset
+                if 1 <= canonical <= show.total_episodes:
+                    show.last_confirmed_episode = canonical
+                    session.add(show)
+            for history in session.exec(
+                select(MatchHistory).where(
+                    MatchHistory.monitored_id == show.id,
+                    MatchHistory.episode.is_not(None),
+                )
+            ).all():
+                if history.episode > show.total_episodes:
+                    history.episode = history.episode - offset
+                    session.add(history)
         session.commit()
 
         stmt = select(Settings)
