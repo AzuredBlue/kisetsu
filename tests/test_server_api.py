@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock
 import asyncio
 import importlib
+from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
@@ -26,6 +27,7 @@ from qbit_seasonal_anime.db.models import (
     RuleHistory,
     RuleOutcome,
     Settings,
+    normalize_mapping_source,
 )
 from qbit_seasonal_anime.server.api import get_db, get_qbit
 from qbit_seasonal_anime.db.session import acquire_supervision_lease, init_db, release_supervision_lease
@@ -932,6 +934,108 @@ def test_init_db_repairs_active_numbering_without_reopening_completed_shows(tmp_
         assert preserved.last_confirmed_episode == 10
         assert session.exec(text("PRAGMA user_version")).one()[0] == 1
     assert list(tmp_path.glob("anime.db.*.bak"))
+    engine.dispose()
+
+
+def test_init_db_does_not_confirm_an_offset_the_aired_schedule_contradicts(tmp_path):
+    """A ledger written under a wrong offset must not promote it back to CONFIRMED."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    aired = datetime(2026, 9, 13, 8, 0, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        show = Monitored(
+            id=1,
+            anilist_id=210031,
+            display_name="Polar Opposites Season 2",
+            aliases_json='["Polar Opposites"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=13,
+            last_confirmed_episode=13,
+            current_feed_id=1,
+        )
+        session.add(feed)
+        session.add(show)
+        session.flush()
+        session.add(EpisodeNumberMapping(
+            monitored_id=1, feed_id=1, offset=11, source="CONFIRMED", evidence_count=2,
+        ))
+        # Release 22 is genuinely episode 11, which aired before the release was seen.
+        session.add(Episode(
+            monitored_id=1, episode_number=11, status=EpisodeStatus.COMPLETED, feed_id=1,
+            release_title="[SubsPlease] Polar Opposites - 22 (1080p).mkv",
+            air_at=aired, downloaded_at=aired + timedelta(hours=1),
+        ))
+        # Release 23 is episode 12, but episode 12 did not air until Sep 27, so an
+        # offset of 11 recorded it two weeks before the episode existed.
+        session.add(Episode(
+            monitored_id=1, episode_number=12, status=EpisodeStatus.COMPLETED, feed_id=1,
+            release_title="[SubsPlease] Polar Opposites - 23 (1080p).mkv",
+            air_at=datetime(2026, 9, 27, 8, 0, tzinfo=timezone.utc), downloaded_at=aired + timedelta(hours=2),
+        ))
+        session.commit()
+        session.exec(text("PRAGMA user_version = 0"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        mapping = session.exec(
+            select(EpisodeNumberMapping).where(
+                EpisodeNumberMapping.monitored_id == 1,
+                EpisodeNumberMapping.feed_id == 1,
+            )
+        ).first()
+        assert mapping.offset == 11
+        assert normalize_mapping_source(mapping.source) == "LEGACY"
+    engine.dispose()
+
+
+def test_init_db_keeps_confirming_an_offset_the_aired_schedule_agrees_with(tmp_path):
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    aired = datetime(2026, 9, 13, 8, 0, tzinfo=timezone.utc)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        show = Monitored(
+            id=1,
+            anilist_id=210031,
+            display_name="Polar Opposites Season 2",
+            aliases_json='["Polar Opposites"]',
+            status=MonitoredStatus.FIXED,
+            total_episodes=13,
+            last_confirmed_episode=12,
+            current_feed_id=1,
+        )
+        session.add(feed)
+        session.add(show)
+        session.flush()
+        session.add(EpisodeNumberMapping(
+            monitored_id=1, feed_id=1, offset=11, source="INFERRED", evidence_count=1,
+        ))
+        for episode_number, raw, air_at in ((11, 22, aired), (12, 23, aired + timedelta(days=7))):
+            session.add(Episode(
+                monitored_id=1, episode_number=episode_number, status=EpisodeStatus.COMPLETED, feed_id=1,
+                release_title=f"[SubsPlease] Polar Opposites - {raw} (1080p).mkv",
+                air_at=air_at, downloaded_at=air_at + timedelta(hours=1),
+            ))
+        session.commit()
+        session.exec(text("PRAGMA user_version = 0"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        mapping = session.exec(
+            select(EpisodeNumberMapping).where(
+                EpisodeNumberMapping.monitored_id == 1,
+                EpisodeNumberMapping.feed_id == 1,
+            )
+        ).first()
+        assert mapping.offset == 11
+        assert normalize_mapping_source(mapping.source) == "CONFIRMED"
     engine.dispose()
 
 

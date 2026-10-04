@@ -4,7 +4,7 @@ import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -32,6 +32,35 @@ def _backup_database(engine: Engine) -> Optional[Path]:
         source.backup(destination)
     os.chmod(backup_path, 0o600)
     return backup_path
+
+
+EPISODE_LEAD_TOLERANCE = timedelta(hours=6)
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+
+
+def _offset_contradicts_air_schedule(
+    episodes: List[Episode],
+    candidate_offset: int,
+) -> Optional[str]:
+    """Reason ``candidate_offset`` puts a release before its episode aired, else None.
+
+    Episodes without both an air date and a download timestamp are not judged.
+    """
+    for episode in episodes:
+        if not episode.air_at or not episode.downloaded_at or episode.source_episode is None:
+            continue
+        if int(episode.source_episode) - episode.episode_number != candidate_offset:
+            continue
+        if _as_utc(episode.air_at) > _as_utc(episode.downloaded_at) + EPISODE_LEAD_TOLERANCE:
+            return (
+                f"release {episode.source_episode} was recorded for episode "
+                f"{episode.episode_number} at {_as_utc(episode.downloaded_at).isoformat()}, "
+                f"before it aired at {_as_utc(episode.air_at).isoformat()}"
+            )
+    return None
 
 
 def _repair_legacy_episode_state(session: Session) -> None:
@@ -75,11 +104,35 @@ def _repair_legacy_episode_state(session: Session) -> None:
             continue
         counts = Counter(offset for offset, _, _ in entries)
         newest_entries = sorted(entries, key=lambda item: item[2], reverse=True)
-        offset = newest_entries[0][0]
-        count = counts[offset]
+        candidate_offset = newest_entries[0][0]
+
+        # The ledger was written under this mapping, so re-deriving the offset
+        # from it only reproduces its current value. AniList's aired schedule is
+        # the one source that can judge it independently.
+        show = shows.get(show_id)
+        judged = [
+            episode
+            for episode in episodes
+            if episode.monitored_id == show_id
+            and (episode.feed_id or (show.current_feed_id if show else None)) == feed_id
+        ]
+        contradiction = _offset_contradicts_air_schedule(judged, candidate_offset)
+        if contradiction:
+            logging.getLogger("qbit_seasonal_anime.db.session").warning(
+                f"Keeping stored episode offset {mapping.offset} for "
+                f"'{show.display_name if show else show_id}' on feed {feed_id}: offset "
+                f"{candidate_offset} implied by the episode ledger contradicts the "
+                f"aired schedule ({contradiction})."
+            )
+            if normalize_mapping_source(mapping.source) != EpisodeMappingSource.LEGACY.name:
+                mapping.source = EpisodeMappingSource.LEGACY.name
+                session.add(mapping)
+            continue
+
+        count = counts[candidate_offset]
         newest_offsets = [entry[0] for entry in newest_entries[:2]]
         confirmed = len(newest_offsets) == 2 and newest_offsets[0] == newest_offsets[1]
-        mapping.offset = offset
+        mapping.offset = candidate_offset
         mapping.evidence_count = max(mapping.evidence_count, count)
         mapping.source = (
             EpisodeMappingSource.CONFIRMED.name
