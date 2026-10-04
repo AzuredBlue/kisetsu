@@ -388,6 +388,16 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to delete torrents: {e}") from e
 
+    def remove_torrent_tags(self, torrent_hashes: List[str], tags: List[str]) -> None:
+        """Drop specific tags from torrents, leaving the rest untouched."""
+        if not torrent_hashes or not tags:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_remove_tags(torrent_hashes=torrent_hashes, tags=tags)
+        except Exception as e:
+            raise QbitClientError(f"Failed to remove tags {tags} from torrents: {e}") from e
+
     def pause_torrents(self, torrent_hashes: List[str]) -> None:
         if not torrent_hashes:
             return

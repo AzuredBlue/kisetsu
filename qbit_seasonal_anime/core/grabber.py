@@ -125,6 +125,25 @@ def _find_tagged(qbit: QBitClient, tag: str) -> Optional[Any]:
     return torrents[0] if torrents else None
 
 
+def _release_operation_tag(qbit: QBitClient, torrent_hash: Optional[str], operation_tag: Optional[str]) -> None:
+    """Drop the per-operation tag once the torrent has been identified by hash.
+
+    The tag exists only because ``add_torrent`` does not return a hash, so the
+    newly added torrent has to be findable by something. Once the hash is known
+    that lookup is never needed again, and the tag is a unique random string per
+    grab, so leaving it on the torrent just accumulates unreadable clutter in the
+    user's qBittorrent. The other tags are stable and stay.
+    """
+    if not torrent_hash or not operation_tag:
+        return
+    try:
+        qbit.remove_torrent_tags([torrent_hash], [operation_tag])
+    except QbitClientError as e:
+        # The tag is cosmetic from here on, so a failure must not disturb the
+        # download or the operation it belongs to.
+        logger.debug(f"Could not remove operation tag {operation_tag}: {e}")
+
+
 def _operation_for_episode(session: Session, episode_id: int) -> Optional[TorrentOperation]:
     stmt = select(TorrentOperation).where(
         TorrentOperation.episode_id == episode_id,
@@ -506,6 +525,7 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                 operation.updated_at = utc_now()
                 session.add(operation)
                 session.commit()
+                _release_operation_tag(qbit, operation.new_torrent_hash, operation.operation_tag)
             else:
                 retry_at = _aware(operation.next_retry_at)
                 if (
@@ -616,7 +636,40 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             episode.status = EpisodeStatus.FAILED
             episode.last_error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
             session.add(episode)
+    logs.extend(_release_stale_operation_tags(session, qbit))
     session.commit()
+    return logs
+
+
+def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[str]:
+    """
+    Remove per-operation tags left behind before the tag was released on success.
+
+    Earlier builds kept the random ``qsa-op-<uuid>`` tag on every torrent
+    forever, because nothing removed it once the hash made it redundant. This
+    sweeps whatever is already sitting in the user's qBittorrent and converges:
+    the column is cleared, so each episode is only ever cleaned once. It runs
+    here rather than as a migration because removing a tag needs qBittorrent,
+    which the database layer has no access to.
+    """
+    logs: List[str] = []
+    episodes = session.exec(
+        select(Episode).where(
+            Episode.operation_tag.isnot(None),
+            Episode.torrent_hash.isnot(None),
+        )
+    ).all()
+    for episode in episodes:
+        if episode.status in {EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING}:
+            # Still in flight: the tag is the only way to find the torrent.
+            continue
+        _release_operation_tag(qbit, episode.torrent_hash, episode.operation_tag)
+        episode.operation_tag = None
+        session.add(episode)
+        logs.append(
+            f"Removed leftover operation tag from {show_name(episode, session)} "
+            f"Ep {episode.episode_number}"
+        )
     return logs
 
 
@@ -989,6 +1042,7 @@ def _attempt_operation_add(
         operation.updated_at = utc_now()
         session.add(operation)
         session.commit()
+        _release_operation_tag(qbit, operation.new_torrent_hash, operation.operation_tag)
         _finish_operation(session, qbit, operation, episode)
         return
     episode.status = EpisodeStatus.REPLACING if operation.kind == "replace" else EpisodeStatus.QUEUED

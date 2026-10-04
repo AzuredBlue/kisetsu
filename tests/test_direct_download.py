@@ -1819,6 +1819,141 @@ def test_a_higher_ranked_feed_clears_a_pending_lower_ranked_candidate():
     engine.dispose()
 
 
+def test_the_random_operation_tag_is_removed_once_the_hash_is_known():
+    """It only exists to find the new torrent, which stops mattering once known."""
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    _show(session, current_feed_id=feed.id)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{
+            "id": "a",
+            "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [A].mkv",
+            "torrentURL": "magnet:a",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    operation = session.exec(select(TorrentOperation)).first()
+    added_tags = qbit.add_torrent.call_args.kwargs["tags"]
+    assert any(tag.startswith("qsa-op-") for tag in added_tags)
+    # The stable tags stay; only the random per-operation one is dropped.
+    qbit.remove_torrent_tags.assert_called_once_with(["hash-1"], [operation.operation_tag])
+    # The stable tags stay; only the random per-operation one is dropped.
+    assert "qsa-managed" in added_tags
+    assert "qsa-show-1" in added_tags
+    assert "qsa-ep-8" in added_tags
+    session.close()
+    engine.dispose()
+
+
+def test_leftover_operation_tags_are_swept_from_existing_torrents():
+    """Older builds left the tag on every torrent; the cycle cleans that up once."""
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    qbit, torrent = _qbit()
+    _qbit_title = str(torrent.name)
+    torrent.state = "stalledUP"
+    torrent.progress = 1.0
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.COMPLETED,
+        feed_id=feed.id,
+        torrent_hash="hash-1",
+        release_title=_qbit_title,
+        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+    ))
+    session.commit()
+
+    logs = update_episode_status(session, qbit, settings)
+
+    qbit.remove_torrent_tags.assert_called_once_with(
+        ["hash-1"], ["qsa-op-834c6907af68485cabb2306495d634f9"]
+    )
+    assert any("leftover operation tag" in line for line in logs)
+    # Cleared, so the same episode is never swept again.
+    session.expire_all()
+    assert session.get(Episode, 1).operation_tag is None
+
+    qbit.remove_torrent_tags.reset_mock()
+    update_episode_status(session, qbit, settings)
+    qbit.remove_torrent_tags.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_an_in_flight_operation_keeps_its_tag_for_lookup():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    qbit, torrent = _qbit()
+    _qbit_title = str(torrent.name)
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.QUEUED,
+        feed_id=feed.id,
+        torrent_hash="hash-1",
+        release_title=_qbit_title,
+        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+    ))
+    session.commit()
+
+    update_episode_status(session, qbit, settings)
+
+    # Still downloading, so the tag is the only handle on the new torrent.
+    qbit.remove_torrent_tags.assert_not_called()
+    session.expire_all()
+    assert session.get(Episode, 1).operation_tag == "qsa-op-834c6907af68485cabb2306495d634f9"
+    session.close()
+    engine.dispose()
+
+
+def test_a_failed_tag_removal_never_disturbs_the_download():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    qbit, torrent = _qbit()
+    _qbit_title = str(torrent.name)
+    torrent.state = "stalledUP"
+    torrent.progress = 1.0
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.COMPLETED,
+        feed_id=feed.id,
+        torrent_hash="hash-1",
+        release_title=_qbit_title,
+        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+    ))
+    session.commit()
+    qbit.remove_torrent_tags.side_effect = QbitClientError("tag API unavailable")
+
+    update_episode_status(session, qbit, settings)
+
+    session.expire_all()
+    episode = session.get(Episode, 1)
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert episode.operation_tag is None
+    session.close()
+    engine.dispose()
+
+
 def test_a_show_locked_to_a_delivering_feed_is_never_read_from_another():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
