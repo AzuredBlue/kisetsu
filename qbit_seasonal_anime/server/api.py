@@ -9,7 +9,18 @@ from sqlmodel import Session, select
 import qbittorrentapi
 
 from qbit_seasonal_anime.db.session import get_engine, get_settings
-from qbit_seasonal_anime.db.models import Monitored, Feed, RuleHistory, MonitoredStatus, RuleOutcome, MatchHistory, Settings, utc_now
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeNumberMapping,
+    Feed,
+    MatchHistory,
+    Monitored,
+    MonitoredStatus,
+    RuleHistory,
+    RuleOutcome,
+    Settings,
+    utc_now,
+)
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.core.supervisor import Supervisor
@@ -580,6 +591,12 @@ def delete_show(show_id: int, session: Session = Depends(get_db), qbit: QBitClie
 
     for h in session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
         session.delete(h)
+    for m in session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
+        session.delete(m)
+    for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
+        session.delete(mapping)
+    for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
+        session.delete(ep)
     session.flush()
     session.delete(show)
     session.commit()

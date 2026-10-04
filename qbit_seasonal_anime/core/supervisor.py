@@ -9,7 +9,19 @@ from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents, h
 from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from qbit_seasonal_anime.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
 from qbit_seasonal_anime.core.stall import check_and_handle_stalls
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from qbit_seasonal_anime.db.models import (
+    Episode,
+    EpisodeNumberMapping,
+    EpisodeStatus,
+    Feed,
+    MatchHistory,
+    Monitored,
+    MonitoredStatus,
+    RuleHistory,
+    RuleOutcome,
+    Settings,
+    utc_now,
+)
 
 logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
 
@@ -590,20 +602,22 @@ class Supervisor:
             if show_season_idx >= cur_season_idx:
                 continue
 
+            # Non-completed shows from past seasons are never pruned
+            if show.status != MonitoredStatus.COMPLETED:
+                continue
+
+            # Grace period check: if next_airing_at was recent, the release may still be pending
             air_at = show.next_airing_at
             if air_at and air_at.tzinfo is None:
                 air_at = air_at.replace(tzinfo=timezone.utc)
+            if air_at and air_at > (now - timedelta(days=7)):
+                continue
 
-            is_extending_cour = (
-                show.status != MonitoredStatus.COMPLETED
-                and (
-                    (air_at is not None and air_at > now)
-                    or (show.total_episodes is None)
-                    or ((show.last_confirmed_episode or 0) < (show.total_episodes or 1))
-                )
-            )
-
-            if is_extending_cour:
+            # Check episode ledger: if any episode is not COMPLETED, do not prune
+            episodes = self.session.exec(
+                select(Episode).where(Episode.monitored_id == show.id)
+            ).all()
+            if any(ep.status != EpisodeStatus.COMPLETED for ep in episodes):
                 continue
 
             if show.qbit_rule_name:
@@ -613,9 +627,14 @@ class Supervisor:
                     logger.debug(f"Could not delete rule '{show.qbit_rule_name}' during seasonal prune: {e}")
                 show.qbit_rule_name = None
 
-            hist = self.session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all()
-            for h in hist:
+            for h in self.session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
                 self.session.delete(h)
+            for m in self.session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
+                self.session.delete(m)
+            for mapping in self.session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
+                self.session.delete(mapping)
+            for ep in episodes:
+                self.session.delete(ep)
 
             self.session.delete(show)
             msg = f"Season transition ({cur_season} {cur_year}): Pruned completed show '{show.display_name}' from past season ({show.season_name} {show.season_year})."
@@ -640,8 +659,6 @@ class Supervisor:
         all_logs.extend(await asyncio.to_thread(self.sync_feeds))
 
         all_logs.extend(await self.sync_anilist_schedule(hunting=hunting))
-
-        all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
 
         all_logs.extend(await asyncio.to_thread(
             self.bootstrap_unassigned_shows,
@@ -673,6 +690,8 @@ class Supervisor:
             parsed_articles,
             self._known_categories,
         ))
+
+        all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
 
         total_shows = self.session.exec(select(Monitored)).all()
         now = utc_now()
