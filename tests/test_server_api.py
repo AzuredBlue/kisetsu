@@ -23,6 +23,8 @@ from qbit_seasonal_anime.db.models import (
     Monitored,
     Feed,
     MonitoredStatus,
+    RuleHistory,
+    RuleOutcome,
     Settings,
 )
 from qbit_seasonal_anime.server.api import get_db, get_qbit
@@ -504,11 +506,19 @@ def test_format_sleep_switches_to_seconds_below_a_minute():
 
 
 def test_delete_show(client, session):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://feed.url", priority=1)
+    session.add(feed)
     show = Monitored(anilist_id=3001, display_name="Show To Delete", status=MonitoredStatus.UNCONFIRMED)
     session.add(show)
     session.commit()
     session.refresh(show)
     show_id = show.id
+
+    session.add(MatchHistory(monitored_id=show_id, show_name="Show To Delete", rule_name="r", release_title="t", episode=1))
+    session.add(RuleHistory(monitored_id=show_id, feed_id=feed.id, outcome=RuleOutcome.CONFIRMED))
+    session.add(EpisodeNumberMapping(monitored_id=show_id, feed_id=feed.id, offset=0))
+    session.add(Episode(monitored_id=show_id, episode_number=1, status=EpisodeStatus.COMPLETED))
+    session.commit()
 
     res = client.delete(f"/api/shows/{show_id}")
     assert res.status_code == 200
@@ -517,6 +527,11 @@ def test_delete_show(client, session):
     session.expire_all()
     deleted = session.get(Monitored, show_id)
     assert deleted is None
+    assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show_id)).all() == []
+    assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == None)).all() == []
+    assert session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show_id)).all() == []
+    assert session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show_id)).all() == []
+    assert session.exec(select(Episode).where(Episode.monitored_id == show_id)).all() == []
 
 
 def test_edit_show_endpoint(client, session, mock_qbit):

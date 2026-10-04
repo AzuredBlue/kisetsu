@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 import re
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -97,17 +97,50 @@ def _canonical_episode(
     show: Monitored,
     feed_id: Optional[int],
     raw_episode: Optional[int],
+    current_time: Optional[datetime] = None,
 ) -> Optional[int]:
     if raw_episode is None:
         return None
     offset = _episode_offset(session, show, feed_id)
     if offset is None:
-        return raw_episode
-    local_episode = raw_episode - offset
+        local_episode = raw_episode
+    else:
+        local_episode = raw_episode - offset
+
     if local_episode < 1:
         return None
     if show.total_episodes and local_episode > show.total_episodes:
         return None
+
+    now = current_time or utc_now()
+    if show.next_airing_episode and show.next_airing_at:
+        air_at = show.next_airing_at
+        if air_at.tzinfo is None:
+            air_at = air_at.replace(tzinfo=timezone.utc)
+
+        # An episode cannot air if its scheduled broadcast is in the future.
+        # When an offset mapping is used, any mapping that produces an episode >= next_airing_episode
+        # while next_airing_at is in the future is invalid evidence.
+        if air_at > now + timedelta(hours=1):
+            if offset is not None and local_episode >= show.next_airing_episode:
+                logger.debug(
+                    f"Episode {local_episode} for '{show.display_name}' rejected: "
+                    f"Offset-mapped episode has not aired yet (next airing Ep {show.next_airing_episode} at {air_at})."
+                )
+                return None
+            if local_episode > show.next_airing_episode:
+                logger.debug(
+                    f"Episode {local_episode} for '{show.display_name}' rejected: "
+                    f"Episode is beyond next airing episode {show.next_airing_episode} which airs at {air_at}."
+                )
+                return None
+            if show.total_episodes and local_episode >= show.total_episodes:
+                logger.debug(
+                    f"Finale episode {local_episode} for '{show.display_name}' rejected: "
+                    f"Show finale airs in the future at {air_at}."
+                )
+                return None
+
     return local_episode
 
 
@@ -641,6 +674,16 @@ def verify_and_confirm_rules_from_feeds(
             canonical_row.release_title = matched_title
             canonical_row.downloaded_at = live_at
             session.add(canonical_row)
+        else:
+            canonical_row = Episode(
+                monitored_id=event["show_id"],
+                episode_number=canonical_episode,
+                status=EpisodeStatus.COMPLETED,
+                source_episode=event["episode"],
+                release_title=matched_title,
+                downloaded_at=live_at,
+            )
+            session.add(canonical_row)
 
         record_match_event(
             session=session,
@@ -686,30 +729,45 @@ def has_downloaded_final_episode(
     if not show.total_episodes or show.total_episodes <= 0 or not show.id:
         return False
 
-    if (download_mode or DEFAULT_DOWNLOAD_MODE) in ("direct", "observe"):
-        episodes = session.exec(
-            select(Episode).where(
-                Episode.monitored_id == show.id,
-                Episode.episode_number <= show.total_episodes,
-            )
-        ).all()
-        if episodes:
-            return all(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
+    # If AniList indicates an earlier episode is still to air, or finale has not aired yet, it cannot be completed
+    now = utc_now()
+    if show.next_airing_episode and show.total_episodes:
+        if show.next_airing_episode < show.total_episodes:
+            return False
+        if show.next_airing_episode == show.total_episodes:
+            air_at = show.next_airing_at
+            if air_at and air_at.tzinfo is None:
+                air_at = air_at.replace(tzinfo=timezone.utc)
+            if air_at and air_at > now:
+                return False
 
-    final_episode = session.exec(
+    episodes = session.exec(
         select(Episode).where(
             Episode.monitored_id == show.id,
-            Episode.episode_number == show.total_episodes,
+            Episode.episode_number <= show.total_episodes,
         )
-    ).first()
-    if final_episode and final_episode.status == EpisodeStatus.COMPLETED:
+    ).all()
+    if episodes:
+        if (download_mode or DEFAULT_DOWNLOAD_MODE) in ("direct", "observe"):
+            return all(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
+        if any(episode.status == EpisodeStatus.WANTED for episode in episodes):
+            return False
+        final_episode = next((ep for ep in episodes if ep.episode_number == show.total_episodes), None)
+        if final_episode and final_episode.status == EpisodeStatus.COMPLETED:
+            return True
+
+    last_episode = show.last_confirmed_episode or 0
+    if last_episode == show.total_episodes:
         return True
 
+    # Legacy raw fallback: handle un-migrated raw last_confirmed_episode
     offset = _episode_offset(session, show, show.current_feed_id)
-    last_episode = show.last_confirmed_episode or 0
-    canonical_last = last_episode - offset if offset is not None else last_episode
-    if canonical_last == show.total_episodes:
-        return True
+    if offset is not None and last_episode > show.total_episodes:
+        if (last_episode - offset) == show.total_episodes:
+            show.last_confirmed_episode = last_episode - offset
+            session.add(show)
+            session.commit()
+            return True
 
     match_conditions = [MatchHistory.monitored_id == show.id]
     if show.display_name:
@@ -722,13 +780,10 @@ def has_downloaded_final_episode(
         history_episode = history.episode
         if history_episode is None:
             continue
-        if offset is not None:
-            history_episode -= offset
-        if history_episode != show.total_episodes:
-            continue
-        if canonical_last < history_episode:
-            show.last_confirmed_episode = history_episode
-            session.add(show)
-        return True
+        if history_episode == show.total_episodes:
+            if last_episode < history_episode:
+                show.last_confirmed_episode = history_episode
+                session.add(show)
+            return True
 
     return False

@@ -2064,3 +2064,54 @@ def test_an_early_mid_season_release_is_grabbed():
     assert qbit.add_torrent.called
     session.close()
     engine.dispose()
+
+
+def test_date_mapped_episode_picks_past_aired_episode_not_future():
+    from qbit_seasonal_anime.core.grabber import _date_mapped_episode
+
+    engine, session = _database()
+    show = _show(
+        session,
+        display_name="Polar Opposites",
+        total_episodes=13,
+    )
+    # Ep 11 aired Sep 15, Ep 12 is scheduled for Sep 18 (3 days later)
+    ep11 = Episode(monitored_id=show.id, episode_number=11, status=EpisodeStatus.WANTED, air_at=datetime(2026, 9, 15, 12, 0, tzinfo=timezone.utc))
+    ep12 = Episode(monitored_id=show.id, episode_number=12, status=EpisodeStatus.WANTED, air_at=datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc))
+    session.add(ep11)
+    session.add(ep12)
+    session.commit()
+
+    # Release published on Sep 17 (2 days after ep 11, 1 day before ep 12)
+    # In the old code, abs(Sep 18 - Sep 17) = 1 day < 2 days, so it erroneously picked Ep 12.
+    article = {
+        "title": "[SubsPlease] Polar Opposites - 23 (1080p).mkv",
+        "date": "Thu, 17 Sep 2026 12:00:00 +0000",
+    }
+    mapped = _date_mapped_episode(session, show, raw_episode=23, target_count=13, article=article)
+    # Must pick Ep 11, NOT the future-scheduled Ep 12
+    assert mapped == 11
+
+    session.close()
+    engine.dispose()
+
+
+def test_mapped_episode_rejects_when_offset_maps_beyond_latest_aired():
+    from qbit_seasonal_anime.core.grabber import _mapped_episode
+
+    engine, session = _database()
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(feed)
+    show = _show(session, display_name="Polar Opposites", total_episodes=13)
+    # Stored bad offset 11
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=feed.id, offset=11))
+    session.commit()
+
+    # Raw 24 with offset 11 would give 13, but latest_aired is only 12 -> must be rejected
+    article = {"title": "[SubsPlease] Polar Opposites - 24 (1080p).mkv"}
+    mapped = _mapped_episode(session, show, feed, raw_episode=24, latest_aired=12, target_count=13, article=article)
+    assert mapped is None
+
+    session.close()
+    engine.dispose()
+

@@ -491,6 +491,115 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(m_hist[0].release_title, release_title)
         self.assertEqual(m_hist[0].episode, 2)
 
+    def test_canonical_episode_rejects_when_next_airing_in_future(self):
+        from qbit_seasonal_anime.core.confirmation import _canonical_episode
+
+        show = Monitored(
+            anilist_id=210031,
+            display_name="You and I Are Polar Opposites Season 2",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=13,
+            next_airing_episode=13,
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=11))
+        self.session.commit()
+
+        # Raw 24 with offset 11 maps to local 13, but AniList says 13 airs in 7 days -> must be rejected
+        canonical = _canonical_episode(self.session, show, feed_id=1, raw_episode=24)
+        self.assertIsNone(canonical)
+
+    def test_canonical_episode_accepts_when_air_date_has_passed(self):
+        from qbit_seasonal_anime.core.confirmation import _canonical_episode
+
+        show = Monitored(
+            anilist_id=210031,
+            display_name="You and I Are Polar Opposites Season 2",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=13,
+            next_airing_episode=13,
+            next_airing_at=utc_now() - timedelta(hours=2),
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=11))
+        self.session.commit()
+
+        canonical = _canonical_episode(self.session, show, feed_id=1, raw_episode=24)
+        self.assertEqual(canonical, 13)
+
+    def test_has_downloaded_final_episode_ledger_incomplete(self):
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        show = Monitored(
+            anilist_id=210031,
+            display_name="Incomplete Show",
+            status=MonitoredStatus.FIXED,
+            total_episodes=13,
+            last_confirmed_episode=13,
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.session.add(Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.WANTED))
+        self.session.add(Episode(monitored_id=show.id, episode_number=13, status=EpisodeStatus.COMPLETED))
+        self.session.commit()
+
+        # Even though last_confirmed is 13 and ep 13 is completed, ep 1 is WANTED -> not finished
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
+
+    def test_has_downloaded_final_episode_empty_ledger_respects_schedule(self):
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        # Empty ledger (no Episode rows exist)
+        show = Monitored(
+            anilist_id=210031,
+            display_name="Polar Opposites",
+            status=MonitoredStatus.FIXED,
+            total_episodes=13,
+            last_confirmed_episode=13,
+            next_airing_episode=13,  # Episode 13 is scheduled next in the future -> finale has not aired
+            next_airing_at=utc_now() + timedelta(days=7),
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
+
+    def test_has_downloaded_final_episode_handles_legacy_raw(self):
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        # Show with raw last_confirmed_episode (e.g. 23) and offset 11, total 12
+        show = Monitored(
+            anilist_id=210031,
+            display_name="Legacy Show",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=12,
+            last_confirmed_episode=23,
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        self.session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=11))
+        self.session.commit()
+
+        # 23 - 11 = 12 == total_episodes -> True and canonicalized
+        self.assertTrue(has_downloaded_final_episode(self.session, show))
+        self.session.refresh(show)
+        self.assertEqual(show.last_confirmed_episode, 12)
+
 
 if __name__ == "__main__":
     unittest.main()

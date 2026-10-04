@@ -119,6 +119,18 @@ def _repair_legacy_episode_state(session: Session) -> None:
         if completed:
             show.last_confirmed_episode = max(episode.episode_number for episode in completed)
             session.add(show)
+        elif scalar_conflict:
+            mapping = session.exec(
+                select(EpisodeNumberMapping).where(
+                    EpisodeNumberMapping.monitored_id == show.id,
+                    EpisodeNumberMapping.feed_id == show.current_feed_id,
+                )
+            ).first() if show.current_feed_id else None
+            if mapping and mapping.offset:
+                canonical = show.last_confirmed_episode - mapping.offset
+                if 1 <= canonical <= show.total_episodes:
+                    show.last_confirmed_episode = canonical
+                    session.add(show)
     session.commit()
 
 

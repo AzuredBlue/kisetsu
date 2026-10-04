@@ -9,6 +9,7 @@ from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
 from qbit_seasonal_anime.db.models import (
     Episode,
+    EpisodeNumberMapping,
     EpisodeStatus,
     Feed,
     MatchHistory,
@@ -768,3 +769,139 @@ def test_pinned_direct_show_is_never_moved_between_feeds():
         session.refresh(show)
         assert show.current_feed_id == subs.id
     engine.dispose()
+
+
+def test_prune_past_season_preserves_non_completed_show():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    # Show from 2020 (definitely past season), status FIXED, last_confirmed == total
+    show = Monitored(
+        id=15,
+        anilist_id=210031,
+        display_name="You and I Are Polar Opposites Season 2",
+        season_name="SUMMER",
+        season_year=2020,
+        status=MonitoredStatus.FIXED,
+        total_episodes=13,
+        last_confirmed_episode=13,
+        next_airing_at=utc_now() - timedelta(hours=2),
+        qbit_rule_name="[Seasonal] Polar Opposites",
+    )
+    session.add(show)
+    session.commit()
+
+    mock_qbit = MagicMock()
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=MagicMock(), settings=Settings(id=1))
+    logs = supervisor.prune_past_season_shows()
+
+    assert logs == []
+    mock_qbit.remove_rss_rule.assert_not_called()
+    assert session.get(Monitored, 15) is not None
+
+
+def test_prune_past_season_preserves_show_within_airing_grace_period():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    # Completed show whose air_at was just 2 hours ago (within 7-day grace period)
+    show = Monitored(
+        id=16,
+        anilist_id=210032,
+        display_name="Recently Aired Show",
+        season_name="SUMMER",
+        season_year=2020,
+        status=MonitoredStatus.COMPLETED,
+        total_episodes=12,
+        last_confirmed_episode=12,
+        next_airing_at=utc_now() - timedelta(hours=2),
+    )
+    session.add(show)
+    session.commit()
+
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=Settings(id=1))
+    logs = supervisor.prune_past_season_shows()
+
+    assert logs == []
+    assert session.get(Monitored, 16) is not None
+
+
+def test_prune_past_season_preserves_show_with_wanted_episodes():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    show = Monitored(
+        id=17,
+        anilist_id=210033,
+        display_name="Show With Missing Episodes",
+        season_name="SUMMER",
+        season_year=2020,
+        status=MonitoredStatus.COMPLETED,
+        total_episodes=13,
+        last_confirmed_episode=13,
+        next_airing_at=utc_now() - timedelta(days=30),
+    )
+    session.add(show)
+    session.commit()
+
+    # Episode 1 is still WANTED
+    session.add(Episode(monitored_id=17, episode_number=1, status=EpisodeStatus.WANTED))
+    session.add(Episode(monitored_id=17, episode_number=13, status=EpisodeStatus.COMPLETED))
+    session.commit()
+
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=Settings(id=1))
+    logs = supervisor.prune_past_season_shows()
+
+    assert logs == []
+    assert session.get(Monitored, 17) is not None
+
+
+def test_prune_past_season_prunes_completed_show_and_cleans_up_records():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://feed.url", priority=1)
+    session.add(feed)
+
+    show = Monitored(
+        id=18,
+        anilist_id=210034,
+        display_name="Truly Completed Past Season Show",
+        season_name="SUMMER",
+        season_year=2020,
+        status=MonitoredStatus.COMPLETED,
+        total_episodes=12,
+        last_confirmed_episode=12,
+        next_airing_at=utc_now() - timedelta(days=30),
+        qbit_rule_name="[Seasonal] Truly Completed Show",
+    )
+    session.add(show)
+    session.commit()
+
+    # Add associated records: Episode, EpisodeNumberMapping, RuleHistory, MatchHistory
+    session.add(Episode(monitored_id=18, episode_number=12, status=EpisodeStatus.COMPLETED))
+    session.add(EpisodeNumberMapping(monitored_id=18, feed_id=1, offset=0))
+    session.add(RuleHistory(monitored_id=18, feed_id=1, outcome=RuleOutcome.CONFIRMED))
+    session.add(MatchHistory(monitored_id=18, show_name=show.display_name, rule_name="[Seasonal] Truly Completed Show", release_title="Rel 12", episode=12))
+    session.commit()
+
+    mock_qbit = MagicMock()
+    supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=MagicMock(), settings=Settings(id=1))
+    logs = supervisor.prune_past_season_shows()
+
+    assert len(logs) == 1
+    assert "Pruned completed show 'Truly Completed Past Season Show'" in logs[0]
+    mock_qbit.remove_rss_rule.assert_called_once_with(rule_name="[Seasonal] Truly Completed Show")
+
+    assert session.get(Monitored, 18) is None
+    assert session.exec(select(Episode).where(Episode.monitored_id == 18)).all() == []
+    assert session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == 18)).all() == []
+    assert session.exec(select(RuleHistory).where(RuleHistory.monitored_id == 18)).all() == []
+    # Verify no leaked MatchHistory rows
+    assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == 18)).all() == []
+    assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == None)).all() == []
+

@@ -649,11 +649,22 @@ def _date_mapped_episode(
     ]
     if not dated:
         return None
-    episode, air_at = min(dated, key=lambda item: abs((item[1] - article_at).total_seconds()))
-    if abs((air_at - article_at).total_seconds()) > AIR_DATE_TOLERANCE.total_seconds():
+
+    # A release published at article_at can only be an episode that has already aired
+    # (allowing a small early air tolerance of 2 hours for timezone/stream variations).
+    early_air_tolerance = timedelta(hours=2)
+    valid_candidates = [
+        (episode, air_at)
+        for episode, air_at in dated
+        if air_at <= article_at + early_air_tolerance
+        and (article_at - air_at) <= AIR_DATE_TOLERANCE
+        and 1 <= episode.episode_number <= target_count
+    ]
+    if not valid_candidates:
         return None
-    if not 1 <= episode.episode_number <= target_count:
-        return None
+
+    # Pick the most recently aired episode prior to the release (closest to article_at)
+    episode, air_at = max(valid_candidates, key=lambda item: item[1])
     return episode.episode_number
 
 
@@ -675,6 +686,12 @@ def _mapped_episode(
     if mapping is not None:
         local_episode = raw_episode - mapping.offset
         if not 1 <= local_episode <= target_count:
+            return None
+        if latest_aired is not None and local_episode > latest_aired:
+            logger.debug(
+                f"Release episode {raw_episode} mapped to {local_episode} for '{show.display_name}', "
+                f"but latest aired is {latest_aired}. Rejecting mapping."
+            )
             return None
         return local_episode
 

@@ -834,6 +834,12 @@ def _delete_show(show_id: int, session: Session, qbit: QBitClient):
 
     for h in session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
         session.delete(h)
+    for m in session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
+        session.delete(m)
+    for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
+        session.delete(mapping)
+    for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
+        session.delete(ep)
     session.flush()
     session.delete(show)
     session.commit()
