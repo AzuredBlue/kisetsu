@@ -1841,12 +1841,10 @@ def test_the_random_operation_tag_is_removed_once_the_hash_is_known():
     operation = session.exec(select(TorrentOperation)).first()
     added_tags = qbit.add_torrent.call_args.kwargs["tags"]
     assert any(tag.startswith("qsa-op-") for tag in added_tags)
-    # The stable tags stay; only the random per-operation one is dropped.
     qbit.remove_torrent_tags.assert_called_once_with(["hash-1"], [operation.operation_tag])
-    # The stable tags stay; only the random per-operation one is dropped.
+    # The queried tags stay; only the per-operation one is dropped.
     assert "qsa-managed" in added_tags
     assert "qsa-show-1" in added_tags
-    assert "qsa-ep-8" in added_tags
     session.close()
     engine.dispose()
 

@@ -60,12 +60,12 @@ def _operation_tag() -> str:
     return f"qsa-op-{uuid4().hex}"
 
 
-def _episode_tags(show: Monitored, episode: int, version: int, operation_tag: str) -> List[str]:
+def _episode_tags(show: Monitored, operation_tag: str) -> List[str]:
+    # Both are queried: qsa-managed finds our torrents, qsa-show-<id> scopes
+    # pausing and resuming to one show.
     return [
         "qsa-managed",
         f"qsa-show-{show.id}",
-        f"qsa-ep-{episode}",
-        f"qsa-v{version}",
         operation_tag,
     ]
 
@@ -1003,7 +1003,7 @@ def _attempt_operation_add(
             urls=operation.new_torrent_url,
             save_path=save_path,
             category=settings.default_category,
-            tags=_episode_tags(show, episode.episode_number, operation.version, operation.operation_tag),
+            tags=_episode_tags(show, operation.operation_tag),
             is_paused=operation.kind == "replace",
             ratio_limit=settings.default_seed_ratio,
         )
