@@ -383,7 +383,7 @@ def verify_and_confirm_rules_from_feeds(
     """
     Verify and confirm rules against new and cached RSS feed articles.
     When a feed article matches an unconfirmed show's regex and aliases,
-    it confirms the rule as working (Works) and updates the last confirmed episode.
+    it confirms the rule as working (Working) and updates the last confirmed episode.
     Unconfirmed shows that stay quiet on their own feed are re-checked against the
     other feeds by priority, so a release that only appears further down the list
     is picked up instead of waiting for the stall timer.
@@ -587,7 +587,7 @@ def verify_and_confirm_rules_from_feeds(
             except Exception as e:
                 logger.warning(f"Could not update cleaned rule in qBittorrent for '{show.display_name}': {e}")
 
-            msg = f"Confirmed rule for '{show.display_name}' (Ep {best_ep}) via RSS '{matched_title}'. Cleaned up rule -> Works"
+            msg = f"Confirmed rule for '{show.display_name}' (Ep {best_ep}) via RSS '{matched_title}'. Cleaned up rule -> Working"
             logger.info(msg)
             logs.append(msg)
 

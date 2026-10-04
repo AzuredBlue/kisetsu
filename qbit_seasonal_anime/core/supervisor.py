@@ -4,7 +4,6 @@ import logging
 from datetime import timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
-from sqlalchemy import func
 from sqlmodel import Session, select
 from qbit_seasonal_anime.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
@@ -306,7 +305,7 @@ class Supervisor:
                     self.session.add(hist)
                     self.session.commit()
 
-                    msg = f"Created verified rule for '{show.display_name}' on feed '{chosen_feed.qbit_feed_name}' (Works)"
+                    msg = f"Created verified rule for '{show.display_name}' on feed '{chosen_feed.qbit_feed_name}' (Working)"
                     logger.info(msg)
                     logs.append(msg)
                 except QbitClientError as e:
@@ -1493,12 +1492,7 @@ class Supervisor:
                 else:
                     testing_cnt += 1
 
-        summary = f"Summary: {works_cnt} Works | {upcoming_cnt} Upcoming"
-        wanted_cnt = self.session.exec(
-            select(func.count(Episode.id)).where(Episode.status == EpisodeStatus.WANTED)
-        ).one()
-        if wanted_cnt:
-            summary += f" | {wanted_cnt} Wanted"
+        summary = f"Summary: {works_cnt} Working | {upcoming_cnt} Upcoming"
         if testing_cnt > 0:
             summary += f" | {testing_cnt} Testing"
         if stalled_cnt > 0:
