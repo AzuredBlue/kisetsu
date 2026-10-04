@@ -288,10 +288,18 @@ def ingest_log_acceptances(
             row.status = EpisodeStatus.COMPLETED
             row.source_episode = source_episode
             row.release_title = release_title
+            row.feed_id = show.current_feed_id
             row.downloaded_at = when
             session.add(row)
 
         show.last_confirmed_episode = canonical
+        # qBittorrent's own log is proof the rule matched, so the feed it is
+        # sitting on has carried the show. Lock it before anything can move it.
+        if show.current_feed_id is not None:
+            show.learned_feed_id = show.current_feed_id
+            parsed = parse_release_title(release_title).get("title")
+            if parsed:
+                show.matched_title = parsed
         session.add(show)
 
         record_match_event(
@@ -433,7 +441,7 @@ def verify_and_confirm_rules_from_feeds(
         if (
             found is None
             and show.status == MonitoredStatus.UNCONFIRMED
-            and not show.feed_pinned
+            and not show.feed_is_locked
             and top_feed is not None
         ):
             # This show's feed never saw the release. Walk the other feeds by
@@ -542,6 +550,13 @@ def verify_and_confirm_rules_from_feeds(
                 show.matched_title = best_parsed.get("title")
             if show.matched_release_group != best_parsed.get("release_group"):
                 show.matched_release_group = best_parsed.get("release_group")
+
+        # This release was seen on the feed the show currently sits on, so that
+        # feed is proven. Recording it keeps candidate nomination, stall fallback
+        # and rediscovery from ever moving the show off it.
+        show.learned_feed_id = feed.id
+        show.candidate_feed_id = None
+        show.candidate_feed_since = None
 
         if show.status == MonitoredStatus.UNCONFIRMED:
             show.status = MonitoredStatus.FIXED
@@ -672,6 +687,7 @@ def verify_and_confirm_rules_from_feeds(
             canonical_row.status = EpisodeStatus.COMPLETED
             canonical_row.source_episode = event["episode"]
             canonical_row.release_title = matched_title
+            canonical_row.feed_id = event.get("feed_id")
             canonical_row.downloaded_at = live_at
             session.add(canonical_row)
         else:
@@ -681,6 +697,7 @@ def verify_and_confirm_rules_from_feeds(
                 status=EpisodeStatus.COMPLETED,
                 source_episode=event["episode"],
                 release_title=matched_title,
+                feed_id=event.get("feed_id"),
                 downloaded_at=live_at,
             )
             session.add(canonical_row)

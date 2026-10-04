@@ -1069,11 +1069,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         }
 
         const isUpcoming = data.is_upcoming === true;
-        const isTesting = data.status === 'unconfirmed' && !isUpcoming && !data.feed_pinned;
+        const isTesting = data.status === 'unconfirmed' && !isUpcoming && !data.feed_locked;
 
-        // No release matched and no feed pinned: the feed is not decided, so the
-        // selector offers Auto-discover and only marks the default being probed.
-        const isAutoManaged = !isCompleted && !data.feed_pinned && !data.has_learned_pattern;
+        // Auto-discover only applies while the feed is genuinely undecided: no
+        // release seen, and nothing pinned. A feed that has already delivered is
+        // decided, and the selector must show it rather than hiding it.
+        const isAutoManaged = !isCompleted && !data.feed_locked && !data.has_learned_pattern;
         const selectedFeedId = isAutoManaged ? 0 : (data.current_feed_id || 0);
         const feedLabel = isUpcoming ? 'Feed (not decided yet)' : isTesting ? 'Feed (auto)' : 'Assigned Feed';
 
@@ -1119,6 +1120,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           <p class="text-[11px] text-zinc-500 leading-snug">Pinned by you — auto-detect will not move this show to another feed.</p>
         ` : '';
 
+        const learnedBanner = data.feed_learned ? `
+          <p class="text-[11px] text-zinc-500 leading-snug">Locked to <span class="text-emerald-400">${escapeHtml(data.learned_feed_name || 'the feed that delivered')}</span> — a release was already downloaded from it, so no other feed is checked and this cannot be moved automatically.</p>
+        ` : '';
+
         const noRulePlaceholder = isCompleted ? `
           <div class="bg-[#121215] border border-emerald-950/60 rounded-lg p-3 text-center">
             <div class="text-xs font-semibold text-emerald-400">Completed Series</div>
@@ -1131,13 +1136,18 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
         `;
 
-        const regexSections = data.has_rule ? `
+        const aliasesSection = data.has_rule ? `
           <div class="space-y-1">
             <label for="modal-aliases" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Custom Aliases</label>
             <input type="text" id="modal-aliases" value="${(data.custom_aliases || []).join(', ')}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
             <p class="text-[11px] text-zinc-500">Comma separated. Extra names the release group uses. AniList titles and synonyms are always matched too.</p>
           </div>
+        ` : '';
 
+        // Must Contain and Must Not Contain are qBittorrent RSS-rule fields. The
+        // direct engine owns no rule and matches from the episode ledger, so
+        // showing them there would display a regex that nothing ever reads.
+        const mustContainSections = data.has_qbit_rule ? `
           <div class="space-y-1">
             <label for="modal-must-contain" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Must Contain (Regex Filter)</label>
             <input type="text" id="modal-must-contain" value="${data.must_contain || ''}" placeholder=".*" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-emerald-400 focus:outline-none focus:border-zinc-500 shadow-inner select-all">
@@ -1147,9 +1157,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             <label for="modal-must-not-contain" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Must Not Contain Filter</label>
             <input type="text" id="modal-must-not-contain" value="${data.must_not_contain || ''}" placeholder="(720p|480p|...)" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-300 focus:outline-none focus:border-zinc-500 shadow-inner select-all">
           </div>
-        ` : noRulePlaceholder;
+        ` : '';
 
-        const articlesSection = (data.has_rule && data.has_learned_pattern) ? `
+        const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
+
+        const articlesSection = (data.has_qbit_rule && data.has_learned_pattern) ? `
           <div class="space-y-1 pt-0.5">
             <div class="flex items-baseline justify-between gap-2">
               <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Currently Matching in RSS Feed</span>
@@ -1196,6 +1208,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             ${(data.feed_url && !isAutoManaged) ? `<div class="text-[11px] text-zinc-500 font-mono truncate px-0.5">${data.feed_url}</div>` : ''}
             ${feedHint}
             ${pinnedBanner}
+            ${learnedBanner}
             ${candidateBanner}
           </div>
 
@@ -1320,8 +1333,22 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     async function modalTriggerRediscover() {
       if (!currentInspectedShowId) return;
       const showId = currentInspectedShowId;
+      const show = allShows.find(s => s.id === showId);
+      if (show && show.feed_learned) {
+        const feedName = show.learned_feed_name || show.current_feed_name || 'the feed that delivered';
+        const ok = confirm(
+          `'${show.display_name}' already downloaded a release from '${feedName}'.\n\n` +
+          `That feed is locked and is what the app will keep using. Resetting abandons it and ` +
+          `re-discovers from scratch, which may move the show to a different feed.\n\n` +
+          `Continue anyway?`
+        );
+        if (!ok) return;
+        closeRuleModal();
+        await rediscoverShow(showId, true);
+        return;
+      }
       closeRuleModal();
-      await rediscoverShow(showId);
+      await rediscoverShow(showId, false);
     }
 
     async function quickDownloadMatch(showId, btn) {
@@ -1356,9 +1383,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
-    async function rediscoverShow(id) {
+    async function rediscoverShow(id, force = false) {
       try {
-        const data = await apiFetch(`/api/shows/${id}/rediscover`, { method: 'POST' });
+        const data = await apiFetch(`/api/shows/${id}/rediscover${force ? '?force=true' : ''}`, { method: 'POST' });
         showToast(data.message, 'success');
         loadShows();
       } catch (err) {

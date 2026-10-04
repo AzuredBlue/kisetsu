@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.core.supervisor import FEED_SWITCH_GRACE_SECONDS, Supervisor
@@ -864,6 +865,133 @@ def test_pinned_direct_show_is_never_moved_between_feeds():
         assert supervisor._reassign_direct_feeds([subs, erai]) == []
         session.refresh(show)
         assert show.current_feed_id == subs.id
+    engine.dispose()
+
+
+def test_a_show_that_delivered_a_release_is_never_moved_between_feeds():
+    """A learned feed outranks every heuristic, with no downloaded hash to lean on."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=subs.id,
+            learned_feed_id=subs.id,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": [{
+                "id": "erai-ep8",
+                "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+                "torrentURL": "magnet:erai-ep8",
+            }]},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        logs = supervisor._reassign_direct_feeds([subs, erai])
+        session.refresh(show)
+
+        # No episode row carries a torrent hash, so the old guard would have let
+        # this through; the learned feed is what holds it now.
+        assert logs == []
+        assert show.candidate_feed_id is None
+        assert show.current_feed_id == subs.id
+    engine.dispose()
+
+
+def test_a_learned_show_is_never_sent_back_to_auto_discovery():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        # current_feed_id was cleared by a reset, but the feed is still proven.
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=None,
+            learned_feed_id=subs.id,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": []},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        logs = supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+        session.refresh(show)
+
+        # Never re-guessed, and the proven feed is put back.
+        assert show.current_feed_id == subs.id
+        assert any("Restored" in line for line in logs)
+        assert supervisor._restore_learned_feeds() == []
+    engine.dispose()
+
+
+def test_a_learned_feed_that_no_longer_exists_is_released():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=1)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            learned_feed_id=1,
+        )
+        session.add(show)
+        session.commit()
+        # An install migrated by ALTER TABLE has no foreign key on this column,
+        # so a feed removed from qBittorrent leaves the id dangling rather than
+        # nulling it. Reproduce that shape here.
+        session.exec(text("PRAGMA foreign_keys=OFF"))
+        session.exec(text("DELETE FROM feeds WHERE id = 1"))
+        session.commit()
+        session.exec(text("PRAGMA foreign_keys=ON"))
+        session.commit()
+
+        qbit = MagicMock()
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        supervisor._restore_learned_feeds()
+        session.refresh(show)
+
+        assert show.learned_feed_id is None
+        assert show.current_feed_id is None
+        assert show.feed_is_locked is False
     engine.dispose()
 
 

@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sqlite3
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
@@ -9,10 +10,21 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.config import DB_PATH, CONFIG_DIR
-from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, Settings, TorrentOperation, normalize_mapping_source
+from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, normalize_mapping_source
 
 _engine = None
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+# A stored naming pattern is only a filename if it still carries the markers a
+# release title has and a series name does not. Used to tell "this show learned
+# the whole episode filename" apart from "this show learned its own name".
+RELEASE_TITLE_EVIDENCE = re.compile(
+    r"\.(?:mkv|mp4|avi|webm)$"
+    r"|\bS\d{1,2}E\d{1,4}\b"
+    r"|\b\d{3,4}p\b"
+    r"|\b(?:WEB-?DL|BluRay|BDRip|WEBRip|REMUX|x264|x265|H\.?264|H\.?265)\b",
+    re.IGNORECASE,
+)
 
 
 def _database_path(engine: Engine) -> Optional[Path]:
@@ -187,6 +199,119 @@ def _repair_legacy_episode_state(session: Session) -> None:
     session.commit()
 
 
+def _repair_learned_feed_state(session: Session) -> None:
+    """
+    Re-derive the learned feed and the learned naming pattern for installs that
+    predate either column.
+
+    Both are recoverable facts that were already recorded, just in the wrong
+    place: the feed in ``episodes.feed_id``, and the series name inside the
+    release filename. Rediscovery had been free to override the former and to
+    learn a pattern from the latter, which produced rules that only ever matched
+    the single episode they were built from.
+    """
+    from qbit_seasonal_anime.core.matching import parse_release_title
+
+    log = logging.getLogger("qbit_seasonal_anime.db.session")
+    shows = session.exec(select(Monitored)).all()
+    episodes = session.exec(select(Episode)).all()
+    episodes_by_show = defaultdict(list)
+    for episode in episodes:
+        episodes_by_show[episode.monitored_id].append(episode)
+
+    for show in shows:
+        feed_usage = Counter(
+            episode.feed_id
+            for episode in episodes_by_show.get(show.id, [])
+            if episode.feed_id is not None
+        )
+        if feed_usage and show.learned_feed_id is None:
+            show.learned_feed_id = feed_usage.most_common(1)[0][0]
+            log.info(
+                f"Learned feed for '{show.display_name}' is now feed {show.learned_feed_id} "
+                f"(from {feed_usage[show.learned_feed_id]} downloaded episode(s))."
+            )
+        if show.learned_feed_id is not None and show.current_feed_id != show.learned_feed_id:
+            log.info(
+                f"'{show.display_name}' was pointed at feed {show.current_feed_id} but has "
+                f"downloaded from feed {show.learned_feed_id}; restoring the proven feed."
+            )
+            show.current_feed_id = show.learned_feed_id
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+        session.add(show)
+
+    # A failure row against the feed that actually delivered is exactly the
+    # record that kept rediscovery from ever coming back to it.
+    stale_failures = session.exec(
+        select(RuleHistory).where(
+            RuleHistory.outcome == RuleOutcome.FALSE_POSITIVE,
+            RuleHistory.feed_id.isnot(None),
+        )
+    ).all()
+    for history in stale_failures:
+        owner = next(
+            (
+                show
+                for show in shows
+                if show.id == history.monitored_id and show.learned_feed_id == history.feed_id
+            ),
+            None,
+        )
+        if owner is None:
+            continue
+        log.info(
+            f"Dropping stale failure record for '{owner.display_name}' on its own learned feed "
+            f"{history.feed_id} so the feed is not excluded from rediscovery."
+        )
+        session.delete(history)
+
+    for operation in session.exec(select(TorrentOperation)).all():
+        if operation.parsed_title or not operation.release_title:
+            continue
+        operation.parsed_title = parse_release_title(operation.release_title).get("title")
+        session.add(operation)
+
+    for show in shows:
+        if show.matched_title:
+            parsed = parse_release_title(show.matched_title).get("title")
+            if not parsed or parsed == show.matched_title:
+                continue
+            # Only rewrite a value that is plainly a filename; a title that merely
+            # parses to something shorter is left as the user/learned name it is.
+            if not RELEASE_TITLE_EVIDENCE.search(show.matched_title):
+                continue
+            log.info(
+                f"'{show.display_name}' had learned the whole release filename as its naming "
+                f"pattern; narrowing it to '{parsed}'."
+            )
+            show.matched_title = parsed
+            session.add(show)
+            continue
+        # Nothing learned at all, but episodes carry the release titles they were
+        # downloaded from, so the naming pattern is still recoverable.
+        if show.learned_feed_id is None:
+            continue
+        downloaded = [
+            episode
+            for episode in episodes_by_show.get(show.id, [])
+            if episode.feed_id == show.learned_feed_id and episode.release_title
+        ]
+        if not downloaded:
+            continue
+        newest = max(downloaded, key=lambda episode: episode.episode_number)
+        parsed = parse_release_title(newest.release_title).get("title")
+        if not parsed:
+            continue
+        show.matched_title = parsed
+        session.add(show)
+        log.info(
+            f"'{show.display_name}' had no learned naming pattern; recovering '{parsed}' "
+            f"from the release downloaded for Ep {newest.episode_number}."
+        )
+    session.commit()
+
+
 @event.listens_for(Engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
     """Ensure SQLite enforces foreign key constraints."""
@@ -253,6 +378,7 @@ def init_db(engine=None):
             ("custom_regex", "VARCHAR"),
             ("custom_must_not", "VARCHAR"),
             ("feed_pinned", "BOOLEAN"),
+            ("learned_feed_id", "INTEGER"),
             ("candidate_feed_id", "INTEGER"),
             ("candidate_feed_since", "DATETIME"),
             ("custom_aliases_json", "VARCHAR"),
@@ -338,6 +464,7 @@ def init_db(engine=None):
             ("source_episode", "INTEGER", None),
             ("feed_item_id", "VARCHAR", None),
             ("feed_id", "INTEGER", None),
+            ("parsed_title", "VARCHAR", None),
             ("attempt_count", "INTEGER", "1"),
             ("last_attempt_at", "TIMESTAMP", None),
             ("next_retry_at", "TIMESTAMP", None),
@@ -404,6 +531,7 @@ def init_db(engine=None):
 
         if needs_migration:
             _repair_legacy_episode_state(session)
+            _repair_learned_feed_state(session)
             session.exec(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
             session.commit()
 

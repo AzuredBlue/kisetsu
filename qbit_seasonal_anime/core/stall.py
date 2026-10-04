@@ -95,6 +95,25 @@ def check_and_handle_stalls(
                     logs.append(msg)
 
                     stalled_feed_id = show.current_feed_id
+                    # A locked feed is never abandoned, whether the user pinned it
+                    # or it has already proved it carries the show. A feed that
+                    # delivered an episode is evidence; a silent week is not. Bail
+                    # out before any rule is torn down or any failure is recorded,
+                    # so the stall leaves no trace that would exclude the feed.
+                    if show.feed_is_locked:
+                        reason = (
+                            "pinned by you"
+                            if show.learned_feed_id is None
+                            else "already proven: it has delivered a release for this show"
+                        )
+                        msg = (
+                            f"STALL: '{show.display_name}' Ep {expected_ep} is overdue, but its feed is "
+                            f"{reason} — keeping the rule armed on it instead of falling back."
+                        )
+                        logger.warning(msg)
+                        logs.append(msg)
+                        session.commit()
+                        continue
                     if latest_hist and latest_hist.outcome == RuleOutcome.PENDING:
                         latest_hist.outcome = RuleOutcome.STALLED
                         latest_hist.note = f"Stalled for Ep {expected_ep}"
@@ -122,24 +141,14 @@ def check_and_handle_stalls(
                     if stalled_feed_id and stalled_feed_id not in failed_feed_ids:
                         failed_feed_ids.append(stalled_feed_id)
 
-                    # A user-pinned feed is never switched automatically.
-                    discovery_res = None
-                    if show.feed_pinned:
-                        msg = (
-                            f"STALL: '{show.display_name}' has no release, but its feed is pinned by you — "
-                            f"keeping it instead of falling back to another feed."
-                        )
-                        logger.warning(msg)
-                        logs.append(msg)
-                    else:
-                        discovery_res = discover_feed_for_show(
-                            monitored=show,
-                            feeds=all_feeds,
-                            qbit_client=qbit_client,
-                            excluded_feed_ids=failed_feed_ids,
-                            rss_snapshot=rss_snapshot,
-                            parsed_articles=parsed_articles,
-                        )
+                    discovery_res = discover_feed_for_show(
+                        monitored=show,
+                        feeds=all_feeds,
+                        qbit_client=qbit_client,
+                        excluded_feed_ids=failed_feed_ids,
+                        rss_snapshot=rss_snapshot,
+                        parsed_articles=parsed_articles,
+                    )
 
                     if discovery_res:
                         fallback_feed, obs_group, matched_title = discovery_res
@@ -179,7 +188,7 @@ def check_and_handle_stalls(
                             logger.error(f"Failed creating fallback rule for '{show.display_name}': {e}")
                             logs.append(f"Error creating fallback rule: {e}")
                     else:
-                        if show.feed_pinned:
+                        if show.feed_is_locked:
                             avail = [f for f in all_feeds if f.id == show.current_feed_id]
                         else:
                             avail = [f for f in all_feeds if f.id not in failed_feed_ids]

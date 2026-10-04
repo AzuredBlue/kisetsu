@@ -34,6 +34,10 @@ from qbit_seasonal_anime.db.models import (
 logger = logging.getLogger("qbit_seasonal_anime.core.grabber")
 
 AIR_DATE_TOLERANCE = timedelta(days=3)
+# How long a release must stay on a lower-ranked feed before a show with no feed
+# assignment adopts it, so a higher-ranked feed gets a chance to post first.
+# Matches the grace windows used by rules-mode discovery and feed switching.
+FEED_DISCOVERY_GRACE_SECONDS = 300
 _FAILED_TORRENT_STATES = {"error", "missingfiles", "unknown"}
 MAX_OPERATION_ATTEMPTS = 8
 _INACTIVE_SHOW_STATUSES = (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
@@ -617,13 +621,88 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
 
 
 def _grab_feeds(session: Session, show: Monitored, feeds: List[Feed]) -> List[Feed]:
-    """The one feed this show may download from."""
+    """
+    The feeds this show may read from this cycle.
+
+    Feed assignment contract (direct engine)
+    -----------------------------------------
+    * ``learned_feed_id`` set -> exactly that feed, forever. It has already
+      delivered a release, which outranks every heuristic we have, so nothing
+      else is even fetched.
+    * ``current_feed_id`` set (assigned or pinned) -> exactly that feed.
+    * Neither set -> *discovery*. Every feed is offered, in ``(priority, id)``
+      order, and the first one carrying a matching, mappable release wins. See
+      :func:`evaluate_and_grab_releases` for the priority grace window applied
+      before a lower-ranked feed is adopted.
+    """
     if not feeds:
         return []
+    if show.feed_is_locked:
+        locked = next((feed for feed in feeds if feed.id == show.learned_feed_id or feed.id == show.current_feed_id), None)
+        # A locked show reads one feed or none at all. Fanning out here would be
+        # exactly the "grab from any feed" behaviour the lock exists to prevent.
+        return [locked] if locked is not None else []
     assigned = next((feed for feed in feeds if feed.id == show.current_feed_id), None)
     if assigned is not None:
         return [assigned]
     return sorted(feeds, key=lambda feed: (feed.priority, feed.id))
+
+
+def _discovery_window_open(
+    session: Session,
+    show: Monitored,
+    feed: Feed,
+    top_feed: Optional[Feed],
+    article: Dict[str, Any],
+    now: datetime,
+) -> bool:
+    """
+    Whether a release found during feed discovery may be grabbed now.
+
+    On the highest-ranked feed, yes. On any other feed, the show only adopts it
+    once the same feed has held the release for the whole grace window, measured
+    from the article's own publish time when qBittorrent gave us one. The
+    candidate is recorded so the window survives between cycles, and it is
+    cleared the moment a higher-ranked feed is seen carrying the release, because
+    that feed is then simply the winner.
+    """
+    if top_feed is None or feed.id == top_feed.id:
+        if show.candidate_feed_id is not None or show.candidate_feed_since is not None:
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+            session.add(show)
+            session.commit()
+        return True
+
+    published_at = parse_article_date(article)
+    reference = published_at if published_at > datetime.min.replace(tzinfo=timezone.utc) else now
+
+    if show.candidate_feed_id != feed.id:
+        show.candidate_feed_id = feed.id
+        show.candidate_feed_since = reference
+        session.add(show)
+        session.commit()
+        logger.info(
+            f"'{show.display_name}': '{article.get('title', '')}' is on #{feed.priority} feed "
+            f"'{feed.qbit_feed_name}', not the #{top_feed.priority} feed "
+            f"'{top_feed.qbit_feed_name}'; holding the adoption open for "
+            f"{FEED_DISCOVERY_GRACE_SECONDS // 60}m to see whether a higher-ranked feed posts it first."
+        )
+        return False
+
+    since = _aware(show.candidate_feed_since) or reference
+    if since + timedelta(seconds=FEED_DISCOVERY_GRACE_SECONDS) > now:
+        return False
+
+    logger.info(
+        f"'{show.display_name}': #{feed.priority} feed '{feed.qbit_feed_name}' has held the "
+        f"release for the full grace window; adopting it."
+    )
+    show.candidate_feed_id = None
+    show.candidate_feed_since = None
+    session.add(show)
+    session.commit()
+    return True
 
 
 def _date_mapped_episode(
@@ -886,9 +965,17 @@ def _attempt_operation_add(
             True,
         )
         return
-    if show.current_feed_id is None:
-        show.current_feed_id = operation.feed_id
-    show.matched_title = operation.release_title
+    # The feed that just delivered a release is now proven for this show. It is
+    # recorded as learned so nothing downstream may quietly move the show
+    # somewhere else on the strength of a heuristic.
+    show.learned_feed_id = operation.feed_id
+    show.current_feed_id = operation.feed_id
+    show.candidate_feed_id = None
+    show.candidate_feed_since = None
+    # Learn the series name, never the filename. The raw title carries this one
+    # episode's number, quality and group, so storing it would build a rule that
+    # matches nothing but the episode it came from.
+    show.matched_title = operation.parsed_title or operation.release_title
     show.matched_release_group = operation.release_group
     if show.status not in _INACTIVE_SHOW_STATUSES:
         show.status = MonitoredStatus.FIXED
@@ -948,6 +1035,7 @@ def _start_operation(
         status=TorrentOperationStatus.PREPARING,
         operation_tag=operation_tag,
         release_title=article.get("title", ""),
+        parsed_title=parsed.get("title"),
         release_group=parsed.get("release_group"),
         version=version,
         new_torrent_url=torrent_url,
@@ -1116,6 +1204,14 @@ def evaluate_and_grab_releases(
             default=None,
         )
         candidate_feeds = _grab_feeds(session, show, feeds)
+        # A show with no feed at all is being discovered. A release on the
+        # highest-ranked feed is taken straight away; one on a lower-ranked feed
+        # is only adopted after a grace window, so a better-ranked feed still
+        # gets its chance to post the episode first. Nothing is grabbed while
+        # the window is open: waiting costs a cycle, grabbing the wrong feed
+        # costs the whole season.
+        discovering = show.current_feed_id is None and show.learned_feed_id is None
+        top_feed = candidate_feeds[0] if candidate_feeds else None
         grabbed_from: Optional[int] = None
         has_feed_articles = False
         for feed in candidate_feeds:
@@ -1176,6 +1272,10 @@ def evaluate_and_grab_releases(
                     continue
                 if mode != "direct":
                     continue
+                if discovering and not _discovery_window_open(
+                    session, show, feed, top_feed, article, now
+                ):
+                    continue
                 _record_mapping_evidence(session, show, feed, int(raw_episode), episode_number)
                 operation = _start_operation(session, qbit, settings, show, feed, episode, article, parsed, version)
                 if operation:
@@ -1226,6 +1326,9 @@ def evaluate_and_grab_releases(
                     logs.append(msg)
                     logger.info(msg)
         if grabbed_from is not None and show.current_feed_id != grabbed_from:
+            # The feed that produced the release becomes the assignment, and the
+            # grab itself marks it learned, so from here on it is the only feed
+            # this show is read from.
             show.current_feed_id = grabbed_from
             session.add(show)
         session.commit()

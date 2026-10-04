@@ -172,6 +172,9 @@ def get_shows(session: Session = Depends(get_db)):
             "is_released": is_released,
             "custom_aliases": s.custom_aliases,
             "feed_pinned": bool(s.feed_pinned),
+            "feed_learned": s.learned_feed_id is not None,
+            "learned_feed_id": s.learned_feed_id or 0,
+            "learned_feed_name": feeds.get(s.learned_feed_id) if s.learned_feed_id else None,
             "candidate_feed_id": s.candidate_feed_id,
             "downloaded_episodes_count": downloaded_count,
             "wanted_episodes_count": wanted_count,
@@ -302,18 +305,38 @@ def get_show_episodes(show_id: int, session: Session = Depends(get_db)):
 
 
 @router.post("/shows/{show_id}/rediscover")
-def rediscover_show(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+def rediscover_show(
+    show_id: int,
+    force: bool = False,
+    session: Session = Depends(get_db),
+    qbit: QBitClient = Depends(get_qbit),
+):
     require_exclusive_cycle()
     try:
-        return _rediscover_show(show_id, session, qbit)
+        return _rediscover_show(show_id, session, qbit, force=force)
     finally:
         release_cycle()
 
 
-def _rediscover_show(show_id: int, session: Session, qbit: QBitClient):
+def _rediscover_show(show_id: int, session: Session, qbit: QBitClient, force: bool = False):
     show = session.get(Monitored, show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
+
+    # A feed that has already delivered a release is not a guess, and wiping it
+    # is how a working show ends up hunting again. Releasing it takes an explicit
+    # override, because the only way back is rediscovering from scratch.
+    if show.learned_feed_id is not None and not force:
+        feed = session.get(Feed, show.learned_feed_id)
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{show.display_name}' has already downloaded from "
+                f"'{feed.qbit_feed_name if feed else show.learned_feed_id}', so that feed is "
+                f"locked. Pick a feed explicitly instead, or repeat the reset with force=true "
+                f"to abandon the learned feed and rediscover from scratch."
+            ),
+        )
 
     old_feed_id = show.current_feed_id
     if show.qbit_rule_name:
@@ -322,7 +345,7 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient):
         except Exception as e:
             state.add_log(f"Warning: Could not delete rule '{show.qbit_rule_name}': {e}", "WARNING")
 
-    if old_feed_id:
+    if old_feed_id and old_feed_id != show.learned_feed_id:
         hist = RuleHistory(
             monitored_id=show.id,
             feed_id=old_feed_id,
@@ -332,6 +355,7 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient):
         session.add(hist)
 
     show.current_feed_id = None
+    show.learned_feed_id = None
     show.qbit_rule_name = None
     show.matched_title = None
     show.matched_release_group = None
@@ -343,7 +367,7 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient):
     session.commit()
 
     state.add_log(f"Reset rule for '{show.display_name}'. Will rediscover on next supervision cycle.", "INFO")
-    return {"status": "success", "message": f"Reset rule for '{show.display_name}'. Will rediscover on next cycle."}
+    return {"status": "success", "message": f"Reset '{show.display_name}'. Will rediscover on next cycle."}
 
 
 def _effective_display_name(show: Monitored, settings: Settings) -> str:
@@ -448,8 +472,11 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
             release_group=show.matched_release_group,
         )
 
-    if not saved_regex and feed:
-        saved_regex = build_regex_pattern(show.effective_aliases)
+    # With no rule and nothing learned there is no pattern to show. Inventing one
+    # from the aliases here would put a value in the field that nothing consumes,
+    # because in direct mode matching is done from the episode ledger, not from a
+    # qBittorrent regex.
+    has_qbit_rule = bool(show.qbit_rule_name and feed)
 
     if not matched_articles and feed_items and saved_regex:
         try:
@@ -485,6 +512,10 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "display_name": effective_display_name,
         "cover_image": show.cover_image,
         "has_rule": bool(show.current_feed_id or show.qbit_rule_name or show.status == MonitoredStatus.COMPLETED or saved_regex),
+        # Whether a real qBittorrent RSS rule backs this show. Direct mode owns no
+        # rule, so it is the difference between a Must Contain field that is read
+        # by something and one that only looks meaningful.
+        "has_qbit_rule": has_qbit_rule,
         "rule_name": show.qbit_rule_name or expected_rule_name,
         "enabled": rule_is_enabled,
         "feed_name": feed.qbit_feed_name if feed else None,
@@ -505,6 +536,10 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "has_learned_pattern": has_learned_pattern,
         "is_upcoming": is_upcoming,
         "feed_pinned": bool(show.feed_pinned),
+        "feed_learned": show.learned_feed_id is not None,
+        "feed_locked": show.feed_is_locked,
+        "learned_feed_id": show.learned_feed_id or 0,
+        "learned_feed_name": feeds_map_name(session, show.learned_feed_id),
         "candidate_feed_id": show.candidate_feed_id or 0,
         "candidate_feed_name": feeds_map_name(session, show.candidate_feed_id),
         "candidate_feed_since": show.candidate_feed_since.isoformat() if show.candidate_feed_since else None,
@@ -589,6 +624,33 @@ class EditShowRequest(BaseModel):
     must_not_contain: Optional[str] = None
     aliases: Optional[List[str]] = None
     episode_offset: Optional[int] = None
+    # Required to move a show off, or back to auto-discovery on, the feed that
+    # has already delivered a release for it.
+    release_learned_feed: bool = False
+
+
+def _reject_learned_feed_change(
+    show: Monitored,
+    new_feed_id: Optional[int],
+    release_learned_feed: bool,
+    session: Session,
+) -> None:
+    """Refuse to silently discard the feed a show has actually downloaded from."""
+    if show.learned_feed_id is None or release_learned_feed:
+        return
+    if new_feed_id == show.learned_feed_id:
+        return
+    feed = session.get(Feed, show.learned_feed_id)
+    name = feed.qbit_feed_name if feed else f"feed {show.learned_feed_id}"
+    target = "auto-discovery" if new_feed_id is None else "a different feed"
+    raise HTTPException(
+        status_code=409,
+        detail=(
+            f"'{show.display_name}' has already downloaded from '{name}', so it will not be "
+            f"moved to {target} without releasing it. Retry with release_learned_feed=true "
+            f"to abandon that feed, or pick '{name}' again to keep it."
+        ),
+    )
 
 
 def _set_episode_offset(session: Session, show: Monitored, feed_id: Optional[int], offset: int) -> None:
@@ -646,6 +708,9 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     direct = uses_direct_engine(mode)
     new_feed_id = None if req.current_feed_id is not None and req.current_feed_id <= 0 else (req.current_feed_id if req.current_feed_id is not None else show.current_feed_id)
 
+    if req.current_feed_id is not None:
+        _reject_learned_feed_change(show, new_feed_id, req.release_learned_feed, session)
+
     if req.save_folder is not None:
         val = req.save_folder.strip()
         if not val or val == "{name}":
@@ -667,6 +732,12 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         show.feed_pinned = req.current_feed_id > 0
         show.candidate_feed_id = None
         show.candidate_feed_since = None
+        if show.learned_feed_id is not None and show.learned_feed_id != new_feed_id:
+            # The user explicitly released the proven feed (the guard above made
+            # them ask for it). Done here rather than in each branch below so
+            # every path that moves the show also drops the lock, instead of
+            # leaving it pointing at a feed we have left.
+            show.learned_feed_id = None
 
     if req.episode_offset is not None:
         _set_episode_offset(session, show, new_feed_id or show.current_feed_id, int(req.episode_offset))
@@ -691,6 +762,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
 
         if new_feed_id is None:
             show.current_feed_id = None
+            show.learned_feed_id = None
             show.matched_title = None
             show.matched_release_group = None
             show.feed_pinned = False
@@ -727,6 +799,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
 
     if new_feed_id is None:
         show.current_feed_id = None
+        show.learned_feed_id = None
         show.matched_title = None
         show.matched_release_group = None
         show.feed_pinned = False

@@ -186,6 +186,11 @@ class Monitored(SQLModel, table=True):
     custom_aliases_json: str = Field(default="[]")
     status: MonitoredStatus = Field(default=MonitoredStatus.UNCONFIRMED, index=True)
     current_feed_id: Optional[int] = Field(default=None, foreign_key="feeds.id", ondelete="SET NULL", nullable=True, index=True)
+    # The feed that actually delivered a release for this show. Set once, when a
+    # release is accepted, and never cleared automatically: from then on this is
+    # the only feed the show is ever read from. Distinct from ``feed_pinned``,
+    # which is the user overriding the engine before anything was downloaded.
+    learned_feed_id: Optional[int] = Field(default=None, foreign_key="feeds.id", ondelete="SET NULL", nullable=True, index=True)
     qbit_rule_name: Optional[str] = Field(default=None, nullable=True)
     total_episodes: Optional[int] = Field(default=None, nullable=True)
     next_airing_episode: Optional[int] = Field(default=None, nullable=True)
@@ -228,6 +233,18 @@ class Monitored(SQLModel, table=True):
     def effective_aliases(self) -> List[str]:
         """Everything a release may be matched against."""
         return list(dict.fromkeys(self.aliases + self.custom_aliases))
+
+    @property
+    def feed_is_locked(self) -> bool:
+        """
+        True when no automatic path may move this show to another feed.
+
+        Either the user picked the feed outright (``feed_pinned``) or a release
+        was really downloaded from it (``learned_feed_id``). A feed that has
+        proven it carries the show outranks every heuristic we have, so stall
+        handling, candidate nomination and feed rediscovery all defer to it.
+        """
+        return bool(self.feed_pinned) or self.learned_feed_id is not None
 
 
 class EpisodeNumberMapping(SQLModel, table=True):
@@ -288,6 +305,10 @@ class TorrentOperation(SQLModel, table=True):
     status: TorrentOperationStatus = Field(default=TorrentOperationStatus.PREPARING, index=True)
     operation_tag: str = Field(unique=True, index=True)
     release_title: str
+    # The release title reduced to its series name (episode, quality and group
+    # tags stripped). ``release_title`` stays the raw filename for matching and
+    # replacement; this is what the show learns as its naming pattern.
+    parsed_title: Optional[str] = Field(default=None, nullable=True)
     release_group: Optional[str] = Field(default=None, nullable=True)
     version: int = Field(default=1)
     new_torrent_url: str

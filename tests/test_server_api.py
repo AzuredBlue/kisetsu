@@ -28,10 +28,12 @@ from qbit_seasonal_anime.db.models import (
     RuleHistory,
     RuleOutcome,
     Settings,
+    TorrentOperation,
     normalize_mapping_source,
 )
+from qbit_seasonal_anime.core.rules import build_regex_pattern
 from qbit_seasonal_anime.server.api import get_db, get_qbit
-from qbit_seasonal_anime.db.session import acquire_supervision_lease, init_db, release_supervision_lease
+from qbit_seasonal_anime.db.session import SCHEMA_VERSION, acquire_supervision_lease, init_db, release_supervision_lease
 
 
 @pytest.fixture
@@ -733,6 +735,189 @@ def test_show_rule_endpoint_returns_only_hand_written_aliases(client, session, m
     assert res.json()["custom_aliases"] == ["Ao Ashi"]
 
 
+def test_auto_discover_is_refused_for_a_feed_that_already_delivered(client, session, mock_qbit):
+    """Saving Auto-discover must not silently discard a proven feed."""
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4003,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+        matched_title="Blue.Box",
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"current_feed_id": 0})
+    assert res.status_code == 409
+    assert "already downloaded from" in res.json()["detail"]
+
+    session.expire_all()
+    untouched = session.get(Monitored, show.id)
+    assert untouched.current_feed_id == feed.id
+    assert untouched.learned_feed_id == feed.id
+
+    # Re-picking the feed it already learned is a no-op, not an error.
+    ok = client.post(f"/api/shows/{show.id}/edit", json={"current_feed_id": feed.id})
+    assert ok.status_code == 200
+
+    # Releasing it is possible, but only when asked for explicitly.
+    forced = client.post(
+        f"/api/shows/{show.id}/edit",
+        json={"current_feed_id": 0, "release_learned_feed": True},
+    )
+    assert forced.status_code == 200
+    session.expire_all()
+    released = session.get(Monitored, show.id)
+    assert released.current_feed_id is None
+    assert released.learned_feed_id is None
+
+
+def test_moving_a_show_off_its_learned_feed_needs_an_explicit_release(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="Feed 1", qbit_feed_url="https://feed1.org/rss", priority=1)
+    other = Feed(id=2, qbit_feed_name="Feed 2", qbit_feed_url="https://feed2.org/rss", priority=2)
+    show = Monitored(
+        anilist_id=4004,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(other)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/edit", json={"current_feed_id": other.id})
+    assert res.status_code == 409
+
+    forced = client.post(
+        f"/api/shows/{show.id}/edit",
+        json={"current_feed_id": other.id, "release_learned_feed": True},
+    )
+    assert forced.status_code == 200
+    session.expire_all()
+    assert session.get(Monitored, show.id).learned_feed_id is None
+
+
+def test_reset_is_refused_for_a_feed_that_already_delivered(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4005,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+        matched_title="Blue.Box",
+        qbit_rule_name="[Seasonal] Blue Box Season 2",
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    res = client.post(f"/api/shows/{show.id}/rediscover")
+    assert res.status_code == 409
+    mock_qbit.remove_rss_rule.assert_not_called()
+
+    session.expire_all()
+    untouched = session.get(Monitored, show.id)
+    assert untouched.current_feed_id == feed.id
+    assert untouched.learned_feed_id == feed.id
+    assert untouched.matched_title == "Blue.Box"
+
+    forced = client.post(f"/api/shows/{show.id}/rediscover?force=true")
+    assert forced.status_code == 200
+    session.expire_all()
+    reset = session.get(Monitored, show.id)
+    assert reset.current_feed_id is None
+    assert reset.learned_feed_id is None
+    assert reset.matched_title is None
+
+
+def test_reset_never_marks_a_learned_feed_as_a_false_positive(client, session, mock_qbit):
+    """The old reset wrote FALSE_POSITIVE for the working feed, excluding it."""
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4006,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    assert client.post(f"/api/shows/{show.id}/rediscover?force=true").status_code == 200
+
+    history = session.exec(
+        select(RuleHistory).where(RuleHistory.monitored_id == show.id)
+    ).all()
+    assert [row.outcome for row in history] == []
+
+
+def test_rule_details_hides_must_contain_without_a_qbittorrent_rule(client, session, mock_qbit):
+    """Direct mode owns no rule, so no regex should be invented for the field."""
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4007,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2", "Ao no Hako Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    body = client.get(f"/api/shows/{show.id}/rule").json()
+
+    assert body["has_qbit_rule"] is False
+    assert body["must_contain"] is None
+    assert body["feed_learned"] is True
+    assert body["feed_locked"] is True
+    assert body["learned_feed_name"] == "SubsPlease RSS"
+
+
+def test_rule_details_shows_the_learned_series_name_not_the_filename(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        anilist_id=4008,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2"]',
+        status=MonitoredStatus.FIXED,
+        current_feed_id=feed.id,
+        learned_feed_id=feed.id,
+        matched_title="Blue.Box",
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    session.refresh(show)
+
+    body = client.get(f"/api/shows/{show.id}/rule").json()
+
+    assert body["must_contain"] == r"Blue[\s._\-:–—/]+Box"
+    for title in (
+        "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
+        "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
+        "[Varyg] Blue_Box - 03 [1080p].mkv",
+    ):
+        assert re.search(body["must_contain"], title, re.IGNORECASE), title
+
+
 def test_picking_auto_discover_feed_unpins_the_show(client, session, mock_qbit):
     feed = Feed(id=1, qbit_feed_name="Feed 1", qbit_feed_url="https://feed1.org/rss", priority=1)
     show = Monitored(
@@ -1069,8 +1254,167 @@ def test_init_db_repairs_active_numbering_without_reopening_completed_shows(tmp_
         assert rezero.last_confirmed_episode == 18
         assert preserved.status == MonitoredStatus.COMPLETED
         assert preserved.last_confirmed_episode == 10
-        assert session.exec(text("PRAGMA user_version")).one()[0] == 1
+        assert session.exec(text("PRAGMA user_version")).one()[0] == SCHEMA_VERSION
     assert list(tmp_path.glob("anime.db.*.bak"))
+    engine.dispose()
+
+
+def test_init_db_learns_the_delivering_feed_and_narrows_a_learned_filename(tmp_path):
+    """
+    Repairs an install where direct mode had already moved on from the real feed.
+
+    The episode ledger records which feed delivered, but the show had been
+    re-pointed elsewhere and its naming pattern had been learned from a whole
+    release filename, which only ever matches the one episode it came from.
+    """
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        subs = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        varyg = Feed(id=2, qbit_feed_name="Varyg", qbit_feed_url="https://nyaa.example/varyg", priority=2)
+        subs_id = subs.id
+        show = Monitored(
+            id=1,
+            anilist_id=154587,
+            display_name="Blue Box Season 2",
+            aliases_json='["Blue Box Season 2", "Ao no Hako Season 2"]',
+            status=MonitoredStatus.FIXED,
+            # Pointed at the wrong feed after a reset.
+            current_feed_id=varyg.id,
+            # Learned from the raw filename, so it matches nothing else.
+            matched_title="Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
+            matched_release_group="VARYG",
+        )
+        session.add(subs)
+        session.add(varyg)
+        session.add(show)
+        session.flush()
+        session.add(Episode(
+            monitored_id=1,
+            episode_number=1,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=subs.id,
+            torrent_url="https://nyaa.si/view/2169492",
+            torrent_hash="abc123",
+            release_title="Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
+            downloaded_at=datetime(2026, 10, 4, 15, 16, 30),
+        ))
+        # The reset wrote a failure record against the feed that actually worked,
+        # which is what kept rediscovery away from it.
+        session.add(RuleHistory(
+            monitored_id=1,
+            feed_id=subs.id,
+            outcome=RuleOutcome.FALSE_POSITIVE,
+            note="Manually reset/rediscovered from WebUI.",
+        ))
+        session.add(TorrentOperation(
+            episode_id=1,
+            kind="grab",
+            status="SEEDING",
+            operation_tag="qsa-op-1",
+            release_title="Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
+            new_torrent_url="https://nyaa.si/view/2169492",
+        ))
+        session.commit()
+        session.exec(text("PRAGMA user_version = 1"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        repaired = session.get(Monitored, 1)
+        assert repaired.learned_feed_id == subs_id
+        assert repaired.current_feed_id == subs_id
+        assert repaired.feed_is_locked is True
+        # The filename is narrowed to the series name, which matches every
+        # separator style the release groups actually use.
+        assert repaired.matched_title == "Blue.Box"
+        pattern = build_regex_pattern([], matched_title=repaired.matched_title)
+        for title in (
+            "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
+            "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
+            "[Varyg] Blue_Box - 03 [1080p].mkv",
+        ):
+            assert re.search(pattern, title, re.IGNORECASE), title
+        # The failure record that excluded the working feed is gone.
+        assert session.exec(
+            select(RuleHistory).where(RuleHistory.monitored_id == 1)
+        ).all() == []
+    engine.dispose()
+
+
+def test_init_db_recovers_a_missing_naming_pattern_from_the_ledger(tmp_path):
+    """A reset that cleared matched_title still leaves the release titles behind."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        show = Monitored(
+            id=1,
+            anilist_id=154587,
+            display_name="Blue Box Season 2",
+            aliases_json='["Blue Box Season 2"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+        )
+        session.add(feed)
+        session.add(show)
+        session.flush()
+        session.add(Episode(
+            monitored_id=1,
+            episode_number=1,
+            status=EpisodeStatus.COMPLETED,
+            feed_id=feed.id,
+            torrent_hash="abc123",
+            release_title="Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
+        ))
+        session.commit()
+        session.exec(text("PRAGMA user_version = 1"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        repaired = session.get(Monitored, 1)
+        assert repaired.learned_feed_id == 1
+        assert repaired.matched_title == "Blue.Box"
+        pattern = build_regex_pattern([], matched_title=repaired.matched_title)
+        assert re.search(
+            pattern,
+            "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
+            re.IGNORECASE,
+        )
+    engine.dispose()
+
+
+def test_init_db_leaves_a_learned_series_name_alone(tmp_path):
+    """The repair keys on filenames, so a genuine series name is never rewritten."""
+    database_path = tmp_path / "anime.db"
+    engine = create_engine(f"sqlite:///{database_path}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        feed = Feed(id=1, qbit_feed_name="SubsPlease RSS", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        show = Monitored(
+            id=1,
+            anilist_id=154587,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED,
+            current_feed_id=feed.id,
+            matched_title="Sousou no Frieren",
+        )
+        session.add(feed)
+        session.add(show)
+        session.commit()
+        session.exec(text("PRAGMA user_version = 1"))
+        session.commit()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        assert session.get(Monitored, 1).matched_title == "Sousou no Frieren"
     engine.dispose()
 
 

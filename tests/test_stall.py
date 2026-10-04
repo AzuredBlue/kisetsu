@@ -155,6 +155,79 @@ class TestStall(unittest.TestCase):
         self.assertEqual(hist.outcome, RuleOutcome.STALLED)
         self.assertTrue(any("Moved to feed 'Erai-raws'" in log for log in logs))
 
+    def test_stall_never_abandons_a_feed_that_has_already_delivered(self):
+        """A feed proven by a real download is kept even when an episode goes late."""
+        show = Monitored(
+            id=5,
+            anilist_id=1005,
+            display_name="Proven Feed Anime",
+            aliases_json='["Proven Feed Anime"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=1,
+            learned_feed_id=1,
+            qbit_rule_name="[Seasonal] Proven Feed Anime",
+            last_confirmed_episode=1,
+            next_airing_episode=2,
+            next_airing_at=_utc_now() - timedelta(hours=48),
+        )
+        self.session.add(show)
+        hist = RuleHistory(
+            id=5,
+            monitored_id=5,
+            feed_id=1,
+            created_at=_utc_now() - timedelta(hours=48),
+            outcome=RuleOutcome.PENDING,
+        )
+        self.session.add(hist)
+        self.session.commit()
+
+        mock_qbit = MagicMock()
+        mock_qbit.get_rss_items.return_value = {
+            "Erai-raws": {
+                "url": "https://www.erai-raws.info/rss-1080p/",
+                "articles": [
+                    {"title": "[Erai-raws] Proven Feed Anime - 02 [1080p].mkv", "torrentURL": "https://erai/2.torrent"}
+                ]
+            }
+        }
+
+        logs = check_and_handle_stalls(self.session, mock_qbit, self.settings)
+        self.session.refresh(show)
+        self.session.refresh(hist)
+
+        # The rule stays armed on the feed that delivered, and no failure is
+        # recorded, so the feed is not excluded from anything later either.
+        self.assertEqual(show.current_feed_id, 1)
+        self.assertEqual(show.status, MonitoredStatus.UNCONFIRMED)
+        self.assertEqual(hist.outcome, RuleOutcome.PENDING)
+        mock_qbit.remove_rss_rule.assert_not_called()
+        self.assertTrue(any("already proven" in log for log in logs))
+
+    def test_stall_never_abandons_a_user_pinned_feed(self):
+        show = Monitored(
+            id=6,
+            anilist_id=1006,
+            display_name="Pinned Feed Anime",
+            aliases_json='["Pinned Feed Anime"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=1,
+            feed_pinned=True,
+            qbit_rule_name="[Seasonal] Pinned Feed Anime",
+            last_confirmed_episode=1,
+            next_airing_episode=2,
+            next_airing_at=_utc_now() - timedelta(hours=48),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        mock_qbit = MagicMock()
+        logs = check_and_handle_stalls(self.session, mock_qbit, self.settings)
+        self.session.refresh(show)
+
+        self.assertEqual(show.current_feed_id, 1)
+        mock_qbit.remove_rss_rule.assert_not_called()
+        self.assertTrue(any("pinned by you" in log for log in logs))
+
     def test_fixed_show_never_stalls(self):
         show = Monitored(
             id=4,

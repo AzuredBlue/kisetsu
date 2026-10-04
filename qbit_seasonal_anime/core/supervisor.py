@@ -192,6 +192,10 @@ class Supervisor:
         so the assignment filter is narrowed to shows that have no feed at all.
         """
         logs = []
+        # A show whose feed has already delivered a release is never a candidate
+        # for a new assignment. Repair any drift before selecting candidates so
+        # a restored feed cannot be re-guessed in the same cycle.
+        logs.extend(self._restore_learned_feeds())
         if create_qbit_rules:
             assignment_filter = (
                 (Monitored.current_feed_id.is_(None))
@@ -201,6 +205,7 @@ class Supervisor:
             assignment_filter = Monitored.current_feed_id.is_(None)
         stmt = select(Monitored).where(
             assignment_filter,
+            Monitored.learned_feed_id.is_(None),
             Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.STALLED]),
         )
         unassigned_shows = self.session.exec(stmt).all()
@@ -981,6 +986,63 @@ class Supervisor:
             )
         return logs
 
+    def _restore_learned_feeds(self) -> List[str]:
+        """
+        Point every show back at the feed that has actually delivered for it.
+
+        The learned feed is the one fact about a show's feed that was proven by a
+        real download, so a ``current_feed_id`` that disagrees with it is drift
+        and gets corrected rather than discovered around.
+        """
+        logs: List[str] = []
+        known_feed_ids = set(self.session.exec(select(Feed.id)).all())
+        stale = self.session.exec(
+            select(Monitored).where(Monitored.learned_feed_id.isnot(None))
+        ).all()
+        for show in stale:
+            if show.learned_feed_id in known_feed_ids:
+                continue
+            # The feed was removed from qBittorrent, so there is nothing left to
+            # be loyal to. Clearing it lets the show discover a feed again.
+            logger.info(
+                f"'{show.display_name}' was pinned to learned feed {show.learned_feed_id}, "
+                f"which no longer exists; releasing it for rediscovery."
+            )
+            show.learned_feed_id = None
+            show.current_feed_id = None
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+            self.session.add(show)
+        if stale:
+            self.session.commit()
+
+        drifted = self.session.exec(
+            select(Monitored).where(
+                Monitored.learned_feed_id.isnot(None),
+                # NULL != learned_feed_id is NULL, not true, so an assignment that
+                # was cleared outright has to be matched separately.
+                (
+                    Monitored.current_feed_id.is_(None)
+                    | (Monitored.current_feed_id != Monitored.learned_feed_id)
+                ),
+            )
+        ).all()
+        for show in drifted:
+            previous = show.current_feed_id
+            show.current_feed_id = show.learned_feed_id
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+            self.session.add(show)
+            msg = (
+                f"Restored '{show.display_name}' to its learned feed "
+                f"{show.learned_feed_id} (was {previous}); that feed has delivered releases for it."
+            )
+            logger.info(msg)
+            logs.append(msg)
+        if drifted:
+            self.session.commit()
+        return logs
+
     def _reassign_direct_feeds(self, all_feeds: List[Feed]) -> List[str]:
         logs: List[str] = []
         now = utc_now()
@@ -1001,6 +1063,7 @@ class Supervisor:
         candidate_shows = self.session.exec(
             select(Monitored).where(
                 Monitored.current_feed_id.is_not(None),
+                Monitored.learned_feed_id.is_(None),
                 Monitored.feed_pinned.isnot(True),
                 Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.STALLED]),
             )

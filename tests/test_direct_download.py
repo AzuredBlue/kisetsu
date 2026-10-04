@@ -8,7 +8,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from qbit_seasonal_anime.clients.qbit import QbitClientError
 from qbit_seasonal_anime.core.discovery import RssSnapshot
-from qbit_seasonal_anime.core.grabber import cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
+from qbit_seasonal_anime.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.db.models import (
     Episode,
@@ -1715,10 +1715,172 @@ def test_the_first_feed_with_a_release_wins_and_becomes_the_assigned_feed():
         }]},
     }
 
+    # First sighting is on the #2 feed, so the adoption is only nominated: a
+    # higher-ranked feed still gets the grace window to post the episode first.
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    qbit.add_torrent.assert_not_called()
+    assert show.current_feed_id is None
+    assert show.learned_feed_id is None
+    assert show.candidate_feed_id == erai.id
+    assert show.candidate_feed_since is not None
+
+    # Once the window has passed the same feed keeps holding it, so it is adopted
+    # and the release is taken.
+    show.candidate_feed_since = utc_now() - timedelta(seconds=FEED_DISCOVERY_GRACE_SECONDS + 30)
+    session.add(show)
+    session.commit()
+
     evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
 
     assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:erai-ep8"
     assert show.current_feed_id == erai.id
+    assert show.learned_feed_id == erai.id
+    assert show.candidate_feed_id is None
+    session.close()
+    engine.dispose()
+
+
+def test_a_release_on_the_top_feed_is_taken_without_waiting():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": [{
+            "id": "subs-ep8",
+            "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [A].mkv",
+            "torrentURL": "magnet:subs-ep8",
+        }]},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    # No grace window on the best-ranked feed, and nothing from the one behind it.
+    assert qbit.add_torrent.call_count == 1
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:subs-ep8"
+    assert show.current_feed_id == subs.id
+    assert show.learned_feed_id == subs.id
+    session.close()
+    engine.dispose()
+
+
+def test_a_higher_ranked_feed_clears_a_pending_lower_ranked_candidate():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+    assert show.candidate_feed_id == erai.id
+
+    # The #1 feed catches up while the window is still open, so there is nothing
+    # left to wait for.
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": [{
+            "id": "subs-ep8",
+            "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [A].mkv",
+            "torrentURL": "magnet:subs-ep8",
+        }]},
+        "Erai": {"url": erai.qbit_feed_url, "articles": [{
+            "id": "erai-ep8",
+            "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+            "torrentURL": "magnet:erai-ep8",
+        }]},
+    }
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:subs-ep8"
+    assert show.current_feed_id == subs.id
+    assert show.candidate_feed_id is None
+    session.close()
+    engine.dispose()
+
+
+def test_a_show_locked_to_a_delivering_feed_is_never_read_from_another():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(settings)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session)
+    show.learned_feed_id = erai.id
+    session.add(show)
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": subs.qbit_feed_url, "articles": [{
+            "id": "subs-ep9",
+            "title": "[SubsPlease] Sousou no Frieren - 09 (1080p) [A].mkv",
+            "torrentURL": "magnet:subs-ep9",
+        }]},
+        "Erai": {"url": erai.qbit_feed_url, "articles": []},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [subs, erai], mode="direct")
+
+    # Even with no assignment at all, a learned feed narrows the read to itself.
+    qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_a_grab_makes_the_show_learn_the_series_name_not_the_filename():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(
+        session,
+        current_feed_id=feed.id,
+        display_name="Blue Box Season 2",
+        aliases_json='["Blue Box Season 2", "Ao no Hako Season 2"]',
+        total_episodes=1,
+        next_airing_episode=1,
+    )
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{
+            "id": "blue-ep1",
+            "title": "[Varyg] Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
+            "torrentURL": "magnet:blue-ep1",
+        }]},
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    # The raw filename carries this one episode's number, quality and group, so
+    # learning it would build a pattern matching nothing else.
+    assert show.matched_title == "Blue.Box"
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)
+    ).first()
+    assert episode.release_title.startswith("[Varyg] Blue.Box.S02E01")
     session.close()
     engine.dispose()
 

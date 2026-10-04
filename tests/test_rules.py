@@ -32,6 +32,24 @@ class TestRules(unittest.TestCase):
         self.assertEqual(sanitize_folder_name("Re:Zero kara Hajimeru Isekai Seikatsu"), "Re - Zero kara Hajimeru Isekai Seikatsu")
         self.assertEqual(sanitize_folder_name(""), "Anime")
 
+    def test_a_learned_pattern_from_a_parsed_title_survives_every_separator_style(self):
+        """
+        The learned pattern is built from the series name alone.
+
+        The direct engine used to learn the whole release filename, which pinned
+        one episode's number, quality and group into the rule and matched nothing
+        but the episode it came from.
+        """
+        pattern = build_regex_pattern(aliases=[], matched_title="Blue.Box")
+        self.assertEqual(pattern, f"Blue{RELEASE_NAME_JOINER}Box")
+        for title in (
+            "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
+            "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
+            "[Varyg] Blue_Box - 03 [1080p].mkv",
+            "[Group] Blue-Box - 04.mkv",
+        ):
+            self.assertTrue(re.search(pattern, title, re.IGNORECASE), title)
+
     def test_build_regex_pattern_broad(self):
         aliases = ["Sousou no Frieren", "Frieren: Beyond Journey's End"]
         pattern = build_regex_pattern(aliases)
