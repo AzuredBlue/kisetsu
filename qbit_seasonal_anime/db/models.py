@@ -94,13 +94,6 @@ CANCELLABLE_OPERATION_STATUSES: Tuple[str, ...] = (
 )
 
 
-class GrabDecisionType(str, Enum):
-    WOULD_GRAB = "would_grab"
-    WOULD_REPLACE = "would_replace"
-    WOULD_WAIT = "would_wait"
-    SKIPPED = "skipped"
-
-
 class RuleOutcome(str, Enum):
     PENDING = "pending"
     CONFIRMED = "confirmed"
@@ -355,26 +348,6 @@ class SeenFeedItem(SQLModel, table=True):
     title: str = Field(default="")
     created_at: datetime = Field(default_factory=utc_now, index=True)
     shielded_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
-
-
-class GrabDecision(SQLModel, table=True):
-    __tablename__ = "grab_decisions"
-    __table_args__ = (
-        Index("ix_grab_decision_episode_created", "episode", "created_at"),
-        Index("ix_grab_decision_item", "feed_url", "feed_item_id"),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    monitored_id: int = Field(foreign_key="monitored.id", ondelete="CASCADE", index=True)
-    episode_id: Optional[int] = Field(default=None, foreign_key="episodes.id", ondelete="SET NULL", nullable=True, index=True)
-    feed_url: str = Field(index=True)
-    feed_item_id: str = Field(index=True)
-    release_title: str
-    episode: int
-    version: int = Field(default=1)
-    decision: GrabDecisionType
-    reason: str = Field(default="")
-    created_at: datetime = Field(default_factory=utc_now, index=True)
 
 
 class RuleHistory(SQLModel, table=True):

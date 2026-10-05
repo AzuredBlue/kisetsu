@@ -222,7 +222,7 @@ def calculate_next_poll_interval(
     - Otherwise (all active shows have working rules or are waiting for air dates) -> Sleep default interval (e.g. 6 hours).
     """
     mode = str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower()
-    uses_direct_engine = mode in {"direct", "observe"}
+    uses_direct_engine = mode == "direct"
 
     classification = classify_shows(
         session,
@@ -290,6 +290,4 @@ def _idle_reason(
     minutes = default_interval_seconds // 60
     if mode == "direct":
         return f"All active shows have direct ownership or are waiting for air dates. Sleeping {minutes}m until next routine check."
-    if mode == "observe":
-        return f"All active shows are observed or waiting for air dates. Sleeping {minutes}m until next routine check."
     return f"All active shows have working rules or are waiting for air dates. Sleeping {minutes}m until next routine check."

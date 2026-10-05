@@ -37,7 +37,7 @@ router = APIRouter(prefix="/api")
 engine = get_engine()
 anilist_client = AniListClient()
 
-VALID_DOWNLOAD_MODES = {"rules", "observe", "direct"}
+VALID_DOWNLOAD_MODES = {"rules", "direct"}
 
 
 def get_db():
@@ -59,7 +59,7 @@ def normalized_download_mode(session: Session) -> str:
 
 
 def uses_direct_engine(mode: str) -> bool:
-    return mode in {"direct", "observe"}
+    return mode == "direct"
 
 
 def require_exclusive_cycle() -> None:
@@ -688,6 +688,9 @@ def _set_episode_offset(session: Session, show: Monitored, feed_id: Optional[int
         mapping.updated_at = now
     session.add(mapping)
     session.commit()
+    # Releases stored under the feed's raw numbering move to the right rows now.
+    from qbit_seasonal_anime.core.grabber import rebase_ledger
+    rebase_ledger(session, show, feed_id, offset, target_count=show.total_episodes)
 
 
 def _set_status_keeping_pause(show: Monitored, status: MonitoredStatus) -> None:
@@ -1058,7 +1061,7 @@ def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_d
         if mode not in VALID_DOWNLOAD_MODES:
             raise HTTPException(
                 status_code=400,
-                detail="download_mode must be rules, observe, or direct",
+                detail="download_mode must be rules or direct",
             )
     if req.backfill_window_days is not None and not (0 <= req.backfill_window_days <= 365):
         raise HTTPException(

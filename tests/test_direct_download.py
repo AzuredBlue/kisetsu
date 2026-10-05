@@ -15,7 +15,6 @@ from qbit_seasonal_anime.db.models import (
     EpisodeNumberMapping,
     EpisodeStatus,
     Feed,
-    GrabDecision,
     Monitored,
     MonitoredStatus,
     SeenFeedItem,
@@ -517,34 +516,6 @@ def test_direct_grab_recovers_when_hash_appears_after_restart():
     engine.dispose()
 
 
-def test_observe_mode_records_decisions_without_adding_torrents():
-    engine, session = _database()
-    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="observe")
-    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
-    session.add(settings)
-    session.add(feed)
-    _show(session)
-    qbit, _ = _qbit()
-    qbit.get_rss_items.return_value = {
-        "SubsPlease": {
-            "url": feed.qbit_feed_url,
-            "articles": [{
-                "id": "ep8",
-                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
-                "torrentURL": "magnet:ep8",
-            }],
-        }
-    }
-
-    logs = evaluate_and_grab_releases(session, qbit, settings, [feed], mode="observe")
-
-    assert any("Would grab" in log for log in logs)
-    assert session.exec(select(GrabDecision)).first() is not None
-    qbit.add_torrent.assert_not_called()
-    session.close()
-    engine.dispose()
-
-
 def test_pinned_feed_is_strict_in_direct_mode():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
@@ -834,7 +805,7 @@ def test_rules_transition_marks_owned_articles_read():
 
 def test_shield_owned_articles_is_scoped_to_each_show():
     engine, session = _database()
-    settings = Settings(id=1, download_mode="observe")
+    settings = Settings(id=1, download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
     session.add(settings)
     session.add(feed)
@@ -874,7 +845,7 @@ def test_shield_owned_articles_is_scoped_to_each_show():
 
 def test_shield_does_not_treat_hashless_queued_release_as_owned():
     engine, session = _database()
-    settings = Settings(id=1, download_mode="observe")
+    settings = Settings(id=1, download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
     session.add(settings)
     session.add(feed)
@@ -903,9 +874,9 @@ def test_shield_does_not_treat_hashless_queued_release_as_owned():
 
 
 @pytest.mark.asyncio
-async def test_observe_mode_disables_managed_rules_without_creating_new_ones():
+async def test_direct_mode_disables_managed_rules_without_creating_new_ones():
     engine, session = _database()
-    settings = Settings(id=1, download_mode="observe", anilist_username="")
+    settings = Settings(id=1, download_mode="direct", anilist_username="")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
     session.add(settings)
     session.add(feed)
@@ -2075,7 +2046,7 @@ def test_two_releases_of_the_same_episode_download_only_once():
     engine.dispose()
 
 
-def test_a_second_release_is_taken_once_it_is_a_higher_version():
+def test_a_refresh_carrying_v1_and_v2_grabs_only_the_newest():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -2091,8 +2062,8 @@ def test_a_second_release_is_taken_once_it_is_a_higher_version():
 
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
-    # v1 then the upgrade for the same episode, and nothing beyond that.
-    assert [c.kwargs["urls"] for c in qbit.add_torrent.call_args_list] == ["magnet:a", "magnet:b"]
+    # Both are on the feed already, so only the newest version is worth adding.
+    assert [c.kwargs["urls"] for c in qbit.add_torrent.call_args_list] == ["magnet:b"]
     session.close()
     engine.dispose()
 

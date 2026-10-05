@@ -1883,12 +1883,12 @@ def test_sync_anilist_aborts_when_rules_cannot_be_stood_down(client, session, mo
     grab.assert_not_called()
 
 
-def test_pause_in_observe_mode_does_not_enable_rules():
+def test_pause_in_direct_mode_does_not_enable_rules():
     app = create_app()
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, download_mode="observe", default_category="Anime", base_dir="/tmp/Anime"))
+        session.add(Settings(id=1, download_mode="direct", default_category="Anime", base_dir="/tmp/Anime"))
         feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
         session.add(feed)
         show = Monitored(

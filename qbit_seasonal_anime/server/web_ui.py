@@ -303,12 +303,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                   <span class="text-xs text-zinc-300 font-medium">Download Engine</span>
                   <div class="inline-flex items-center bg-[#121215] border border-[#30303a] rounded-lg p-0.5 text-xs font-mono select-none">
                     <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm">Rules</button>
-                    <button type="button" onclick="setDownloadMode('observe')" id="btn-mode-observe" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">Observe</button>
                     <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">Direct</button>
                   </div>
                   <input type="hidden" id="set-download-mode" value="rules">
                 </div>
-                <p class="text-xs text-zinc-500">Rules owns downloads. Observe logs direct decisions without adding torrents. Direct manages episodes and verified replacements.</p>
+                <p class="text-xs text-zinc-500">Rules owns downloads. Direct manages episodes and verified replacements.</p>
               </div>
 
               <div id="sync-anilist-status" class="text-xs font-mono empty:hidden"></div>
@@ -1049,17 +1048,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const isCompleted = (data.status === 'completed');
         const isPaused = (data.status === 'paused');
         const isRuleActive = data.enabled === true;
-        // Observe runs the direct engine without downloading, so it shares the
-        // episode ledger rather than the rule panel.
-        const isObserve = data.download_mode === 'observe';
-        const isDirect = data.download_mode === 'direct' || isObserve;
+        const isDirect = data.download_mode === 'direct';
 
         titleEl.textContent = data.display_name;
-        ruleNameEl.textContent = isDirect ? (isObserve ? 'Observe mode (no downloads)' : 'Direct download engine') : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
+        ruleNameEl.textContent = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
 
         let ruleStatusText = '';
         if (isDirect) {
-          ruleStatusText = `<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>${isObserve ? 'Observing' : 'Direct Engine Active'}</span>`;
+          ruleStatusText = `<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Direct Engine Active</span>`;
         } else if (isCompleted) {
           ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>Completed</span>';
         } else if (isPaused) {
@@ -1547,7 +1543,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const hidden = document.getElementById('set-download-mode');
       if (hidden) hidden.value = selected;
 
-      ['rules', 'observe', 'direct'].forEach(name => {
+      ['rules', 'direct'].forEach(name => {
         const button = document.getElementById(`btn-mode-${name}`);
         if (!button) return;
         const active = name === selected;
@@ -1558,7 +1554,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     }
 
     async function setDownloadMode(mode) {
-      if (!['rules', 'observe', 'direct'].includes(mode)) return;
+      if (!['rules', 'direct'].includes(mode)) return;
       if (mode === 'direct' && !confirm(
         'Switch to Direct downloads? Managed RSS rules will be disabled before Direct mode is enabled. Episode replacement operations will be managed by the application.'
       )) {

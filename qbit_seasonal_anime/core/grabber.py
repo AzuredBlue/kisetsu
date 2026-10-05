@@ -19,8 +19,6 @@ from qbit_seasonal_anime.db.models import (
     EpisodeNumberMapping,
     EpisodeStatus,
     Feed,
-    GrabDecision,
-    GrabDecisionType,
     Monitored,
     MonitoredStatus,
     SeenFeedItem,
@@ -180,45 +178,6 @@ def _fail_operation(session: Session, operation: TorrentOperation, episode: Epis
     episode.retry_after = None
     session.add(operation)
     session.add(episode)
-    session.commit()
-
-
-def _record_decision(
-    session: Session,
-    show: Monitored,
-    episode: Optional[Episode],
-    feed: Feed,
-    article: Dict[str, Any],
-    title: str,
-    episode_number: int,
-    version: int,
-    decision: GrabDecisionType,
-    reason: str,
-) -> None:
-    item_id = str(article.get("id") or article.get("torrentURL") or article.get("link") or title)
-    existing = session.exec(
-        select(GrabDecision).where(
-            GrabDecision.monitored_id == show.id,
-            GrabDecision.feed_url == feed.qbit_feed_url,
-            GrabDecision.feed_item_id == item_id,
-            GrabDecision.episode == episode_number,
-            GrabDecision.version == version,
-            GrabDecision.decision == decision,
-        )
-    ).first()
-    if existing:
-        return
-    session.add(GrabDecision(
-        monitored_id=show.id,
-        episode_id=episode.id if episode else None,
-        feed_url=feed.qbit_feed_url,
-        feed_item_id=item_id,
-        release_title=title,
-        episode=episode_number,
-        version=version,
-        decision=decision,
-        reason=reason,
-    ))
     session.commit()
 
 
@@ -396,7 +355,10 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
                 _operation_retry(session, operation, episode, str(e))
                 return None
             if not torrent:
-                _operation_retry(session, operation, episode, "Replacement torrent is not visible yet; the previous torrent remains untouched.")
+                # The hash was already exposed once, so a torrent that is gone now
+                # was removed, not delayed. Retrying would block the episode forever;
+                # failing a replace restores the previous release.
+                _fail_operation(session, operation, episode, "Replacement torrent is no longer present in qBittorrent; the previous release was kept.")
                 return None
             state = _torrent_state(torrent)
             if state in _FAILED_TORRENT_STATES:
@@ -790,6 +752,152 @@ def _date_mapped_episode(
     return episode.episode_number
 
 
+_RELEASE_HOLDING = {
+    EpisodeStatus.COMPLETED,
+    EpisodeStatus.DOWNLOADING,
+    EpisodeStatus.QUEUED,
+    EpisodeStatus.REPLACING,
+}
+_RELEASE_FIELDS = (
+    "status",
+    "version",
+    "release_title",
+    "release_group",
+    "source_episode",
+    "feed_id",
+    "feed_item_id",
+    "torrent_url",
+    "torrent_hash",
+    "operation_tag",
+    "downloaded_at",
+    "last_error",
+    "retry_after",
+    "last_attempt_at",
+    "attempt_count",
+)
+
+
+def rebase_ledger(
+    session: Session,
+    show: Monitored,
+    feed_id: Optional[int],
+    offset: int,
+    latest_aired: Optional[int] = None,
+    target_count: Optional[int] = None,
+) -> bool:
+    """Renumber the show's downloaded releases so ``source_episode - offset`` is their row.
+
+    Rows written before a feed's numbering was known (rules-era confirmations,
+    adopted torrents) sit under the raw number the feed used. Once the real offset
+    is known they must move, or the true episode would look already downloaded.
+    Nothing changes unless every release can move safely: each target must exist,
+    be an episode that has aired, and be free or itself moving, and no affected
+    episode may have a torrent operation in flight.
+    """
+    if not show.id:
+        return False
+    rows = session.exec(select(Episode).where(Episode.monitored_id == show.id)).all()
+    by_number = {row.episode_number: row for row in rows}
+    movers = [
+        row for row in rows
+        if row.source_episode is not None
+        and row.status in _RELEASE_HOLDING
+        and row.feed_id in (None, feed_id)
+    ]
+    if not movers:
+        return False
+    limit = target_count or max(by_number, default=0)
+    plan = []
+    for row in movers:
+        target = row.source_episode - offset
+        if not 1 <= target <= limit:
+            return False
+        if latest_aired is not None and target > latest_aired:
+            return False
+        plan.append((row, target))
+    mover_ids = {row.id for row in movers}
+    for row, target in plan:
+        occupant = by_number.get(target)
+        if occupant is None:
+            return False
+        if occupant.id not in mover_ids and (occupant.status in _RELEASE_HOLDING or occupant.torrent_hash):
+            return False
+    touched = mover_ids | {by_number[target].id for _, target in plan}
+    in_flight = session.exec(
+        select(TorrentOperation.id).where(
+            TorrentOperation.episode_id.in_(list(touched)),
+            TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)),
+        )
+    ).first()
+    if in_flight is not None:
+        return False
+    if all(row.episode_number == target for row, target in plan):
+        return False
+
+    snapshots = [({name: getattr(row, name) for name in _RELEASE_FIELDS}, target) for row, target in plan]
+    for row, _ in plan:
+        row.status = EpisodeStatus.WANTED
+        row.version = 1
+        for name in _RELEASE_FIELDS:
+            if name not in ("status", "version", "attempt_count"):
+                setattr(row, name, None)
+        row.attempt_count = 0
+        session.add(row)
+    for values, target in snapshots:
+        row = by_number[target]
+        for name, value in values.items():
+            setattr(row, name, value)
+        session.add(row)
+    completed = [row.episode_number for row in rows if row.status == EpisodeStatus.COMPLETED]
+    show.last_confirmed_episode = max(completed, default=0)
+    session.add(show)
+    session.commit()
+    return True
+
+
+def _infer_offset_from_conflict(
+    session: Session,
+    show: Monitored,
+    feed: Feed,
+    raw_episode: int,
+    local_episode: int,
+    latest_aired: Optional[int],
+    target_count: int,
+) -> None:
+    """Learn a feed's numbering offset when a release contradicts the ledger.
+
+    The air date says this release is episode ``local_episode``, but that row
+    already holds a release the feed numbered differently. When the feed is
+    consistently higher (it counts an earlier cour or a split entry, as AniList
+    lists them), the stored rows are shifted so the true episode is wanted again.
+    """
+    row = session.exec(
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.episode_number == local_episode,
+        )
+    ).first()
+    if row is None or row.status not in _RELEASE_HOLDING:
+        return
+    if row.source_episode is None or row.source_episode == raw_episode or row.feed_id not in (None, feed.id):
+        return
+    offset = raw_episode - local_episode
+    held = session.exec(
+        select(Episode.source_episode).where(
+            Episode.monitored_id == show.id,
+            Episode.status.in_(list(_RELEASE_HOLDING)),
+            Episode.source_episode.is_not(None),
+        )
+    ).all()
+    if offset <= 0 or raw_episode <= max(held, default=0):
+        return
+    if rebase_ledger(session, show, feed.id, offset, latest_aired, target_count):
+        logger.info(
+            f"'{show.display_name}': '{feed.qbit_feed_name}' numbers episodes {offset} higher than "
+            f"AniList; renumbered the stored releases and mapped raw {raw_episode} to episode {local_episode}."
+        )
+
+
 def _mapped_episode(
     session: Session,
     show: Monitored,
@@ -819,6 +927,7 @@ def _mapped_episode(
 
     by_date = _date_mapped_episode(session, show, raw_episode, target_count, article)
     if by_date is not None:
+        _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
         return by_date
     if latest_aired is not None and raw_episode > target_count and 1 <= latest_aired <= target_count:
         return latest_aired
@@ -1263,6 +1372,12 @@ def evaluate_and_grab_releases(
                 has_feed_articles = True
             if grabbed_from is not None:
                 break
+            # Resolve every article first so a refresh carrying v1 and v2 of the
+            # same episode only grabs the newest, instead of adding v1 and then
+            # replacing it a moment later. A version that already failed is not
+            # a candidate, so it cannot hide a lower one that would still work.
+            resolved = []
+            best_version: Dict[int, int] = {}
             for article in feed_articles:
                 title = article.get("title", "")
                 if not title:
@@ -1287,9 +1402,15 @@ def evaluate_and_grab_releases(
                 episode = episodes_by_number.get(episode_number)
                 if not episode:
                     continue
+                version = int(parsed.get("version") or 1)
+                resolved.append((article, title, parsed, raw_episode, episode_number, episode, version))
+                if version not in failed_versions.get(episode.id, set()):
+                    best_version[episode_number] = max(best_version.get(episode_number, 0), version)
+            for article, title, parsed, raw_episode, episode_number, episode, version in resolved:
+                if version < best_version.get(episode_number, version):
+                    continue
                 episode_air_at = as_utc(episode.air_at)
                 backfill_window_days = max(0, int(getattr(settings, "backfill_window_days", 14)))
-                version = int(parsed.get("version") or 1)
                 is_upgrade = version > episode.version
                 if not is_upgrade:
                     if episode_air_at is None:
@@ -1306,12 +1427,6 @@ def evaluate_and_grab_releases(
                 if episode.status in {EpisodeStatus.COMPLETED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING} and version <= episode.version:
                     continue
                 if episode.status == EpisodeStatus.QUEUED and version <= episode.version:
-                    continue
-                if mode == "observe":
-                    decision = GrabDecisionType.WOULD_REPLACE if version > episode.version else GrabDecisionType.WOULD_GRAB
-                    reason = "Higher release version detected." if decision == GrabDecisionType.WOULD_REPLACE else "Wanted episode detected."
-                    _record_decision(session, show, episode, feed, article, title, episode_number, version, decision, reason)
-                    logs.append(f"Would {'replace' if decision == GrabDecisionType.WOULD_REPLACE else 'grab'} {show.display_name} Ep {episode_number} v{version}: {title}")
                     continue
                 if mode != "direct":
                     continue

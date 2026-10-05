@@ -515,30 +515,6 @@ class TestDirectScheduler(unittest.TestCase):
         self.assertIn("Direct hunting", reason)
         self.assertIn("Pending Operation Anime", reason)
 
-    def test_observe_mode_uses_observation_message(self):
-        show = Monitored(
-            id=8,
-            anilist_id=808,
-            display_name="Observed Anime",
-            aliases_json='["Observed Anime"]',
-            status=MonitoredStatus.FIXED,
-            current_feed_id=1,
-            next_airing_episode=6,
-            next_airing_at=utc_now() + timedelta(minutes=30),
-        )
-        self.session.add(show)
-        self.session.commit()
-
-        duration, reason = calculate_next_poll_interval(
-            self.session,
-            default_interval_seconds=21600,
-            download_mode="observe",
-        )
-
-        self.assertEqual(duration, 21600)
-        self.assertIn("are observed", reason)
-        self.assertNotIn("working rules", reason)
-
 
 AIR = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
 REAL_AIR = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)

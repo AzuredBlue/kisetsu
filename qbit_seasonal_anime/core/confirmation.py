@@ -733,7 +733,7 @@ def has_downloaded_final_episode(
     ``rules`` mode lets qBittorrent own the downloads, so the only evidence the
     app has is a scalar plus the match log, and the historical checks stand.
 
-    ``direct``/``observe`` mode makes this app the owner of an episode ledger,
+    ``direct`` mode makes this app the owner of an episode ledger,
     so the ledger is authoritative: every ledger row up to ``total_episodes``
     must be COMPLETED or MISSED (no longer retrievable), and at least one
     COMPLETED. A single wanted or failed episode
@@ -763,7 +763,7 @@ def has_downloaded_final_episode(
         )
     ).all()
     if episodes:
-        if (download_mode or DEFAULT_DOWNLOAD_MODE) in ("direct", "observe"):
+        if (download_mode or DEFAULT_DOWNLOAD_MODE) == "direct":
             return (
                 all(episode.status in (EpisodeStatus.COMPLETED, EpisodeStatus.MISSED) for episode in episodes)
                 and any(episode.status == EpisodeStatus.COMPLETED for episode in episodes)

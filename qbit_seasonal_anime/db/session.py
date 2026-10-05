@@ -405,6 +405,10 @@ def init_db(engine=None):
         if "download_mode" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN download_mode VARCHAR DEFAULT 'rules'"))
             session.commit()
+        # Observe mode was removed; it already behaved like direct, so keep that.
+        session.exec(text("UPDATE settings SET download_mode = 'direct' WHERE download_mode = 'observe'"))
+        session.exec(text("DROP TABLE IF EXISTS grab_decisions"))
+        session.commit()
         if "backfill_window_days" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN backfill_window_days INTEGER DEFAULT 14"))
             session.commit()
@@ -509,8 +513,6 @@ def init_db(engine=None):
             ("ix_episode_source_number", "episodes", "monitored_id, feed_id, source_episode"),
             ("ix_seen_feed_item_shielded", "seen_feed_items", "shielded_at"),
             ("ix_torrent_operation_status_updated", "torrent_operations", "status, updated_at"),
-            ("ix_grab_decision_episode_created", "grab_decisions", "episode, created_at"),
-            ("ix_grab_decision_item", "grab_decisions", "feed_url, feed_item_id"),
             ("ix_rule_history_feed_id", "rule_history", "feed_id"),
             ("ix_rule_history_created_at", "rule_history", "created_at"),
             ("ix_rule_history_monitored_created", "rule_history", "monitored_id, created_at DESC"),

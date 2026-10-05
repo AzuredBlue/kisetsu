@@ -88,7 +88,7 @@ class Supervisor:
         """
         mode = (getattr(self.settings, "download_mode", DEFAULT_DOWNLOAD_MODE) or DEFAULT_DOWNLOAD_MODE)
         mode = str(mode).strip().lower()
-        return mode if mode in {"rules", "observe", "direct"} else DEFAULT_DOWNLOAD_MODE
+        return mode if mode in {"rules", "direct"} else DEFAULT_DOWNLOAD_MODE
 
     def sync_feeds(self) -> List[str]:
         """Fetch RSS feeds from qBittorrent and ensure they are registered in the database, pruning any removed feeds."""
@@ -1293,7 +1293,7 @@ class Supervisor:
         return logs
 
     def prepare_download_mode(self, mode: str, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
-        if mode in {"direct", "observe"}:
+        if mode == "direct":
             logs = self.import_existing_torrents(rss_snapshot)
             logs.extend(self.disable_managed_rules())
             return logs
@@ -1365,11 +1365,11 @@ class Supervisor:
         beat()
         all_logs.extend(await self.sync_anilist_schedule(
             hunting=hunting,
-            direct_mode=mode in {"direct", "observe"},
+            direct_mode=mode == "direct",
         ))
 
         beat()
-        if mode in {"direct", "observe"}:
+        if mode == "direct":
             try:
                 all_logs.extend(await asyncio.to_thread(self.prepare_download_mode, mode, rss_snapshot))
             except QbitClientError:
@@ -1429,42 +1429,30 @@ class Supervisor:
                 rss_snapshot,
                 parsed_articles,
                 self._known_categories,
-                mode == "rules",
-                mode == "rules",
+                True,
+                True,
             ))
-            if mode == "observe":
-                all_logs.extend(await asyncio.to_thread(
-                    evaluate_and_grab_releases,
-                    self.session,
-                    self.qbit,
-                    self.settings,
-                    None,
-                    "observe",
-                    rss_snapshot,
-                ))
-            else:
-                all_logs.extend(await asyncio.to_thread(
-                    verify_and_confirm_torrents,
-                    self.session,
-                    self.qbit,
-                    self.settings,
-                    rss_snapshot,
-                    parsed_articles,
-                    self._known_categories,
-                ))
+            all_logs.extend(await asyncio.to_thread(
+                verify_and_confirm_torrents,
+                self.session,
+                self.qbit,
+                self.settings,
+                rss_snapshot,
+                parsed_articles,
+                self._known_categories,
+            ))
             if self.anilist_sync_succeeded is not False:
                 all_logs.extend(await asyncio.to_thread(self.reconcile_schedule_rollover))
-            if mode == "rules":
-                all_logs.extend(await asyncio.to_thread(self.sync_active_rules))
-                all_logs.extend(await asyncio.to_thread(
-                    check_and_handle_stalls,
-                    self.session,
-                    self.qbit,
-                    self.settings,
-                    rss_snapshot,
-                    parsed_articles,
-                    self._known_categories,
-                ))
+            all_logs.extend(await asyncio.to_thread(self.sync_active_rules))
+            all_logs.extend(await asyncio.to_thread(
+                check_and_handle_stalls,
+                self.session,
+                self.qbit,
+                self.settings,
+                rss_snapshot,
+                parsed_articles,
+                self._known_categories,
+            ))
 
         beat()
         all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
