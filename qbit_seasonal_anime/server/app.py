@@ -49,6 +49,11 @@ def _next_qbit_retry(retry_index: int) -> int:
     return QBIT_RETRY_DELAYS[min(retry_index, len(QBIT_RETRY_DELAYS) - 1)]
 
 
+def _backoff(retry_index: int) -> tuple[int, int]:
+    """The wait for this failure and the retry index to carry into the next one."""
+    return _next_qbit_retry(retry_index), min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
+
+
 async def background_supervisor_task():
     """Supervisor loop running concurrently with the WebUI server."""
     engine = get_engine()
@@ -82,8 +87,7 @@ async def background_supervisor_task():
                     _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
                     state.add_log("qBittorrent authentication failed; check the configured username and password.", "ERROR")
                 except QbitClientError as e:
-                    sleep_seconds = _next_qbit_retry(retry_index)
-                    retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
+                    sleep_seconds, retry_index = _backoff(retry_index)
                     _set_next_check(sleep_seconds, f"qBittorrent is unavailable: {e}")
 
                 if connection_ready:
@@ -126,8 +130,7 @@ async def background_supervisor_task():
                     except QbitClientError as e:
                         connection_ready = False
                         needs_rss_refresh = True
-                        sleep_seconds = _next_qbit_retry(retry_index)
-                        retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
+                        sleep_seconds, retry_index = _backoff(retry_index)
                         _set_next_check(sleep_seconds, f"qBittorrent became unavailable during the cycle: {e}")
                     except Exception as e:
                         needs_rss_refresh = True
@@ -154,8 +157,7 @@ async def background_supervisor_task():
                             _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
                         except QbitClientError as e:
                             connection_ready = False
-                            sleep_seconds = _next_qbit_retry(retry_index)
-                            retry_index = min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
+                            sleep_seconds, retry_index = _backoff(retry_index)
                             _set_next_check(sleep_seconds, f"qBittorrent became unavailable while scheduling the next check: {e}")
                         else:
                             hunting_next = await asyncio.to_thread(
