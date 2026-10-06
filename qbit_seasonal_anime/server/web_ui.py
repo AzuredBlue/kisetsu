@@ -70,9 +70,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         <div id="sidebar-next-check" class="text-zinc-300 font-mono text-xs leading-tight" title="">Calculating...</div>
       </div>
 
-      <button onclick="runCycleNow()" id="btn-run-cycle" class="w-full bg-[#24242c] hover:bg-[#2e2e38] text-zinc-200 text-xs sm:text-sm py-2 px-3 rounded-lg border border-[#33333d] transition-colors flex items-center justify-center gap-2 font-medium shadow-sm active:scale-95">
+      <button onclick="runCycleNow()" id="btn-run-cycle" title="Re-sync AniList, refresh RSS feeds, grab or confirm new episodes and reconcile with qBittorrent" class="w-full bg-[#24242c] hover:bg-[#2e2e38] text-zinc-200 text-xs sm:text-sm py-2 px-3 rounded-lg border border-[#33333d] transition-colors flex items-center justify-center gap-2 font-medium shadow-sm active:scale-95">
         <svg id="spinner-run-cycle" class="w-4 h-4 hidden animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-        <span id="text-run-cycle">Check for New Episodes</span>
+        <span id="text-run-cycle">Sync Now</span>
       </button>
     </div>
   </aside>
@@ -268,7 +268,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <input type="text" id="set-anilist-user" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
               </div>
               <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Routine Refresh (Minutes)</label>
+                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Routine Check &amp; AniList Sync (Minutes)</label>
                 <input type="number" min="5" id="set-interval" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
               </div>
               <div>
@@ -284,10 +284,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
             <div class="pt-2 border-t border-[#26262e] space-y-2">
               <div class="flex items-center justify-between gap-3">
-                <button type="button" onclick="syncAniListNow()" class="bg-[#222228] hover:bg-[#2c2c34] text-zinc-200 text-xs py-1.5 px-3.5 rounded-lg border border-[#33333d] transition-colors font-medium">
-                  Sync AniList Shows
-                </button>
-
                 <div class="flex items-center gap-2.5 flex-shrink-0">
                   <span class="text-xs text-zinc-300 font-medium">Anime Names</span>
                   <div class="inline-flex items-center bg-[#121215] border border-[#30303a] rounded-lg p-0.5 text-xs font-mono select-none">
@@ -310,7 +306,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <p class="text-xs text-zinc-500">Rules owns downloads. Direct manages episodes and verified replacements.</p>
               </div>
 
-              <div id="sync-anilist-status" class="text-xs font-mono empty:hidden"></div>
             </div>
           </div>
 
@@ -1687,23 +1682,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
-    async function syncAniListNow() {
-      const statusEl = document.getElementById('sync-anilist-status');
-      statusEl.textContent = 'Syncing...';
-      statusEl.className = 'text-xs font-mono text-zinc-400';
-      try {
-        const data = await apiFetch('/api/settings/sync-anilist', { method: 'POST' });
-        statusEl.textContent = data.message || 'Synced.';
-        statusEl.className = 'text-xs font-mono text-emerald-400 font-semibold';
-        showToast(data.message || 'AniList synced.', 'success');
-        loadShows();
-      } catch (err) {
-        statusEl.textContent = `Failed: ${err}`;
-        statusEl.className = 'text-xs font-mono text-rose-400';
-        showToast(`AniList sync failed: ${err}`, 'error');
-      }
-    }
-
     async function clearAllShows() {
       if (!confirm('Delete ALL monitored shows and remove all qBittorrent RSS rules?')) return;
       try {
@@ -1722,11 +1700,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       btn.disabled = true;
       spinner.classList.remove('hidden');
-      text.textContent = 'Checking...';
+      text.textContent = 'Syncing...';
 
       try {
         const data = await apiFetch('/api/cycle/run', { method: 'POST' });
-        showToast(data.message || 'Check completed.', 'success');
+        showToast(data.message || 'Sync completed.', 'success');
         loadShows();
         updateStatus(true);
       } catch (err) {
@@ -1735,12 +1713,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (err.status === 409) {
           showToast(err.message || 'A supervision cycle is already in progress.', 'info');
         } else {
-          showToast(`Check error: ${err.message || err}`, 'error');
+          showToast(`Sync error: ${err.message || err}`, 'error');
         }
       } finally {
         btn.disabled = false;
         spinner.classList.add('hidden');
-        text.textContent = 'Check for New Episodes';
+        text.textContent = 'Sync Now';
       }
     }
 

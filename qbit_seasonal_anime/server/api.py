@@ -1312,10 +1312,10 @@ async def _run_cycle_now(session: Session):
 
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
 
-    state.add_log("Manual supervision cycle initiated from WebUI.", "INFO")
+    state.add_log("Manual sync initiated from WebUI.", "INFO")
     state.trigger_immediate_rule_check()
     try:
-        logs = await sup.run_full_cycle(force_rss_refresh=True)
+        logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True)
         state.last_cycle_time = datetime.now(timezone.utc)
         for l in logs:
             state.add_log(f"Supervisor: {l}", "INFO")

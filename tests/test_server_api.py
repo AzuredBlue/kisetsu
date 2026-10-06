@@ -278,7 +278,7 @@ def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
     assert response.json()["next_check_seconds"] == 321
     assert response.json()["next_check_reason"] == "Next cycle"
     # A manual cycle always re-reads the RSS feeds first.
-    supervisor.run_full_cycle.assert_awaited_once_with(force_rss_refresh=True)
+    supervisor.run_full_cycle.assert_awaited_once_with(force_rss_refresh=True, force_anilist=True)
     assert [c.args[0] for c in to_thread.await_args_list].count(scheduler) == 1
     scheduler.assert_called_once()
     assert api_module.state.is_running_cycle is False

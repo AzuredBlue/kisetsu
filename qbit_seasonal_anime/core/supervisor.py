@@ -1312,6 +1312,7 @@ class Supervisor:
         *,
         hunting: bool = False,
         force_rss_refresh: bool = False,
+        force_anilist: bool = False,
     ) -> List[str]:
         """Execute one complete supervision iteration.
 
@@ -1321,6 +1322,8 @@ class Supervisor:
         ``hunting`` marks a short release-polling pass for the AniList sync log
         line. ``force_rss_refresh`` makes the direct engine re-read the feeds
         before deciding, because a stale snapshot would otherwise be acted upon.
+        ``force_anilist`` queries AniList even when the cached schedule is fresh,
+        so a manual sync picks up shows the user just added.
         """
         engine = self.session.get_bind()
         owner = f"supervisor:{uuid4().hex}"
@@ -1330,6 +1333,7 @@ class Supervisor:
             return await self._run_full_cycle(
                 hunting=hunting,
                 force_rss_refresh=force_rss_refresh,
+                force_anilist=force_anilist,
                 lease_owner=owner,
             )
         except Exception:
@@ -1346,6 +1350,7 @@ class Supervisor:
         *,
         hunting: bool = False,
         force_rss_refresh: bool = False,
+        force_anilist: bool = False,
         lease_owner: Optional[str] = None,
     ) -> List[str]:
         all_logs: List[str] = []
@@ -1364,6 +1369,7 @@ class Supervisor:
 
         beat()
         all_logs.extend(await self.sync_anilist_schedule(
+            force=force_anilist,
             hunting=hunting,
             direct_mode=mode == "direct",
         ))
