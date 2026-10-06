@@ -1,7 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from uuid import uuid4
 
 from sqlmodel import Session, select
@@ -906,7 +906,13 @@ def _mapped_episode(
     latest_aired: Optional[int],
     target_count: int,
     article: Dict[str, Any],
+    learn: bool = True,
 ) -> Optional[int]:
+    """Map a feed's raw episode number to the show's local one.
+
+    ``learn=False`` is for read-only previews: it skips the offset inference
+    that can renumber stored releases.
+    """
     mapping = session.exec(
         select(EpisodeNumberMapping).where(
             EpisodeNumberMapping.monitored_id == show.id,
@@ -927,7 +933,8 @@ def _mapped_episode(
 
     by_date = _date_mapped_episode(session, show, raw_episode, target_count, article)
     if by_date is not None:
-        _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
+        if learn:
+            _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
         return by_date
     if latest_aired is not None and raw_episode > target_count and 1 <= latest_aired <= target_count:
         return latest_aired
@@ -1343,6 +1350,47 @@ def _mark_missed_episodes(
     return logs
 
 
+class _GrabContext(NamedTuple):
+    episodes: List[Episode]
+    episodes_by_number: Dict[int, Episode]
+    failed_versions: Dict[int, set]
+    target_count: int
+    latest_aired: Optional[int]
+
+
+def _show_grab_context(
+    session: Session,
+    show: Monitored,
+    now: datetime,
+    air_horizon: datetime,
+) -> _GrabContext:
+    episodes = sync_show_episodes(session, show)
+    episodes_by_number = {episode.episode_number: episode for episode in episodes}
+    failed_versions: Dict[int, set] = {}
+    episode_ids = [episode.id for episode in episodes if episode.id]
+    if episode_ids:
+        failed_operations = session.exec(
+            select(TorrentOperation).where(
+                TorrentOperation.episode_id.in_(episode_ids),
+                TorrentOperation.status == TorrentOperationStatus.FAILED,
+            )
+        ).all()
+        for failed_operation in failed_operations:
+            failed_versions.setdefault(failed_operation.episode_id, set()).add(failed_operation.version)
+    canonical_max = max((episode.episode_number for episode in episodes), default=0)
+    target_count = show.total_episodes or max(show.next_airing_episode or 0, canonical_max, 1)
+    known_aired = [
+        episode.episode_number
+        for episode in episodes
+        if episode.air_at and as_utc(episode.air_at) <= air_horizon
+    ]
+    latest_aired = max(known_aired) if known_aired else None
+    airing_at = as_utc(show.next_airing_at)
+    if latest_aired is None and show.next_airing_episode:
+        latest_aired = show.next_airing_episode if airing_at and airing_at <= now else max(0, show.next_airing_episode - 1)
+    return _GrabContext(episodes, episodes_by_number, failed_versions, target_count, latest_aired)
+
+
 def evaluate_and_grab_releases(
     session: Session,
     qbit: QBitClient,
@@ -1374,30 +1422,10 @@ def evaluate_and_grab_releases(
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     air_horizon = now + timedelta(hours=tolerance_hours)
     for show in shows:
-        episodes = sync_show_episodes(session, show)
-        episodes_by_number = {episode.episode_number: episode for episode in episodes}
-        failed_versions: Dict[int, set] = {}
-        episode_ids = [episode.id for episode in episodes if episode.id]
-        if episode_ids:
-            failed_operations = session.exec(
-                select(TorrentOperation).where(
-                    TorrentOperation.episode_id.in_(episode_ids),
-                    TorrentOperation.status == TorrentOperationStatus.FAILED,
-                )
-            ).all()
-            for failed_operation in failed_operations:
-                failed_versions.setdefault(failed_operation.episode_id, set()).add(failed_operation.version)
-        canonical_max = max((episode.episode_number for episode in episodes), default=0)
-        target_count = show.total_episodes or max(show.next_airing_episode or 0, canonical_max, 1)
-        known_aired = [
-            episode.episode_number
-            for episode in episodes
-            if episode.air_at and as_utc(episode.air_at) <= air_horizon
-        ]
-        latest_aired = max(known_aired) if known_aired else None
+        episodes, episodes_by_number, failed_versions, target_count, latest_aired = _show_grab_context(
+            session, show, now, air_horizon,
+        )
         airing_at = as_utc(show.next_airing_at)
-        if latest_aired is None and show.next_airing_episode:
-            latest_aired = show.next_airing_episode if airing_at and airing_at <= now else max(0, show.next_airing_episode - 1)
         if show.next_airing_episode == 1 and airing_at and airing_at > air_horizon:
             continue
         newest_wanted = max(
@@ -1507,3 +1535,130 @@ def evaluate_and_grab_releases(
             session.add(show)
         session.commit()
     return logs
+
+
+def _manual_refusal(session: Session, episode: Episode, version: int) -> Optional[str]:
+    """Why an explicit grab of ``version`` of ``episode`` must not go ahead."""
+    if _operation_for_episode(session, episode.id):
+        return f"Episode {episode.episode_number} already has a download in progress."
+    if episode.status in {
+        EpisodeStatus.COMPLETED,
+        EpisodeStatus.DOWNLOADING,
+        EpisodeStatus.REPLACING,
+        EpisodeStatus.QUEUED,
+    } and version <= episode.version:
+        return f"Episode {episode.episode_number} v{episode.version} is already downloaded or queued."
+    return None
+
+
+def _manual_candidates(
+    session: Session,
+    qbit: QBitClient,
+    settings: Settings,
+    show: Monitored,
+    articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> List[Tuple[Feed, Dict[str, Any], Dict[str, Any], int, int, int, Episode, _GrabContext]]:
+    """Every feed article the grabber would accept for ``show``, with its episode.
+
+    Reads only the feeds the show may use (so the feed lock is honoured) and never
+    writes: the mapping is resolved with ``learn=False``.
+    """
+    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+    candidate_feeds = _grab_feeds(session, show, feeds)
+    if not candidate_feeds:
+        return []
+    if articles_by_url is None:
+        articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
+    now = utc_now()
+    tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
+    context = _show_grab_context(session, show, now, now + timedelta(hours=tolerance_hours))
+    found = []
+    for feed in candidate_feeds:
+        for article in articles_by_url.get(feed.qbit_feed_url, []):
+            title = article.get("title", "")
+            if not title:
+                continue
+            matched, parsed = _decide(show, title)
+            if not matched:
+                continue
+            raw_episode = parsed.get("episode")
+            if raw_episode is None or raw_episode <= 0:
+                continue
+            episode_number = _mapped_episode(
+                session, show, feed, int(raw_episode), context.latest_aired, context.target_count, article, learn=False,
+            )
+            episode = context.episodes_by_number.get(episode_number) if episode_number is not None else None
+            if episode is None:
+                continue
+            version = int(parsed.get("version") or 1)
+            found.append((feed, article, parsed, int(raw_episode), episode_number, version, episode, context))
+    return found
+
+
+def direct_feed_matches(
+    session: Session,
+    qbit: QBitClient,
+    settings: Settings,
+    show: Monitored,
+    limit: int = 30,
+    articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> List[Dict[str, Any]]:
+    """Releases in the show's feed that the direct engine recognises, for the UI."""
+    matches = []
+    for feed, article, _parsed, _raw, episode_number, version, episode, _context in _manual_candidates(
+        session, qbit, settings, show, articles_by_url,
+    ):
+        refusal = _manual_refusal(session, episode, version)
+        matches.append({
+            "title": article.get("title", ""),
+            "feed_id": feed.id,
+            "feed_name": feed.qbit_feed_name,
+            "episode": episode_number,
+            "version": version,
+            "episode_status": episode.status.value,
+            "downloadable": refusal is None,
+        })
+        if len(matches) >= limit:
+            break
+    return matches
+
+
+def manual_grab(
+    session: Session,
+    qbit: QBitClient,
+    settings: Settings,
+    show: Monitored,
+    title: str,
+) -> str:
+    """Queue one named release through the normal operation path.
+
+    This is an explicit user action, so the backfill and discovery-grace windows
+    do not apply: a MISSED or FAILED episode that is still in the feed may be
+    fetched again. Everything else (ledger, tags, v2 replacement, feed lock)
+    goes through ``_start_operation`` exactly like a cycle grab.
+    """
+    if show.status == MonitoredStatus.PAUSED:
+        raise ValueError("This show is paused. Resume it before downloading.")
+    wanted_title = title.strip()
+    candidate = next(
+        (item for item in _manual_candidates(session, qbit, settings, show) if item[1].get("title") == wanted_title),
+        None,
+    )
+    if candidate is None:
+        raise ValueError(
+            "That release is not in this show's feed any more, or does not match this show."
+        )
+    feed, article, parsed, raw_episode, episode_number, version, episode, _context = candidate
+    refusal = _manual_refusal(session, episode, version)
+    if refusal:
+        raise ValueError(refusal)
+    _record_mapping_evidence(session, show, feed, raw_episode, episode_number)
+    operation = _start_operation(session, qbit, settings, show, feed, episode, article, parsed, version)
+    if operation is None:
+        raise ValueError(episode.last_error or "Could not start the download for that release.")
+    if show.current_feed_id != feed.id:
+        show.current_feed_id = feed.id
+        session.add(show)
+        session.commit()
+    action = "replacement" if operation.kind == "replace" else "download"
+    return f"Manually queued {action} for {show.display_name} Ep {episode_number} v{version}: {wanted_title}"

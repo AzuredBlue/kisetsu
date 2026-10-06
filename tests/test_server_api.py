@@ -1132,7 +1132,8 @@ def test_get_show_rule_is_read_only_when_a_article_matches(client, session, mock
         }
     }
 
-    res = client.get(f"/api/shows/{show.id}/rule")
+    assert client.get(f"/api/shows/{show.id}/rule").status_code == 200
+    res = client.get(f"/api/shows/{show.id}/feed-matches")
     assert res.status_code == 200
     data = res.json()
     # The article is still reported as currently matching...
@@ -1177,7 +1178,7 @@ def test_rule_details_reports_only_live_matches(client, session, mock_qbit):
         "https://subsplease.org/rss": ["[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv"]
     }
 
-    data = client.get(f"/api/shows/{show.id}/rule").json()
+    data = client.get(f"/api/shows/{show.id}/feed-matches").json()
     assert data["matched_articles"] == ["[SubsPlease] Yomi no Tsugai - 22 (1080p) [NEW].mkv"]
     # Already-recorded releases are not re-listed alongside live matches; the
     # History tab is their only home.

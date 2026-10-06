@@ -9,12 +9,38 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>qbit-seasonal-anime</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+          colors: {
+            canvas: '#131317',
+            sunken: '#0f0f13',
+            chrome: '#17171c',
+            surface: '#1b1b21',
+            raised: '#23232b',
+            raised2: '#2b2b35',
+            'line-soft': '#25252d',
+            line: '#2f2f3a',
+            'line-strong': '#4a4a5a',
+            accent: { DEFAULT: '#2dd4bf', strong: '#14b8a6', soft: '#5eead4' },
+          },
+          borderRadius: { xl: '0.875rem', '2xl': '1.125rem' },
+        },
+      },
+    };
+  </script>
   <style>
-    ::-webkit-scrollbar { width: 5px; height: 5px; }
-    ::-webkit-scrollbar-track { background: #121215; }
-    ::-webkit-scrollbar-thumb { background: #2a2a32; border-radius: 2px; }
-    ::-webkit-scrollbar-thumb:hover { background: #383844; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #2f2f3a; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #454555; }
 
     .line-clamp-2 {
       display: -webkit-box;
@@ -22,338 +48,413 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       -webkit-box-orient: vertical;
       overflow: hidden;
     }
+
+    /* Shared form and button vocabulary, so markup stays short. */
+    .field-label { display: block; font-size: 0.8125rem; font-weight: 500; color: #d4d4d8; margin-bottom: 0.375rem; }
+    .field-hint { font-size: 0.75rem; line-height: 1.45; color: #8b8b97; margin-top: 0.375rem; }
+    .field {
+      width: 100%; background: #131317; border: 1px solid #2f2f3a; border-radius: 0.625rem;
+      padding: 0.55rem 0.8rem; font-size: 0.875rem; color: #f4f4f5; outline: none;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field:focus { border-color: #2dd4bf; }
+    .field::placeholder { color: #5d5d6b; }
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+      font-size: 0.8125rem; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: 0.625rem;
+      background: #23232b; color: #e4e4e7; border: 1px solid #2f2f3a;
+      transition: background-color .15s, border-color .15s, color .15s, transform .1s; cursor: pointer;
+    }
+    .btn:hover { background: #2b2b35; border-color: #3a3a48; }
+    .btn:active { transform: scale(.97); }
+    .btn:focus-visible, .nav-item:focus-visible { outline: 2px solid #2dd4bf; outline-offset: 2px; }
+    .btn-primary { background: #14b8a6; border-color: #14b8a6; color: #04201e; font-weight: 600; }
+    .btn-primary:hover { background: #2dd4bf; border-color: #2dd4bf; }
+    #btn-run-cycle:hover { border-color: #2dd4bf; color: #5eead4; }
+    .btn-danger { background: #2a1818; border-color: #4a2424; color: #f0868b; }
+    .btn-danger:hover { background: #381d1d; border-color: #5e2b2b; }
+    .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.75rem; }
+    .card { background: #1b1b21; border: 1px solid #2f2f3a; border-radius: 0.875rem; }
+    .page-title { font-size: 1.125rem; font-weight: 600; color: #fafafa; letter-spacing: -0.01em; }
+    .page-sub { font-size: 0.8125rem; color: #8b8b97; margin-top: 0.2rem; }
+    .section-title { font-size: 0.8125rem; font-weight: 600; color: #d4d4d8; letter-spacing: 0.02em; }
+    .seg { display: inline-flex; background: #131317; border: 1px solid #2f2f3a; border-radius: 0.625rem; padding: 2px; }
+    .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.5rem; color: #9a9aa6; transition: background-color .15s, color .15s; }
+    .seg > button:hover { color: #e4e4e7; }
+
+    @media (prefers-reduced-motion: reduce) {
+      .group:hover { transform: none !important; }
+    }
+
+    @media (hover: none) {
+      .card-actions { visibility: visible !important; }
+    }
   </style>
 </head>
-<body class="bg-[#121215] text-zinc-100 flex h-screen overflow-hidden font-sans antialiased selection:bg-zinc-700 selection:text-white">
+<body class="bg-canvas text-zinc-100 flex h-screen overflow-hidden font-sans antialiased selection:bg-zinc-600 selection:text-white">
 
-  <aside class="w-60 bg-[#18181c] border-r border-[#26262e] flex flex-col flex-shrink-0 select-none z-20">
-    
-    <nav class="flex-1 px-3 py-5 space-y-1.5 overflow-y-auto">
-      <button onclick="switchTab('shows')" id="nav-shows" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors bg-[#262630] text-white">
-        <svg class="w-5 h-5 text-zinc-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
+  <div id="sidebar-backdrop" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/60 z-30 hidden md:hidden"></div>
+
+  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome border-r border-line-soft flex flex-col flex-shrink-0 select-none z-40">
+
+    <div class="px-4 pt-4 pb-2 flex items-center">
+      <span class="text-sm font-semibold text-zinc-100">qbit-seasonal-anime</span>
+    </div>
+
+    <nav class="flex-1 px-2 py-1 space-y-0.5 overflow-y-auto">
+      <button onclick="switchTab('shows')" id="nav-shows" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white shadow-[inset_2px_0_0_0_#2dd4bf] [&>svg]:text-accent">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
         <span>Shows</span>
-        <span id="badge-total-shows" class="ml-auto text-xs text-zinc-400 font-mono font-semibold">0</span>
+        <span id="badge-total-shows" class="ml-auto text-xs text-zinc-500 tabular-nums font-medium">0</span>
       </button>
 
-      <button onclick="switchTab('calendar')" id="nav-calendar" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]">
-        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      <button onclick="switchTab('calendar')" id="nav-calendar" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
         <span>Calendar</span>
-        <span id="badge-calendar-shows" class="ml-auto text-xs text-zinc-400 font-mono font-semibold">0</span>
+        <span id="badge-calendar-shows" class="ml-auto text-xs text-zinc-500 tabular-nums font-medium">0</span>
       </button>
 
-      <button onclick="switchTab('history')" id="nav-history" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]">
-        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      <button onclick="switchTab('history')" id="nav-history" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
         <span>History</span>
-        <span id="badge-total-history" class="ml-auto text-xs text-zinc-400 font-mono font-semibold">0</span>
+        <span id="badge-total-history" class="ml-auto text-xs text-zinc-500 tabular-nums font-medium">0</span>
       </button>
 
-      <button onclick="switchTab('feeds')" id="nav-feeds" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]">
-
-        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
+      <button onclick="switchTab('feeds')" id="nav-feeds" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
         <span>RSS Feeds</span>
       </button>
 
-      <button onclick="switchTab('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]">
-        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-        <span>Settings</span>
+      <button onclick="switchTab('logs')" id="nav-logs" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        <span>Logs</span>
       </button>
 
-      <button onclick="switchTab('logs')" id="nav-logs" class="nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]">
-        <svg class="w-5 h-5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-        <span>Logs</span>
+      <button onclick="switchTab('settings')" id="nav-settings" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        <span>Settings</span>
       </button>
     </nav>
 
-    <div class="p-3.5 border-t border-[#26262e] space-y-2.5 text-xs">
-      <div class="space-y-0.5">
-        <div class="text-[10px] text-zinc-500 uppercase tracking-wider font-semibold">Next Check</div>
-        <div id="sidebar-next-check" class="text-zinc-300 font-mono text-xs leading-tight" title="">Calculating...</div>
+    <div class="p-3 border-t border-line-soft space-y-2">
+      <div class="flex items-baseline justify-between gap-2 px-0.5">
+        <span class="text-[11px] text-zinc-500">Next check</span>
+        <span id="sidebar-next-check" class="text-zinc-300 text-xs tabular-nums" title="">Calculating...</span>
       </div>
 
-      <button onclick="runCycleNow()" id="btn-run-cycle" title="Re-sync AniList, refresh RSS feeds, grab or confirm new episodes and reconcile with qBittorrent" class="w-full bg-[#24242c] hover:bg-[#2e2e38] text-zinc-200 text-xs sm:text-sm py-2 px-3 rounded-lg border border-[#33333d] transition-colors flex items-center justify-center gap-2 font-medium shadow-sm active:scale-95">
+      <button onclick="runCycleNow()" id="btn-run-cycle" title="Re-sync AniList, refresh RSS feeds, grab or confirm new episodes and reconcile with qBittorrent" class="btn btn-sm w-full">
         <svg id="spinner-run-cycle" class="w-4 h-4 hidden animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
         <span id="text-run-cycle">Sync Now</span>
       </button>
     </div>
   </aside>
 
-  <main class="flex-1 flex flex-col min-w-0 bg-[#121215] overflow-hidden">
-    
-    <header class="h-11 border-b border-[#222228] px-6 flex items-center justify-between flex-shrink-0 bg-[#16161a]">
-      <div class="flex items-center gap-3 text-xs font-mono">
-        <span id="stat-working" class="text-emerald-400 font-medium">0 Working</span>
-        <span class="text-zinc-600">/</span>
-        <span id="stat-upcoming" class="text-sky-400 font-medium">0 Upcoming</span>
-        <span class="text-zinc-600">/</span>
-        <span id="stat-stalled" class="text-rose-400 font-medium">0 Stalled</span>
+  <main class="flex-1 flex flex-col min-w-0 bg-canvas overflow-hidden">
+
+    <header class="h-14 border-b border-line-soft px-4 md:px-8 flex items-center justify-between gap-3 flex-shrink-0 bg-chrome">
+      <div class="flex items-center gap-3 min-w-0">
+        <button onclick="toggleSidebar(true)" class="md:hidden p-1.5 -ml-1.5 rounded-lg text-zinc-300 hover:bg-raised" aria-label="Open menu">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <h1 id="page-title" class="text-sm font-semibold text-zinc-100 truncate">Shows</h1>
       </div>
 
+      <div class="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+        <span id="stat-working" class="text-emerald-400">0 Working</span>
+        <span id="stat-upcoming" class="text-sky-400">0 Upcoming</span>
+        <span id="stat-stalled" class="text-rose-400">0 Stalled</span>
+      </div>
     </header>
 
-    <div class="flex-1 overflow-y-auto p-6" id="main-scroll-container">
+    <div class="flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-7" id="main-scroll-container">
 
-      <section id="tab-shows" class="space-y-8 max-w-[1900px]">
-        
-        <div id="section-releasing" class="space-y-3">
-          <div class="flex items-center justify-between border-b border-[#222228] pb-1.5">
-            <div class="flex items-center gap-2">
-              <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-300">Releasing</h2>
-              <span id="header-count-releasing" class="text-xs text-zinc-500 font-mono">(0)</span>
+      <section id="tab-shows" class="space-y-10 max-w-[1900px]">
+
+        <div id="section-releasing" class="space-y-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-baseline gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-accent self-center"></span>
+              <h2 class="section-title">Releasing</h2>
+              <span id="header-count-releasing" class="text-xs text-zinc-500 tabular-nums">(0)</span>
             </div>
-
-            <div class="flex items-center gap-1 bg-[#121215] p-0.5 rounded border border-[#26262e] text-[11px] font-mono">
-              <button onclick="setSortMode('airing')" id="sort-btn-airing" class="px-2 py-0.5 rounded flex items-center gap-1.5 transition-all text-zinc-400 hover:text-zinc-200" title="Sort by Next Episode Airing (Soonest first)">
+            <div class="flex items-center gap-0.5 bg-sunken p-0.5 rounded-lg border border-line-soft text-xs">
+              <button onclick="setSortMode('airing')" id="sort-btn-airing" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Sort by Next Episode Airing (Soonest first)">
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 <span>Airing</span>
               </button>
-              <button onclick="setSortMode('title')" id="sort-btn-title" class="px-2 py-0.5 rounded flex items-center gap-1.5 transition-all text-zinc-400 hover:text-zinc-200" title="Sort Alphabetically (A to Z)">
+              <button onclick="setSortMode('title')" id="sort-btn-title" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Sort Alphabetically (A to Z)">
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
                 <span>A-Z</span>
               </button>
-              <button onclick="setSortMode('default')" id="sort-btn-default" class="px-2 py-0.5 rounded flex items-center gap-1.5 transition-all text-zinc-400 hover:text-zinc-200" title="Default Order (Date added)">
+              <button onclick="setSortMode('default')" id="sort-btn-default" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Default Order (Date added)">
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                 <span>Default</span>
               </button>
             </div>
           </div>
-          <div id="grid-releasing" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3">
+          <div id="grid-releasing" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
           </div>
         </div>
 
-        <div id="section-completed" class="space-y-3 pt-2">
-          <div class="flex items-center gap-2 border-b border-[#222228] pb-1.5">
-            <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-300">Completed</h2>
-            <span id="header-count-completed" class="text-xs text-zinc-500 font-mono">(0)</span>
+        <div id="section-completed" class="space-y-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-baseline gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-violet-400 self-center"></span>
+              <h2 class="section-title">Completed</h2>
+              <span id="header-count-completed" class="text-xs text-zinc-500 tabular-nums">(0)</span>
+            </div>
           </div>
-          <div id="grid-completed" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3">
-          </div>
-        </div>
-
-        <div id="section-planned" class="space-y-3 pt-2">
-          <div class="flex items-center gap-2 border-b border-[#222228] pb-1.5">
-            <h2 class="text-xs font-bold uppercase tracking-wider text-zinc-300">Planned</h2>
-            <span id="header-count-planned" class="text-xs text-zinc-500 font-mono">(0)</span>
-          </div>
-          <div id="grid-planned" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8 gap-3">
+          <div id="grid-completed" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
           </div>
         </div>
 
-      </section>
-
-      <section id="tab-calendar" class="space-y-4 max-w-[1950px] hidden">
-        
-        <div class="flex items-center justify-between border-b border-[#222228] pb-3">
-          <div>
-            <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">Weekly Calendar</h2>
-            <span id="calendar-week-range" class="text-xs font-mono text-zinc-400 mt-0.5 block"></span>
+        <div id="section-planned" class="space-y-4">
+          <div class="flex items-center justify-between gap-3">
+            <div class="flex items-baseline gap-2">
+              <span class="w-1.5 h-1.5 rounded-full bg-sky-400 self-center"></span>
+              <h2 class="section-title">Planned</h2>
+              <span id="header-count-planned" class="text-xs text-zinc-500 tabular-nums">(0)</span>
+            </div>
           </div>
-        </div>
-
-        <div id="calendar-weekly-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-6 items-start select-none">
+          <div id="grid-planned" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+          </div>
         </div>
 
       </section>
 
-      <section id="tab-history" class="space-y-4 max-w-5xl hidden">
-        <div class="flex items-center justify-between border-b border-[#222228] pb-3">
-          <div>
-            <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">Match History</h2>
-            <p class="text-xs text-zinc-400 mt-0.5">Recorded releases matched by rules in qBittorrent</p>
-          </div>
+      <section id="tab-calendar" class="space-y-5 max-w-[1950px] hidden">
 
-          <div class="flex items-center gap-2">
-            <button onclick="loadHistory(true)" class="bg-[#1e1e24] hover:bg-[#282832] text-zinc-300 text-xs py-1.5 px-3 rounded-lg border border-[#30303c] transition-colors font-medium flex items-center gap-1.5">
+        <div>
+          <p id="calendar-week-range" class="text-sm text-zinc-400"></p>
+        </div>
+
+        <div id="calendar-weekly-grid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4 items-start select-none">
+        </div>
+
+      </section>
+
+      <section id="tab-history" class="space-y-5 max-w-4xl hidden">
+        <div class="flex items-center justify-between gap-3">
+          <p class="page-sub !mt-0">Releases added or matched for your shows.</p>
+
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <button onclick="loadHistory(true)" class="btn btn-sm">
               <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
               <span>Refresh</span>
             </button>
-            <button onclick="clearHistory()" class="bg-[#1e1e24] hover:bg-[#282832] text-zinc-400 hover:text-rose-400 text-xs py-1.5 px-3 rounded-lg border border-[#30303c] transition-colors font-medium">
+            <button onclick="clearHistory()" class="btn btn-sm hover:!text-rose-400">
               Clear
             </button>
           </div>
         </div>
 
-        <div id="history-container" class="space-y-2.5"></div>
+        <div id="history-container" class="space-y-2"></div>
       </section>
 
-      <section id="tab-feeds" class="hidden max-w-5xl space-y-5">
-        <div class="flex items-center justify-between border-b border-[#222228] pb-3">
-          <div>
-            <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">RSS Feeds & Priority</h2>
-            <p class="text-xs text-zinc-400 mt-0.5">Manage prioritized torrent indexer feeds queried during supervision cycles.</p>
-          </div>
-          <button onclick="syncFeeds()" class="bg-[#222228] hover:bg-[#2c2c34] text-zinc-200 text-xs py-2 px-4 rounded-lg border border-[#33333d] transition-colors font-medium">
-            Sync Feeds from qBittorrent
+      <section id="tab-feeds" class="hidden max-w-4xl space-y-5">
+        <div class="flex items-center justify-between gap-3">
+          <p class="page-sub !mt-0">Prioritized torrent indexer feeds queried during supervision cycles. Drag rows to reorder.</p>
+          <button onclick="syncFeeds()" class="btn btn-sm flex-shrink-0">
+            Sync from qBittorrent
           </button>
         </div>
 
-        <div class="bg-[#18181c] border border-[#26262e] rounded-xl overflow-hidden shadow-sm">
-          <table class="w-full text-left text-sm">
-            <thead class="bg-[#121215] text-zinc-400 border-b border-[#26262e] uppercase text-[11px] font-semibold tracking-wider">
-              <tr>
-                <th class="py-3.5 px-3 w-10 text-center"></th>
-                <th class="py-3.5 px-3 w-20">Priority</th>
-                <th class="py-3.5 px-4">Feed Name & RSS URL</th>
-              </tr>
-            </thead>
-            <tbody id="feeds-table-body" class="divide-y divide-[#222228]">
-            </tbody>
-          </table>
+        <div class="card overflow-hidden">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm min-w-[480px]">
+              <thead class="bg-chrome text-zinc-500 border-b border-line-soft text-xs font-medium">
+                <tr>
+                  <th class="py-3 px-3 w-10 text-center"></th>
+                  <th class="py-3 px-3 w-24">Priority</th>
+                  <th class="py-3 px-4">Feed name &amp; RSS URL</th>
+                </tr>
+              </thead>
+              <tbody id="feeds-table-body" class="divide-y divide-line-soft">
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
-      <section id="tab-settings" class="hidden max-w-4xl space-y-6">
-        <div class="border-b border-[#222228] pb-3">
-          <h2 class="text-sm font-bold uppercase tracking-wider text-zinc-200">Settings</h2>
-          <p class="text-xs text-zinc-400 mt-0.5">Configure daemon connectivity, paths, defaults, and scheduling.</p>
-        </div>
+      <section id="tab-settings" class="hidden max-w-3xl space-y-6">
 
-        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-5">
-          
-          <div class="bg-[#18181c] border border-[#26262e] rounded-xl p-5 space-y-4 shadow-sm">
-            <h3 class="text-xs font-bold text-zinc-200 uppercase tracking-wide">qBittorrent Connection</h3>
+        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-6">
 
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Host / URL</label>
-                <input type="text" id="set-qbit-host" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Username</label>
-                <input type="text" id="set-qbit-user" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div class="sm:col-span-2">
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Password <span class="text-zinc-500 font-normal">(leave blank to keep unchanged)</span></label>
-                <input type="password" id="set-qbit-pass" placeholder="••••••••" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
+          <div>
+            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent"></span>qBittorrent</h3>
+            <div class="card divide-y divide-line-soft">
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-qbit-host">Host / URL</label>
+            <p class="field-hint !mt-0.5">Address of the qBittorrent Web UI.</p>
             </div>
-
-            <div class="pt-1 flex items-center gap-3">
-              <button type="button" onclick="testQbitConnection()" class="bg-[#222228] hover:bg-[#2c2c34] text-zinc-200 text-xs py-1.5 px-3.5 rounded-lg border border-[#33333d] transition-colors font-medium">
-                Test Connection
-              </button>
-              <span id="test-qbit-status" class="text-xs font-mono"></span>
+            <div><input id="set-qbit-host" type="text" required class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-qbit-user">Username</label>
+            </div>
+            <div><input id="set-qbit-user" type="text" required class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-qbit-pass">Password</label>
+            <p class="field-hint !mt-0.5">Leave blank to keep the current one.</p>
+            </div>
+            <div><input id="set-qbit-pass" type="password" placeholder="••••••••" class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <div class="field-label !mb-0">Connection</div>
+            </div>
+            <div><div class="flex items-center gap-3"><button type="button" onclick="testQbitConnection()" class="btn btn-sm">Test connection</button><span id="test-qbit-status" class="text-xs font-mono"></span></div></div>
+          </div>
             </div>
           </div>
 
-          <div class="bg-[#18181c] border border-[#26262e] rounded-xl p-5 space-y-4 shadow-sm">
-            <h3 class="text-xs font-bold text-zinc-200 uppercase tracking-wide">Paths & Rule Defaults</h3>
-
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="sm:col-span-3">
-                <label class="block text-xs text-zinc-200 font-medium mb-1.5">Base Download Directory <span class="text-zinc-400 font-normal">(uses <code class="text-sky-300">{name}</code> placeholder)</span></label>
-                <input type="text" id="set-base-dir" placeholder="e.g. ~/Anime/{name} or D:/Anime/{name} (leave blank for qBit default)" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 font-mono focus:outline-none focus:border-zinc-500">
-                <p class="text-xs text-zinc-400 mt-1">Leave blank to use qBittorrent's default download location, or enter a custom path template with <code class="text-sky-300 font-mono">{name}</code>.</p>
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Default Category</label>
-                <input type="text" id="set-category" placeholder="(blank)" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Seed Ratio Limit</label>
-                <input type="number" step="0.1" min="0" id="set-ratio" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Stall Grace (Hours)</label>
-                <input type="number" min="1" id="set-stall-window" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
+          <div>
+            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Downloads</h3>
+            <div class="card divide-y divide-line-soft">
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-base-dir">Base directory</label>
+            <p class="field-hint !mt-0.5">Path template for new shows. <code class="text-zinc-300 font-mono">{name}</code> becomes the show name. Blank uses qBittorrent's default.</p>
+            </div>
+            <div><input id="set-base-dir" type="text" placeholder="e.g. ~/Anime/{name}" class="field font-mono"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-category">Category</label>
+            <p class="field-hint !mt-0.5">Default qBittorrent category.</p>
+            </div>
+            <div><input id="set-category" type="text" placeholder="(blank)" class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-ratio">Seed ratio limit</label>
+            <p class="field-hint !mt-0.5">Stop seeding at this ratio.</p>
+            </div>
+            <div><input id="set-ratio" type="number" step="0.1" min="0" required class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-stall-window">Stall grace (hours)</label>
+            <p class="field-hint !mt-0.5">How long a download may sit idle before it counts as stalled.</p>
+            </div>
+            <div><input id="set-stall-window" type="number" min="1" required class="field"></div>
+          </div>
             </div>
           </div>
 
-          <div class="bg-[#18181c] border border-[#26262e] rounded-xl p-5 space-y-4 shadow-sm">
-            <h3 class="text-xs font-bold text-zinc-200 uppercase tracking-wide">AniList Account & Scheduler</h3>
-
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">AniList Username</label>
-                <input type="text" id="set-anilist-user" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Routine Check &amp; AniList Sync (Minutes)</label>
-                <input type="number" min="5" id="set-interval" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Automatic Backfill Window (Days)</label>
-                <input type="number" min="0" max="365" id="set-backfill-window" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-              </div>
-              <div>
-                <label class="block text-xs text-zinc-300 font-medium mb-1.5">Early Air Tolerance (Hours)</label>
-                <input type="number" min="0" max="168" id="set-early-air-tolerance" required class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-sm text-zinc-100 focus:outline-none focus:border-zinc-500">
-                <p class="text-xs text-zinc-500 mt-1.5">Start looking this many hours before AniList's air time. AniList times are often late, and a release is taken as soon as it appears. Use 0 to only act after the stated time.</p>
-              </div>
+          <div>
+            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>AniList &amp; schedule</h3>
+            <div class="card divide-y divide-line-soft">
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-anilist-user">AniList username</label>
+            <p class="field-hint !mt-0.5">Whose watching list to follow.</p>
             </div>
-
-            <div class="pt-2 border-t border-[#26262e] space-y-2">
-              <div class="flex items-center justify-between gap-3">
-                <div class="flex items-center gap-2.5 flex-shrink-0">
-                  <span class="text-xs text-zinc-300 font-medium">Anime Names</span>
-                  <div class="inline-flex items-center bg-[#121215] border border-[#30303a] rounded-lg p-0.5 text-xs font-mono select-none">
-                    <button type="button" onclick="setTitleLanguage('english')" id="btn-lang-en" class="px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm">EN</button>
-                    <button type="button" onclick="setTitleLanguage('romaji')" id="btn-lang-ja" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">JA</button>
-                  </div>
-                  <input type="hidden" id="set-title-language" value="english">
-                </div>
-              </div>
-
-              <div class="space-y-2">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="text-xs text-zinc-300 font-medium">Download Engine</span>
-                  <div class="inline-flex items-center bg-[#121215] border border-[#30303a] rounded-lg p-0.5 text-xs font-mono select-none">
-                    <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm">Rules</button>
-                    <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200">Direct</button>
-                  </div>
-                  <input type="hidden" id="set-download-mode" value="rules">
-                </div>
-                <p class="text-xs text-zinc-500">Rules owns downloads. Direct manages episodes and verified replacements.</p>
-              </div>
-
+            <div><input id="set-anilist-user" type="text" class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-interval">Check interval (minutes)</label>
+            <p class="field-hint !mt-0.5">How often to sync AniList and check feeds.</p>
+            </div>
+            <div><input id="set-interval" type="number" min="5" required class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-backfill-window">Backfill window (days)</label>
+            <p class="field-hint !mt-0.5">How far back to look for episodes that were missed.</p>
+            </div>
+            <div><input id="set-backfill-window" type="number" min="0" max="365" required class="field"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <label class="field-label !mb-0" for="set-early-air-tolerance">Early air tolerance (hours)</label>
+            <p class="field-hint !mt-0.5">Start looking this long before AniList's air time, since those times are often late. 0 waits for the stated time.</p>
+            </div>
+            <div><input id="set-early-air-tolerance" type="number" min="0" max="168" required class="field"></div>
+          </div>
             </div>
           </div>
 
-          <div class="flex items-center justify-between pt-2">
-            <button type="submit" class="bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-semibold py-2.5 px-6 rounded-lg transition-colors shadow-md">
-              Save Settings
-            </button>
+          <div>
+            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-violet-400"></span>Behaviour</h3>
+            <div class="card divide-y divide-line-soft">
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <div class="field-label !mb-0">Anime names</div>
+            <p class="field-hint !mt-0.5">Which title to show for each anime.</p>
+            </div>
+            <div><div class="seg">
+                <button type="button" onclick="setTitleLanguage('english')" id="btn-lang-en" class="font-semibold bg-teal-500/15 text-teal-300">English</button>
+                <button type="button" onclick="setTitleLanguage('romaji')" id="btn-lang-ja" class="font-medium text-zinc-400 hover:text-zinc-200">Romaji</button>
+              </div>
+              <input type="hidden" id="set-title-language" value="english"></div>
+          </div>
+          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
+            <div>
+            <div class="field-label !mb-0">Download engine</div>
+            <p class="field-hint !mt-0.5">Rules lets qBittorrent's RSS rules download. Direct adds torrents itself and handles v2 replacements.</p>
+            </div>
+            <div><div class="seg">
+                <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="font-semibold bg-teal-500/15 text-teal-300">Rules</button>
+                <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="font-medium text-zinc-400 hover:text-zinc-200">Direct</button>
+              </div>
+              <input type="hidden" id="set-download-mode" value="rules"></div>
+          </div>
+            </div>
+          </div>
 
-            <button type="button" onclick="clearAllShows()" class="bg-[#261818] hover:bg-[#361c1c] text-rose-400 text-xs py-2 px-4 rounded-lg border border-[#442222] transition-colors">
-              Clear All Monitored Shows
+          <div class="flex justify-end">
+            <button type="submit" class="btn btn-primary px-6 py-2">
+              Save settings
             </button>
           </div>
         </form>
+
+        <div class="card px-5 py-4 flex items-center justify-between gap-4">
+          <div>
+            <h3 class="section-title">Clear all shows</h3>
+            <p class="field-hint !mt-1">Deletes every monitored show and the match history, and removes the app's RSS rules from qBittorrent. Downloaded torrents are not touched.</p>
+          </div>
+          <button type="button" onclick="clearAllShows()" class="btn btn-danger btn-sm flex-shrink-0">
+            Clear all
+          </button>
+        </div>
       </section>
 
       <section id="tab-logs" class="space-y-4 max-w-6xl hidden">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-xl font-bold text-white tracking-tight">Supervisor & System Logs</h2>
-            <p class="text-xs text-zinc-400 mt-1">Live execution trace of scheduled supervisor cycles, AniList updates, RSS discoveries, and rule state changes.</p>
-          </div>
+        <div class="flex items-center justify-between gap-3 flex-wrap">
+          <p class="page-sub !mt-0">Live trace of supervisor cycles, AniList updates, RSS discoveries and state changes.</p>
 
           <div class="flex items-center gap-2">
-            <label class="flex items-center gap-2 text-xs text-zinc-400 bg-[#18181c] border border-[#26262e] px-3 py-1.5 rounded-lg cursor-pointer hover:text-zinc-200">
-              <input type="checkbox" id="logs-auto-refresh" checked onchange="toggleLogsAutoRefresh(this.checked)" class="rounded bg-[#121215] border-[#30303a] text-blue-500 focus:ring-0">
+            <label class="btn btn-sm cursor-pointer select-none">
+              <input type="checkbox" id="logs-auto-refresh" checked onchange="toggleLogsAutoRefresh(this.checked)" class="rounded bg-canvas border-line text-zinc-300 focus:ring-0">
               <span>Auto-refresh</span>
             </label>
-            <button onclick="loadLogs(true)" class="bg-[#1e1e24] hover:bg-[#282832] text-zinc-300 text-xs py-1.5 px-3 rounded-lg border border-[#30303c] transition-colors font-medium flex items-center gap-1.5">
+            <button onclick="loadLogs(true)" class="btn btn-sm">
               <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
               <span>Refresh</span>
             </button>
-            <button onclick="copyLogs()" class="bg-[#1e1e24] hover:bg-[#282832] text-zinc-300 text-xs py-1.5 px-3 rounded-lg border border-[#30303c] transition-colors font-medium flex items-center gap-1.5">
+            <button onclick="copyLogs()" class="btn btn-sm">
               <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
               <span>Copy</span>
             </button>
           </div>
         </div>
 
-        <div class="bg-[#101014] border border-[#24242c] rounded-xl overflow-hidden shadow-xl flex flex-col h-[calc(100vh-210px)]">
-          <div class="h-9 bg-[#16161b] border-b border-[#24242c] px-4 flex items-center justify-between flex-shrink-0 text-xs font-mono text-zinc-400">
+        <div class="bg-sunken border border-line-soft rounded-xl overflow-hidden flex flex-col h-[calc(100dvh-13rem)] min-h-[320px]">
+          <div class="h-10 bg-chrome border-b border-line-soft px-4 flex items-center justify-between flex-shrink-0 text-xs text-zinc-400">
             <div class="flex items-center gap-2">
-              <span class="w-2 h-2 rounded-full bg-emerald-500 inline-block animate-pulse"></span>
-              <span class="text-zinc-300 font-medium">Activity Stream</span>
+              <span class="text-zinc-300 font-medium">Activity stream</span>
             </div>
             <div id="logs-count-badge" class="text-zinc-500 text-[11px]">0 entries</div>
           </div>
 
-          <div id="logs-container" class="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-1.5 bg-[#0e0e12] select-text">
+          <div id="logs-container" class="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-1.5 bg-sunken select-text">
             <div class="text-zinc-600 text-center py-12">Loading supervisor logs...</div>
           </div>
         </div>
@@ -362,30 +463,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     </div>
   </main>
 
-  <div id="rule-modal" onclick="if (event.target === this) closeRuleModal()" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-3 sm:p-6">
-    <div class="bg-[#18181c] border border-[#2e2e38] rounded-2xl max-w-3xl w-full p-5 sm:p-6 space-y-3.5 shadow-2xl overflow-y-auto max-h-[92vh]">
-      <div class="flex items-center justify-between border-b border-[#26262e] pb-2.5">
-        <div>
-          <h3 class="text-base font-bold uppercase tracking-wider text-zinc-100 truncate pr-2" id="rule-modal-title">Show Details</h3>
-          <p class="text-xs text-zinc-400 font-mono mt-0.5" id="rule-modal-rule-name"></p>
+  <div id="rule-modal" onclick="if (event.target === this) closeRuleModal()" class="fixed inset-0 bg-black/70 z-50 hidden flex items-center justify-center p-3 sm:p-6">
+    <div class="bg-surface border border-line rounded-xl max-w-2xl w-full flex flex-col max-h-[88vh] overflow-hidden">
+      <div class="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-line-soft flex-shrink-0">
+        <div class="min-w-0">
+          <h3 class="text-base font-semibold text-zinc-100 truncate" id="rule-modal-title">Show Details</h3>
+          <p class="text-xs text-zinc-500 font-mono mt-0.5 truncate" id="rule-modal-rule-name"></p>
         </div>
-        <button onclick="closeRuleModal()" class="text-zinc-400 hover:text-zinc-100 text-base font-bold p-1">✕</button>
+        <button onclick="closeRuleModal()" class="text-zinc-500 hover:text-zinc-100 text-base p-1 -mr-1" aria-label="Close">✕</button>
       </div>
 
-      <div id="rule-modal-content" class="space-y-3 text-sm">
+      <div id="rule-modal-content" class="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm min-h-0">
       </div>
 
-      <div class="flex items-center justify-between pt-3 border-t border-[#26262e]">
-        <button type="button" onclick="modalTriggerRediscover()" class="text-xs sm:text-sm text-sky-400 hover:text-sky-300 py-1 font-medium transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
+      <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-line-soft flex-shrink-0">
+        <button type="button" onclick="modalTriggerRediscover()" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-zinc-600 transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
           Reset to Auto-Detect
         </button>
 
-        <div class="flex items-center gap-2.5">
-          <button type="button" onclick="closeRuleModal()" class="bg-[#222228] hover:bg-[#2a2a32] text-zinc-300 text-xs sm:text-sm py-2 px-4 rounded-lg border border-[#33333d] transition-colors">
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="closeRuleModal()" class="btn">
             Cancel
           </button>
-          <button type="button" id="btn-save-show-modal" onclick="saveShowModal()" class="bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-medium py-2 px-5 rounded-lg transition-colors shadow-md">
-            Save Changes
+          <button type="button" id="btn-save-show-modal" onclick="saveShowModal()" class="btn btn-primary">
+            Save changes
           </button>
         </div>
       </div>
@@ -411,18 +512,38 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       'UPCOMING': { label: 'Upcoming', bg: 'bg-[#101a3d] text-[#6c93c9] border-[#1f3a6b]' },
       'STALLED': { label: 'Stalled', bg: 'bg-[#2b1111] text-[#c26a6a] border-[#5e2323]' },
       'COMPLETED': { label: 'Completed', bg: 'bg-[#312e81] text-[#c4b5fd] border-[#6366f1]' },
-      'PAUSED': { label: 'Paused', bg: 'bg-[#1b1b1f] text-[#91919a] border-[#2e2e35]' },
+      'PAUSED': { label: 'Paused', bg: 'bg-surface text-[#91919a] border-line' },
     };
+
+    const NAV_INACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised';
+    const NAV_ACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white shadow-[inset_2px_0_0_0_#2dd4bf] [&>svg]:text-accent';
+    const SEG_ACTIVE_CLASS = 'font-semibold bg-teal-500/15 text-teal-300';
+    const SEG_INACTIVE_CLASS = 'font-medium text-zinc-400 hover:text-zinc-200';
+    const TAB_TITLES = {
+      shows: 'Shows', calendar: 'Weekly Calendar', history: 'Match History',
+      feeds: 'RSS Feeds', logs: 'Logs', settings: 'Settings',
+    };
+
+    function toggleSidebar(open) {
+      const sidebar = document.getElementById('sidebar');
+      const backdrop = document.getElementById('sidebar-backdrop');
+      if (!sidebar || !backdrop) return;
+      sidebar.classList.toggle('-translate-x-full', !open);
+      backdrop.classList.toggle('hidden', !open);
+    }
 
     function switchTab(tab) {
       activeTab = tab;
       document.querySelectorAll('nav button').forEach(b => {
-        b.className = 'nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-200 hover:bg-[#202026]';
+        b.className = NAV_INACTIVE_CLASS;
       });
       const activeBtn = document.getElementById(`nav-${tab}`);
       if (activeBtn) {
-        activeBtn.className = 'nav-item w-full flex items-center gap-3 px-3.5 py-2.5 rounded-lg text-sm font-medium transition-colors bg-[#262630] text-white';
+        activeBtn.className = NAV_ACTIVE_CLASS;
       }
+      const titleEl = document.getElementById('page-title');
+      if (titleEl) titleEl.textContent = TAB_TITLES[tab] || '';
+      toggleSidebar(false);
 
       document.getElementById('tab-shows').classList.toggle('hidden', tab !== 'shows');
       document.getElementById('tab-calendar').classList.toggle('hidden', tab !== 'calendar');
@@ -454,11 +575,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const colors = {
         success: 'bg-[#142618] border-[#1f4a28] text-emerald-300',
         error: 'bg-[#2b1616] border-[#4d2424] text-rose-300',
-        info: 'bg-[#1a1a20] border-[#30303a] text-zinc-200',
-      }[type] || 'bg-[#1a1a20] border-[#30303a] text-white';
+        info: 'bg-surface border-line text-zinc-200',
+      }[type] || 'bg-surface border-line text-white';
 
-      toast.className = `border rounded p-2.5 text-xs shadow-lg transition-all duration-200 translate-y-2 opacity-0 flex items-center justify-between gap-3 ${colors}`;
-      toast.innerHTML = `<span>${message}</span><button onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-white font-bold text-xs">✕</button>`;
+      toast.className = `border rounded-xl px-3.5 py-2.5 text-[13px] shadow-xl shadow-black/40 transition-all duration-200 translate-y-2 opacity-0 flex items-center justify-between gap-3 ${colors}`;
+      toast.innerHTML = `<span>${escapeHtml(message)}</span><button onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-white text-xs">✕</button>`;
 
       document.getElementById('toast-container').appendChild(toast);
       setTimeout(() => { toast.classList.remove('translate-y-2', 'opacity-0'); }, 10);
@@ -519,10 +640,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (!btn) return;
         const svg = btn.querySelector('svg');
         if (m === currentSortMode) {
-          btn.className = 'px-2 py-0.5 rounded flex items-center gap-1.5 transition-all bg-[#26262e] text-indigo-400 font-semibold shadow-sm';
-          if (svg) svg.className = 'w-3.5 h-3.5 text-indigo-400';
+          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors bg-teal-500/15 text-teal-300 font-medium';
+          if (svg) svg.className = 'w-3.5 h-3.5 text-teal-300';
         } else {
-          btn.className = 'px-2 py-0.5 rounded flex items-center gap-1.5 transition-all text-zinc-400 hover:text-zinc-200 hover:bg-[#18181c]';
+          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200';
           if (svg) svg.className = 'w-3.5 h-3.5 text-zinc-400';
         }
       });
@@ -577,9 +698,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const gridPlanned = document.getElementById('grid-planned');
       const gridCompleted = document.getElementById('grid-completed');
 
-      gridReleasing.innerHTML = releasingShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-xs font-mono">No currently releasing anime.</div>';
-      gridPlanned.innerHTML = plannedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-xs font-mono">No planned upcoming anime.</div>';
-      gridCompleted.innerHTML = completedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-xs font-mono">No completed anime.</div>';
+      gridReleasing.innerHTML = releasingShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No currently releasing anime.</div>';
+      gridPlanned.innerHTML = plannedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No planned upcoming anime.</div>';
+      gridCompleted.innerHTML = completedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No completed anime.</div>';
 
       // Releasing is always shown so the page is never blank; the trailing
       // sections are noise when they have nothing in them.
@@ -657,55 +778,53 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       const isDimmed = isPaused || isCompleted;
       const posterImg = show.cover_image 
-        ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-full h-full object-cover transition-all duration-200 ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/260x360/1a1a20/4a4a58?text=Poster'">`
-        : `<div class="w-full h-full flex items-center justify-center bg-[#18181c] text-zinc-600 text-xs font-mono ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}">No Art</div>`;
+        ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-full h-full object-cover ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/260x360/1a1a20/4a4a58?text=Poster'">`
+        : `<div class="w-full h-full flex items-center justify-center bg-surface text-zinc-600 text-xs font-mono ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}">No Art</div>`;
 
-      const pauseBtnBg = isPaused 
-        ? 'bg-emerald-600 hover:bg-emerald-500 text-white' 
-        : 'bg-amber-600 hover:bg-amber-500 text-white';
+      const pauseBtnBg = 'bg-black/70 hover:bg-black text-zinc-100';
 
       const pauseIcon = isPaused 
         ? `<svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
         : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
       return `
-        <div onclick="viewShowRule(${show.id})" class="bg-[#18181c] border ${isDimmed ? 'border-zinc-800' : 'border-[#26262e]'} hover:border-[#444452] hover:-translate-y-1 hover:shadow-lg hover:shadow-black/50 rounded flex flex-col overflow-hidden group cursor-pointer transition-all duration-200 ease-out">
+        <div onclick="viewShowRule(${show.id})" onpointerenter="prefetchShowModal(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-xl flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
           
-          <div class="relative w-full aspect-[2/3] bg-[#121215] overflow-hidden">
+          <div class="relative w-full aspect-[2/3] bg-canvas overflow-hidden">
             ${posterImg}
 
             <div class="absolute top-2 right-2 z-10">
-              <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-medium border shadow-sm ${cfg.bg}">
+              <span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium border ${cfg.bg}">
                 ${label}
               </span>
             </div>
 
-            <div class="absolute bottom-2 inset-x-2 flex items-center justify-between z-20 opacity-0 group-hover:opacity-100 transition-opacity duration-150 pointer-events-none">
+            <div class="card-actions absolute bottom-2 inset-x-2 flex items-center justify-between z-20 invisible group-hover:visible pointer-events-none">
               
               <div class="flex items-center gap-1.5 pointer-events-auto">
                 ${!isCompleted ? `
-                <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-7 h-7 rounded flex items-center justify-center ${pauseBtnBg} shadow-md transition-transform active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
+                <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-8 h-8 rounded-lg flex items-center justify-center ${pauseBtnBg} transition-colors active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
                   ${pauseIcon}
                 </button>
                 ` : ''}
               </div>
 
               <div class="pointer-events-auto">
-                <button onclick="event.stopPropagation(); deleteShow(${show.id}, '${show.display_name.replace(/'/g, "\\'")}')" class="w-7 h-7 rounded flex items-center justify-center bg-red-600 hover:bg-red-500 text-white shadow-md transition-transform active:scale-90" title="Delete show from monitoring">
+                <button onclick="event.stopPropagation(); deleteShow(${show.id}, '${show.display_name.replace(/'/g, "\\'")}')" class="w-8 h-8 rounded-lg flex items-center justify-center bg-black/70 hover:bg-rose-600 text-zinc-100 transition-colors active:scale-90" title="Delete show from monitoring">
                   <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
                 </button>
               </div>
             </div>
           </div>
 
-          <div class="p-2.5 flex flex-col justify-between bg-[#18181c] min-h-[5.5rem]">
-            <h3 class="text-[13px] font-semibold text-zinc-100 leading-[1.4] line-clamp-2 min-h-[2.55rem] overflow-hidden pb-[1px]" title="${show.display_name}">
+          <div class="p-3 flex flex-col justify-between bg-surface min-h-[6rem]">
+            <h3 class="text-[13px] font-medium text-zinc-200 group-hover:text-white leading-[1.4] line-clamp-2 min-h-[2.55rem] overflow-hidden pb-[1px]" title="${show.display_name}">
               ${show.display_name}
             </h3>
 
-            <div class="pt-2 border-t border-[#222228] flex items-center justify-between gap-2.5 text-xs font-mono">
-              <span class="truncate text-zinc-400 font-medium min-w-0" title="${feedName}">${feedName}</span>
-              <span class="show-countdown flex-shrink-0 text-zinc-200 font-semibold ml-auto" ${countdownAttr} title="${show.next_airing_formatted ? show.next_airing_formatted : ''}">${airInfo}</span>
+            <div class="pt-2.5 border-t border-line-soft flex items-center justify-between gap-2.5 text-xs">
+              <span class="truncate text-zinc-500 min-w-0" title="${feedName}">${feedName}</span>
+              <span class="show-countdown flex-shrink-0 text-zinc-200 font-medium tabular-nums ml-auto" ${countdownAttr} title="${show.next_airing_formatted ? show.next_airing_formatted : ''}">${airInfo}</span>
             </div>
           </div>
 
@@ -809,9 +928,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         colShows.sort((a, b) => a.timeMinutes - b.timeMinutes);
 
         const headerHtml = `
-          <div class="pb-2 mb-2 border-b ${isPastDay ? 'border-[#22222a]' : 'border-[#26262e]'}">
+          <div class="pb-2 mb-2 border-b ${isToday ? 'border-accent/60' : isPastDay ? 'border-line-soft' : 'border-line'}">
             <div class="flex items-baseline gap-1.5 ${isPastDay ? 'opacity-80' : 'opacity-100'}">
-              <span class="text-sm font-bold ${isPastDay ? 'text-zinc-400' : 'text-zinc-200'}">${dayName}</span>
+              <span class="text-sm font-semibold ${isToday ? 'text-accent' : isPastDay ? 'text-zinc-400' : 'text-zinc-100'}">${dayName}</span>
               <span class="text-xs ${isPastDay ? 'text-zinc-500' : 'text-zinc-400'} font-medium">${dateStr}</span>
             </div>
           </div>
@@ -824,14 +943,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             itemsHtml = `
               <div class="py-6 flex flex-col items-center justify-center space-y-2 select-none">
                 <div class="w-full relative py-1 my-1 -ml-3 flex items-center gap-1 z-20">
-                  <span class="w-2 h-2 rounded-full bg-sky-400/80 absolute -left-[4px]"></span>
-                  <div class="h-[1.5px] w-full bg-gradient-to-r from-sky-500/60 via-sky-500/30 to-transparent"></div>
+                  <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
+                  <div class="h-px w-full bg-accent/50"></div>
                 </div>
-                <div class="text-zinc-600 text-xs font-mono">No releases</div>
+                <div class="text-zinc-600 text-xs">No releases</div>
               </div>
             `;
           } else {
-            itemsHtml = `<div class="py-6 text-zinc-600 text-xs font-mono select-none">No releases</div>`;
+            itemsHtml = `<div class="py-6 text-zinc-600 text-xs select-none">No releases</div>`;
           }
         } else {
         const timeSlots = [];
@@ -855,8 +974,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             if (isToday && !renderedLine && !slot.hasPassed) {
               itemsHtml += `
                 <div class="relative py-1 my-1.5 -ml-3 flex items-center gap-1 z-20 select-none">
-                  <span class="w-2 h-2 rounded-full bg-sky-400/80 absolute -left-[4px]"></span>
-                  <div class="h-[1.5px] w-full bg-gradient-to-r from-sky-500/60 via-sky-500/30 to-transparent"></div>
+                  <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
+                  <div class="h-px w-full bg-accent/50"></div>
                 </div>
               `;
               renderedLine = true;
@@ -868,8 +987,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           if (isToday && !renderedLine) {
             itemsHtml += `
               <div class="relative py-1 my-1.5 -ml-3 flex items-center gap-1 z-20 select-none">
-                <span class="w-2 h-2 rounded-full bg-sky-400/80 absolute -left-[4px]"></span>
-                <div class="h-[1.5px] w-full bg-gradient-to-r from-sky-500/60 via-sky-500/30 to-transparent"></div>
+                <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
+                <div class="h-px w-full bg-accent/50"></div>
               </div>
             `;
           }
@@ -878,7 +997,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         gridHtml += `
           <div class="flex flex-col min-h-[380px] ${isPastDay ? 'opacity-85' : 'opacity-100'}">
             ${headerHtml}
-            <div class="relative pl-3.5 space-y-4 flex-1 flex flex-col before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-[1.5px] before:bg-[#282834]">
+            <div class="relative pl-3.5 space-y-4 flex-1 flex flex-col before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-[1.5px] before:bg-raised2">
               ${itemsHtml}
             </div>
           </div>
@@ -935,8 +1054,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         }
 
         const posterImg = show.cover_image
-          ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-[#121215] shadow-md ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/100x140/1a1a20/4a4a58?text=Poster'">`
-          : `<div class="w-16 aspect-[2/3] bg-[#141418] border border-zinc-800 rounded-md flex items-center justify-center text-[10px] font-mono text-zinc-500 flex-shrink-0">No Art</div>`;
+          ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-canvas ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/100x140/1a1a20/4a4a58?text=Poster'">`
+          : `<div class="w-16 aspect-[2/3] bg-canvas border border-zinc-800 rounded-md flex items-center justify-center text-[10px] font-mono text-zinc-500 flex-shrink-0">No Art</div>`;
 
         let epText = show.next_airing_episode ? `EP${show.next_airing_episode}` : (show.last_confirmed_episode ? `EP${show.last_confirmed_episode}` : 'EP1');
         const anilistUrl = show.anilist_id ? `https://anilist.co/anime/${show.anilist_id}` : '#';
@@ -946,16 +1065,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             <div class="flex items-center justify-between gap-1.5 mb-1.5">
               <div class="flex items-center gap-1.5">
                 <span class="w-3 h-3 rounded-full ${dotColor} absolute -left-[15px] z-10"></span>
-                <span class="text-[13px] font-mono ${isPaused ? 'text-zinc-400' : (hasPassed ? 'text-zinc-400' : 'text-zinc-100')} font-bold tracking-tight">${slot.timeStr}</span>
+                <span class="text-[13px] tabular-nums ${isPaused ? 'text-zinc-400' : (hasPassed ? 'text-zinc-400' : 'text-zinc-100')} font-medium">${slot.timeStr}</span>
               </div>
-              <span class="text-xs font-mono font-semibold ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')}">${epText}</span>
+              <span class="text-xs tabular-nums font-medium ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')}">${epText}</span>
             </div>
 
             <a href="${anilistUrl}" target="_blank" rel="noopener noreferrer" class="flex gap-3 items-start cursor-pointer transition-opacity ${isPaused ? 'grayscale opacity-50 hover:opacity-80' : (hasPassed ? 'opacity-80 hover:opacity-100' : 'opacity-100 hover:opacity-90')}">
               ${posterImg}
 
               <div class="flex-1 min-w-0 pt-0.5">
-                <h4 class="text-sm font-semibold leading-snug line-clamp-3 ${titleColor}" title="${show.display_name}">
+                <h4 class="text-sm font-medium leading-snug line-clamp-3 ${titleColor}" title="${show.display_name}">
                   ${show.display_name}
                 </h4>
               </div>
@@ -984,8 +1103,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         }
 
         const posterImg = show.cover_image
-          ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-[#121215] shadow-md ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/100x140/1a1a20/4a4a58?text=Poster'">`
-          : `<div class="w-16 aspect-[2/3] bg-[#141418] border border-zinc-800 rounded-md flex items-center justify-center text-[10px] font-mono text-zinc-500 flex-shrink-0">No Art</div>`;
+          ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-canvas ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/100x140/1a1a20/4a4a58?text=Poster'">`
+          : `<div class="w-16 aspect-[2/3] bg-canvas border border-zinc-800 rounded-md flex items-center justify-center text-[10px] font-mono text-zinc-500 flex-shrink-0">No Art</div>`;
 
         let epText = show.next_airing_episode ? `EP${show.next_airing_episode}` : (show.last_confirmed_episode ? `EP${show.last_confirmed_episode}` : 'EP1');
         const anilistUrl = show.anilist_id ? `https://anilist.co/anime/${show.anilist_id}` : '#';
@@ -996,10 +1115,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
             <div class="flex-1 min-w-0 pt-0.5">
               <div class="flex items-start justify-between gap-1">
-                <h4 class="text-sm font-semibold leading-snug line-clamp-3 ${titleColor}" title="${show.display_name}">
+                <h4 class="text-sm font-medium leading-snug line-clamp-3 ${titleColor}" title="${show.display_name}">
                   ${show.display_name}
                 </h4>
-                <span class="text-xs font-mono font-semibold ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')} shrink-0 ml-1">${epText}</span>
+                <span class="text-xs tabular-nums font-medium ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')} shrink-0 ml-1">${epText}</span>
               </div>
             </div>
           </a>
@@ -1011,7 +1130,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           <div class="flex items-center justify-between gap-1.5 mb-2">
             <div class="flex items-center gap-1.5">
               <span class="w-3 h-3 rounded-full ${dotColor} absolute -left-[15px] z-10"></span>
-              <span class="text-[13px] font-mono ${slot.hasPassed ? 'text-zinc-400' : 'text-zinc-100'} font-bold tracking-tight">${slot.timeStr}</span>
+              <span class="text-[13px] tabular-nums ${slot.hasPassed ? 'text-zinc-400' : 'text-zinc-100'} font-medium">${slot.timeStr}</span>
             </div>
           </div>
 
@@ -1022,23 +1141,181 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       `;
     }
 
+    let modalListTab = 'episodes';
+
+    function setModalListTab(tab) {
+      modalListTab = tab;
+      ['episodes', 'feed'].forEach(name => {
+        const panel = document.getElementById(`modal-panel-${name}`);
+        const button = document.getElementById(`modal-tab-${name}`);
+        if (panel) panel.classList.toggle('hidden', name !== tab);
+        if (button) button.className = name === tab ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
+      });
+    }
+
+    const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
+
+    function downloadButton(showId, title, tip) {
+      return `<button type="button" data-title="${escapeHtml(title)}" onclick="quickDownloadMatch(${showId}, this)"
+        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-raised hover:bg-teal-500/15 border border-line hover:border-teal-500/50 text-zinc-400 hover:text-teal-300 transition-colors active:scale-95"
+        title="${escapeHtml(tip)}">${DOWNLOAD_ICON}</button>`;
+    }
+
+    function listShell(rows, emptyText) {
+      return `<ul class="bg-canvas border border-line-soft rounded-lg px-3 max-h-48 overflow-y-auto divide-y divide-line-soft">${rows || `<li class="text-xs text-zinc-600 py-3 text-center">${emptyText}</li>`}</ul>`;
+    }
+
+    // `feed` is null while the feed lookup is still loading.
+    function buildModalLists(showId, data, episodes, feed) {
+      const isDirect = data.download_mode === 'direct';
+      const loadingText = 'Checking the feed…';
+
+      const episodeRows = episodes.map(ep => {
+        const done = String(ep.status).toLowerCase() === 'completed';
+        const missed = String(ep.status).toLowerCase() === 'missed';
+        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : 'text-zinc-500';
+        return `
+          <li class="flex items-center gap-3 py-1.5 text-xs">
+            <span class="w-20 shrink-0 text-zinc-200 tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
+            <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
+            <span class="shrink-0 ${statusCls}">${escapeHtml(ep.status)}</span>
+          </li>`;
+      }).join('');
+
+      if (isDirect) {
+        const matches = feed ? (feed.feed_matches || []) : [];
+        const feedRows = matches.map(m => `
+          <li class="flex items-center gap-3 py-1.5 text-xs">
+            <span class="w-20 shrink-0 text-zinc-200 tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
+            <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
+            ${m.downloadable
+              ? downloadButton(showId, m.title, 'Download this release now. It is tracked like any other episode.')
+              : `<span class="shrink-0 text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
+          </li>`).join('');
+        return `
+          <div class="space-y-2">
+            <div class="flex items-center justify-between gap-3">
+              <div class="seg">
+                <button type="button" id="modal-tab-episodes" onclick="setModalListTab('episodes')" class="${modalListTab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
+                <button type="button" id="modal-tab-feed" onclick="setModalListTab('feed')" class="${modalListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">In feed</button>
+              </div>
+              <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} in feed` : 'checking feed…'}</span>
+            </div>
+            <div id="modal-panel-episodes" class="${modalListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
+            <div id="modal-panel-feed" class="${modalListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? 'Nothing in the feed matches this show right now.' : loadingText)}</div>
+          </div>`;
+      }
+
+      if (!(data.has_qbit_rule && data.has_learned_pattern)) return '';
+      const articles = feed ? (feed.matched_articles || []) : [];
+      const count = articles.length;
+      const ruleRows = articles.map(a => `
+        <li class="flex items-center gap-3 py-1.5 text-xs">
+          <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
+          ${downloadButton(showId, a, 'Download this release now with the same save path, category and ratio as the rule')}
+        </li>`).join('');
+      return `
+        <div class="space-y-2">
+          <div class="flex items-baseline justify-between gap-3">
+            <span class="field-label !mb-0">In feed</span>
+            <span class="text-xs text-zinc-500">${!feed ? '' : count === 1 ? '1 match' : `${count} matches`}</span>
+          </div>
+          ${listShell(ruleRows, feed ? 'No cached RSS articles currently match this rule pattern.' : loadingText)}
+        </div>`;
+    }
+
+    // What the open dialog was drawn from, so the lists can be redrawn when the
+    // slower feed lookup lands or after a download.
+    let modalContext = null;
+    let modalFeedState = null;
+
+    function rerenderModalLists() {
+      const target = document.getElementById('modal-lists');
+      if (!target || !modalContext || currentInspectedShowId !== modalContext.showId) return;
+      target.innerHTML = buildModalLists(modalContext.showId, modalContext.data, modalContext.episodes, modalFeedState);
+    }
+
+    async function loadModalFeedMatches(showId) {
+      let result;
+      try {
+        result = await apiFetch(`/api/shows/${showId}/feed-matches`);
+      } catch (err) {
+        result = { matched_articles: [], feed_matches: [] };
+      }
+      if (currentInspectedShowId !== showId) return;
+      modalFeedState = result;
+      rerenderModalLists();
+    }
+
+    async function refreshModalLists(showId) {
+      if (!modalContext || currentInspectedShowId !== showId) return;
+      try {
+        const episodes = await apiFetch(`/api/shows/${showId}/episodes`);
+        if (currentInspectedShowId !== showId) return;
+        modalContext.episodes = Array.isArray(episodes) ? episodes : [];
+        rerenderModalLists();
+      } catch (err) {
+        // The lists are informational; the toast from the download already reported the outcome.
+      }
+      loadModalFeedMatches(showId);
+    }
+
+    // Started when the pointer enters a card, so the data is usually there by the
+    // time the click lands. An entry is used once, then dropped, so reopening a
+    // show after an edit never shows stale values.
+    const modalPrefetch = new Map();
+    const PREFETCH_MAX_AGE_MS = 10000;
+
+    function startModalFetch(showId) {
+      const entry = {
+        at: Date.now(),
+        rule: apiFetch(`/api/shows/${showId}/rule`),
+        episodes: apiFetch(`/api/shows/${showId}/episodes`).catch(() => []),
+      };
+      entry.rule.catch(() => {});
+      return entry;
+    }
+
+    function prefetchShowModal(showId) {
+      const existing = modalPrefetch.get(showId);
+      if (existing && Date.now() - existing.at < PREFETCH_MAX_AGE_MS) return;
+      modalPrefetch.set(showId, startModalFetch(showId));
+    }
+
+    function takeModalFetch(showId) {
+      const entry = modalPrefetch.get(showId);
+      modalPrefetch.delete(showId);
+      if (entry && Date.now() - entry.at < PREFETCH_MAX_AGE_MS) return entry;
+      return startModalFetch(showId);
+    }
+
+    function modalSkeleton() {
+      const block = (h) => `<div class="${h} rounded-lg bg-raised/60"></div>`;
+      return `<div class="space-y-4">${block('h-16')}${block('h-16')}${block('h-16')}${block('h-24')}</div>`;
+    }
+
     async function viewShowRule(showId) {
       currentInspectedShowId = showId;
+      modalContext = null;
+      modalFeedState = null;
       const modal = document.getElementById('rule-modal');
       const titleEl = document.getElementById('rule-modal-title');
       const ruleNameEl = document.getElementById('rule-modal-rule-name');
       const contentEl = document.getElementById('rule-modal-content');
 
-      contentEl.innerHTML = '<div class="text-center py-8 text-zinc-500 font-mono">Loading show details...</div>';
+      // Draw the frame now from what the page already knows; the form fills in
+      // as soon as the (cheap) detail request returns.
+      const known = allShows.find(sh => sh.id === showId);
+      titleEl.textContent = known ? known.display_name : 'Show Details';
+      ruleNameEl.textContent = '';
+      contentEl.innerHTML = modalSkeleton();
       modal.classList.remove('hidden');
 
       try {
         // The rule panel and the episode ledger are independent, so fetch both.
-        const [data, episodeRes] = await Promise.all([
-          apiFetch(`/api/shows/${showId}/rule`),
-          fetch(`/api/shows/${showId}/episodes`)
-        ]);
-        const episodes = episodeRes.ok ? await episodeRes.json() : [];
+        const pending = takeModalFetch(showId);
+        const [data, episodes] = await Promise.all([pending.rule, pending.episodes]);
+        if (currentInspectedShowId !== showId) return;
 
         const isCompleted = (data.status === 'completed');
         const isPaused = (data.status === 'paused');
@@ -1048,18 +1325,13 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         titleEl.textContent = data.display_name;
         ruleNameEl.textContent = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
 
+        // Plain muted text, not a badge: the header already names the engine.
         let ruleStatusText = '';
-        if (isDirect) {
-          ruleStatusText = `<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-sky-950/80 text-sky-300 border border-sky-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Direct Engine Active</span>`;
-        } else if (isCompleted) {
-          ruleStatusText = '<span class="px-2.5 py-0.5 rounded-md text-xs font-bold bg-indigo-950/80 text-indigo-300 border border-indigo-800 flex items-center gap-1.5"><span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span>Completed</span>';
-        } else if (isPaused) {
-          ruleStatusText = '<span class="text-[11px] font-medium text-zinc-400">Paused</span>';
-        } else if (isRuleActive) {
-          ruleStatusText = '<span class="text-[11px] font-medium text-zinc-300">Enabled</span>';
-        } else {
-          ruleStatusText = '<span class="text-[11px] font-medium text-zinc-500">Waiting for air date</span>';
-        }
+        if (isDirect) ruleStatusText = '';
+        else if (isCompleted) ruleStatusText = 'Completed';
+        else if (isPaused) ruleStatusText = 'Paused';
+        else if (isRuleActive) ruleStatusText = 'Rule enabled';
+        else ruleStatusText = 'Waiting for air date';
 
         const isUpcoming = data.is_upcoming === true;
         const isTesting = data.status === 'unconfirmed' && !isUpcoming && !data.feed_locked;
@@ -1069,71 +1341,35 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         // decided, and the selector must show it rather than hiding it.
         const isAutoManaged = !isCompleted && !data.feed_locked && !data.has_learned_pattern;
         const selectedFeedId = isAutoManaged ? 0 : (data.current_feed_id || 0);
-        const feedLabel = isUpcoming ? 'Feed (not decided yet)' : isTesting ? 'Feed (auto)' : 'Assigned Feed';
+        const feedLabel = isUpcoming ? 'Feed (not decided yet)' : isTesting ? 'Feed (auto)' : 'Assigned feed';
 
         const feedOptions = `<option value="0">[ Auto-discover ]</option>` +
           allFeeds.map(f => `<option value="${f.id}" ${f.id === selectedFeedId ? 'selected' : ''}>#${f.priority} ${escapeHtml(f.qbit_feed_name)}</option>`).join('');
 
-        // Until a release has been matched, the feed is only a starting point:
-        // say what it actually means instead of implying it was chosen.
+        // One hint line, the most specific one that applies.
         let feedHint = '';
-        if (!isCompleted && data.has_rule) {
-            if (isUpcoming) {
-                feedHint = `
-                  <p class="text-[11px] text-zinc-500 leading-snug">Auto-discover is on. No release seen yet, so nothing is decided — every feed is checked and the rule moves by itself to whichever one posts the episode first.</p>
-                `;
-            } else if (isTesting) {
-                feedHint = `
-                  <p class="text-[11px] text-zinc-500 leading-snug">Auto-discover is on and still testing: every feed is re-checked in priority order, so this rule moves by itself if another feed posts the release first.</p>
-                `;
-            }
+        if (data.feed_learned) {
+          feedHint = `Locked to ${escapeHtml(data.learned_feed_name || 'the feed that delivered')}: a release was already downloaded from it, so no other feed is checked.`;
+        } else if (data.feed_pinned) {
+          feedHint = 'Pinned by you. Auto-detect will not move this show to another feed.';
+        } else if (data.candidate_feed_id) {
+          feedHint = `Watching ${escapeHtml(data.candidate_feed_name || 'another feed')}: a release appeared there but not on the preferred feed. It moves automatically if that stays true for 5 minutes.`;
+        } else if (!isCompleted && data.has_rule && (isUpcoming || isTesting)) {
+          feedHint = isUpcoming
+            ? 'Auto-discover is on. No release seen yet, so every feed is checked and the first to post the episode wins.'
+            : 'Auto-discover is on and still testing: feeds are re-checked in priority order.';
         }
+        const feedUrlLine = (data.feed_url && !isAutoManaged) ? `<span class="font-mono truncate block">${escapeHtml(data.feed_url)}</span>` : '';
 
-        const countMatched = (data.matched_articles || []).length;
-        const matchCountLabel = countMatched === 1 ? '1 match' : `${countMatched} matches`;
-        const listRows = (items, emptyText) => (items && items.length > 0)
-          ? items.map(a => `
-              <li class="text-[11px] font-mono text-zinc-400 py-1.5 border-t border-[#1c1c22] first:border-t-0 first:pt-0 flex items-center gap-2">
-                <span class="truncate select-all flex-1" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
-                <button type="button" data-title="${escapeHtml(a)}" onclick="quickDownloadMatch(${showId}, this)"
-                  class="shrink-0 w-6 h-6 rounded flex items-center justify-center bg-[#1e1e26] hover:bg-emerald-600 border border-[#2e2e38] hover:border-emerald-500 text-zinc-400 hover:text-white transition-colors active:scale-90"
-                  title="Download this release now with the same save path, category and ratio as the rule">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-                </button>
-              </li>
-            `).join('')
-          : `<li class="text-[11px] font-mono text-zinc-600 py-1.5">${emptyText}</li>`;
-        const articlesHtml = listRows(data.matched_articles, 'No cached RSS articles currently match this rule pattern.');
-
-        const candidateBanner = data.candidate_feed_id ? `
-          <p class="text-[11px] text-zinc-500 leading-snug">Watching <span class="text-zinc-300">${escapeHtml(data.candidate_feed_name || 'another feed')}</span> — a release for this show appeared there but not on the preferred feed. The rule moves automatically if that stays true for 5 minutes.</p>
-        ` : '';
-
-        const pinnedBanner = data.feed_pinned ? `
-          <p class="text-[11px] text-zinc-500 leading-snug">Pinned by you — auto-detect will not move this show to another feed.</p>
-        ` : '';
-
-        const learnedBanner = data.feed_learned ? `
-          <p class="text-[11px] text-zinc-500 leading-snug">Locked to <span class="text-emerald-400">${escapeHtml(data.learned_feed_name || 'the feed that delivered')}</span> — a release was already downloaded from it, so no other feed is checked and this cannot be moved automatically.</p>
-        ` : '';
-
-        const noRulePlaceholder = isCompleted ? `
-          <div class="bg-[#121215] border border-emerald-950/60 rounded-lg p-3 text-center">
-            <div class="text-xs font-semibold text-emerald-400">Completed Series</div>
-            <p class="text-[11px] text-zinc-400 mt-0.5">All episodes have aired and were confirmed downloaded. RSS rule has been disabled.</p>
-          </div>
-        ` : `
-          <div class="bg-[#121215] border border-[#2a2a34] rounded-lg p-3 text-center">
-            <div class="text-xs font-semibold text-sky-400">Upcoming Show (Awaiting Air Date)</div>
-            <p class="text-[11px] text-zinc-400 mt-0.5">The supervisor automatically discovers and arms the verified qBittorrent rule when the episode drops.</p>
-          </div>
-        `;
+        const noRulePlaceholder = isCompleted
+          ? '<p class="field-hint !mt-0">Completed series. All episodes aired and were confirmed downloaded, and the RSS rule is disabled.</p>'
+          : '<p class="field-hint !mt-0">Upcoming show. The supervisor arms the rule when the first episode drops.</p>';
 
         const aliasesSection = data.has_rule ? `
-          <div class="space-y-1">
-            <label for="modal-aliases" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Custom Aliases</label>
-            <input type="text" id="modal-aliases" value="${(data.custom_aliases || []).join(', ')}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
-            <p class="text-[11px] text-zinc-500">Comma separated. Extra names the release group uses. AniList titles and synonyms are always matched too.</p>
+          <div>
+            <label for="modal-aliases" class="field-label">Custom aliases</label>
+            <input type="text" id="modal-aliases" value="${escapeHtml((data.custom_aliases || []).join(', '))}" class="field font-mono">
+            <p class="field-hint">Comma separated. Extra names the release group uses. AniList titles and synonyms always match too.</p>
           </div>
         ` : '';
 
@@ -1141,90 +1377,51 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         // direct engine owns no rule and matches from the episode ledger, so
         // showing them there would display a regex that nothing ever reads.
         const mustContainSections = data.has_qbit_rule ? `
-          <div class="space-y-1">
-            <label for="modal-must-contain" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Must Contain (Regex Filter)</label>
-            <input type="text" id="modal-must-contain" value="${data.must_contain || ''}" placeholder=".*" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-emerald-400 focus:outline-none focus:border-zinc-500 shadow-inner select-all">
-          </div>
-
-          <div class="space-y-1">
-            <label for="modal-must-not-contain" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-400">Must Not Contain Filter</label>
-            <input type="text" id="modal-must-not-contain" value="${data.must_not_contain || ''}" placeholder="(720p|480p|...)" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-300 focus:outline-none focus:border-zinc-500 shadow-inner select-all">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label for="modal-must-contain" class="field-label">Must contain (regex)</label>
+              <input type="text" id="modal-must-contain" value="${escapeHtml(data.must_contain || '')}" placeholder=".*" class="field font-mono">
+            </div>
+            <div>
+              <label for="modal-must-not-contain" class="field-label">Must not contain</label>
+              <input type="text" id="modal-must-not-contain" value="${escapeHtml(data.must_not_contain || '')}" placeholder="(720p|480p|...)" class="field font-mono">
+            </div>
           </div>
         ` : '';
 
         const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
 
-        const articlesSection = (data.has_qbit_rule && data.has_learned_pattern) ? `
-          <div class="space-y-1 pt-0.5">
-            <div class="flex items-baseline justify-between gap-2">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Currently Matching in RSS Feed</span>
-              <span class="text-[11px] font-mono text-zinc-500">${matchCountLabel}</span>
-            </div>
-            <ul class="bg-[#121215] border border-[#2e2e38] rounded-lg px-3 py-2 max-h-24 overflow-y-auto">
-              ${articlesHtml}
-            </ul>
-          </div>
-        ` : '';
-
-        const episodeSection = isDirect ? `
-          <div class="space-y-1 pt-1">
-            <div class="flex items-center justify-between">
-              <span class="text-[11px] font-bold uppercase tracking-wider text-zinc-300">Episode Ownership</span>
-              <span class="text-[11px] font-mono text-zinc-500">${episodes.length} tracked</span>
-            </div>
-            <div class="bg-[#121215] border border-[#2e2e38] rounded-lg p-2 max-h-40 overflow-y-auto space-y-1">
-              ${episodes.length ? episodes.map(ep => `
-                <div class="flex items-center justify-between gap-2 text-[11px] font-mono px-2 py-1 rounded ${
-                  ep.version > 1
-                    ? 'bg-amber-950/50 text-amber-300'
-                    : String(ep.status).toLowerCase() === 'completed'
-                    ? 'bg-emerald-950/50 text-emerald-300'
-                    : 'text-zinc-400'
-                }">
-                  <span>Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
-                  <span class="truncate">${escapeHtml(ep.status)}</span>
-                </div>
-              `).join('') : '<div class="text-zinc-500 text-xs text-center py-2">No episode records yet.</div>'}
-            </div>
-          </div>
-        ` : '';
-
         contentEl.innerHTML = `
-          <div class="space-y-1">
-            <div class="flex items-center justify-between">
-              <label for="modal-feed-id" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">${feedLabel}</label>
-              ${ruleStatusText}
+          <div>
+            <div class="flex items-baseline justify-between gap-3">
+              <label for="modal-feed-id" class="field-label">${feedLabel}</label>
+              <span class="text-xs text-zinc-500">${ruleStatusText}</span>
             </div>
-            <select id="modal-feed-id" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm text-zinc-100 font-medium focus:outline-none focus:border-zinc-500 shadow-inner">
+            <select id="modal-feed-id" class="field">
               ${feedOptions}
             </select>
-            ${(data.feed_url && !isAutoManaged) ? `<div class="text-[11px] text-zinc-500 font-mono truncate px-0.5">${data.feed_url}</div>` : ''}
-            ${feedHint}
-            ${pinnedBanner}
-            ${learnedBanner}
-            ${candidateBanner}
+            ${(feedHint || feedUrlLine) ? `<div class="field-hint">${feedHint ? `<p>${feedHint}</p>` : ''}${feedUrlLine}</div>` : ''}
           </div>
 
           ${regexSections}
 
-          <div class="space-y-1">
-            <label for="modal-save-path" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Save Path</label>
-            <input type="text" id="modal-save-path" value="${data.save_path || data.save_folder || ''}" placeholder="~/Anime/${data.display_name}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner" title="${data.save_path || ''}">
+          <div>
+            <label for="modal-save-path" class="field-label">Save path</label>
+            <input type="text" id="modal-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
           </div>
 
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div class="space-y-1">
-              <label for="modal-category" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Category</label>
-              <input type="text" id="modal-category" value="${data.category || ''}" placeholder="${currentSettings.default_category || 'anime'}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
+            <div>
+              <label for="modal-category" class="field-label">Category</label>
+              <input type="text" id="modal-category" value="${escapeHtml(data.category || '')}" placeholder="${escapeHtml(currentSettings.default_category || 'anime')}" class="field font-mono">
             </div>
-            <div class="space-y-1">
-              <label for="modal-ratio-limit" class="block text-[11px] font-bold uppercase tracking-wider text-zinc-300">Seed Ratio Limit</label>
-              <input type="number" step="0.1" min="0" id="modal-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="w-full bg-[#121215] border border-[#30303a] rounded-lg px-3.5 py-2 text-xs sm:text-sm font-mono text-zinc-100 focus:outline-none focus:border-zinc-500 shadow-inner">
+            <div>
+              <label for="modal-ratio-limit" class="field-label">Seed ratio limit</label>
+              <input type="number" step="0.1" min="0" id="modal-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="field font-mono">
             </div>
           </div>
 
-          ${articlesSection}
-          ${episodeSection}
+          <div id="modal-lists">${buildModalLists(showId, data, episodes, null)}</div>
         `;
         modalInitialState = {
           // Tracks what the selector shows, not the internal feed id: while a show
@@ -1238,6 +1435,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           must_not_contain: (data.must_not_contain || '').trim(),
           aliases: (data.custom_aliases || []).join(', '),
         };
+        modalContext = { showId, data, episodes: Array.isArray(episodes) ? episodes : [] };
+        loadModalFeedMatches(showId);
       } catch (err) {
         contentEl.innerHTML = `<div class="text-rose-400 py-4 text-center">Failed loading show details: ${err}</div>`;
       }
@@ -1379,6 +1578,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           body: JSON.stringify({ title })
         });
         showToast(data.message || 'Download started.', 'success');
+        refreshModalLists(showId);
       } catch (err) {
         showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
       } finally {
@@ -1424,32 +1624,37 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       dragSourceIndex = index;
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', index);
-      e.currentTarget.classList.add('opacity-40', 'bg-[#22222a]');
+      e.currentTarget.classList.add('opacity-40', 'bg-raised');
     }
 
     function handleDragOver(e) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
-      e.currentTarget.classList.add('border-t-2', 'border-sky-500', 'bg-[#1c1c24]');
+      e.currentTarget.classList.add('border-t-2', 'border-sky-500', 'bg-surface');
     }
 
     function handleDragLeave(e) {
-      e.currentTarget.classList.remove('border-t-2', 'border-sky-500', 'bg-[#1c1c24]');
+      e.currentTarget.classList.remove('border-t-2', 'border-sky-500', 'bg-surface');
     }
 
     function handleDragEnd(e) {
-      e.currentTarget.classList.remove('opacity-40', 'bg-[#22222a]');
+      e.currentTarget.classList.remove('opacity-40', 'bg-raised');
       document.querySelectorAll('#feeds-table-body tr').forEach(r => {
-        r.classList.remove('border-t-2', 'border-sky-500', 'bg-[#1c1c24]');
+        r.classList.remove('border-t-2', 'border-sky-500', 'bg-surface');
       });
     }
 
     async function handleDrop(e, targetIndex) {
       e.preventDefault();
-      e.currentTarget.classList.remove('border-t-2', 'border-sky-500', 'bg-[#1c1c24]');
+      e.currentTarget.classList.remove('border-t-2', 'border-sky-500', 'bg-surface');
       if (dragSourceIndex === null || dragSourceIndex === targetIndex) return;
+      await moveFeed(dragSourceIndex, targetIndex);
+    }
 
-      const movedItem = allFeeds.splice(dragSourceIndex, 1)[0];
+    async function moveFeed(fromIndex, targetIndex) {
+      if (targetIndex < 0 || targetIndex >= allFeeds.length || fromIndex === targetIndex) return;
+
+      const movedItem = allFeeds.splice(fromIndex, 1)[0];
       allFeeds.splice(targetIndex, 0, movedItem);
 
       allFeeds.forEach((f, idx) => { f.priority = idx + 1; });
@@ -1492,17 +1697,25 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             ondragleave="handleDragLeave(event)"
             ondragend="handleDragEnd(event)"
             ondrop="handleDrop(event, ${idx})"
-            class="hover:bg-[#1e1e24] cursor-grab active:cursor-grabbing transition-colors group select-none">
-          <td class="py-3.5 px-3 text-center text-zinc-500 group-hover:text-zinc-300">
+            class="hover:bg-raised/60 cursor-grab active:cursor-grabbing transition-colors group select-none">
+          <td class="py-4 px-3 text-center text-zinc-500 group-hover:text-zinc-300">
             <svg class="w-4 h-4 mx-auto opacity-60 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 24 24"><path d="M9 5a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm10-14a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
           </td>
-          <td class="py-3.5 px-3 font-mono font-bold text-zinc-300 text-sm">#${f.priority}</td>
-          <td class="py-3.5 px-4">
-            <div class="font-semibold text-zinc-100 text-sm">${f.qbit_feed_name}</div>
-            <div class="text-xs text-zinc-500 font-mono truncate max-w-2xl mt-0.5">${f.qbit_feed_url}</div>
+          <td class="py-4 px-3 text-accent text-sm font-medium tabular-nums">
+            <div class="flex items-center gap-1.5">
+              <span>#${f.priority}</span>
+              <span class="flex flex-col opacity-60 hover:opacity-100">
+                <button onclick="event.stopPropagation(); moveFeed(${idx}, ${idx - 1})" class="leading-none text-[10px] px-1 hover:text-white disabled:opacity-20" title="Move up" ${idx === 0 ? 'disabled' : ''}>▲</button>
+                <button onclick="event.stopPropagation(); moveFeed(${idx}, ${idx + 1})" class="leading-none text-[10px] px-1 hover:text-white disabled:opacity-20" title="Move down" ${idx === allFeeds.length - 1 ? 'disabled' : ''}>▼</button>
+              </span>
+            </div>
+          </td>
+          <td class="py-4 px-4">
+            <div class="font-medium text-zinc-100 text-sm">${escapeHtml(f.qbit_feed_name)}</div>
+            <div class="text-xs text-zinc-500 font-mono truncate max-w-2xl mt-0.5">${escapeHtml(f.qbit_feed_url)}</div>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="3" class="text-center py-8 text-zinc-500 font-mono">No feeds registered.</td></tr>';
+      `).join('') || '<tr><td colspan="3" class="text-center py-10 text-zinc-500 text-sm">No feeds registered.</td></tr>';
     }
 
     async function syncFeeds() {
@@ -1524,11 +1737,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       if (btnJa && btnEn) {
         if (lang === 'english') {
-          btnEn.className = 'px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm';
-          btnJa.className = 'px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200';
+          btnEn.className = SEG_ACTIVE_CLASS;
+          btnJa.className = SEG_INACTIVE_CLASS;
         } else {
-          btnJa.className = 'px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm';
-          btnEn.className = 'px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200';
+          btnJa.className = SEG_ACTIVE_CLASS;
+          btnEn.className = SEG_INACTIVE_CLASS;
         }
       }
     }
@@ -1542,9 +1755,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const button = document.getElementById(`btn-mode-${name}`);
         if (!button) return;
         const active = name === selected;
-        button.className = active
-          ? 'px-2.5 py-1 font-semibold rounded transition-colors text-sky-400 bg-[#262632] shadow-sm'
-          : 'px-2.5 py-1 font-medium rounded transition-colors text-zinc-400 hover:text-zinc-200';
+        button.className = active ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
       });
     }
 
@@ -1768,6 +1979,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
+    function historyDayLabel(isoStr) {
+      if (!isoStr) return 'Earlier';
+      const d = new Date(isoStr);
+      const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+      const days = Math.round((startOf(new Date()) - startOf(d)) / 86400000);
+      if (days <= 0) return 'Today';
+      if (days === 1) return 'Yesterday';
+      return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+    }
+
     function renderHistory() {
       const container = document.getElementById('history-container');
       const badge = document.getElementById('badge-total-history');
@@ -1777,51 +1998,57 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       if (!cachedHistory || cachedHistory.length === 0) {
         container.innerHTML = `
-          <div class="bg-[#18181c] border border-[#26262e] rounded-2xl p-8 text-center space-y-2">
-            <div class="text-zinc-400 font-medium text-sm">No matches recorded yet</div>
-            <p class="text-xs text-zinc-500 max-w-sm mx-auto">When an RSS rule matches a release in qBittorrent, it will appear here as confirmation that it began downloading.</p>
+          <div class="card p-10 text-center space-y-1.5">
+            <div class="text-zinc-300 text-sm">Nothing here yet</div>
+            <p class="text-xs text-zinc-500 max-w-sm mx-auto">Releases show up here once they are added or matched for one of your shows.</p>
           </div>
         `;
         return;
       }
 
-      const rows = cachedHistory.map(h => {
-        const relTime = formatRelativeTime(h.created_at);
-        const fullTime = h.created_at ? new Date(h.created_at).toLocaleString() : '';
-        const regexVal = h.matched_regex || '';
-
-        const ruleBadge = regexVal ? `
-          <span class="relative group/regex inline-block">
-            <span class="font-mono font-medium text-zinc-100 bg-[#22222a] px-1.5 py-0.5 rounded-md border border-[#2f2f3b] cursor-help hover:border-emerald-500/50 hover:text-white transition-colors">
-              ${escapeHtml(h.rule_name || '')}
-            </span>
-            <span class="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover/regex:flex flex-col items-center z-50">
-              <span class="bg-[#121216] text-emerald-300 border border-[#30303c] text-xs font-mono font-medium px-2.5 py-1 rounded-lg shadow-2xl whitespace-nowrap max-w-sm sm:max-w-md truncate">
-                ${escapeHtml(regexVal)}
-              </span>
-              <span class="w-2 h-2 bg-[#121216] border-r border-b border-[#30303c] rotate-45 -mt-1"></span>
-            </span>
-          </span>
-        ` : `
-          <span class="font-mono font-medium text-zinc-100 bg-[#22222a] px-1.5 py-0.5 rounded-md border border-[#2f2f3b]">
-            ${escapeHtml(h.rule_name || '')}
-          </span>
-        `;
-
-        return `
-          <div class="bg-[#18181c] border border-[#26262e] hover:border-[#383844] rounded-2xl p-3.5 sm:px-4 sm:py-3 flex items-start sm:items-center justify-between gap-3 transition-colors shadow-sm">
-            <div class="flex items-start sm:items-center gap-3 min-w-0">
-              <span class="text-emerald-400 font-bold text-sm select-none shrink-0 mt-0.5 sm:mt-0">✓</span>
-              <div class="text-xs sm:text-sm text-zinc-300 leading-snug break-all sm:break-normal">
-                Rule ${ruleBadge} matched <span class="font-mono text-emerald-300 font-medium select-all">${escapeHtml(h.release_title || '')}</span>
-              </div>
-            </div>
-            <span class="text-xs text-zinc-500 font-mono flex-shrink-0 whitespace-nowrap self-start sm:self-center" title="${escapeHtml(fullTime)}">${relTime}</span>
-          </div>
-        `;
+      const groups = [];
+      cachedHistory.forEach(h => {
+        const label = historyDayLabel(h.created_at);
+        const last = groups[groups.length - 1];
+        if (last && last.label === label) last.items.push(h);
+        else groups.push({ label, items: [h] });
       });
 
-      container.innerHTML = rows.join('');
+      container.innerHTML = groups.map(g => `
+        <div>
+          <div class="text-xs font-medium text-zinc-400 mb-1.5 px-1 flex items-center gap-1.5"><span class="w-1 h-3 rounded-sm bg-accent/70"></span>${escapeHtml(g.label)}</div>
+          <div class="card divide-y divide-line-soft">
+            ${g.items.map(renderHistoryRow).join('')}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderHistoryRow(h) {
+      const added = (h.rule_name || '').startsWith('Direct:');
+      const verb = added ? 'Added' : 'Matched';
+      const fullTime = h.created_at ? new Date(h.created_at).toLocaleString() : '';
+      const showName = h.show_name || (h.rule_name || '').replace(/^Direct:\\s*/, '');
+      // For rules rows the rule and its pattern are the only extra facts; keep
+      // them out of the way instead of printing them on every line.
+      const ruleTip = (!added && (h.rule_name || h.matched_regex))
+        ? `${h.rule_name || ''}${h.matched_regex ? `\n${h.matched_regex}` : ''}`
+        : '';
+      return `
+        <div class="px-4 py-3 flex items-center gap-4" ${ruleTip ? `title="${escapeHtml(ruleTip)}"` : ''}>
+          <div class="min-w-0 flex-1">
+            <div class="flex items-baseline gap-2 min-w-0">
+              <span class="text-sm font-medium text-zinc-100 truncate">${escapeHtml(showName)}</span>
+              ${h.episode ? `<span class="text-xs text-accent tabular-nums flex-shrink-0">Ep ${escapeHtml(h.episode)}</span>` : ''}
+            </div>
+            <div class="text-xs text-zinc-500 font-mono truncate mt-0.5 select-all" title="${escapeHtml(h.release_title || '')}">${escapeHtml(h.release_title || '')}</div>
+          </div>
+          <div class="text-right flex-shrink-0">
+            <div class="text-xs text-zinc-400" title="${escapeHtml(fullTime)}">${formatRelativeTime(h.created_at)}</div>
+            <div class="text-[11px] text-zinc-600 mt-0.5 truncate max-w-[12rem]"><span class="${added ? 'text-emerald-400' : 'text-sky-400'}">${verb}</span>${h.feed_name ? ` · ${escapeHtml(h.feed_name)}` : ''}</div>
+          </div>
+        </div>
+      `;
     }
 
     async function clearHistory() {
@@ -1864,15 +2091,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       const rows = cachedLogs.map(l => {
         const level = (l.level || 'INFO').toUpperCase();
-        let levelBadge = '<span class="text-zinc-400 font-semibold">[INFO]</span>';
-        if (level === 'ERROR') levelBadge = '<span class="text-rose-400 font-semibold">[ERROR]</span>';
-        else if (level === 'WARNING' || level === 'WARN') levelBadge = '<span class="text-amber-400 font-semibold">[WARN]</span>';
-        else if (level === 'DEBUG') levelBadge = '<span class="text-sky-400 font-semibold">[DEBUG]</span>';
+        const pill = (text, cls) => `<span class="inline-block w-[3.25rem] text-center rounded px-1 py-px text-[10px] font-semibold ${cls}">${text}</span>`;
+        let levelBadge = pill('INFO', 'bg-zinc-500/15 text-zinc-400');
+        if (level === 'ERROR') levelBadge = pill('ERROR', 'bg-rose-500/15 text-rose-400');
+        else if (level === 'WARNING' || level === 'WARN') levelBadge = pill('WARN', 'bg-amber-500/15 text-amber-400');
+        else if (level === 'DEBUG') levelBadge = pill('DEBUG', 'bg-sky-500/15 text-sky-400');
 
         const timeStr = l.time_str || (l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : '');
 
-        return `<div class="flex items-start gap-2.5 py-0.5 hover:bg-[#15151c] px-1.5 rounded transition-colors leading-relaxed">
-          <span class="text-zinc-500 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
+        return `<div class="flex items-start gap-2.5 py-0.5 hover:bg-chrome px-1.5 rounded transition-colors leading-relaxed">
+          <span class="text-teal-500/60 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
           <span class="shrink-0 text-[11px] font-mono">${levelBadge}</span>
           <span class="text-zinc-200 break-all select-text font-mono text-[11px] flex-1">${escapeHtml(l.message || '')}</span>
         </div>`;

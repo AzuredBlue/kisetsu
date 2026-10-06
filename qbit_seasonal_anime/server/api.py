@@ -1,6 +1,6 @@
 import asyncio
 from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -26,7 +26,7 @@ from qbit_seasonal_anime.db.models import (
 from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
 from qbit_seasonal_anime.clients.anilist import AniListClient
 from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
-from qbit_seasonal_anime.core.grabber import cancel_episode_operations
+from qbit_seasonal_anime.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
 from qbit_seasonal_anime.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
@@ -417,41 +417,19 @@ def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> 
     return None
 
 
-@router.get("/shows/{show_id}/rule")
-def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
-    show = session.get(Monitored, show_id)
-    if not show:
-        raise HTTPException(status_code=404, detail="Show not found")
+def _show_rule_data(qbit: QBitClient, show: Monitored) -> Dict[str, Any]:
+    """The qBittorrent rule backing this show, or {} (direct mode owns none)."""
+    if not show.qbit_rule_name:
+        return {}
+    try:
+        return (qbit.get_rss_rules() or {}).get(show.qbit_rule_name, {})
+    except Exception as e:
+        state.add_log(f"Warning fetching rule details from qBit: {e}", "WARNING")
+        return {}
 
-    settings = get_settings(session)
-    feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
 
-    qbit_rule_data = {}
-    matched_articles = []
-    if show.qbit_rule_name:
-        try:
-            qrules = qbit.get_rss_rules()
-            qbit_rule_data = qrules.get(show.qbit_rule_name, {})
-            articles_resp = qbit.get_matching_articles(show.qbit_rule_name)
-            if isinstance(articles_resp, dict):
-                for k, v in articles_resp.items():
-                    if isinstance(v, list) and v:
-                        matched_articles.extend(v)
-            elif isinstance(articles_resp, list):
-                matched_articles = articles_resp
-        except Exception as e:
-            state.add_log(f"Warning fetching rule details from qBit: {e}", "WARNING")
-
-    feed_items: List[Dict[str, Any]] = []
-    if feed:
-        try:
-            from qbit_seasonal_anime.core.discovery import flatten_rss_articles
-            rss_tree = qbit.get_rss_items(with_data=True)
-            all_cached = flatten_rss_articles(rss_tree)
-            feed_items = all_cached.get(feed.qbit_feed_url, [])
-        except Exception as e:
-            state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
-
+def _saved_patterns(session: Session, show: Monitored, qbit_rule_data: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """(saved must-contain regex, must-not-contain regex) for a show."""
     saved_must_not = qbit_rule_data.get("mustNotContain") or show.custom_must_not or DEFAULT_MUST_NOT
 
     saved_regex = qbit_rule_data.get("mustContain") or show.custom_regex
@@ -472,28 +450,31 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
             matched_title=show.matched_title,
             release_group=show.matched_release_group,
         )
+    return saved_regex, saved_must_not
+
+
+@router.get("/shows/{show_id}/rule")
+def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    """Everything the show dialog needs to draw its form.
+
+    This must stay cheap: the dialog opens on it. Anything that reads
+    qBittorrent's RSS cache lives in ``/feed-matches`` and loads afterwards.
+    """
+    show = session.get(Monitored, show_id)
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    settings = get_settings(session)
+    feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
+
+    qbit_rule_data = _show_rule_data(qbit, show)
+    saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
 
     # With no rule and nothing learned there is no pattern to show. Inventing one
     # from the aliases here would put a value in the field that nothing consumes,
     # because in direct mode matching is done from the episode ledger, not from a
     # qBittorrent regex.
     has_qbit_rule = bool(show.qbit_rule_name and feed)
-
-    if not matched_articles and feed_items and saved_regex:
-        try:
-            import re
-            must_re = re.compile(saved_regex, re.IGNORECASE)
-            must_not_re = re.compile(saved_must_not, re.IGNORECASE) if saved_must_not else None
-
-            for item in feed_items:
-                title = item.get("title", "") if isinstance(item, dict) else str(item)
-                if must_re.search(title):
-                    if must_not_re and must_not_re.search(title):
-                        continue
-                    if title not in matched_articles:
-                        matched_articles.append(title)
-        except Exception as e:
-            state.add_log(f"Warning matching against cached articles: {e}", "DEBUG")
 
     effective_display_name = _effective_display_name(show, settings)
 
@@ -507,6 +488,8 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
     # Before that the feed it sits on is just a default, not an assignment.
     is_upcoming = is_show_rule_unreleased(show)
     has_learned_pattern = bool(show.matched_title or show.custom_regex)
+
+    download_mode = normalized_download_mode(session)
 
     return {
         "show_id": show.id,
@@ -529,11 +512,10 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "category": download_params["category"],
         "ratio_limit": download_params["ratio_limit"],
         "status": show.status.value,
-        "download_mode": normalized_download_mode(session),
+        "download_mode": download_mode,
         "custom_aliases": show.custom_aliases,
         "matched_title": show.matched_title,
         "matched_release_group": show.matched_release_group,
-        "matched_articles": matched_articles[:15],
         "has_learned_pattern": has_learned_pattern,
         "is_upcoming": is_upcoming,
         "feed_pinned": bool(show.feed_pinned),
@@ -545,6 +527,70 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "candidate_feed_name": feeds_map_name(session, show.candidate_feed_id),
         "candidate_feed_since": show.candidate_feed_since.isoformat() if show.candidate_feed_since else None,
     }
+
+
+@router.get("/shows/{show_id}/feed-matches")
+def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    """Releases currently in the show's feed, for the dialog's "In feed" list.
+
+    Reads qBittorrent's RSS cache, so it is slower than ``/rule`` and is fetched
+    after the dialog is already open.
+    """
+    show = session.get(Monitored, show_id)
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+
+    settings = get_settings(session)
+    feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
+
+    try:
+        from qbit_seasonal_anime.core.discovery import flatten_rss_articles
+        articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
+    except Exception as e:
+        state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
+        articles_by_url = {}
+
+    if uses_direct_engine(normalized_download_mode(session)):
+        try:
+            matches = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles_by_url)
+        except Exception as e:
+            state.add_log(f"Warning listing direct feed matches: {e}", "DEBUG")
+            matches = []
+        return {"matched_articles": [], "feed_matches": matches}
+
+    matched_articles: List[str] = []
+    qbit_rule_data = _show_rule_data(qbit, show)
+    if show.qbit_rule_name:
+        try:
+            articles_resp = qbit.get_matching_articles(show.qbit_rule_name)
+            if isinstance(articles_resp, dict):
+                for v in articles_resp.values():
+                    if isinstance(v, list) and v:
+                        matched_articles.extend(v)
+            elif isinstance(articles_resp, list):
+                matched_articles = articles_resp
+        except Exception as e:
+            state.add_log(f"Warning fetching rule details from qBit: {e}", "WARNING")
+
+    feed_items = articles_by_url.get(feed.qbit_feed_url, []) if feed else []
+    saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
+    if not matched_articles and feed_items and saved_regex:
+        try:
+            import re
+            must_re = re.compile(saved_regex, re.IGNORECASE)
+            must_not_re = re.compile(saved_must_not, re.IGNORECASE) if saved_must_not else None
+
+            for item in feed_items:
+                title = item.get("title", "") if isinstance(item, dict) else str(item)
+                if must_re.search(title):
+                    if must_not_re and must_not_re.search(title):
+                        continue
+                    if title not in matched_articles:
+                        matched_articles.append(title)
+        except Exception as e:
+            state.add_log(f"Warning matching against cached articles: {e}", "DEBUG")
+
+    return {"matched_articles": matched_articles[:15], "feed_matches": []}
 
 
 def feeds_map_name(session: Session, feed_id: Optional[int]) -> Optional[str]:
@@ -563,6 +609,9 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
     show = session.get(Monitored, show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
+
+    if uses_direct_engine(normalized_download_mode(session)):
+        return _direct_quick_download(show, req.title, session, qbit)
 
     if not show.qbit_rule_name:
         raise HTTPException(status_code=400, detail="This show has no RSS rule yet, so there is nothing to download with.")
@@ -614,6 +663,21 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
         "category": params["category"],
         "ratio_limit": params["ratio_limit"],
     }
+
+
+def _direct_quick_download(show: Monitored, title: str, session: Session, qbit: QBitClient) -> Dict[str, Any]:
+    # The grab writes the episode ledger, so it must not interleave with a cycle.
+    require_exclusive_cycle()
+    try:
+        message = manual_grab(session, qbit, get_settings(session), show, title)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        release_cycle()
+    state.add_log(message, "INFO")
+    return {"status": "success", "message": message}
 
 
 class EditShowRequest(BaseModel):
