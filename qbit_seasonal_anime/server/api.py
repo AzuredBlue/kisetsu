@@ -1174,7 +1174,13 @@ def test_qbit_connection(req: Optional[TestQbitConnectionRequest] = None, sessio
     s = get_settings(session)
     host = (req.qbit_host.strip() if req and req.qbit_host else "") or s.qbit_host
     username = (req.qbit_username.strip() if req and req.qbit_username else "") or s.qbit_username
-    password = (req.qbit_password if req and req.qbit_password else "") or s.qbit_password
+    password = req.qbit_password if req and req.qbit_password else ""
+    if not password:
+        # The stored password may only go to the stored host; otherwise anyone who
+        # can reach this API could point the test at their own server and read it.
+        if host.rstrip("/") != (s.qbit_host or "").rstrip("/"):
+            raise HTTPException(status_code=400, detail="Enter the password to test a different host.")
+        password = s.qbit_password
     client = QBitClient(host=host, username=username, password=password, timeout=6)
     try:
         res = client.test_connection()
