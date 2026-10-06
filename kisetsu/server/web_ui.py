@@ -8,7 +8,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>qbit-seasonal-anime</title>
+  <title>Kisetsu</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
@@ -98,7 +98,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
   <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome border-r border-line-soft flex flex-col flex-shrink-0 select-none z-40">
 
     <div class="px-4 pt-4 pb-2 flex items-center">
-      <span class="text-sm font-semibold text-zinc-100">qbit-seasonal-anime</span>
+      <span class="text-sm font-semibold text-zinc-100">Kisetsu</span>
     </div>
 
     <nav class="flex-1 px-2 py-1 space-y-0.5 overflow-y-auto">

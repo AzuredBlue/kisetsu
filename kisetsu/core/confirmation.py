@@ -4,19 +4,19 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select, or_
 from rapidfuzz import fuzz
-from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
-from qbit_seasonal_anime.core.matching import (
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.clients.qbit import QBitClient, QbitClientError
+from kisetsu.core.matching import (
     match_release_to_show,
     normalize_title,
     parse_release_title,
     prepare_aliases,
 )
-from qbit_seasonal_anime.core.discovery import RssSnapshot, flatten_rss_articles
-from qbit_seasonal_anime.core.rules import create_or_update_rule, build_regex_pattern
-from qbit_seasonal_anime.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, Feed, MatchHistory, utc_now
+from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles
+from kisetsu.core.rules import create_or_update_rule, build_regex_pattern
+from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, Feed, MatchHistory, utc_now
 
-logger = logging.getLogger("qbit_seasonal_anime.core.confirmation")
+logger = logging.getLogger("kisetsu.core.confirmation")
 
 
 LIVE_TORRENT_MIN_SCORE = 95.0

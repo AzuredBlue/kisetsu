@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import qbittorrentapi
 import requests
 
-from qbit_seasonal_anime.clients.qbit import (
+from kisetsu.clients.qbit import (
     QBitClient,
     QbitAuthenticationError,
     QbitClientError,
@@ -27,7 +27,7 @@ class TestGetClient(unittest.TestCase):
 
     def test_login_failure_raises_authentication_error_without_retrying(self):
         """A rejected password will not fix itself, so it must not be retried."""
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = qbittorrentapi.LoginFailed("bad creds")
 
             with self.assertRaises(QbitAuthenticationError):
@@ -39,7 +39,7 @@ class TestGetClient(unittest.TestCase):
     def test_http_403_login_rejection_is_treated_as_authentication_failure(self):
         """qbittorrent-api reports a bad password as Forbidden403Error, not LoginFailed."""
         forbidden = _http_error(403)
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = forbidden
 
             with self.assertRaises(QbitAuthenticationError):
@@ -49,7 +49,7 @@ class TestGetClient(unittest.TestCase):
         self.assertIsNone(self.client._client)
 
     def test_http_401_login_rejection_is_treated_as_authentication_failure(self):
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = _http_error(401)
 
             with self.assertRaises(QbitAuthenticationError):
@@ -59,18 +59,18 @@ class TestGetClient(unittest.TestCase):
 
     def test_server_error_is_still_retried_as_a_connection_problem(self):
         """A 5xx is qBittorrent being unhealthy, not a credentials problem."""
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = _http_error(503)
-            with patch("qbit_seasonal_anime.clients.qbit.time.sleep"):
+            with patch("kisetsu.clients.qbit.time.sleep"):
                 with self.assertRaises(QbitConnectionError):
                     self.client.get_client()
 
         self.assertEqual(client_cls.call_count, 3)
 
     def test_exhausted_retries_raise_connection_error(self):
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = ConnectionRefusedError("refused")
-            with patch("qbit_seasonal_anime.clients.qbit.time.sleep"):
+            with patch("kisetsu.clients.qbit.time.sleep"):
                 with self.assertRaises(QbitConnectionError) as ctx:
                     self.client.get_client()
 
@@ -80,9 +80,9 @@ class TestGetClient(unittest.TestCase):
 
     def test_default_retries_wait_longer_than_a_single_attempt(self):
         """The default backoff must span a container's WebUI startup window."""
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = ConnectionRefusedError("refused")
-            with patch("qbit_seasonal_anime.clients.qbit.time.sleep") as sleep:
+            with patch("kisetsu.clients.qbit.time.sleep") as sleep:
                 with self.assertRaises(QbitConnectionError):
                     self.client.get_client()
 
@@ -90,9 +90,9 @@ class TestGetClient(unittest.TestCase):
         self.assertEqual([c.args[0] for c in sleep.call_args_list], [1.0, 2.0])
 
     def test_max_retries_keyword_remains_supported(self):
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             client_cls.return_value.auth_log_in.side_effect = ConnectionRefusedError("refused")
-            with patch("qbit_seasonal_anime.clients.qbit.time.sleep"):
+            with patch("kisetsu.clients.qbit.time.sleep"):
                 with self.assertRaises(QbitConnectionError) as ctx:
                     self.client.get_client(max_retries=1)
 
@@ -100,7 +100,7 @@ class TestGetClient(unittest.TestCase):
         self.assertIn("after 1 attempts", str(ctx.exception))
 
     def test_successful_login_is_memoized(self):
-        with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client") as client_cls:
+        with patch("kisetsu.clients.qbit.qbittorrentapi.Client") as client_cls:
             first = self.client.get_client()
             second = self.client.get_client()
 

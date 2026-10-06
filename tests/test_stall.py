@@ -2,8 +2,8 @@ from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock
 from sqlmodel import Session, create_engine, SQLModel
-from qbit_seasonal_anime.core.stall import check_and_handle_stalls
-from qbit_seasonal_anime.db.models import Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
+from kisetsu.core.stall import check_and_handle_stalls
+from kisetsu.db.models import Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings
 
 
 def _utc_now():

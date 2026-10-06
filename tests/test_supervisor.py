@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.core.supervisor import FEED_SWITCH_GRACE_SECONDS, Supervisor
-from qbit_seasonal_anime.clients.anilist import AniListClient
-from qbit_seasonal_anime.clients.qbit import QbitClientError, QbitConnectionError
-from qbit_seasonal_anime.db.models import (
+from kisetsu.core.supervisor import FEED_SWITCH_GRACE_SECONDS, Supervisor
+from kisetsu.clients.anilist import AniListClient
+from kisetsu.clients.qbit import QbitClientError, QbitConnectionError
+from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -21,7 +21,7 @@ from qbit_seasonal_anime.db.models import (
     Settings,
     utc_now,
 )
-from qbit_seasonal_anime.db.session import get_settings
+from kisetsu.db.session import get_settings
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
 
@@ -648,7 +648,7 @@ async def test_user_completed_show_is_never_reopened_by_a_still_airing_schedule(
 
 @pytest.mark.asyncio
 async def test_sync_anilist_failure_marks_schedule_stale_without_erasing_pointer():
-    from qbit_seasonal_anime.clients.anilist import AniListError
+    from kisetsu.clients.anilist import AniListError
 
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)

@@ -4,10 +4,10 @@ import re
 from datetime import timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, utc_now
+from kisetsu.clients.qbit import QBitClient, QbitClientError
+from kisetsu.db.models import Feed, Monitored, MonitoredStatus, utc_now
 
-logger = logging.getLogger("qbit_seasonal_anime.core.rules")
+logger = logging.getLogger("kisetsu.core.rules")
 
 
 ROMAN_TO_INT = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}

@@ -3,9 +3,9 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qbit-seasonal-anime"
+name = "kisetsu"
 version = "0.1.0"
-description = "Automatically download your seasonal anime through qBittorrent, using RSS rules or direct downloads."
+description = "Kisetsu: automatically download your seasonal anime through qBittorrent, using RSS rules or direct downloads."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -25,7 +25,7 @@ dev = [
 ]
 
 [project.scripts]
-qbit-seasonal-anime = "qbit_seasonal_anime.main:main"
+kisetsu = "kisetsu.main:main"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

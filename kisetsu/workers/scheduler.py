@@ -3,13 +3,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 from sqlmodel import Session, select
-from qbit_seasonal_anime.clients.qbit import QBitClient
-from qbit_seasonal_anime.config import (
+from kisetsu.clients.qbit import QBitClient
+from kisetsu.config import (
     DEFAULT_BACKFILL_WINDOW_DAYS,
     DEFAULT_DOWNLOAD_MODE,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
-from qbit_seasonal_anime.db.models import (
+from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     Episode,
     EpisodeStatus,
@@ -20,7 +20,7 @@ from qbit_seasonal_anime.db.models import (
     utc_now,
 )
 
-logger = logging.getLogger("qbit_seasonal_anime.workers.scheduler")
+logger = logging.getLogger("kisetsu.workers.scheduler")
 
 MIN_RETRY_SLEEP_SECONDS = 30
 

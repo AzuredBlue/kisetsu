@@ -4,7 +4,7 @@ import logging
 from typing import Any, Dict, List, Optional, Set
 import httpx2
 
-logger = logging.getLogger("qbit_seasonal_anime.clients.anilist")
+logger = logging.getLogger("kisetsu.clients.anilist")
 
 ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 

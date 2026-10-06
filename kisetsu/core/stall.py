@@ -2,13 +2,13 @@ from datetime import timedelta, timezone
 import logging
 from typing import Any, Dict, List, Optional, Set
 from sqlmodel import Session, select
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
-from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show
-from qbit_seasonal_anime.core.rules import create_or_update_rule, delete_rule, disable_rule
-from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
-from qbit_seasonal_anime.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from kisetsu.clients.qbit import QBitClient, QbitClientError
+from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show
+from kisetsu.core.rules import create_or_update_rule, delete_rule, disable_rule
+from kisetsu.core.confirmation import has_downloaded_final_episode
+from kisetsu.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
 
-logger = logging.getLogger("qbit_seasonal_anime.core.stall")
+logger = logging.getLogger("kisetsu.core.stall")
 
 
 def check_and_handle_stalls(

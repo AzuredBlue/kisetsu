@@ -5,7 +5,7 @@ import time
 from typing import Any, Dict, List, Optional, Tuple
 import qbittorrentapi
 
-logger = logging.getLogger("qbit_seasonal_anime.clients.qbit")
+logger = logging.getLogger("kisetsu.clients.qbit")
 
 
 class QbitClientError(Exception):

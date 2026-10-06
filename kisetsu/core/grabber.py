@@ -6,12 +6,12 @@ from uuid import uuid4
 
 from sqlmodel import Session, select
 
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
-from qbit_seasonal_anime.core.confirmation import record_match_event
-from qbit_seasonal_anime.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from qbit_seasonal_anime.core.matching import match_release_to_show, parse_release_title
-from qbit_seasonal_anime.core.rules import effective_title, resolve_save_path
-from qbit_seasonal_anime.db.models import (
+from kisetsu.clients.qbit import QBitClient, QbitClientError
+from kisetsu.core.confirmation import record_match_event
+from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
+from kisetsu.core.matching import match_release_to_show, parse_release_title
+from kisetsu.core.rules import effective_title, resolve_save_path
+from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     CANCELLABLE_OPERATION_STATUSES,
     Episode,
@@ -30,7 +30,7 @@ from qbit_seasonal_anime.db.models import (
     utc_now,
 )
 
-logger = logging.getLogger("qbit_seasonal_anime.core.grabber")
+logger = logging.getLogger("kisetsu.core.grabber")
 
 AIR_DATE_TOLERANCE = timedelta(days=3)
 # How long a release must stay on a lower-ranked feed before a show with no feed

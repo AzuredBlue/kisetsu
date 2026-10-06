@@ -8,8 +8,8 @@ from sqlmodel import Session, select
 
 import qbittorrentapi
 
-from qbit_seasonal_anime.db.session import get_engine, get_settings
-from qbit_seasonal_anime.db.models import (
+from kisetsu.db.session import get_engine, get_settings
+from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -23,15 +23,15 @@ from qbit_seasonal_anime.db.models import (
     normalize_mapping_source,
     utc_now,
 )
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
-from qbit_seasonal_anime.clients.anilist import AniListClient
-from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
-from qbit_seasonal_anime.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
-from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
-from qbit_seasonal_anime.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
-from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
-from qbit_seasonal_anime.server.state import state
+from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
+from kisetsu.clients.anilist import AniListClient
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
+from kisetsu.core.supervisor import Supervisor
+from kisetsu.core.matching import match_release_to_show, prepare_aliases
+from kisetsu.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
+from kisetsu.workers.scheduler import calculate_next_poll_interval
+from kisetsu.server.state import state
 
 router = APIRouter(prefix="/api")
 engine = get_engine()
@@ -115,7 +115,7 @@ def get_shows(session: Session = Depends(get_db)):
         romaji_title = s.title_romaji or s.display_name
         effective_display_name = effective_title(s, settings.title_language)
 
-        from qbit_seasonal_anime.core.rules import sanitize_folder_name, compress_home_path
+        from kisetsu.core.rules import sanitize_folder_name, compress_home_path
         base_template = settings.base_dir or "~/Anime/{name}"
         is_custom_folder = bool(s.save_folder and s.save_folder != sanitize_folder_name(s.display_name) and s.save_folder != sanitize_folder_name(s.title_romaji or "") and s.save_folder != sanitize_folder_name(s.title_english or ""))
         if is_custom_folder and (s.save_folder.startswith("/") or s.save_folder.startswith("~")):
@@ -193,6 +193,14 @@ def get_shows(session: Session = Depends(get_db)):
 
 @router.post("/shows/{show_id}/pause")
 def toggle_pause_show(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _toggle_pause_show(show_id, session, qbit)
+    finally:
+        release_cycle()
+
+
+def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
     show = session.get(Monitored, show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
@@ -377,7 +385,7 @@ def _effective_display_name(show: Monitored, settings: Settings) -> str:
 
 
 def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Settings, display_name: str) -> Dict[str, Any]:
-    from qbit_seasonal_anime.core.rules import resolve_save_path, sanitize_folder_name
+    from kisetsu.core.rules import resolve_save_path, sanitize_folder_name
 
     torrent_params = rule.get("torrentParams") or {}
 
@@ -402,7 +410,7 @@ def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Setti
 
 
 def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> Optional[str]:
-    from qbit_seasonal_anime.core.discovery import flatten_rss_articles
+    from kisetsu.core.discovery import flatten_rss_articles
 
     try:
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
@@ -478,7 +486,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
     effective_display_name = _effective_display_name(show, settings)
 
-    from qbit_seasonal_anime.core.rules import build_rule_name, is_show_rule_enabled, is_show_rule_unreleased, compress_home_path
+    from kisetsu.core.rules import build_rule_name, is_show_rule_enabled, is_show_rule_unreleased, compress_home_path
     expected_rule_name = build_rule_name(show.id or 0, effective_display_name)
     rule_is_enabled = qbit_rule_data.get("enabled") if "enabled" in qbit_rule_data else is_show_rule_enabled(show)
 
@@ -544,7 +552,7 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
     feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
 
     try:
-        from qbit_seasonal_anime.core.discovery import flatten_rss_articles
+        from kisetsu.core.discovery import flatten_rss_articles
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
         state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
@@ -753,7 +761,7 @@ def _set_episode_offset(session: Session, show: Monitored, feed_id: Optional[int
     session.add(mapping)
     session.commit()
     # Releases stored under the feed's raw numbering move to the right rows now.
-    from qbit_seasonal_anime.core.grabber import rebase_ledger
+    from kisetsu.core.grabber import rebase_ledger
     rebase_ledger(session, show, feed_id, offset, target_count=show.total_episodes)
 
 
@@ -867,7 +875,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
 
-    from qbit_seasonal_anime.core.rules import create_or_update_rule
+    from kisetsu.core.rules import create_or_update_rule
 
     title_language = getattr(settings, "title_language", "english")
     feed_changed = req.current_feed_id is not None and new_feed_id != previous_feed_id
@@ -929,7 +937,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     parsed_articles = {}
     try:
         rss_data = qbit.get_rss_items(with_data=True)
-        from qbit_seasonal_anime.core.discovery import flatten_rss_articles
+        from kisetsu.core.discovery import flatten_rss_articles
         articles_by_feed = flatten_rss_articles(rss_data)
         feed_articles = articles_by_feed.get(feed.qbit_feed_url, [])
 
@@ -1054,6 +1062,14 @@ class ReorderRequest(BaseModel):
 
 @router.post("/feeds/reorder")
 def reorder_feeds(req: ReorderRequest, session: Session = Depends(get_db)):
+    require_exclusive_cycle()
+    try:
+        return _reorder_feeds(req, session)
+    finally:
+        release_cycle()
+
+
+def _reorder_feeds(req: ReorderRequest, session: Session):
     for item in req.feeds:
         feed = session.get(Feed, item.id)
         if feed:
@@ -1066,6 +1082,14 @@ def reorder_feeds(req: ReorderRequest, session: Session = Depends(get_db)):
 
 @router.post("/feeds/sync")
 def sync_feeds(session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _sync_feeds(session, qbit)
+    finally:
+        release_cycle()
+
+
+def _sync_feeds(session: Session, qbit: QBitClient):
     settings = get_settings(session)
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=settings)
     try:
@@ -1080,7 +1104,7 @@ def sync_feeds(session: Session = Depends(get_db), qbit: QBitClient = Depends(ge
 
 @router.get("/settings")
 def get_current_settings(session: Session = Depends(get_db)):
-    from qbit_seasonal_anime.core.rules import compress_home_path
+    from kisetsu.core.rules import compress_home_path
     s = get_settings(session)
     base_dir = s.base_dir or "~/Anime/{name}"
     if base_dir and "{name}" not in base_dir:
@@ -1295,10 +1319,10 @@ async def _sync_anilist_now(session: Session):
         )
         logs.extend(bootstrap_logs)
         if direct:
-            from qbit_seasonal_anime.core.grabber import evaluate_and_grab_releases
+            from kisetsu.core.grabber import evaluate_and_grab_releases
             logs.extend(await asyncio.to_thread(evaluate_and_grab_releases, session, qbit, s, mode=mode))
         else:
-            from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents
+            from kisetsu.core.confirmation import verify_and_confirm_torrents
             logs.extend(await asyncio.to_thread(verify_and_confirm_torrents, session, qbit, s))
         if sup.anilist_sync_succeeded is not False:
             logs.extend(await asyncio.to_thread(sup.reconcile_schedule_rollover))
@@ -1319,6 +1343,14 @@ async def _sync_anilist_now(session: Session):
 
 @router.post("/settings/clear-all")
 def clear_all_monitored(session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _clear_all_monitored(session, qbit)
+    finally:
+        release_cycle()
+
+
+def _clear_all_monitored(session: Session, qbit: QBitClient):
     shows = session.exec(select(Monitored)).all()
     count = len(shows)
     try:
@@ -1326,7 +1358,6 @@ def clear_all_monitored(session: Session = Depends(get_db), qbit: QBitClient = D
         for rname in qrules:
             if (
                 rname.startswith("[Seasonal]")
-                or rname.startswith("[qbit-seasonal-anime]")
                 or any(show.qbit_rule_name == rname for show in shows)
             ):
                 delete_rule(qbit, rname, raise_on_error=True)
@@ -1339,6 +1370,11 @@ def clear_all_monitored(session: Session = Depends(get_db), qbit: QBitClient = D
     session.flush()
 
     for s in shows:
+        # Dispose of torrents an in-flight direct grab added; the cascade below
+        # would otherwise orphan them in qBittorrent.
+        for ep in session.exec(select(Episode).where(Episode.monitored_id == s.id)).all():
+            cancel_episode_operations(session, qbit, s, ep, "All shows cleared by user.")
+        session.flush()
         session.delete(s)
     session.commit()
 

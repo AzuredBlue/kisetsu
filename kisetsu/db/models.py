@@ -2,11 +2,12 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Tuple
+from pydantic import NaiveDatetime
 from sqlalchemy import Index, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
-from qbit_seasonal_anime.config import (
+from kisetsu.config import (
     DEFAULT_BASE_DIR,
     DEFAULT_BACKFILL_WINDOW_DAYS,
     DEFAULT_CATEGORY,
@@ -155,8 +156,8 @@ class SupervisionLease(SQLModel, table=True):
 
     id: int = Field(default=1, primary_key=True)
     owner: str = Field(index=True)
-    acquired_at: datetime = Field(default_factory=utc_now, index=True)
-    heartbeat_at: datetime = Field(default_factory=utc_now, index=True)
+    acquired_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
+    heartbeat_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
 
 
 class Feed(SQLModel, table=True):
@@ -196,7 +197,7 @@ class Monitored(SQLModel, table=True):
     qbit_rule_name: Optional[str] = Field(default=None, nullable=True)
     total_episodes: Optional[int] = Field(default=None, nullable=True)
     next_airing_episode: Optional[int] = Field(default=None, nullable=True)
-    next_airing_at: Optional[datetime] = Field(default=None, nullable=True)
+    next_airing_at: Optional[NaiveDatetime] = Field(default=None, nullable=True)
     last_confirmed_episode: Optional[int] = Field(default=None, nullable=True)
     save_folder: str = Field(default="")
     matched_title: Optional[str] = Field(default=None, nullable=True)
@@ -209,9 +210,9 @@ class Monitored(SQLModel, table=True):
     custom_must_not: Optional[str] = Field(default=None, nullable=True)
     feed_pinned: bool = Field(default=False)
     candidate_feed_id: Optional[int] = Field(default=None, nullable=True)
-    candidate_feed_since: Optional[datetime] = Field(default=None, nullable=True)
+    candidate_feed_since: Optional[NaiveDatetime] = Field(default=None, nullable=True)
     anilist_status: Optional[str] = Field(default=None, nullable=True, index=True)
-    schedule_synced_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    schedule_synced_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
     schedule_stale: bool = Field(default=False, index=True)
 
     @property
@@ -261,9 +262,9 @@ class EpisodeNumberMapping(SQLModel, table=True):
     offset: int = Field(default=0)
     source: str = Field(default=EpisodeMappingSource.INFERRED.name, index=True)
     evidence_count: int = Field(default=0)
-    first_evidence_at: Optional[datetime] = Field(default=None, nullable=True)
-    last_evidence_at: Optional[datetime] = Field(default=None, nullable=True)
-    updated_at: datetime = Field(default_factory=utc_now, index=True)
+    first_evidence_at: Optional[NaiveDatetime] = Field(default=None, nullable=True)
+    last_evidence_at: Optional[NaiveDatetime] = Field(default=None, nullable=True)
+    updated_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
 
 
 class Episode(SQLModel, table=True):
@@ -285,13 +286,13 @@ class Episode(SQLModel, table=True):
     torrent_url: Optional[str] = Field(default=None, nullable=True)
     torrent_hash: Optional[str] = Field(default=None, nullable=True, index=True)
     operation_tag: Optional[str] = Field(default=None, nullable=True, index=True)
-    downloaded_at: Optional[datetime] = Field(default=None, nullable=True)
+    downloaded_at: Optional[NaiveDatetime] = Field(default=None, nullable=True)
     last_error: Optional[str] = Field(default=None, nullable=True)
-    retry_after: Optional[datetime] = Field(default=None, nullable=True, index=True)
-    air_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    retry_after: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
+    air_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
     schedule_state: str = Field(default=EpisodeScheduleState.UNKNOWN.name.lower(), index=True)
     source_episode: Optional[int] = Field(default=None, nullable=True, index=True)
-    last_attempt_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    last_attempt_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
     attempt_count: int = Field(default=0)
 
 
@@ -327,12 +328,12 @@ class TorrentOperation(SQLModel, table=True):
     feed_item_id: Optional[str] = Field(default=None, nullable=True, index=True)
     feed_id: Optional[int] = Field(default=None, nullable=True, index=True)
     attempt_count: int = Field(default=1)
-    last_attempt_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
-    next_retry_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    last_attempt_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
+    next_retry_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
     ambiguous: bool = Field(default=False)
     last_error: Optional[str] = Field(default=None, nullable=True)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
-    updated_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
+    updated_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
 
 
 class SeenFeedItem(SQLModel, table=True):
@@ -346,8 +347,8 @@ class SeenFeedItem(SQLModel, table=True):
     feed_url: str = Field(index=True)
     item_id: str = Field(index=True)
     title: str = Field(default="")
-    created_at: datetime = Field(default_factory=utc_now, index=True)
-    shielded_at: Optional[datetime] = Field(default=None, nullable=True, index=True)
+    created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
+    shielded_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
 
 
 class RuleHistory(SQLModel, table=True):
@@ -356,7 +357,7 @@ class RuleHistory(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     monitored_id: int = Field(foreign_key="monitored.id", ondelete="CASCADE", index=True)
     feed_id: Optional[int] = Field(default=None, foreign_key="feeds.id", ondelete="SET NULL", nullable=True, index=True)
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
     outcome: RuleOutcome = Field(default=RuleOutcome.PENDING, index=True)
     note: Optional[str] = Field(default=None, nullable=True)
 
@@ -366,7 +367,7 @@ class QbitRuleWatermark(SQLModel, table=True):
 
     rule_name: str = Field(primary_key=True)
     last_match: str = Field(default="")
-    updated_at: datetime = Field(default_factory=utc_now)
+    updated_at: NaiveDatetime = Field(default_factory=utc_now)
 
 
 class MatchHistory(SQLModel, table=True):
@@ -379,6 +380,6 @@ class MatchHistory(SQLModel, table=True):
     feed_name: Optional[str] = None
     release_title: str = Field(index=True)
     episode: Optional[int] = None
-    created_at: datetime = Field(default_factory=utc_now, index=True)
+    created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
     matched_regex: Optional[str] = Field(default=None, nullable=True)
 

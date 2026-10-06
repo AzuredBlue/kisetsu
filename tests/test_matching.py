@@ -1,5 +1,5 @@
 import unittest
-from qbit_seasonal_anime.core.matching import (
+from kisetsu.core.matching import (
     extract_release_version,
     match_release_to_show,
     normalize_title,
@@ -72,7 +72,7 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(parsed2["title"], "Shangri-La Frontier")
 
     def test_extract_release_group_avoids_digits(self):
-        from qbit_seasonal_anime.core.matching import extract_release_group_tag
+        from kisetsu.core.matching import extract_release_group_tag
         self.assertIsNone(extract_release_group_tag("Show_Name-01.mkv"))
         self.assertEqual(extract_release_group_tag("[SubsPlease] Show - 01.mkv"), "SubsPlease")
         self.assertEqual(extract_release_group_tag("Show S01E05 1080p-VARYG.mkv"), "VARYG")
@@ -112,7 +112,7 @@ class TestMatching(unittest.TestCase):
         title = "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv"
         aliases = ["Sousou no Frieren", "Frieren"]
         with patch(
-            "qbit_seasonal_anime.core.matching.parse_release_title",
+            "kisetsu.core.matching.parse_release_title",
             wraps=parse_release_title,
         ) as parser:
             first = match_release_to_show(title, aliases, parsed_cache=cache)

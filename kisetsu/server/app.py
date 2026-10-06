@@ -7,19 +7,19 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select
 
-from qbit_seasonal_anime.config import RULE_OBSERVER_INTERVAL_SECONDS
-from qbit_seasonal_anime.db.models import QbitRuleWatermark
-from qbit_seasonal_anime.db.session import get_engine, get_settings, init_db
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
-from qbit_seasonal_anime.clients.anilist import AniListClient
-from qbit_seasonal_anime.core.confirmation import ingest_log_acceptances
-from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval, is_hunting
-from qbit_seasonal_anime.server.api import router
-from qbit_seasonal_anime.server.state import state
-from qbit_seasonal_anime.server.web_ui import get_web_ui_html
+from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS
+from kisetsu.db.models import QbitRuleWatermark
+from kisetsu.db.session import get_engine, get_settings, init_db
+from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
+from kisetsu.clients.anilist import AniListClient
+from kisetsu.core.confirmation import ingest_log_acceptances
+from kisetsu.core.supervisor import Supervisor
+from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
+from kisetsu.server.api import router
+from kisetsu.server.state import state
+from kisetsu.server.web_ui import get_web_ui_html
 
-logger = logging.getLogger("qbit_seasonal_anime.server")
+logger = logging.getLogger("kisetsu.server")
 
 
 # Escalating waits used while qBittorrent is unreachable. The delay settles at
@@ -275,7 +275,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="qbit-seasonal-anime", lifespan=lifespan)
+    app = FastAPI(title="Kisetsu", lifespan=lifespan)
     app.include_router(router)
 
     @app.get("/", response_class=HTMLResponse)

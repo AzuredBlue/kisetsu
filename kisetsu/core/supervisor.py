@@ -5,19 +5,19 @@ from datetime import timezone, timedelta
 from typing import Any, Dict, List, Optional, Set
 from uuid import uuid4
 from sqlmodel import Session, select
-from qbit_seasonal_anime.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
-from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
-from qbit_seasonal_anime.core.confirmation import verify_and_confirm_torrents, has_downloaded_final_episode
-from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from qbit_seasonal_anime.core.grabber import is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
-from qbit_seasonal_anime.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from qbit_seasonal_anime.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
-from qbit_seasonal_anime.core.stall import check_and_handle_stalls
-from qbit_seasonal_anime.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
-from qbit_seasonal_anime.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
+from kisetsu.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
+from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.core.confirmation import verify_and_confirm_torrents, has_downloaded_final_episode
+from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
+from kisetsu.core.grabber import is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
+from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
+from kisetsu.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
+from kisetsu.core.stall import check_and_handle_stalls
+from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
+from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 
-logger = logging.getLogger("qbit_seasonal_anime.core.supervisor")
+logger = logging.getLogger("kisetsu.core.supervisor")
 
 # How stale a show's per-episode air dates may get before they are refetched.
 EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
@@ -536,7 +536,7 @@ class Supervisor:
                 if updated:
                     self.session.add(show)
             else:
-                from qbit_seasonal_anime.core.rules import sanitize_folder_name
+                from kisetsu.core.rules import sanitize_folder_name
                 new_show = Monitored(
                     anilist_id=aid,
                     display_name=chosen_name,
@@ -1125,7 +1125,6 @@ class Supervisor:
             rule_name
             for rule_name in rules
             if rule_name.startswith("[Seasonal]")
-            or rule_name.startswith("[qbit-seasonal-anime]")
             or any(
                 show.qbit_rule_name == rule_name for show in shows
             )

@@ -8,16 +8,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.clients.qbit import (
+from kisetsu.clients.qbit import (
     QbitAuthenticationError,
     QbitClientError,
     QbitConnectionError,
     QbitRSSRefreshError,
 )
-app_module = importlib.import_module("qbit_seasonal_anime.server.app")
-from qbit_seasonal_anime.server import api as api_module
-from qbit_seasonal_anime.server.app import create_app
-from qbit_seasonal_anime.db.models import (
+app_module = importlib.import_module("kisetsu.server.app")
+from kisetsu.server import api as api_module
+from kisetsu.server.app import create_app
+from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -31,9 +31,9 @@ from qbit_seasonal_anime.db.models import (
     TorrentOperation,
     normalize_mapping_source,
 )
-from qbit_seasonal_anime.core.rules import build_regex_pattern
-from qbit_seasonal_anime.server.api import get_db, get_qbit
-from qbit_seasonal_anime.db.session import SCHEMA_VERSION, acquire_supervision_lease, init_db, release_supervision_lease
+from kisetsu.core.rules import build_regex_pattern
+from kisetsu.server.api import get_db, get_qbit
+from kisetsu.db.session import SCHEMA_VERSION, acquire_supervision_lease, init_db, release_supervision_lease
 
 
 @pytest.fixture
@@ -117,7 +117,7 @@ def test_index_returns_html(client):
     response = client.get("/")
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "qbit-seasonal-anime" in response.text
+    assert "Kisetsu" in response.text
     assert "Releasing" in response.text
     assert "Planned" in response.text
     assert "Calendar" in response.text
@@ -1011,7 +1011,7 @@ def test_rule_details_flags_unlearned_pattern(client, session, mock_qbit):
 def test_rule_details_reports_testing_show_not_upcoming(client, session, mock_qbit):
     from datetime import timedelta
 
-    from qbit_seasonal_anime.db.models import utc_now
+    from kisetsu.db.models import utc_now
 
     feed = Feed(id=1, qbit_feed_name="Feed 1", qbit_feed_url="https://feed1.org/rss", priority=1)
     show = Monitored(
@@ -1040,7 +1040,7 @@ def test_rule_details_reports_testing_show_not_upcoming(client, session, mock_qb
 def test_rule_details_reports_watched_candidate_feed(client, session, mock_qbit):
     from datetime import timedelta
 
-    from qbit_seasonal_anime.db.models import utc_now
+    from kisetsu.db.models import utc_now
 
     feed = Feed(id=1, qbit_feed_name="Feed 1", qbit_feed_url="https://feed1.org/rss", priority=1)
     other = Feed(id=2, qbit_feed_name="Feed 2", qbit_feed_url="https://feed2.org/rss", priority=2)
@@ -1907,7 +1907,7 @@ def test_sync_anilist_stands_rules_down_before_grabbing(client, session, monkeyp
     supervisor.reconcile_schedule_rollover.return_value = []
     monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
     monkeypatch.setattr(api_module, "QBitClient", MagicMock())
-    monkeypatch.setattr("qbit_seasonal_anime.core.grabber.evaluate_and_grab_releases", MagicMock(return_value=[]))
+    monkeypatch.setattr("kisetsu.core.grabber.evaluate_and_grab_releases", MagicMock(return_value=[]))
 
     response = client.post("/api/settings/sync-anilist")
 
@@ -1930,7 +1930,7 @@ def test_sync_anilist_aborts_when_rules_cannot_be_stood_down(client, session, mo
     monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
     monkeypatch.setattr(api_module, "QBitClient", MagicMock())
     grab = MagicMock(return_value=[])
-    monkeypatch.setattr("qbit_seasonal_anime.core.grabber.evaluate_and_grab_releases", grab)
+    monkeypatch.setattr("kisetsu.core.grabber.evaluate_and_grab_releases", grab)
 
     response = client.post("/api/settings/sync-anilist")
 

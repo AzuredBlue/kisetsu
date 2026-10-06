@@ -1,7 +1,7 @@
 import json
 import re
 import unittest
-from qbit_seasonal_anime.core.rules import (
+from kisetsu.core.rules import (
     RELEASE_NAME_JOINER,
     build_regex_pattern,
     build_release_name_pattern,
@@ -9,7 +9,7 @@ from qbit_seasonal_anime.core.rules import (
     build_rule_name,
     sanitize_folder_name,
 )
-from qbit_seasonal_anime.db.models import Monitored, MonitoredStatus
+from kisetsu.db.models import Monitored, MonitoredStatus
 
 STEEL_BALL_RUN_ALIASES = [
     "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd - 3rd STAGE",
@@ -246,8 +246,8 @@ class TestRules(unittest.TestCase):
 
     def test_create_or_update_rule_does_not_blank_existing_rule_state(self):
         from unittest.mock import MagicMock
-        from qbit_seasonal_anime.db.models import Feed
-        from qbit_seasonal_anime.core.rules import create_or_update_rule
+        from kisetsu.db.models import Feed
+        from kisetsu.core.rules import create_or_update_rule
 
         mock_qbit = MagicMock()
         show = Monitored(
@@ -279,9 +279,9 @@ class TestRules(unittest.TestCase):
 
     def test_create_or_update_rule_survives_rule_read_failure(self):
         from unittest.mock import MagicMock
-        from qbit_seasonal_anime.db.models import Feed
-        from qbit_seasonal_anime.clients.qbit import QbitClientError
-        from qbit_seasonal_anime.core.rules import create_or_update_rule
+        from kisetsu.db.models import Feed
+        from kisetsu.clients.qbit import QbitClientError
+        from kisetsu.core.rules import create_or_update_rule
 
         mock_qbit = MagicMock()
         mock_qbit.get_rss_rules.side_effect = QbitClientError("qBittorrent busy")
@@ -302,7 +302,7 @@ class TestRules(unittest.TestCase):
         self.assertEqual(written["previouslyMatchedEpisodes"], [])
 
     def test_match_state_alone_does_not_trigger_a_rule_rewrite(self):
-        from qbit_seasonal_anime.core.supervisor import _rules_are_equivalent
+        from kisetsu.core.supervisor import _rules_are_equivalent
 
         base = {
             "mustContain": "Sousou",
@@ -325,7 +325,7 @@ class TestRules(unittest.TestCase):
         self.assertEqual(name, "[Seasonal] Frieren - Beyond Journey's End")
 
     def test_generate_season_variants_does_not_corrupt_pronoun_i(self):
-        from qbit_seasonal_anime.core.rules import generate_season_variants
+        from kisetsu.core.rules import generate_season_variants
         variants = generate_season_variants("I Was Reincarnated as a Slime")
         self.assertEqual(variants, ["I Was Reincarnated as a Slime"])
 
@@ -334,7 +334,7 @@ class TestRules(unittest.TestCase):
 
     def test_generate_season_variants_preserves_colon_titles(self):
         """Separators inside a title are part of the name, not a cut point."""
-        from qbit_seasonal_anime.core.rules import generate_season_variants
+        from kisetsu.core.rules import generate_season_variants
         v = generate_season_variants("Re:Zero kara Hajimeru Isekai Seikatsu 4th Season")
         self.assertIn("Re:Zero kara Hajimeru Isekai Seikatsu S0?4", v)
         self.assertIn("Re:Zero kara Hajimeru Isekai Seikatsu Season 4", v)
@@ -346,19 +346,19 @@ class TestRules(unittest.TestCase):
         self.assertIn("Fate/stay night: Unlimited Blade Works S0?2", v3)
 
     def test_generate_season_variants_keeps_hyphenated_titles_whole(self):
-        from qbit_seasonal_anime.core.rules import generate_season_variants
+        from kisetsu.core.rules import generate_season_variants
         v = generate_season_variants("Akane-banashi 2nd Season")
         self.assertIn("Akane-banashi S0?2", v)
         self.assertIn("Akane-banashi Season 2", v)
 
     def test_generate_season_variants_strips_dangling_punctuation(self):
-        from qbit_seasonal_anime.core.rules import generate_season_variants
+        from kisetsu.core.rules import generate_season_variants
         v = generate_season_variants("Show Name - Season 2")
         self.assertIn("Show Name S0?2", v)
         self.assertNotIn("Show Name - S0?2", v)
 
     def test_season_variant_regex_matches_unpadded_and_padded_season(self):
-        from qbit_seasonal_anime.core.rules import build_regex_pattern
+        from kisetsu.core.rules import build_regex_pattern
         pattern = build_regex_pattern(["Blue Box Season 2"])
         self.assertTrue(re.search(pattern, "[VARYG] Blue Box S02E01 Deja Vu 1080p NF WEB-DL", re.IGNORECASE))
         self.assertTrue(re.search(pattern, "[SubsPlease] Blue Box S2 - 01 (1080p)", re.IGNORECASE))
@@ -373,8 +373,8 @@ class TestRules(unittest.TestCase):
 
     def test_create_or_update_rule_ensures_category(self):
         from unittest.mock import MagicMock
-        from qbit_seasonal_anime.core.rules import create_or_update_rule
-        from qbit_seasonal_anime.db.models import Feed
+        from kisetsu.core.rules import create_or_update_rule
+        from kisetsu.db.models import Feed
 
         mock_qbit = MagicMock()
         mock_qbit.get_matching_articles.return_value = {"feed_url": ["[SubsPlease] Frieren - 08.mkv"]}
@@ -396,15 +396,15 @@ class TestRules(unittest.TestCase):
 
     def test_create_or_update_rule_runs_debug_check_when_enabled(self):
         from unittest.mock import MagicMock, patch
-        from qbit_seasonal_anime.core.rules import create_or_update_rule
-        from qbit_seasonal_anime.db.models import Feed
+        from kisetsu.core.rules import create_or_update_rule
+        from kisetsu.db.models import Feed
 
         mock_qbit = MagicMock()
         mock_qbit.get_matching_articles.return_value = {"feed_url": ["[SubsPlease] Frieren - 08.mkv"]}
         show = Monitored(id=1, anilist_id=101, display_name="Frieren", aliases_json='["Frieren"]')
         feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss")
 
-        with patch("qbit_seasonal_anime.core.rules.logger.isEnabledFor", return_value=True):
+        with patch("kisetsu.core.rules.logger.isEnabledFor", return_value=True):
             create_or_update_rule(
                 qbit_client=mock_qbit,
                 monitored=show,
@@ -418,8 +418,8 @@ class TestRules(unittest.TestCase):
 
     def test_create_or_update_rule_reuses_cycle_category_cache(self):
         from unittest.mock import MagicMock
-        from qbit_seasonal_anime.core.rules import create_or_update_rule
-        from qbit_seasonal_anime.db.models import Feed
+        from kisetsu.core.rules import create_or_update_rule
+        from kisetsu.db.models import Feed
 
         mock_qbit = MagicMock()
         show = Monitored(id=1, anilist_id=101, display_name="Frieren", aliases_json='["Frieren"]')
@@ -441,7 +441,7 @@ class TestRules(unittest.TestCase):
         self.assertEqual(known_categories, {"Anime"})
 
     def test_resolve_save_path_placeholders(self):
-        from qbit_seasonal_anime.core.rules import resolve_save_path
+        from kisetsu.core.rules import resolve_save_path
         import os
         home = os.path.expanduser("~")
 

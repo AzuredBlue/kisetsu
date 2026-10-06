@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import MagicMock
-from qbit_seasonal_anime.clients.qbit import QbitRSSRefreshError
-from qbit_seasonal_anime.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from qbit_seasonal_anime.db.models import Feed, Monitored
+from kisetsu.clients.qbit import QbitRSSRefreshError
+from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
+from kisetsu.db.models import Feed, Monitored
 from tests.fixtures import MOCK_QBIT_RSS_ITEMS
 
 
@@ -33,7 +33,7 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(mock_qbit.get_rss_items.call_count, 3)
 
     def test_rss_snapshot_caches_failed_load_for_cycle(self):
-        from qbit_seasonal_anime.clients.qbit import QbitClientError
+        from kisetsu.clients.qbit import QbitClientError
 
         mock_qbit = MagicMock()
         mock_qbit.get_rss_items.side_effect = QbitClientError("RSS unavailable")
@@ -239,7 +239,7 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(feed.qbit_feed_name, "Erai-raws")
 
     def test_get_max_same_host_feed_count(self):
-        from qbit_seasonal_anime.core.discovery import get_max_same_host_feed_count
+        from kisetsu.core.discovery import get_max_same_host_feed_count
 
         urls = [
             "https://nyaa.si/?page=rss&u=Erai-raws",

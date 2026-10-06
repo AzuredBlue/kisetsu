@@ -1,6 +1,6 @@
-# qbit-seasonal-anime
+# Kisetsu
 
-A script that helps you manage your seasonal anime's RSS download rules automatically.
+Kisetsu reads your AniList watching list and has qBittorrent download each new episode of your seasonal anime, either through managed RSS download rules or by adding torrents itself.
 
 The WebUI is available at `http://localhost:8085`.
 
@@ -30,23 +30,23 @@ The WebUI is available at `http://localhost:8085`.
 
 ### Option 1:  `pipx` (Easiest)
 ```bash
-pipx install git+https://github.com/AzuredBlue/qbit-seasonal-anime.git
+pipx install git+https://github.com/AzuredBlue/kisetsu.git
 
 # Run directly from anywhere
-qbit-seasonal-anime
+kisetsu
 ```
 
 ### Option 2: Clone & Run
 ```bash
-git clone https://github.com/AzuredBlue/qbit-seasonal-anime.git
-cd qbit-seasonal-anime
+git clone https://github.com/AzuredBlue/kisetsu.git
+cd kisetsu
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
 # Run:
-qbit-seasonal-anime
+kisetsu
 ```
 
 ---
@@ -54,6 +54,8 @@ qbit-seasonal-anime
 ## Usage
 
 After running it, you can open **`http://localhost:8085`** in your browser, where you can change some settings like the base download directory and connecting with your AniList and qBit.
+
+The UI only listens on `127.0.0.1` by default. Run `kisetsu --host 0.0.0.0` to expose it to your LAN (there is no authentication), and `--port` to change the port.
 
 After syncing with your AniList and making sure it can connect to qBit's WebUI, it will automatically create RSS Download Rules for each seasonal show. Once a show airs, it will automatically check for the best release (based on your RSS feed ranking) and adjust the RSS Download Rule so it matches it.
 

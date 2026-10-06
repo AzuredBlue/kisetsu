@@ -1,7 +1,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.db.models import (
+from kisetsu.db.models import (
     Episode,
     EpisodeStatus,
     Feed,
@@ -11,7 +11,7 @@ from qbit_seasonal_anime.db.models import (
     TorrentOperationStatus,
     utc_now,
 )
-from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval, is_hunting
+from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
 
 
 class TestScheduler(unittest.TestCase):
@@ -561,7 +561,7 @@ class TestEarlyAirTolerance(unittest.TestCase):
 
     def _hunting_at(self, when, tolerance):
         from unittest.mock import patch
-        with patch("qbit_seasonal_anime.workers.scheduler.utc_now", return_value=when):
+        with patch("kisetsu.workers.scheduler.utc_now", return_value=when):
             return is_hunting(
                 self.session,
                 download_mode="direct",

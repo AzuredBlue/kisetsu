@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import qbittorrentapi
 
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConnectionError
+from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConnectionError
 
 
 def _client():
@@ -133,8 +133,8 @@ def test_get_client_retries_transient_connection_failure():
     client_factory = MagicMock(side_effect=[ConnectionError("starting"), connected_client])
     sleep = MagicMock()
 
-    with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client", client_factory), patch(
-        "qbit_seasonal_anime.clients.qbit.time.sleep", sleep
+    with patch("kisetsu.clients.qbit.qbittorrentapi.Client", client_factory), patch(
+        "kisetsu.clients.qbit.time.sleep", sleep
     ):
         client = QBitClient(host="http://qbit:8080")
         result = client.get_client(max_attempts=3, backoff_factor=1.0)
@@ -148,8 +148,8 @@ def test_get_client_raises_connection_error_after_bounded_attempts():
     client_factory = MagicMock(side_effect=ConnectionError("not ready"))
     sleep = MagicMock()
 
-    with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client", client_factory), patch(
-        "qbit_seasonal_anime.clients.qbit.time.sleep", sleep
+    with patch("kisetsu.clients.qbit.qbittorrentapi.Client", client_factory), patch(
+        "kisetsu.clients.qbit.time.sleep", sleep
     ):
         client = QBitClient(host="http://qbit:8080")
         with pytest.raises(QbitConnectionError):
@@ -164,8 +164,8 @@ def test_get_client_does_not_retry_authentication_failure():
     client_factory.return_value.auth_log_in.side_effect = qbittorrentapi.LoginFailed("invalid credentials")
     sleep = MagicMock()
 
-    with patch("qbit_seasonal_anime.clients.qbit.qbittorrentapi.Client", client_factory), patch(
-        "qbit_seasonal_anime.clients.qbit.time.sleep", sleep
+    with patch("kisetsu.clients.qbit.qbittorrentapi.Client", client_factory), patch(
+        "kisetsu.clients.qbit.time.sleep", sleep
     ):
         client = QBitClient(host="http://qbit:8080")
         with pytest.raises(QbitAuthenticationError):

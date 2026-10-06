@@ -5,9 +5,9 @@ from unittest.mock import MagicMock, patch
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from qbit_seasonal_anime.clients.qbit import QbitClientError
-from qbit_seasonal_anime.core.confirmation import ingest_log_acceptances, parse_acceptance_log_line
-from qbit_seasonal_anime.db.models import (
+from kisetsu.clients.qbit import QbitClientError
+from kisetsu.core.confirmation import ingest_log_acceptances, parse_acceptance_log_line
+from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -194,7 +194,7 @@ class TestRuleObserver(unittest.IsolatedAsyncioTestCase):
     MARKER = "27 Sep 2026 01:32:05 +0000"
 
     def setUp(self):
-        from qbit_seasonal_anime.server.state import state
+        from kisetsu.server.state import state
 
         state.log_wake_event.clear()
         self.engine = create_engine("sqlite:///:memory:")
@@ -213,8 +213,8 @@ class TestRuleObserver(unittest.IsolatedAsyncioTestCase):
             session.commit()
 
     async def _run(self, client, iterations=2):
-        from qbit_seasonal_anime.server.app import qbit_rule_observer_task
-        from qbit_seasonal_anime.server.state import state
+        from kisetsu.server.app import qbit_rule_observer_task
+        from kisetsu.server.state import state
 
         calls = {"markers": 0}
 
@@ -228,8 +228,8 @@ class TestRuleObserver(unittest.IsolatedAsyncioTestCase):
         client.get_rule_match_markers.side_effect = markers
         client.get_rule_patterns.return_value = {}
 
-        with patch("qbit_seasonal_anime.server.app.get_engine", return_value=self.engine), \
-                patch("qbit_seasonal_anime.server.app.QBitClient", return_value=client):
+        with patch("kisetsu.server.app.get_engine", return_value=self.engine), \
+                patch("kisetsu.server.app.QBitClient", return_value=client):
             with self.assertRaises(asyncio.CancelledError):
                 await qbit_rule_observer_task()
 

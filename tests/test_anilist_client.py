@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock, patch
-from qbit_seasonal_anime.clients.anilist import AniListClient, AniListError, get_current_and_next_season
+from kisetsu.clients.anilist import AniListClient, AniListError, get_current_and_next_season
 
 
 def test_season_calculation():
@@ -70,7 +70,7 @@ async def test_fetch_user_seasonal_anime_filtering():
     }
 
     with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
-         patch("qbit_seasonal_anime.clients.anilist.get_current_and_next_season", return_value=(("WINTER", 2026), ("SPRING", 2026))):
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("WINTER", 2026), ("SPRING", 2026))):
         mock_post.return_value = payload
 
         shows = await client.fetch_user_seasonal_anime("TestUser")
@@ -128,7 +128,7 @@ async def test_fetch_user_seasonal_anime_includes_current_season_finished_and_mo
     }
 
     with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
-         patch("qbit_seasonal_anime.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
         mock_post.return_value = payload
 
         shows = await client.fetch_user_seasonal_anime("TestUser", monitored_anilist_ids={20})
@@ -178,7 +178,7 @@ async def test_fetch_user_seasonal_anime_surfaces_list_status():
     }
 
     with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
-         patch("qbit_seasonal_anime.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
         mock_post.return_value = payload
 
         shows = {s["anilist_id"]: s for s in await client.fetch_user_seasonal_anime("TestUser", monitored_anilist_ids={5, 6})}
@@ -231,7 +231,7 @@ async def test_fetch_user_seasonal_anime_returns_completed_entries_for_monitored
     }
 
     with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
-         patch("qbit_seasonal_anime.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
         mock_post.return_value = payload
 
         shows = {s["anilist_id"]: s for s in await client.fetch_user_seasonal_anime("TestUser", monitored_anilist_ids={7})}
@@ -271,7 +271,7 @@ async def test_fetch_user_seasonal_anime_never_introduces_a_list_completed_show(
     }
 
     with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
-         patch("qbit_seasonal_anime.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("SUMMER", 2026), ("FALL", 2026))):
         mock_post.return_value = payload
 
         # Not monitored yet, so it must be filtered out instead of armed for download.

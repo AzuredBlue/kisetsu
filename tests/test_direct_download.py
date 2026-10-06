@@ -7,11 +7,11 @@ import pytest
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from qbit_seasonal_anime.clients.qbit import QbitClientError
-from qbit_seasonal_anime.core.discovery import RssSnapshot
-from qbit_seasonal_anime.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
-from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.db.models import (
+from kisetsu.clients.qbit import QbitClientError
+from kisetsu.core.discovery import RssSnapshot
+from kisetsu.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
+from kisetsu.core.supervisor import Supervisor
+from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -1157,19 +1157,19 @@ async def test_supervisor_ordinary_direct_cycle_also_fails_closed_on_preflight()
     engine.dispose()
 
 
-def test_direct_preflight_disables_legacy_managed_rule_prefix():
+def test_direct_preflight_disables_managed_rule_prefix():
     engine, session = _database()
     settings = Settings(id=1, download_mode="direct")
     session.add(settings)
     qbit = MagicMock()
-    rules = {"[qbit-seasonal-anime] Legacy Show": {"enabled": True}}
+    rules = {"[Seasonal] Managed Show": {"enabled": True}}
     qbit.get_rss_rules.side_effect = lambda: dict(rules)
     qbit.set_rss_rule.side_effect = lambda name, definition: rules.__setitem__(name, definition)
     supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
 
     supervisor.disable_managed_rules()
 
-    assert rules["[qbit-seasonal-anime] Legacy Show"]["enabled"] is False
+    assert rules["[Seasonal] Managed Show"]["enabled"] is False
     session.close()
     engine.dispose()
 
@@ -1503,7 +1503,7 @@ SBR_ALIASES = [
 
 
 def test_split_cour_show_rejects_bare_arc_title():
-    from qbit_seasonal_anime.core.matching import match_release_to_show
+    from kisetsu.core.matching import match_release_to_show
 
     def decide(title, aliases):
         # The direct engine opts into arc enforcement: it chooses what to spend
@@ -1541,7 +1541,7 @@ def test_split_cour_show_rejects_bare_arc_title():
 
 
 def test_arc_enforcement_is_opt_in_for_interpretation_callers():
-    from qbit_seasonal_anime.core.matching import match_release_to_show
+    from kisetsu.core.matching import match_release_to_show
 
     # Callers that only interpret an already-downloaded release (RSS rule mode)
     # keep the historical permissive fuzzy behaviour by default.
@@ -2365,7 +2365,7 @@ def test_an_early_mid_season_release_is_grabbed():
 
 
 def test_date_mapped_episode_picks_past_aired_episode_not_future():
-    from qbit_seasonal_anime.core.grabber import _date_mapped_episode
+    from kisetsu.core.grabber import _date_mapped_episode
 
     engine, session = _database()
     show = _show(
@@ -2395,7 +2395,7 @@ def test_date_mapped_episode_picks_past_aired_episode_not_future():
 
 
 def test_mapped_episode_rejects_when_offset_maps_beyond_latest_aired():
-    from qbit_seasonal_anime.core.grabber import _mapped_episode
+    from kisetsu.core.grabber import _mapped_episode
 
     engine, session = _database()
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -2448,7 +2448,7 @@ def test_initial_v2_release_is_grabbed_directly_without_v1():
 
 
 def test_older_wanted_episode_not_in_feed_transitions_to_missed():
-    from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
+    from kisetsu.workers.scheduler import calculate_next_poll_interval
 
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")

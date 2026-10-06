@@ -4,8 +4,8 @@ import unittest
 from datetime import timedelta
 from unittest.mock import MagicMock
 from sqlmodel import Session, create_engine, SQLModel, select
-from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode, verify_and_confirm_torrents
-from qbit_seasonal_anime.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from kisetsu.core.confirmation import has_downloaded_final_episode, verify_and_confirm_torrents
+from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
 
 STEEL_BALL_RUN_ALIASES = [
     "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd - 3rd STAGE",
@@ -234,7 +234,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(self.session.exec(select(MatchHistory)).all(), [])
 
     def test_log_acceptance_lookup_requires_the_same_rule(self):
-        from qbit_seasonal_anime.clients.qbit import QBitClient
+        from kisetsu.clients.qbit import QBitClient
 
         client = QBitClient(host="http://localhost:8080")
         underlying = MagicMock()
@@ -256,7 +256,7 @@ class TestConfirmation(unittest.TestCase):
         underlying.log_main.assert_called_once()
 
     def test_log_acceptance_lookup_survives_an_unreadable_log(self):
-        from qbit_seasonal_anime.clients.qbit import QBitClient
+        from kisetsu.clients.qbit import QBitClient
 
         client = QBitClient(host="http://localhost:8080")
         underlying = MagicMock()
@@ -499,7 +499,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(m_hist[0].episode, 2)
 
     def test_canonical_episode_rejects_when_next_airing_in_future(self):
-        from qbit_seasonal_anime.core.confirmation import _canonical_episode
+        from kisetsu.core.confirmation import _canonical_episode
 
         show = Monitored(
             anilist_id=210031,
@@ -522,7 +522,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertIsNone(canonical)
 
     def test_canonical_episode_accepts_when_air_date_has_passed(self):
-        from qbit_seasonal_anime.core.confirmation import _canonical_episode
+        from kisetsu.core.confirmation import _canonical_episode
 
         show = Monitored(
             anilist_id=210031,
@@ -544,7 +544,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(canonical, 13)
 
     def test_has_downloaded_final_episode_ledger_incomplete(self):
-        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+        from kisetsu.core.confirmation import has_downloaded_final_episode
 
         show = Monitored(
             anilist_id=210031,
@@ -565,7 +565,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertFalse(has_downloaded_final_episode(self.session, show))
 
     def test_has_downloaded_final_episode_empty_ledger_respects_schedule(self):
-        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+        from kisetsu.core.confirmation import has_downloaded_final_episode
 
         # Empty ledger (no Episode rows exist)
         show = Monitored(
@@ -584,7 +584,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertFalse(has_downloaded_final_episode(self.session, show))
 
     def test_has_downloaded_final_episode_handles_legacy_raw(self):
-        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+        from kisetsu.core.confirmation import has_downloaded_final_episode
 
         # Show with raw last_confirmed_episode (e.g. 23) and offset 11, total 12
         show = Monitored(
@@ -609,7 +609,7 @@ class TestConfirmation(unittest.TestCase):
 
     def test_has_downloaded_final_episode_requires_every_episode_of_the_season(self):
         """Episodes with no ledger row were never downloaded, so they block completion."""
-        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+        from kisetsu.core.confirmation import has_downloaded_final_episode
 
         show = Monitored(
             anilist_id=210032,

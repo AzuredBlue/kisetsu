@@ -9,8 +9,8 @@ from typing import List, Optional
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
-from qbit_seasonal_anime.config import DB_PATH, CONFIG_DIR
-from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, as_utc, normalize_mapping_source
+from kisetsu.config import DB_PATH, CONFIG_DIR
+from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, as_utc, normalize_mapping_source
 
 _engine = None
 SCHEMA_VERSION = 2
@@ -72,7 +72,7 @@ def _offset_contradicts_air_schedule(
 
 
 def _repair_legacy_episode_state(session: Session) -> None:
-    from qbit_seasonal_anime.core.matching import parse_release_title
+    from kisetsu.core.matching import parse_release_title
 
     shows = {show.id: show for show in session.exec(select(Monitored)).all()}
     episodes = session.exec(select(Episode)).all()
@@ -126,7 +126,7 @@ def _repair_legacy_episode_state(session: Session) -> None:
         ]
         contradiction = _offset_contradicts_air_schedule(judged, candidate_offset)
         if contradiction:
-            logging.getLogger("qbit_seasonal_anime.db.session").warning(
+            logging.getLogger("kisetsu.db.session").warning(
                 f"Keeping stored episode offset {mapping.offset} for "
                 f"'{show.display_name if show else show_id}' on feed {feed_id}: offset "
                 f"{candidate_offset} implied by the episode ledger contradicts the "
@@ -230,9 +230,9 @@ def _repair_learned_feed_state(session: Session) -> None:
     learn a pattern from the latter, which produced rules that only ever matched
     the single episode they were built from.
     """
-    from qbit_seasonal_anime.core.matching import parse_release_title
+    from kisetsu.core.matching import parse_release_title
 
-    log = logging.getLogger("qbit_seasonal_anime.db.session")
+    log = logging.getLogger("kisetsu.db.session")
     shows = session.exec(select(Monitored)).all()
     episodes = session.exec(select(Episode)).all()
     episodes_by_show = defaultdict(list)
@@ -614,7 +614,7 @@ def release_supervision_lease(engine: Engine, owner: str) -> None:
                 {"owner": owner},
             )
     except Exception as e:
-        logging.getLogger("qbit_seasonal_anime.db.session").warning(
+        logging.getLogger("kisetsu.db.session").warning(
             f"Could not release supervision lease: {e}"
         )
 

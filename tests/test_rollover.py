@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from qbit_seasonal_anime.core.supervisor import Supervisor
-from qbit_seasonal_anime.db.models import Episode, Monitored, MonitoredStatus, Settings, utc_now
+from kisetsu.core.supervisor import Supervisor
+from kisetsu.db.models import Episode, Monitored, MonitoredStatus, Settings, utc_now
 
 
 @pytest.fixture
@@ -209,7 +209,7 @@ def test_prune_past_season_shows(session):
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
     from unittest.mock import patch
-    with patch("qbit_seasonal_anime.core.supervisor.get_current_and_next_season", return_value=(("FALL", 2026), ("WINTER", 2027))):
+    with patch("kisetsu.core.supervisor.get_current_and_next_season", return_value=(("FALL", 2026), ("WINTER", 2027))):
         logs = supervisor.prune_past_season_shows()
 
     all_ids = {s.id for s in session.exec(select(Monitored)).all()}

@@ -3,9 +3,9 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 from guessit import guessit
 from rapidfuzz import fuzz
-from qbit_seasonal_anime.config import FUZZY_MATCH_THRESHOLD
+from kisetsu.config import FUZZY_MATCH_THRESHOLD
 
-logger = logging.getLogger("qbit_seasonal_anime.core.matching")
+logger = logging.getLogger("kisetsu.core.matching")
 
 
 VERSION_REGEX: re.Pattern[str] = re.compile(r"(E\d+|\b\d+)v\d+", re.IGNORECASE)
@@ -402,7 +402,7 @@ def match_release_to_show(
         return False, 0.0, parsed
 
     if test_pattern is None:
-        from qbit_seasonal_anime.core.rules import build_regex_pattern
+        from kisetsu.core.rules import build_regex_pattern
         test_pattern = build_regex_pattern(aliases)
     try:
         m = re.search(test_pattern, raw_title, flags=re.IGNORECASE)

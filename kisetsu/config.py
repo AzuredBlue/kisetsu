@@ -1,6 +1,6 @@
 from pathlib import Path
 
-APP_NAME = "qbit-seasonal-anime"
+APP_NAME = "kisetsu"
 CONFIG_DIR = Path.home() / ".config" / APP_NAME
 DB_PATH = CONFIG_DIR / "anime.db"
 

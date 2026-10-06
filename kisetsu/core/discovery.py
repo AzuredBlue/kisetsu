@@ -5,12 +5,12 @@ import time
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
-from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
-from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
-from qbit_seasonal_anime.core.rules import build_regex_pattern
-from qbit_seasonal_anime.db.models import Feed, Monitored
+from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
+from kisetsu.core.matching import match_release_to_show, prepare_aliases
+from kisetsu.core.rules import build_regex_pattern
+from kisetsu.db.models import Feed, Monitored
 
-logger = logging.getLogger("qbit_seasonal_anime.core.discovery")
+logger = logging.getLogger("kisetsu.core.discovery")
 
 
 def get_max_same_host_feed_count(feed_urls: List[str]) -> int:
