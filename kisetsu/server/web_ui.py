@@ -162,7 +162,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       <div class="flex items-center gap-3 text-xs font-medium flex-shrink-0">
         <span id="stat-working" class="text-emerald-400">0 Working</span>
         <span id="stat-upcoming" class="text-sky-400">0 Upcoming</span>
-        <span id="stat-stalled" class="text-rose-400">0 Stalled</span>
+        <span id="stat-stalled" class="text-rose-400 hidden">0 Stalled</span>
       </div>
     </header>
 
@@ -2212,7 +2212,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
         document.getElementById('stat-working').textContent = `${st.counts.works} Working`;
         document.getElementById('stat-upcoming').textContent = `${st.counts.upcoming} Upcoming`;
-        document.getElementById('stat-stalled').textContent = `${st.counts.stalled} Stalled`;
+        const stalledEl = document.getElementById('stat-stalled');
+        stalledEl.textContent = `${st.counts.stalled} Stalled`;
+        stalledEl.classList.toggle('hidden', !st.counts.stalled);
 
         if (activeTab === 'history') loadHistory();
       } catch {
