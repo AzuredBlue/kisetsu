@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from email.utils import format_datetime
 from unittest.mock import MagicMock
 
 import pytest
@@ -2095,8 +2096,10 @@ def test_a_pinned_show_never_moves_off_its_feed():
     engine.dispose()
 
 
-AIR = datetime(2026, 10, 4, 23, 0, tzinfo=timezone.utc)
-REAL_AIR = datetime(2026, 10, 4, 22, 0, tzinfo=timezone.utc)
+# Air times are relative to now: the grabber compares them with the real clock,
+# so fixed dates would stop meaning "just aired" the day after they were written.
+AIR = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+REAL_AIR = AIR - timedelta(hours=1)
 EP9_TITLE = "[SubsPlease] Sousou no Frieren - 09 (1080p) [E9].mkv"
 
 
@@ -2134,7 +2137,7 @@ def _early_release_qbit(feed):
                 "id": "ep9",
                 "title": EP9_TITLE,
                 "torrentURL": "magnet:ep9",
-                "date": "Sun, 04 Oct 2026 22:05:00 +0000",
+                "date": format_datetime(REAL_AIR + timedelta(minutes=5)),
             }],
         }
     }
@@ -2192,7 +2195,7 @@ def test_a_release_before_the_season_premiere_is_not_grabbed():
         session,
         current_feed_id=feed.id,
         next_airing_episode=1,
-        next_airing_at=AIR,
+        next_airing_at=AIR + timedelta(hours=12),
     )
     qbit = _early_release_qbit(feed)
 
@@ -2424,8 +2427,8 @@ def test_initial_v2_release_is_grabbed_directly_without_v1():
 
     # Feed has v2 first (newer pubDate), then v1 (older pubDate)
     articles = [
-        {"id": "v2", "title": "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [B].mkv", "torrentURL": "magnet:v2", "pubDate": "Sat, 03 Oct 2026 12:00:00 +0000"},
-        {"id": "v1", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [A].mkv", "torrentURL": "magnet:v1", "pubDate": "Fri, 02 Oct 2026 09:00:00 +0000"},
+        {"id": "v2", "title": "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [B].mkv", "torrentURL": "magnet:v2", "pubDate": format_datetime(AIR - timedelta(hours=2))},
+        {"id": "v1", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [A].mkv", "torrentURL": "magnet:v1", "pubDate": format_datetime(AIR - timedelta(days=1))},
     ]
     qbit, _ = _qbit()
     qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": articles}}
