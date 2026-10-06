@@ -29,7 +29,7 @@ from qbit_seasonal_anime.config import DEFAULT_DOWNLOAD_MODE
 from qbit_seasonal_anime.core.grabber import cancel_episode_operations
 from qbit_seasonal_anime.core.supervisor import Supervisor
 from qbit_seasonal_anime.core.matching import match_release_to_show, prepare_aliases
-from qbit_seasonal_anime.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule
+from qbit_seasonal_anime.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
 from qbit_seasonal_anime.workers.scheduler import calculate_next_poll_interval
 from qbit_seasonal_anime.server.state import state
 
@@ -45,9 +45,12 @@ def get_db():
         yield session
 
 
-def get_qbit(session: Session = Depends(get_db)) -> QBitClient:
-    s = get_settings(session)
+def _qbit_from_settings(s: Settings) -> QBitClient:
     return QBitClient(host=s.qbit_host, username=s.qbit_username, password=s.qbit_password, timeout=10)
+
+
+def get_qbit(session: Session = Depends(get_db)) -> QBitClient:
+    return _qbit_from_settings(get_settings(session))
 
 
 def normalized_download_mode(session: Session) -> str:
@@ -86,7 +89,6 @@ def get_shows(session: Session = Depends(get_db)):
     now = datetime.now(timezone.utc)
     shows = session.exec(select(Monitored).order_by(Monitored.id)).all()
     feeds = {f.id: f.qbit_feed_name for f in session.exec(select(Feed)).all()}
-    prefer_english = (getattr(settings, "title_language", "english") == "english")
 
     result = []
     episode_rows = session.exec(select(Episode)).all()
@@ -110,9 +112,8 @@ def get_shows(session: Session = Depends(get_db)):
             or (airing_at is not None and airing_at <= now)
         )
 
-        english_title = s.title_english
         romaji_title = s.title_romaji or s.display_name
-        effective_display_name = english_title if (prefer_english and english_title) else (romaji_title or s.display_name)
+        effective_display_name = effective_title(s, settings.title_language)
 
         from qbit_seasonal_anime.core.rules import sanitize_folder_name, compress_home_path
         base_template = settings.base_dir or "~/Anime/{name}"
@@ -372,8 +373,7 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient, force: bo
 
 
 def _effective_display_name(show: Monitored, settings: Settings) -> str:
-    prefer_english = (getattr(settings, "title_language", "english") == "english")
-    return show.title_english if (prefer_english and show.title_english) else (show.title_romaji or show.display_name)
+    return effective_title(show, settings.title_language)
 
 
 def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Settings, display_name: str) -> Dict[str, Any]:
@@ -1207,7 +1207,7 @@ async def _sync_anilist_now(session: Session):
     mode = normalized_download_mode(session)
     direct = uses_direct_engine(mode)
 
-    qbit = QBitClient(host=s.qbit_host, username=s.qbit_username, password=s.qbit_password, timeout=10)
+    qbit = _qbit_from_settings(s)
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
     try:
         logs = []
@@ -1298,7 +1298,7 @@ async def run_cycle_now(session: Session = Depends(get_db)):
 
 async def _run_cycle_now(session: Session):
     s = get_settings(session)
-    qbit = QBitClient(host=s.qbit_host, username=s.qbit_username, password=s.qbit_password, timeout=10)
+    qbit = _qbit_from_settings(s)
 
     # Probe first so the button does not launch a cycle that can only fail.
     try:

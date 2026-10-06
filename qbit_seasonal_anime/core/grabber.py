@@ -10,7 +10,7 @@ from qbit_seasonal_anime.clients.qbit import QBitClient, QbitClientError
 from qbit_seasonal_anime.core.confirmation import record_match_event
 from qbit_seasonal_anime.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from qbit_seasonal_anime.core.matching import match_release_to_show, parse_release_title
-from qbit_seasonal_anime.core.rules import resolve_save_path
+from qbit_seasonal_anime.core.rules import effective_title, resolve_save_path
 from qbit_seasonal_anime.db.models import (
     ACTIVE_OPERATION_STATUSES,
     CANCELLABLE_OPERATION_STATUSES,
@@ -1067,7 +1067,7 @@ def _attempt_operation_add(
         return
     save_path = resolve_save_path(
         settings.base_dir,
-        show.title_english if getattr(settings, "title_language", "english") == "english" and show.title_english else (show.title_romaji or show.display_name),
+        effective_title(show, settings.title_language),
         show.save_folder,
     )
     operation.status = TorrentOperationStatus.PREPARING
