@@ -570,6 +570,21 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         .replace(/'/g, '&#039;');
     }
 
+    // The server sends UTC; show times in the viewer's own timezone.
+    function localTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
+    }
+
+    function localDateTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d)) return '';
+      return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+    }
+
     function showToast(message, type = 'info') {
       const toast = document.createElement('div');
       const colors = {
@@ -765,8 +780,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (cd === 'Aired' && show.last_confirmed_episode && show.last_confirmed_episode >= show.next_airing_episode) {
           airInfo = `Ep ${show.last_confirmed_episode} (Downloaded)`;
         } else {
-          airInfo = `Ep ${show.next_airing_episode} (${cd || show.next_airing_formatted || ''})`;
-          countdownAttr = `data-air-at="${show.next_airing_at}" data-ep="${show.next_airing_episode}" data-date-str="${show.next_airing_formatted || ''}"`;
+          airInfo = `Ep ${show.next_airing_episode} (${cd || localDateTime(show.next_airing_at)})`;
+          countdownAttr = `data-air-at="${show.next_airing_at}" data-ep="${show.next_airing_episode}" data-date-str="${localDateTime(show.next_airing_at)}"`;
         }
       } else if (show.last_confirmed_episode) {
         airInfo = `Ep ${show.last_confirmed_episode}`;
@@ -824,7 +839,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
             <div class="pt-2.5 border-t border-line-soft flex items-center justify-between gap-2.5 text-xs">
               <span class="truncate text-zinc-500 min-w-0" title="${feedName}">${feedName}</span>
-              <span class="show-countdown flex-shrink-0 text-zinc-200 font-medium tabular-nums ml-auto" ${countdownAttr} title="${show.next_airing_formatted ? show.next_airing_formatted : ''}">${airInfo}</span>
+              <span class="show-countdown flex-shrink-0 text-zinc-200 font-medium tabular-nums ml-auto" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
             </div>
           </div>
 
@@ -2097,7 +2112,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         else if (level === 'WARNING' || level === 'WARN') levelBadge = pill('WARN', 'bg-amber-500/15 text-amber-400');
         else if (level === 'DEBUG') levelBadge = pill('DEBUG', 'bg-sky-500/15 text-sky-400');
 
-        const timeStr = l.time_str || (l.timestamp ? new Date(l.timestamp).toLocaleTimeString() : '');
+        const timeStr = localTime(l.timestamp) || l.time_str || '';
 
         return `<div class="flex items-start gap-2.5 py-0.5 hover:bg-chrome px-1.5 rounded transition-colors leading-relaxed">
           <span class="text-teal-500/60 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
@@ -2124,7 +2139,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         showToast('No logs to copy.', 'info');
         return;
       }
-      const text = cachedLogs.map(l => `[${l.time_str || l.timestamp}] [${l.level || 'INFO'}] ${l.message}`).join('\\n');
+      const text = cachedLogs.map(l => `[${localTime(l.timestamp) || l.time_str || l.timestamp}] [${l.level || 'INFO'}] ${l.message}`).join('\\n');
       navigator.clipboard.writeText(text).then(() => {
         showToast('Logs copied to clipboard!', 'success');
       }).catch(() => {
