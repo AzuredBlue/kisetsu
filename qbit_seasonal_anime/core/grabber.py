@@ -1290,6 +1290,59 @@ def _decide(show: Monitored, title: str) -> Tuple[bool, Dict[str, Any]]:
     return matched, parsed
 
 
+def _mark_missed_episodes(
+    session: Session,
+    show: Monitored,
+    episodes: List[Episode],
+    now: datetime,
+    air_horizon: datetime,
+    latest_aired: Optional[int],
+    backfill_window_days: int,
+) -> List[str]:
+    """Mark aired WANTED episodes that the feeds can no longer deliver as MISSED.
+
+    A WANTED episode that is stale, older than the latest aired one, or followed
+    by a downloaded one fell out of the RSS cache and will not come back.
+    """
+    logs: List[str] = []
+    for episode in episodes:
+        if episode.status != EpisodeStatus.WANTED:
+            continue
+        if episode.retry_after and as_utc(episode.retry_after) > now:
+            # Requeued moments ago (e.g. its torrent was removed); give
+            # the retry its chance before calling the episode missed.
+            continue
+        episode_air_at = as_utc(episode.air_at)
+        # An episode MUST have reached its air time to ever be considered missed.
+        # Future scheduled episodes must remain WANTED.
+        if episode_air_at is not None:
+            has_aired = episode_air_at <= air_horizon
+        else:
+            has_aired = latest_aired is not None and episode.episode_number <= latest_aired
+        if not has_aired:
+            continue
+
+        is_stale_air = (
+            episode_air_at is not None
+            and now - episode_air_at > timedelta(days=backfill_window_days)
+        )
+        is_older_than_latest = (
+            latest_aired is not None
+            and episode.episode_number < latest_aired
+        )
+        has_newer_downloaded = any(
+            e.episode_number > episode.episode_number and e.status in _RELEASE_HOLDING
+            for e in episodes
+        )
+        if is_stale_air or is_older_than_latest or has_newer_downloaded:
+            episode.status = EpisodeStatus.MISSED
+            session.add(episode)
+            msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
+            logs.append(msg)
+            logger.info(msg)
+    return logs
+
+
 def evaluate_and_grab_releases(
     session: Session,
     qbit: QBitClient,
@@ -1317,6 +1370,9 @@ def evaluate_and_grab_releases(
         MonitoredStatus.STALLED,
     ]))).all()
     now = utc_now()
+    backfill_window_days = max(0, int(settings.backfill_window_days))
+    tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
+    air_horizon = now + timedelta(hours=tolerance_hours)
     for show in shows:
         episodes = sync_show_episodes(session, show)
         episodes_by_number = {episode.episode_number: episode for episode in episodes}
@@ -1333,8 +1389,6 @@ def evaluate_and_grab_releases(
                 failed_versions.setdefault(failed_operation.episode_id, set()).add(failed_operation.version)
         canonical_max = max((episode.episode_number for episode in episodes), default=0)
         target_count = show.total_episodes or max(show.next_airing_episode or 0, canonical_max, 1)
-        tolerance_hours = max(0, int(getattr(settings, "early_air_tolerance_hours", 0) or 0))
-        air_horizon = now + timedelta(hours=tolerance_hours)
         known_aired = [
             episode.episode_number
             for episode in episodes
@@ -1410,7 +1464,6 @@ def evaluate_and_grab_releases(
                 if version < best_version.get(episode_number, version):
                     continue
                 episode_air_at = as_utc(episode.air_at)
-                backfill_window_days = max(0, int(getattr(settings, "backfill_window_days", 14)))
                 is_upgrade = version > episode.version
                 if not is_upgrade:
                     if episode_air_at is None:
@@ -1443,50 +1496,9 @@ def evaluate_and_grab_releases(
                     else:
                         logs.append(f"Queued {show.display_name} Ep {episode_number} v{version}: {title}")
         if mode == "direct" and has_feed_articles:
-            backfill_window_days = max(0, int(getattr(settings, "backfill_window_days", 14)))
-            for episode in episodes:
-                if episode.status != EpisodeStatus.WANTED:
-                    continue
-                if episode.retry_after and as_utc(episode.retry_after) > now:
-                    # Requeued moments ago (e.g. its torrent was removed); give
-                    # the retry its chance before calling the episode missed.
-                    continue
-                episode_air_at = as_utc(episode.air_at)
-                # An episode MUST have reached its air time to ever be considered missed.
-                # Future scheduled episodes must remain WANTED.
-                has_aired = False
-                if episode_air_at is not None:
-                    has_aired = (episode_air_at <= air_horizon)
-                elif latest_aired is not None:
-                    has_aired = (episode.episode_number <= latest_aired)
-
-                if not has_aired:
-                    continue
-
-                is_stale_air = (
-                    episode_air_at is not None
-                    and now - episode_air_at > timedelta(days=backfill_window_days)
-                )
-                is_older_than_latest = (
-                    latest_aired is not None
-                    and episode.episode_number < latest_aired
-                )
-                has_newer_downloaded = any(
-                    e.episode_number > episode.episode_number
-                    and e.status in {
-                        EpisodeStatus.COMPLETED,
-                        EpisodeStatus.DOWNLOADING,
-                        EpisodeStatus.QUEUED,
-                        EpisodeStatus.REPLACING,
-                    }
-                    for e in episodes
-                )
-                if is_stale_air or is_older_than_latest or has_newer_downloaded:
-                    episode.status = EpisodeStatus.MISSED
-                    session.add(episode)
-                    msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
-                    logs.append(msg)
-                    logger.info(msg)
+            logs.extend(_mark_missed_episodes(
+                session, show, episodes, now, air_horizon, latest_aired, backfill_window_days,
+            ))
         if grabbed_from is not None and show.current_feed_id != grabbed_from:
             # The feed that produced the release becomes the assignment, and the
             # grab itself marks it learned, so from here on it is the only feed
