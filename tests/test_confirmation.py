@@ -607,6 +607,42 @@ class TestConfirmation(unittest.TestCase):
         self.session.refresh(show)
         self.assertEqual(show.last_confirmed_episode, 12)
 
+    def test_has_downloaded_final_episode_requires_every_episode_of_the_season(self):
+        """Episodes with no ledger row were never downloaded, so they block completion."""
+        from qbit_seasonal_anime.core.confirmation import has_downloaded_final_episode
+
+        show = Monitored(
+            anilist_id=210032,
+            display_name="Tracked Late",
+            status=MonitoredStatus.FIXED,
+            current_feed_id=1,
+            total_episodes=13,
+            last_confirmed_episode=13,
+        )
+        self.session.add(show)
+        self.session.commit()
+        self.session.refresh(show)
+
+        for episode_number in (11, 12, 13):
+            self.session.add(Episode(
+                monitored_id=show.id,
+                episode_number=episode_number,
+                status=EpisodeStatus.COMPLETED,
+            ))
+        self.session.commit()
+
+        self.assertFalse(has_downloaded_final_episode(self.session, show))
+
+        for episode_number in range(1, 11):
+            self.session.add(Episode(
+                monitored_id=show.id,
+                episode_number=episode_number,
+                status=EpisodeStatus.COMPLETED,
+            ))
+        self.session.commit()
+
+        self.assertTrue(has_downloaded_final_episode(self.session, show))
+
 
 if __name__ == "__main__":
     unittest.main()

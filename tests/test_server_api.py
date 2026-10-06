@@ -1297,6 +1297,60 @@ def test_init_db_repairs_active_numbering_without_reopening_completed_shows(tmp_
     engine.dispose()
 
 
+def _legacy_database_with_raw_numbering(tmp_path, **show_fields):
+    """A pre-offset database: a show whose feed numbers episodes 11 higher than AniList."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'anime.db'}")
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+    session.add(Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1))
+    session.flush()
+    session.add(Monitored(
+        id=1, anilist_id=210031, display_name="Legacy Init Show",
+        status=MonitoredStatus.FIXED, current_feed_id=1, total_episodes=12, **show_fields,
+    ))
+    session.flush()
+    session.add(EpisodeNumberMapping(monitored_id=1, feed_id=1, offset=11))
+    session.commit()
+    return engine, session
+
+
+def test_init_db_canonicalizes_a_raw_last_confirmed_episode(tmp_path):
+    engine, session = _legacy_database_with_raw_numbering(tmp_path, last_confirmed_episode=23)
+    session.commit()
+    session.exec(text("PRAGMA user_version = 0"))
+    session.commit()
+    session.close()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        assert session.get(Monitored, 1).last_confirmed_episode == 12
+    engine.dispose()
+
+
+def test_init_db_canonicalizes_raw_match_history(tmp_path):
+    engine, session = _legacy_database_with_raw_numbering(tmp_path)
+    for episode in (23, 12):
+        session.add(MatchHistory(
+            monitored_id=1,
+            show_name="Legacy Init Show",
+            rule_name="[Seasonal] Legacy Init Show",
+            release_title=f"[SubsPlease] Legacy - {episode} (1080p).mkv",
+            episode=episode,
+        ))
+    session.commit()
+    session.exec(text("PRAGMA user_version = 0"))
+    session.commit()
+    session.close()
+
+    init_db(engine)
+
+    with Session(engine) as session:
+        episodes = sorted(row.episode for row in session.exec(select(MatchHistory)).all())
+        assert episodes == [12, 12]
+    engine.dispose()
+
+
 def test_a_fresh_database_is_stamped_and_not_treated_as_legacy_on_restart(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'anime.db'}")
 

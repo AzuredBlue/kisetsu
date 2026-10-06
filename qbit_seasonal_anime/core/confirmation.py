@@ -768,11 +768,15 @@ def has_downloaded_final_episode(
                 all(episode.status in (EpisodeStatus.COMPLETED, EpisodeStatus.MISSED) for episode in episodes)
                 and any(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
             )
-        if any(episode.status == EpisodeStatus.WANTED for episode in episodes):
-            return False
-        final_episode = next((ep for ep in episodes if ep.episode_number == show.total_episodes), None)
-        if final_episode and final_episode.status == EpisodeStatus.COMPLETED:
-            return True
+        completed = {
+            episode.episode_number
+            for episode in episodes
+            if episode.status == EpisodeStatus.COMPLETED
+        }
+        # A season is only accounted for when every episode of it is. A row that
+        # was never written means we have no evidence for that episode, which is
+        # not the same as it being downloaded, so it blocks completion.
+        return all(number in completed for number in range(1, show.total_episodes + 1))
 
     last_episode = show.last_confirmed_episode or 0
     if last_episode == show.total_episodes:

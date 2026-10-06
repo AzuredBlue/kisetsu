@@ -10,7 +10,7 @@ from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 from qbit_seasonal_anime.config import DB_PATH, CONFIG_DIR
-from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, as_utc, normalize_mapping_source
+from qbit_seasonal_anime.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMappingSource, EpisodeNumberMapping, EpisodeStatus, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, TorrentOperation, as_utc, normalize_mapping_source
 
 _engine = None
 SCHEMA_VERSION = 2
@@ -192,6 +192,30 @@ def _repair_legacy_episode_state(session: Session) -> None:
                 if 1 <= canonical <= show.total_episodes:
                     show.last_confirmed_episode = canonical
                     session.add(show)
+
+    # Match rows recorded before the feed offset existed hold raw feed numbers too.
+    # Only a stored mapping can translate them back; none is ever invented here.
+    for show in shows.values():
+        if not show.total_episodes or not show.current_feed_id:
+            continue
+        mapping = session.exec(
+            select(EpisodeNumberMapping).where(
+                EpisodeNumberMapping.monitored_id == show.id,
+                EpisodeNumberMapping.feed_id == show.current_feed_id,
+            )
+        ).first()
+        if not mapping or not mapping.offset:
+            continue
+        for history in session.exec(
+            select(MatchHistory).where(
+                MatchHistory.monitored_id == show.id,
+                MatchHistory.episode.is_not(None),
+            )
+        ).all():
+            canonical = history.episode - mapping.offset
+            if history.episode > show.total_episodes and 1 <= canonical <= show.total_episodes:
+                history.episode = canonical
+                session.add(history)
     session.commit()
 
 
