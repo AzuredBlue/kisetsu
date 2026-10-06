@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "qbit-seasonal-anime"
 version = "0.1.0"
-description = "Automatically manage RSS Download Rules based on your seasonal anime."
+description = "Automatically download your seasonal anime through qBittorrent, using RSS rules or direct downloads."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
