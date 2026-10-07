@@ -5,3 +5,4 @@ qbittorrent-api>=2024.0.0
 httpx2>=2.0.0
 guessit>=3.8.0
 rapidfuzz>=3.9.0
+pillow>=10.0.0
