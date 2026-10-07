@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends
@@ -29,6 +30,7 @@ from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
+from kisetsu.core.palette import fetch_hues
 from kisetsu.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
 from kisetsu.workers.scheduler import calculate_next_poll_interval
 from kisetsu.server.state import state
@@ -81,6 +83,70 @@ def require_exclusive_cycle() -> None:
 
 def release_cycle() -> None:
     state.end_cycle("api")
+
+
+ACCENT_VERSION = 2
+
+
+def _accent_source(show: Monitored) -> str:
+    return show.banner_image or show.cover_image or ""
+
+
+def _accent_key(show: Monitored) -> str:
+    """What a stored value must match to be current: the image and the extraction version."""
+    source = _accent_source(show)
+    return f"{source}#{ACCENT_VERSION}" if source else ""
+
+
+def _parse_accent(show: Monitored) -> Optional[List[float]]:
+    if not show.accent_hues:
+        return None
+    try:
+        hue, saturation, secondary, tint_hue, tint_saturation = show.accent_hues.split(",")
+        return [int(hue), float(saturation), int(secondary), int(tint_hue), float(tint_saturation)]
+    except ValueError:
+        return None
+
+
+def _accent_ready(show: Monitored) -> bool:
+    key = _accent_key(show)
+    return bool(key) and show.accent_src == key and show.accent_hues is not None
+
+
+# One fetch per show at a time, so a page warming every show and a click on one of
+# them do not download the same banner twice.
+_accent_tasks: Dict[int, "asyncio.Task[Tuple[bool, Optional[Tuple[int, float, int, int, float]]]]"] = {}
+
+
+@router.get("/shows/{show_id}/accent")
+async def get_show_accent(show_id: int):
+    with Session(engine) as session:
+        show = session.get(Monitored, show_id)
+        if not show:
+            raise HTTPException(status_code=404, detail="Show not found")
+        if _accent_ready(show) or not _accent_source(show):
+            return {"accent_hues": _parse_accent(show), "accent_ready": _accent_ready(show)}
+        key, banner, cover = _accent_key(show), show.banner_image or "", show.cover_image or ""
+
+    task = _accent_tasks.get(show_id)
+    if task is None:
+        task = asyncio.ensure_future(fetch_hues(banner, cover))
+        _accent_tasks[show_id] = task
+        task.add_done_callback(lambda _t: _accent_tasks.pop(show_id, None))
+    ok, hues = await task
+
+    with Session(engine) as session:
+        show = session.get(Monitored, show_id)
+        if not show:
+            raise HTTPException(status_code=404, detail="Show not found")
+        # A failed download is not remembered, so it is tried again next time.
+        if ok:
+            show.accent_src = key
+            show.accent_hues = "" if hues is None else f"{hues[0]},{hues[1]:.3f},{hues[2]},{hues[3]},{hues[4]:.3f}"
+            session.add(show)
+            session.commit()
+            session.refresh(show)
+        return {"accent_hues": _parse_accent(show), "accent_ready": _accent_ready(show)}
 
 
 @router.get("/shows")
@@ -156,6 +222,9 @@ def get_shows(session: Session = Depends(get_db)):
             "title_romaji": romaji_title,
             "title_english": s.title_english,
             "cover_image": s.cover_image,
+            "banner_image": s.banner_image,
+            "accent_hues": _parse_accent(s),
+            "accent_ready": _accent_ready(s),
             "season_name": s.season_name,
             "season_year": s.season_year,
             "status": s.status.value,
@@ -503,6 +572,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "show_id": show.id,
         "display_name": effective_display_name,
         "cover_image": show.cover_image,
+        "banner_image": show.banner_image,
         "has_rule": bool(show.current_feed_id or show.qbit_rule_name or show.status == MonitoredStatus.COMPLETED or saved_regex),
         # Whether a real qBittorrent RSS rule backs this show. Direct mode owns no
         # rule, so it is the difference between a Must Contain field that is read
@@ -1123,6 +1193,8 @@ def get_current_settings(session: Session = Depends(get_db)):
         "download_mode": normalized_download_mode(session),
         "backfill_window_days": s.backfill_window_days,
         "early_air_tolerance_hours": s.early_air_tolerance_hours,
+        "accent_color": s.accent_color or "#2dd4bf",
+        "accent_tint": s.accent_tint or "subtle",
     }
 
 
@@ -1140,6 +1212,12 @@ class UpdateSettingsRequest(BaseModel):
     download_mode: Optional[str] = None
     backfill_window_days: Optional[int] = None
     early_air_tolerance_hours: Optional[int] = None
+    accent_color: Optional[str] = None
+    accent_tint: Optional[str] = None
+
+
+ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+VALID_ACCENT_TINTS = ("off", "subtle", "full")
 
 
 @router.post("/settings")
@@ -1161,6 +1239,26 @@ def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_d
             status_code=400,
             detail="early_air_tolerance_hours must be between 0 and 168",
         )
+
+    if req.accent_color is not None and not ACCENT_COLOR_RE.match(req.accent_color.strip()):
+        raise HTTPException(status_code=400, detail="accent_color must be a #rrggbb colour")
+    if req.accent_tint is not None and req.accent_tint.strip().lower() not in VALID_ACCENT_TINTS:
+        raise HTTPException(status_code=400, detail="accent_tint must be off, subtle or full")
+
+    appearance_only = all(
+        value is None
+        for name, value in req.model_dump().items()
+        if name not in ("accent_color", "accent_tint")
+    )
+    if appearance_only:
+        s = get_settings(session)
+        if req.accent_color is not None:
+            s.accent_color = req.accent_color.strip().lower()
+        if req.accent_tint is not None:
+            s.accent_tint = req.accent_tint.strip().lower()
+        session.add(s)
+        session.commit()
+        return {"message": "Appearance saved."}
 
     require_exclusive_cycle()
     try:
@@ -1195,6 +1293,10 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
         s.refresh_interval_minutes = req.refresh_interval_minutes
     if req.stall_wait_hours is not None:
         s.stall_wait_hours = req.stall_wait_hours
+    if req.accent_color is not None:
+        s.accent_color = req.accent_color.strip().lower()
+    if req.accent_tint is not None:
+        s.accent_tint = req.accent_tint.strip().lower()
     if req.title_language is not None:
         new_lang = req.title_language.strip().lower()
         if new_lang != s.title_language:

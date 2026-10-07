@@ -20,16 +20,17 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
           },
           colors: {
-            canvas: '#131317',
-            sunken: '#0f0f13',
-            chrome: '#17171c',
-            surface: '#1b1b21',
-            raised: '#23232b',
-            raised2: '#2b2b35',
-            'line-soft': '#25252d',
-            line: '#2f2f3a',
-            'line-strong': '#4a4a5a',
-            accent: { DEFAULT: '#2dd4bf', strong: '#14b8a6', soft: '#5eead4' },
+            canvas: 'rgb(var(--bg) / <alpha-value>)',
+            sunken: 'rgb(var(--sunken) / <alpha-value>)',
+            chrome: 'rgb(var(--chrome) / <alpha-value>)',
+            surface: 'rgb(var(--surface) / <alpha-value>)',
+            raised: 'rgb(var(--raised) / <alpha-value>)',
+            raised2: 'rgb(var(--raised2) / <alpha-value>)',
+            'line-soft': 'rgb(var(--line-soft) / <alpha-value>)',
+            line: 'rgb(var(--line) / <alpha-value>)',
+            'line-strong': 'rgb(var(--line-strong) / <alpha-value>)',
+            accent: { DEFAULT: 'rgb(var(--ac) / <alpha-value>)', strong: 'rgb(var(--ac-strong) / <alpha-value>)', soft: 'rgb(var(--ac-soft) / <alpha-value>)' },
+            accent2: 'rgb(var(--ac2) / <alpha-value>)',
           },
           borderRadius: { xl: '0.875rem', '2xl': '1.125rem' },
         },
@@ -37,10 +38,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     };
   </script>
   <style>
+    * { scrollbar-width: thin; scrollbar-color: rgb(var(--line)) transparent; }
+    :root {
+      --ac: 45 212 191; --ac-soft: 94 234 212; --ac-strong: 20 184 166; --ac-ink: 4 32 30; --ac2: 56 189 248;
+      --bg: 19 19 23; --sunken: 15 15 19; --chrome: 23 23 28; --surface: 27 27 33; --field: 19 19 23; --raised: 35 35 43; --raised2: 43 43 53; --line: 47 47 58; --line-soft: 37 37 45; --line-hover: 58 58 72; --line-strong: 74 74 90;
+    }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: #2f2f3a; border-radius: 4px; }
-    ::-webkit-scrollbar-thumb:hover { background: #454555; }
+    ::-webkit-scrollbar-thumb { background: rgb(var(--line)); border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgb(var(--line-strong)); }
 
     .line-clamp-2 {
       display: -webkit-box;
@@ -53,32 +59,33 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .field-label { display: block; font-size: 0.8125rem; font-weight: 500; color: #d4d4d8; margin-bottom: 0.375rem; }
     .field-hint { font-size: 0.75rem; line-height: 1.45; color: #8b8b97; margin-top: 0.375rem; }
     .field {
-      width: 100%; background: #131317; border: 1px solid #2f2f3a; border-radius: 0.625rem;
+      width: 100%; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.625rem;
       padding: 0.55rem 0.8rem; font-size: 0.875rem; color: #f4f4f5; outline: none;
       transition: border-color .15s, box-shadow .15s;
     }
-    .field:focus { border-color: #2dd4bf; }
+    .field:focus { border-color: rgb(var(--ac)); }
     .field::placeholder { color: #5d5d6b; }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
       font-size: 0.8125rem; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: 0.625rem;
-      background: #23232b; color: #e4e4e7; border: 1px solid #2f2f3a;
+      background: rgb(var(--raised)); color: #e4e4e7; border: 1px solid rgb(var(--line));
       transition: background-color .15s, border-color .15s, color .15s, transform .1s; cursor: pointer;
     }
-    .btn:hover { background: #2b2b35; border-color: #3a3a48; }
+    .btn:hover { background: rgb(var(--raised2)); border-color: rgb(var(--line-hover)); }
     .btn:active { transform: scale(.97); }
-    .btn:focus-visible, .nav-item:focus-visible { outline: 2px solid #2dd4bf; outline-offset: 2px; }
-    .btn-primary { background: #14b8a6; border-color: #14b8a6; color: #04201e; font-weight: 600; }
-    .btn-primary:hover { background: #2dd4bf; border-color: #2dd4bf; }
-    #btn-run-cycle:hover { border-color: #2dd4bf; color: #5eead4; }
+    .btn:focus-visible, .nav-item:focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
+    .btn-primary { background: rgb(var(--ac-strong)); border-color: rgb(var(--ac-strong)); color: rgb(var(--ac-ink)); font-weight: 600; }
+    .btn-primary:hover { background: rgb(var(--ac)); border-color: rgb(var(--ac)); }
+    #btn-run-cycle:hover { border-color: rgb(var(--ac)); color: rgb(var(--ac-soft)); }
+    .nav-marker { box-shadow: inset 2px 0 0 0 rgb(var(--ac)); }
     .btn-danger { background: #2a1818; border-color: #4a2424; color: #f0868b; }
     .btn-danger:hover { background: #381d1d; border-color: #5e2b2b; }
     .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.75rem; }
-    .card { background: #1b1b21; border: 1px solid #2f2f3a; border-radius: 0.875rem; }
+    .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 0.875rem; }
     .page-title { font-size: 1.125rem; font-weight: 600; color: #fafafa; letter-spacing: -0.01em; }
     .page-sub { font-size: 0.8125rem; color: #8b8b97; margin-top: 0.2rem; }
     .section-title { font-size: 0.8125rem; font-weight: 600; color: #d4d4d8; letter-spacing: 0.02em; }
-    .seg { display: inline-flex; background: #131317; border: 1px solid #2f2f3a; border-radius: 0.625rem; padding: 2px; }
+    .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.625rem; padding: 2px; }
     .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.5rem; color: #9a9aa6; transition: background-color .15s, color .15s; }
     .seg > button:hover { color: #e4e4e7; }
 
@@ -91,12 +98,46 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
        heights are fractional) and showed as a seam. -2% on every side is a ~1.04 zoom. */
     .poster-zoom { transition: inset .3s ease-out; }
     .group:hover .poster-zoom { inset: -2%; }
+    .status-chip { position: relative; }
+    .status-chip::before { content: ''; position: absolute; inset: -10px; }
     .status-chip .status-label { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; margin-left: 0; transition: max-width .2s ease-out, opacity .2s ease-out, margin .2s ease-out; }
-    .group:hover .status-chip .status-label { max-width: 5rem; opacity: 1; margin-left: 0.375rem; }
+    .status-chip:hover .status-label, .status-chip:focus-visible .status-label { max-width: 5rem; opacity: 1; margin-left: 0.375rem; }
     .card-actions { opacity: 0; pointer-events: none; transition: opacity .2s ease-out; }
     .group:hover .card-actions, .group:focus-within .card-actions { opacity: 1; pointer-events: auto; }
 
+    #tab-show { background-color: rgb(var(--bg)); }
+    body.show-open #sidebar .btn:hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
+    #tab-show .card { background-color: rgb(var(--surface) / .85); border-color: rgb(var(--line)); backdrop-filter: blur(10px); }
+    #tab-show .field, #tab-show .seg { background-color: rgb(var(--field)); border-color: rgb(var(--line)); }
+    #tab-show .field:focus { border-color: rgb(var(--ac)); box-shadow: 0 0 0 3px rgb(var(--ac) / .2); }
+    #tab-show .bg-canvas { background-color: rgb(var(--field) / .85); }
+    #tab-show .border-line { border-color: rgb(var(--line)); }
+    #tab-show .divide-line-soft > :not([hidden]) ~ :not([hidden]) { border-color: rgb(var(--line-soft)); }
+        #tab-show .btn:not(.btn-primary):not(.btn-danger):hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
+    #tab-show .section-title { color: rgb(var(--ac-soft)); }
+    #tab-show #show-save-bar { border-color: rgb(var(--ac) / .5); background-color: rgb(var(--surface) / .95); }
+    #show-backdrop-art { -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); }
+    #show-banner-art { -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); }
+    #tab-show ::selection { background: rgb(var(--ac) / .35); color: #fff; }
+    #tab-show * { scrollbar-color: rgb(var(--ac) / .45) transparent; }
+    #tab-show ::-webkit-scrollbar-thumb { background: rgb(var(--ac) / .45); }
+    @keyframes vt-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+    @keyframes vt-drop { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(8px); } }
+    @keyframes vt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes vt-fade-out { from { opacity: 1; } to { opacity: 0; } }
+    .page-enter { animation: vt-rise .26s ease-out; }
+    #sidebar { view-transition-name: sidebar; }
+    #main-shell > header { view-transition-name: topbar; }
+    #main-scroll-container, #tab-show { view-transition-name: content; }
+    html.vt-open::view-transition-old(content) { animation: vt-fade-out .28s ease-out both; }
+    html.vt-open::view-transition-new(content) { animation: vt-rise .28s ease-out both; }
+    html.vt-close::view-transition-old(content) { animation: vt-drop .28s ease-out both; }
+    html.vt-close::view-transition-new(content) { animation: vt-fade-in .28s ease-out both; }
+    ::view-transition-group(show-poster) { animation-duration: .32s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+
     @media (prefers-reduced-motion: reduce) {
+      ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
+      .page-enter { animation: none; }
       .group:hover { transform: none !important; }
       .group:hover .poster-zoom { inset: 0; }
     }
@@ -105,19 +146,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       .card-actions { opacity: 1 !important; pointer-events: auto !important; }
     }
   </style>
+  <script>
+    try {
+      var cachedAccent = localStorage.getItem('kisetsu_accent_css');
+      if (cachedAccent) {
+        var accentStyle = document.createElement('style');
+        accentStyle.id = 'user-accent';
+        accentStyle.textContent = cachedAccent;
+        document.head.appendChild(accentStyle);
+      }
+    } catch (err) {}
+  </script>
 </head>
 <body class="bg-canvas text-zinc-100 flex h-screen overflow-hidden font-sans antialiased selection:bg-zinc-600 selection:text-white">
 
   <div id="sidebar-backdrop" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/60 z-30 hidden md:hidden"></div>
 
-  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome border-r border-line-soft flex flex-col flex-shrink-0 select-none z-40">
+  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome flex flex-col flex-shrink-0 select-none z-40">
 
     <div class="px-4 pt-4 pb-2 flex items-center">
       <span class="text-sm font-semibold text-zinc-100">Kisetsu</span>
     </div>
 
     <nav class="flex-1 px-2 py-1 space-y-0.5 overflow-y-auto">
-      <button onclick="switchTab('shows')" id="nav-shows" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white shadow-[inset_2px_0_0_0_#2dd4bf] [&>svg]:text-accent">
+      <button onclick="switchTab('shows')" id="nav-shows" class="nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white nav-marker [&>svg]:text-accent">
         <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 4v16M17 4v16M3 8h4m10 0h4M3 12h18M3 16h4m10 0h4M4 20h16a1 1 0 001-1V5a1 1 0 00-1-1H4a1 1 0 00-1 1v14a1 1 0 001 1z"/></svg>
         <span>Shows</span>
         <span id="badge-total-shows" class="ml-auto text-xs text-zinc-500 tabular-nums font-medium">0</span>
@@ -151,7 +203,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       </button>
     </nav>
 
-    <div class="p-3 border-t border-line-soft space-y-2">
+    <div class="p-3 space-y-2">
       <div class="flex items-baseline justify-between gap-2 px-0.5">
         <span class="text-[11px] text-zinc-500">Next check</span>
         <span id="sidebar-next-check" class="text-zinc-300 text-xs tabular-nums" title="">Calculating...</span>
@@ -164,9 +216,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     </div>
   </aside>
 
-  <main class="flex-1 flex flex-col min-w-0 bg-canvas overflow-hidden">
+  <main id="main-shell" class="flex-1 flex flex-col min-w-0 bg-canvas overflow-hidden">
 
-    <header class="h-14 border-b border-line-soft px-4 md:px-8 flex items-center justify-between gap-3 flex-shrink-0 bg-chrome">
+    <header class="h-14 px-4 md:px-8 flex items-center justify-between gap-3 flex-shrink-0 bg-chrome">
       <div class="flex items-center gap-3 min-w-0">
         <button onclick="toggleSidebar(true)" class="md:hidden p-1.5 -ml-1.5 rounded-lg text-zinc-300 hover:bg-raised" aria-label="Open menu">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -176,6 +228,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       <div class="flex items-center gap-3 text-xs font-medium flex-shrink-0">
         <span id="stat-working" class="text-emerald-400">0 Working</span>
+        <span id="stat-testing" class="text-amber-400 hidden">0 Testing</span>
         <span id="stat-upcoming" class="text-sky-400">0 Upcoming</span>
         <span id="stat-stalled" class="text-rose-400 hidden">0 Stalled</span>
       </div>
@@ -291,135 +344,107 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         </div>
       </section>
 
-      <section id="tab-settings" class="hidden max-w-3xl space-y-6">
+      <section id="tab-settings" class="hidden max-w-3xl space-y-5">
 
-        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-6">
+        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-5">
 
           <div>
             <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent"></span>qBittorrent</h3>
-            <div class="card divide-y divide-line-soft">
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-qbit-host">Host / URL</label>
-            <p class="field-hint !mt-0.5">Address of the qBittorrent Web UI.</p>
-            </div>
-            <div><input id="set-qbit-host" type="text" required class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-qbit-user">Username</label>
-            </div>
-            <div><input id="set-qbit-user" type="text" required class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-qbit-pass">Password</label>
-            <p class="field-hint !mt-0.5">Leave blank to keep the current one.</p>
-            </div>
-            <div><input id="set-qbit-pass" type="password" placeholder="••••••••" class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <div class="field-label !mb-0">Connection</div>
-            </div>
-            <div><div class="flex items-center gap-3"><button type="button" onclick="testQbitConnection()" class="btn btn-sm">Test connection</button><span id="test-qbit-status" class="text-xs font-mono"></span></div></div>
-          </div>
+            <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+              <div class="sm:col-span-2">
+                <label class="field-label" for="set-qbit-host">Host / URL</label>
+                <input id="set-qbit-host" type="text" required class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-qbit-user">Username</label>
+                <input id="set-qbit-user" type="text" required class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-qbit-pass">Password</label>
+                <input id="set-qbit-pass" type="password" placeholder="Unchanged" class="field">
+              </div>
+              <div class="sm:col-span-2 flex items-center gap-3">
+                <button type="button" onclick="testQbitConnection()" class="btn btn-sm">Test connection</button>
+                <span id="test-qbit-status" class="text-xs font-mono"></span>
+              </div>
             </div>
           </div>
 
           <div>
             <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>Downloads</h3>
-            <div class="card divide-y divide-line-soft">
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-base-dir">Base directory</label>
-            <p class="field-hint !mt-0.5">Path template for new shows. <code class="text-zinc-300 font-mono">{name}</code> becomes the show name. Blank uses qBittorrent's default.</p>
-            </div>
-            <div><input id="set-base-dir" type="text" placeholder="e.g. ~/Anime/{name}" class="field font-mono"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-category">Category</label>
-            <p class="field-hint !mt-0.5">Default qBittorrent category.</p>
-            </div>
-            <div><input id="set-category" type="text" placeholder="(blank)" class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-ratio">Seed ratio limit</label>
-            <p class="field-hint !mt-0.5">Stop seeding at this ratio.</p>
-            </div>
-            <div><input id="set-ratio" type="number" step="0.1" min="0" required class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-stall-window">Stall grace (hours)</label>
-            <p class="field-hint !mt-0.5">How long a download may sit idle before it counts as stalled.</p>
-            </div>
-            <div><input id="set-stall-window" type="number" min="1" required class="field"></div>
-          </div>
+            <div class="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
+              <div class="sm:col-span-3">
+                <label class="field-label" for="set-base-dir" title="{name} becomes the show name. Blank uses qBittorrent's default.">Base directory</label>
+                <input id="set-base-dir" type="text" placeholder="~/Anime/{name}" class="field font-mono">
+              </div>
+              <div>
+                <label class="field-label" for="set-category">Category</label>
+                <input id="set-category" type="text" placeholder="(blank)" class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-ratio">Seed ratio</label>
+                <input id="set-ratio" type="number" step="0.1" min="0" required class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-stall-window" title="Idle time before a download counts as stalled.">Stall grace (h)</label>
+                <input id="set-stall-window" type="number" min="1" required class="field">
+              </div>
             </div>
           </div>
 
           <div>
             <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>AniList &amp; schedule</h3>
-            <div class="card divide-y divide-line-soft">
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-anilist-user">AniList username</label>
-            <p class="field-hint !mt-0.5">Whose watching list to follow.</p>
-            </div>
-            <div><input id="set-anilist-user" type="text" class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-interval">Check interval (minutes)</label>
-            <p class="field-hint !mt-0.5">How often to sync AniList and check feeds.</p>
-            </div>
-            <div><input id="set-interval" type="number" min="5" required class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-backfill-window">Backfill window (days)</label>
-            <p class="field-hint !mt-0.5">How far back to look for episodes that were missed.</p>
-            </div>
-            <div><input id="set-backfill-window" type="number" min="0" max="365" required class="field"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <label class="field-label !mb-0" for="set-early-air-tolerance">Early air tolerance (hours)</label>
-            <p class="field-hint !mt-0.5">Start looking this long before AniList's air time, since those times are often late. 0 waits for the stated time.</p>
-            </div>
-            <div><input id="set-early-air-tolerance" type="number" min="0" max="168" required class="field"></div>
-          </div>
+            <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+              <div>
+                <label class="field-label" for="set-anilist-user" title="Whose watching list to follow.">AniList username</label>
+                <input id="set-anilist-user" type="text" class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-interval" title="How often to sync AniList and check feeds.">Check every (min)</label>
+                <input id="set-interval" type="number" min="5" required class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-backfill-window" title="How far back to look for missed episodes.">Backfill (days)</label>
+                <input id="set-backfill-window" type="number" min="0" max="365" required class="field">
+              </div>
+              <div>
+                <label class="field-label" for="set-early-air-tolerance" title="Start looking this long before AniList's air time. 0 waits for the stated time.">Early air (h)</label>
+                <input id="set-early-air-tolerance" type="number" min="0" max="168" required class="field">
+              </div>
             </div>
           </div>
 
           <div>
-            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-violet-400"></span>Behaviour</h3>
-            <div class="card divide-y divide-line-soft">
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <div class="field-label !mb-0">Anime names</div>
-            <p class="field-hint !mt-0.5">Which title to show for each anime.</p>
-            </div>
-            <div><div class="seg">
-                <button type="button" onclick="setTitleLanguage('english')" id="btn-lang-en" class="font-semibold bg-teal-500/15 text-teal-300">English</button>
-                <button type="button" onclick="setTitleLanguage('romaji')" id="btn-lang-ja" class="font-medium text-zinc-400 hover:text-zinc-200">Romaji</button>
+            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-violet-400"></span>Appearance &amp; behaviour</h3>
+            <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
+              <div>
+                <div class="field-label">Anime names</div>
+                <div class="seg">
+                  <button type="button" onclick="setTitleLanguage('english')" id="btn-lang-en" class="font-semibold bg-accent/15 text-accent-soft">English</button>
+                  <button type="button" onclick="setTitleLanguage('romaji')" id="btn-lang-ja" class="font-medium text-zinc-400 hover:text-zinc-200">Romaji</button>
+                </div>
+                <input type="hidden" id="set-title-language" value="english">
               </div>
-              <input type="hidden" id="set-title-language" value="english"></div>
-          </div>
-          <div class="px-5 py-4 grid grid-cols-1 sm:grid-cols-[minmax(0,14rem)_1fr] gap-x-8 gap-y-2 items-start">
-            <div>
-            <div class="field-label !mb-0">Download engine</div>
-            <p class="field-hint !mt-0.5">Rules lets qBittorrent's RSS rules download. Direct adds torrents itself and handles v2 replacements.</p>
-            </div>
-            <div><div class="seg">
-                <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="font-semibold bg-teal-500/15 text-teal-300">Rules</button>
-                <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="font-medium text-zinc-400 hover:text-zinc-200">Direct</button>
+              <div>
+                <div class="field-label" title="Rules lets qBittorrent's RSS rules download. Direct adds torrents itself and handles v2 replacements.">Download engine</div>
+                <div class="seg">
+                  <button type="button" onclick="setDownloadMode('rules')" id="btn-mode-rules" class="font-semibold bg-accent/15 text-accent-soft">Rules</button>
+                  <button type="button" onclick="setDownloadMode('direct')" id="btn-mode-direct" class="font-medium text-zinc-400 hover:text-zinc-200">Direct</button>
+                </div>
+                <input type="hidden" id="set-download-mode" value="rules">
               </div>
-              <input type="hidden" id="set-download-mode" value="rules"></div>
-          </div>
+              <div>
+                <div class="field-label">Accent colour</div>
+                <div id="accent-swatches" class="flex flex-wrap items-center gap-2 py-1"></div>
+              </div>
+              <div>
+                <div class="field-label" title="How much the accent colours the backgrounds.">Colour tint</div>
+                <div class="seg">
+                  <button type="button" onclick="setAccentTint('off')" id="btn-tint-off">Off</button>
+                  <button type="button" onclick="setAccentTint('subtle')" id="btn-tint-subtle">Subtle</button>
+                  <button type="button" onclick="setAccentTint('full')" id="btn-tint-full">Full</button>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -430,10 +455,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
         </form>
 
-        <div class="card px-5 py-4 flex items-center justify-between gap-4">
+        <div class="card px-4 py-3 flex items-center justify-between gap-4">
           <div>
             <h3 class="section-title">Clear all shows</h3>
-            <p class="field-hint !mt-1">Deletes every monitored show and the match history, and removes the app's RSS rules from qBittorrent. Downloaded torrents are not touched.</p>
+            <p class="field-hint !mt-0.5">Removes every show, the history and the app's RSS rules. Downloads are kept.</p>
           </div>
           <button type="button" onclick="clearAllShows()" class="btn btn-danger btn-sm flex-shrink-0">
             Clear all
@@ -476,37 +501,45 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       </section>
 
     </div>
-  </main>
 
-  <div id="rule-modal" onclick="if (event.target === this) closeRuleModal()" class="fixed inset-0 bg-black/70 z-50 hidden flex items-center justify-center p-3 sm:p-6">
-    <div class="bg-surface border border-line rounded-xl max-w-2xl w-full flex flex-col max-h-[88vh] overflow-hidden">
-      <div class="flex items-start justify-between gap-3 px-5 pt-4 pb-3 border-b border-line-soft flex-shrink-0">
-        <div class="min-w-0">
-          <h3 class="text-base font-semibold text-zinc-100 truncate" id="rule-modal-title">Show Details</h3>
-          <p class="text-xs text-zinc-500 font-mono mt-0.5 truncate" id="rule-modal-rule-name"></p>
-        </div>
-        <button onclick="closeRuleModal()" class="text-zinc-500 hover:text-zinc-100 text-base p-1 -mr-1" aria-label="Close">✕</button>
+  <section id="tab-show" class="hidden flex-1 min-h-0 flex flex-col overflow-y-auto lg:overflow-hidden relative isolate">
+
+      <div id="show-backdrop" class="absolute inset-x-0 top-0 h-full -z-10 pointer-events-none overflow-hidden">
+        <div id="show-backdrop-art" class="absolute inset-0"></div>
+        <div class="absolute inset-0" style="background: rgb(var(--bg) / .5)"></div>
       </div>
 
-      <div id="rule-modal-content" class="flex-1 overflow-y-auto px-5 py-4 space-y-4 text-sm min-h-0">
-      </div>
-
-      <div class="flex items-center justify-between gap-3 px-5 py-3 border-t border-line-soft flex-shrink-0">
-        <button type="button" onclick="modalTriggerRediscover()" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-zinc-600 transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
-          Reset to Auto-Detect
+      <div class="relative flex-shrink-0 h-[clamp(15rem,34vh,24rem)] overflow-hidden">
+        <div id="show-banner-art" class="absolute inset-0"></div>
+        <div class="absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-black/30 to-transparent"></div>
+        <button type="button" onclick="closeShowPage()" class="absolute top-3 left-4 md:top-4 md:left-8 w-8 h-8 rounded-md flex items-center justify-center bg-black/50 hover:bg-black/70 backdrop-blur text-zinc-100 transition-colors active:scale-90" aria-label="Back" title="Back (Esc)">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/></svg>
         </button>
+      </div>
 
+      <div id="show-body" oninput="updateSaveBar()" onchange="updateSaveBar()" class="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,29rem)_minmax(0,1fr)_17rem] lg:grid-rows-[auto_minmax(0,1fr)] gap-x-6 gap-y-5 px-4 md:px-8 pb-6 max-w-[1700px] w-full">
+
+        <div class="order-1 lg:order-none lg:col-span-3 flex flex-col lg:flex-row lg:items-end gap-x-6 gap-y-4 min-w-0">
+          <div id="show-poster" class="relative z-10 -mt-24 lg:-mt-40 w-36 lg:w-[13.5rem] aspect-[2/3] flex-shrink-0 rounded-lg overflow-hidden bg-surface border border-line shadow-lg shadow-black/40"></div>
+          <div id="show-title-block" class="min-w-0 flex-1 lg:pb-1"></div>
+        </div>
+
+        <div id="show-side-form" class="order-3 lg:order-none min-w-0 lg:min-h-0 flex flex-col"></div>
+        <div id="show-lists" class="order-2 lg:order-none flex flex-col lg:min-h-0 min-w-0"></div>
+        <div id="show-col-feed" class="order-4 lg:order-none min-w-0 lg:min-h-0 flex flex-col"></div>
+
+      </div>
+
+      <div id="show-save-bar" inert aria-hidden="true" class="absolute bottom-5 left-1/2 -translate-x-1/2 z-30 card shadow-xl shadow-black/50 pl-4 pr-2.5 py-2.5 flex items-center gap-4 opacity-0 translate-y-3 pointer-events-none transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none">
+        <span class="text-sm text-zinc-300 whitespace-nowrap">Unsaved changes</span>
         <div class="flex items-center gap-2">
-          <button type="button" onclick="closeRuleModal()" class="btn">
-            Cancel
-          </button>
-          <button type="button" id="btn-save-show-modal" onclick="saveShowModal()" class="btn btn-primary">
-            Save changes
-          </button>
+          <button type="button" onclick="discardShowChanges()" class="btn btn-sm">Discard</button>
+          <button type="button" id="btn-save-show" onclick="saveShowPage()" class="btn btn-sm btn-primary">Save changes</button>
         </div>
       </div>
-    </div>
-  </div>
+
+    </section>
+  </main>
 
   <div id="toast-container" class="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-xs"></div>
 
@@ -516,7 +549,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     let currentSettings = {};
     let activeTab = 'shows';
     let currentInspectedShowId = null;
-    let modalInitialState = null;
 
     // Muted status colours: dim text on near-card-tone backgrounds, so a tag reads as
     // a state marker rather than the brightest thing on the poster. All pairs keep
@@ -531,8 +563,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     };
 
     const NAV_INACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised';
-    const NAV_ACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white shadow-[inset_2px_0_0_0_#2dd4bf] [&>svg]:text-accent';
-    const SEG_ACTIVE_CLASS = 'font-semibold bg-teal-500/15 text-teal-300';
+    const NAV_ACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors bg-raised2 text-white nav-marker [&>svg]:text-accent';
+    const SEG_ACTIVE_CLASS = 'font-semibold bg-accent/15 text-accent-soft';
     const SEG_INACTIVE_CLASS = 'font-medium text-zinc-400 hover:text-zinc-200';
     const TAB_TITLES = {
       shows: 'Shows', calendar: 'Weekly Calendar', history: 'Match History',
@@ -548,6 +580,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     }
 
     function switchTab(tab) {
+      // Leaving a show page through the sidebar: ask first if the form has edits.
+      if (currentInspectedShowId !== null) {
+        if (!confirmDiscardShowChanges()) return;
+        showInitialState = null;
+        clearShowHash();
+        leaveShowPage(tab);
+        return;
+      }
       activeTab = tab;
       document.querySelectorAll('nav button').forEach(b => {
         b.className = NAV_INACTIVE_CLASS;
@@ -643,12 +683,20 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           apiFetch('/api/feeds'),
           apiFetch('/api/settings')
         ]);
+        if (renderHold) await renderHold;
         allShows = showsData;
         allFeeds = feedsData;
         currentSettings = settingsData;
+        const savedColor = settingsData.accent_color || DEFAULT_ACCENT;
+        const savedTint = settingsData.accent_tint || 'subtle';
+        if (savedColor !== userAccent.color || savedTint !== userAccent.tint || !document.getElementById('user-accent')) {
+          applyUserAccent(savedColor, savedTint);
+        }
         renderShows();
         renderCalendar();
         updateStatus();
+        syncShowPageHeader();
+        warmAccents();
       } catch (err) {
         showToast(`Failed loading data: ${err}`, 'error');
       }
@@ -670,8 +718,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (!btn) return;
         const svg = btn.querySelector('svg');
         if (m === currentSortMode) {
-          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors bg-teal-500/15 text-teal-300 font-medium';
-          if (svg) svg.className = 'w-3.5 h-3.5 text-teal-300';
+          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors bg-accent/15 text-accent-soft font-medium';
+          if (svg) svg.className = 'w-3.5 h-3.5 text-accent-soft';
         } else {
           btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200';
           if (svg) svg.className = 'w-3.5 h-3.5 text-zinc-400';
@@ -771,56 +819,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     }
 
     function renderShowCard(show) {
-      const rawStatus = (show.status || 'UNCONFIRMED').toUpperCase();
-      const isPaused = rawStatus === 'PAUSED';
-      const isCompleted = isShowCompleted(show);
-      const statusKey = isPaused ? ((show.status_before_pause || 'UNCONFIRMED').toUpperCase()) : rawStatus;
-
-      let cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG['UNCONFIRMED'];
-      let label = cfg.label;
-
-      if (!isPaused && statusKey === 'UNCONFIRMED') {
-        if (!show.is_released) {
-          label = 'Upcoming';
-          cfg = STATUS_CONFIG['UPCOMING'];
-        } else {
-          label = 'Testing';
-          cfg = STATUS_CONFIG['UNCONFIRMED'];
-        }
-      } else if (isPaused) {
-        label = 'Paused';
-        cfg = STATUS_CONFIG['PAUSED'];
-      }
+      const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
 
       // Overlay line: "EP n" on the left, countdown or outcome on the right.
       const downloaded = show.downloaded_episodes_count || 0;
       const total = show.total_episodes || 0;
-      let epLabel = '';
-      let airInfo = '';
-      let airClass = 'text-zinc-100';
-      let countdownAttr = '';
-      if (statusKey === 'COMPLETED') {
-        epLabel = total ? `${total} EP` : '';
-        airInfo = 'Completed';
-        airClass = 'text-zinc-300';
-      } else if (show.next_airing_episode && show.next_airing_at) {
-        const cd = formatEpisodeCountdown(show.next_airing_at);
-        if (cd === 'Aired' && show.last_confirmed_episode && show.last_confirmed_episode >= show.next_airing_episode) {
-          epLabel = `EP ${show.last_confirmed_episode}`;
-          airInfo = 'Downloaded';
-          airClass = 'text-emerald-300';
-        } else {
-          epLabel = `EP ${show.next_airing_episode}`;
-          airInfo = formatCardCountdown(cd, localDateTime(show.next_airing_at));
-          if (cd === 'Aired') airClass = 'text-amber-300';
-          countdownAttr = `data-air-at="${show.next_airing_at}" data-date-str="${localDateTime(show.next_airing_at)}"`;
-        }
-      } else if (show.last_confirmed_episode) {
-        epLabel = `EP ${show.last_confirmed_episode}`;
-      } else if (statusKey === 'STALLED') {
-        airInfo = 'Stalled';
-        airClass = 'text-rose-300';
-      }
+      const { epLabel, airInfo, airClass, countdownAttr } = showAirSummary(show, statusKey);
 
       // The count is shown whenever something is downloaded; the bar only when the
       // season total is known, since without it there is nothing to fill against.
@@ -870,9 +874,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         : '';
 
       return `
-        <div onclick="viewShowRule(${show.id})" onpointerenter="prefetchShowModal(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
+        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
 
-          <div class="relative w-full aspect-[2/3] bg-canvas overflow-hidden">
+          <div data-poster-id="${show.id}" class="relative w-full aspect-[2/3] bg-canvas overflow-hidden">
             ${posterImg}
             ${overlay}
 
@@ -1212,13 +1216,19 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       `;
     }
 
-    let modalListTab = 'episodes';
+    // Opening a show swaps the scroll container for #tab-show. Edits raise the save
+    // pill; nothing is saved on leave, and leaving with unsaved edits asks first.
 
-    function setModalListTab(tab) {
-      modalListTab = tab;
+    let showListTab = 'episodes';
+    let showReturnTab = 'shows';
+    let showReturnScroll = 0;
+    let showPagePushed = false;
+
+    function setShowListTab(tab) {
+      showListTab = tab;
       ['episodes', 'feed'].forEach(name => {
-        const panel = document.getElementById(`modal-panel-${name}`);
-        const button = document.getElementById(`modal-tab-${name}`);
+        const panel = document.getElementById(`show-panel-${name}`);
+        const button = document.getElementById(`show-tab-${name}`);
         if (panel) panel.classList.toggle('hidden', name !== tab);
         if (button) button.className = name === tab ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
       });
@@ -1228,16 +1238,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     function downloadButton(showId, title, tip) {
       return `<button type="button" data-title="${escapeHtml(title)}" onclick="quickDownloadMatch(${showId}, this)"
-        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-raised hover:bg-teal-500/15 border border-line hover:border-teal-500/50 text-zinc-400 hover:text-teal-300 transition-colors active:scale-95"
+        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-accent/10 hover:bg-accent/25 border border-accent/30 hover:border-accent/60 text-accent-soft transition-colors active:scale-95"
         title="${escapeHtml(tip)}">${DOWNLOAD_ICON}</button>`;
     }
 
     function listShell(rows, emptyText) {
-      return `<ul class="bg-canvas border border-line-soft rounded-lg px-3 max-h-48 overflow-y-auto divide-y divide-line-soft">${rows || `<li class="text-xs text-zinc-600 py-3 text-center">${emptyText}</li>`}</ul>`;
+      return `<ul class="bg-canvas border border-line-soft rounded-lg px-3 flex-1 min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none divide-y divide-line-soft">${rows || `<li class="text-xs text-zinc-600 py-3 text-center">${emptyText}</li>`}</ul>`;
     }
 
     // `feed` is null while the feed lookup is still loading.
-    function buildModalLists(showId, data, episodes, feed) {
+    function buildShowLists(showId, data, episodes, feed) {
       const isDirect = data.download_mode === 'direct';
       const loadingText = 'Checking the feed…';
 
@@ -1247,7 +1257,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : 'text-zinc-500';
         return `
           <li class="flex items-center gap-3 py-1.5 text-xs">
-            <span class="w-20 shrink-0 text-zinc-200 tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
+            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 ${statusCls}">${escapeHtml(ep.status)}</span>
           </li>`;
@@ -1257,23 +1267,23 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const matches = feed ? (feed.feed_matches || []) : [];
         const feedRows = matches.map(m => `
           <li class="flex items-center gap-3 py-1.5 text-xs">
-            <span class="w-20 shrink-0 text-zinc-200 tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
+            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
             ${m.downloadable
               ? downloadButton(showId, m.title, 'Download this release now. It is tracked like any other episode.')
               : `<span class="shrink-0 text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
           </li>`).join('');
         return `
-          <div class="space-y-2">
+          <div class="flex-1 min-h-0 flex flex-col gap-3">
             <div class="flex items-center justify-between gap-3">
               <div class="seg">
-                <button type="button" id="modal-tab-episodes" onclick="setModalListTab('episodes')" class="${modalListTab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
-                <button type="button" id="modal-tab-feed" onclick="setModalListTab('feed')" class="${modalListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">In feed</button>
+                <button type="button" id="show-tab-episodes" onclick="setShowListTab('episodes')" class="${showListTab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
+                <button type="button" id="show-tab-feed" onclick="setShowListTab('feed')" class="${showListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">In feed</button>
               </div>
               <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} in feed` : 'checking feed…'}</span>
             </div>
-            <div id="modal-panel-episodes" class="${modalListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
-            <div id="modal-panel-feed" class="${modalListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? 'Nothing in the feed matches this show right now.' : loadingText)}</div>
+            <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${showListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
+            <div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${showListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? 'Nothing in the feed matches this show right now.' : loadingText)}</div>
           </div>`;
       }
 
@@ -1286,27 +1296,36 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           ${downloadButton(showId, a, 'Download this release now with the same save path, category and ratio as the rule')}
         </li>`).join('');
       return `
-        <div class="space-y-2">
+        <div class="flex-1 min-h-0 flex flex-col gap-3">
           <div class="flex items-baseline justify-between gap-3">
-            <span class="field-label !mb-0">In feed</span>
+            <span class="section-title">In feed</span>
             <span class="text-xs text-zinc-500">${!feed ? '' : count === 1 ? '1 match' : `${count} matches`}</span>
           </div>
           ${listShell(ruleRows, feed ? 'No cached RSS articles currently match this rule pattern.' : loadingText)}
         </div>`;
     }
 
-    // What the open dialog was drawn from, so the lists can be redrawn when the
-    // slower feed lookup lands or after a download.
-    let modalContext = null;
-    let modalFeedState = null;
-
-    function rerenderModalLists() {
-      const target = document.getElementById('modal-lists');
-      if (!target || !modalContext || currentInspectedShowId !== modalContext.showId) return;
-      target.innerHTML = buildModalLists(modalContext.showId, modalContext.data, modalContext.episodes, modalFeedState);
+    function showListsMarkup(showId, data, episodes, feed) {
+      const inner = buildShowLists(showId, data, episodes, feed)
+        || '<div class="flex-1 flex items-center justify-center text-center text-sm text-zinc-500 px-6 py-10">Episodes and feed matches appear here once the show has a rule and a matched release.</div>';
+      return `
+        <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent"></span>Episodes</h3>
+        <div class="card p-4 flex-1 min-h-0 flex flex-col">${inner}</div>`;
     }
 
-    async function loadModalFeedMatches(showId) {
+    // What the open page was drawn from, so the lists can be redrawn when the
+    // slower feed lookup lands or after a download.
+    let showContext = null;
+    let showFeedState = null;
+    let showInitialState = null;
+
+    function rerenderShowLists() {
+      const target = document.getElementById('show-lists');
+      if (!target || !showContext || currentInspectedShowId !== showContext.showId) return;
+      target.innerHTML = showListsMarkup(showContext.showId, showContext.data, showContext.episodes, showFeedState);
+    }
+
+    async function loadShowFeedMatches(showId) {
       let result;
       try {
         result = await apiFetch(`/api/shows/${showId}/feed-matches`);
@@ -1314,30 +1333,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         result = { matched_articles: [], feed_matches: [] };
       }
       if (currentInspectedShowId !== showId) return;
-      modalFeedState = result;
-      rerenderModalLists();
+      showFeedState = result;
+      rerenderShowLists();
     }
 
-    async function refreshModalLists(showId) {
-      if (!modalContext || currentInspectedShowId !== showId) return;
+    async function refreshShowLists(showId) {
+      if (!showContext || currentInspectedShowId !== showId) return;
       try {
         const episodes = await apiFetch(`/api/shows/${showId}/episodes`);
         if (currentInspectedShowId !== showId) return;
-        modalContext.episodes = Array.isArray(episodes) ? episodes : [];
-        rerenderModalLists();
+        showContext.episodes = Array.isArray(episodes) ? episodes : [];
+        rerenderShowLists();
       } catch (err) {
         // The lists are informational; the toast from the download already reported the outcome.
       }
-      loadModalFeedMatches(showId);
+      loadShowFeedMatches(showId);
     }
 
     // Started when the pointer enters a card, so the data is usually there by the
     // time the click lands. An entry is used once, then dropped, so reopening a
     // show after an edit never shows stale values.
-    const modalPrefetch = new Map();
+    const showPrefetch = new Map();
     const PREFETCH_MAX_AGE_MS = 10000;
 
-    function startModalFetch(showId) {
+    function startShowFetch(showId) {
       const entry = {
         at: Date.now(),
         rule: apiFetch(`/api/shows/${showId}/rule`),
@@ -1347,220 +1366,777 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return entry;
     }
 
-    function prefetchShowModal(showId) {
-      const existing = modalPrefetch.get(showId);
+    function prefetchShowPage(showId) {
+      const existing = showPrefetch.get(showId);
       if (existing && Date.now() - existing.at < PREFETCH_MAX_AGE_MS) return;
-      modalPrefetch.set(showId, startModalFetch(showId));
+      showPrefetch.set(showId, startShowFetch(showId));
     }
 
-    function takeModalFetch(showId) {
-      const entry = modalPrefetch.get(showId);
-      modalPrefetch.delete(showId);
+    function takeShowFetch(showId) {
+      const entry = showPrefetch.get(showId);
+      showPrefetch.delete(showId);
       if (entry && Date.now() - entry.at < PREFETCH_MAX_AGE_MS) return entry;
-      return startModalFetch(showId);
+      return startShowFetch(showId);
     }
 
-    function modalSkeleton() {
-      const block = (h) => `<div class="${h} rounded-lg bg-raised/60"></div>`;
-      return `<div class="space-y-4">${block('h-16')}${block('h-16')}${block('h-16')}${block('h-24')}</div>`;
+    function showBodySkeleton() {
+      const block = '<div class="h-4 mb-2.5"></div><div class="flex-1 min-h-[12rem] rounded-xl bg-raised/60"></div>';
+      document.getElementById('show-side-form').innerHTML = block;
+      document.getElementById('show-lists').innerHTML = block;
+      document.getElementById('show-col-feed').innerHTML = block;
     }
 
-    async function viewShowRule(showId) {
-      currentInspectedShowId = showId;
-      modalContext = null;
-      modalFeedState = null;
-      const modal = document.getElementById('rule-modal');
-      const titleEl = document.getElementById('rule-modal-title');
-      const ruleNameEl = document.getElementById('rule-modal-rule-name');
-      const contentEl = document.getElementById('rule-modal-content');
+    // A paused show keeps the colour of what it was before, and an unconfirmed one
+    // reads as Upcoming until it has aired.
+    function resolveShowStatus(show) {
+      const rawStatus = (show.status || 'UNCONFIRMED').toUpperCase();
+      const isPaused = rawStatus === 'PAUSED';
+      const statusKey = isPaused ? ((show.status_before_pause || 'UNCONFIRMED').toUpperCase()) : rawStatus;
 
-      // Draw the frame now from what the page already knows; the form fills in
-      // as soon as the (cheap) detail request returns.
-      const known = allShows.find(sh => sh.id === showId);
-      titleEl.textContent = known ? known.display_name : 'Show Details';
-      ruleNameEl.textContent = '';
-      contentEl.innerHTML = modalSkeleton();
-      modal.classList.remove('hidden');
+      let cfg = STATUS_CONFIG[statusKey] || STATUS_CONFIG['UNCONFIRMED'];
+      let label = cfg.label;
 
-      try {
-        // The rule panel and the episode ledger are independent, so fetch both.
-        const pending = takeModalFetch(showId);
-        const [data, episodes] = await Promise.all([pending.rule, pending.episodes]);
-        if (currentInspectedShowId !== showId) return;
-
-        const isCompleted = (data.status === 'completed');
-        const isPaused = (data.status === 'paused');
-        const isRuleActive = data.enabled === true;
-        const isDirect = data.download_mode === 'direct';
-
-        titleEl.textContent = data.display_name;
-        ruleNameEl.textContent = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
-
-        // Plain muted text, not a badge: the header already names the engine.
-        let ruleStatusText = '';
-        if (isDirect) ruleStatusText = '';
-        else if (isCompleted) ruleStatusText = 'Completed';
-        else if (isPaused) ruleStatusText = 'Paused';
-        else if (isRuleActive) ruleStatusText = 'Rule enabled';
-        else ruleStatusText = 'Waiting for air date';
-
-        const isUpcoming = data.is_upcoming === true;
-        const isTesting = data.status === 'unconfirmed' && !isUpcoming && !data.feed_locked;
-
-        // Auto-discover only applies while the feed is genuinely undecided: no
-        // release seen, and nothing pinned. A feed that has already delivered is
-        // decided, and the selector must show it rather than hiding it.
-        const isAutoManaged = !isCompleted && !data.feed_locked && !data.has_learned_pattern;
-        const selectedFeedId = isAutoManaged ? 0 : (data.current_feed_id || 0);
-        const feedLabel = isUpcoming ? 'Feed (not decided yet)' : isTesting ? 'Feed (auto)' : 'Assigned feed';
-
-        const feedOptions = `<option value="0">[ Auto-discover ]</option>` +
-          allFeeds.map(f => `<option value="${f.id}" ${f.id === selectedFeedId ? 'selected' : ''}>#${f.priority} ${escapeHtml(f.qbit_feed_name)}</option>`).join('');
-
-        // One hint line, the most specific one that applies.
-        let feedHint = '';
-        if (data.feed_learned) {
-          feedHint = `Locked to ${escapeHtml(data.learned_feed_name || 'the feed that delivered')}: a release was already downloaded from it, so no other feed is checked.`;
-        } else if (data.feed_pinned) {
-          feedHint = 'Pinned by you. Auto-detect will not move this show to another feed.';
-        } else if (data.candidate_feed_id) {
-          feedHint = `Watching ${escapeHtml(data.candidate_feed_name || 'another feed')}: a release appeared there but not on the preferred feed. It moves automatically if that stays true for 5 minutes.`;
-        } else if (!isCompleted && data.has_rule && (isUpcoming || isTesting)) {
-          feedHint = isUpcoming
-            ? 'Auto-discover is on. No release seen yet, so every feed is checked and the first to post the episode wins.'
-            : 'Auto-discover is on and still testing: feeds are re-checked in priority order.';
+      if (!isPaused && statusKey === 'UNCONFIRMED') {
+        if (!show.is_released) {
+          label = 'Upcoming';
+          cfg = STATUS_CONFIG['UPCOMING'];
+        } else {
+          label = 'Testing';
+          cfg = STATUS_CONFIG['UNCONFIRMED'];
         }
-        const feedUrlLine = (data.feed_url && !isAutoManaged) ? `<span class="font-mono truncate block">${escapeHtml(data.feed_url)}</span>` : '';
-
-        const noRulePlaceholder = isCompleted
-          ? '<p class="field-hint !mt-0">Completed series. All episodes aired and were confirmed downloaded, and the RSS rule is disabled.</p>'
-          : '<p class="field-hint !mt-0">Upcoming show. The supervisor arms the rule when the first episode drops.</p>';
-
-        const aliasesSection = data.has_rule ? `
-          <div>
-            <label for="modal-aliases" class="field-label">Custom aliases</label>
-            <input type="text" id="modal-aliases" value="${escapeHtml((data.custom_aliases || []).join(', '))}" class="field font-mono">
-            <p class="field-hint">Comma separated. Extra names the release group uses. AniList titles and synonyms always match too.</p>
-          </div>
-        ` : '';
-
-        // Must Contain and Must Not Contain are qBittorrent RSS-rule fields. The
-        // direct engine owns no rule and matches from the episode ledger, so
-        // showing them there would display a regex that nothing ever reads.
-        const mustContainSections = data.has_qbit_rule ? `
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label for="modal-must-contain" class="field-label">Must contain (regex)</label>
-              <input type="text" id="modal-must-contain" value="${escapeHtml(data.must_contain || '')}" placeholder=".*" class="field font-mono">
-            </div>
-            <div>
-              <label for="modal-must-not-contain" class="field-label">Must not contain</label>
-              <input type="text" id="modal-must-not-contain" value="${escapeHtml(data.must_not_contain || '')}" placeholder="(720p|480p|...)" class="field font-mono">
-            </div>
-          </div>
-        ` : '';
-
-        const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
-
-        contentEl.innerHTML = `
-          <div>
-            <div class="flex items-baseline justify-between gap-3">
-              <label for="modal-feed-id" class="field-label">${feedLabel}</label>
-              <span class="text-xs text-zinc-500">${ruleStatusText}</span>
-            </div>
-            <select id="modal-feed-id" class="field">
-              ${feedOptions}
-            </select>
-            ${(feedHint || feedUrlLine) ? `<div class="field-hint">${feedHint ? `<p>${feedHint}</p>` : ''}${feedUrlLine}</div>` : ''}
-          </div>
-
-          ${regexSections}
-
-          <div>
-            <label for="modal-save-path" class="field-label">Save path</label>
-            <input type="text" id="modal-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
-          </div>
-
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label for="modal-category" class="field-label">Category</label>
-              <input type="text" id="modal-category" value="${escapeHtml(data.category || '')}" placeholder="${escapeHtml(currentSettings.default_category || 'anime')}" class="field font-mono">
-            </div>
-            <div>
-              <label for="modal-ratio-limit" class="field-label">Seed ratio limit</label>
-              <input type="number" step="0.1" min="0" id="modal-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="field font-mono">
-            </div>
-          </div>
-
-          <div id="modal-lists">${buildModalLists(showId, data, episodes, null)}</div>
-        `;
-        modalInitialState = {
-          // Tracks what the selector shows, not the internal feed id: while a show
-          // is undecided it renders as Auto-discover, and saving that untouched must
-          // not wipe the default feed the supervisor is probing.
-          current_feed_id: selectedFeedId,
-          save_folder: (data.save_path || data.save_folder || '').trim(),
-          category: (data.category || '').trim(),
-          ratio_limit: data.ratio_limit !== undefined && data.ratio_limit !== null ? parseFloat(data.ratio_limit) : undefined,
-          must_contain: (data.must_contain || '').trim(),
-          must_not_contain: (data.must_not_contain || '').trim(),
-          aliases: (data.custom_aliases || []).join(', '),
-        };
-        modalContext = { showId, data, episodes: Array.isArray(episodes) ? episodes : [] };
-        loadModalFeedMatches(showId);
-      } catch (err) {
-        contentEl.innerHTML = `<div class="text-rose-400 py-4 text-center">Failed loading show details: ${err}</div>`;
+      } else if (isPaused) {
+        label = 'Paused';
+        cfg = STATUS_CONFIG['PAUSED'];
       }
+      return { isPaused, isCompleted: isShowCompleted(show), statusKey, cfg, label };
     }
 
-    function closeRuleModal() {
-      document.getElementById('rule-modal').classList.add('hidden');
-      currentInspectedShowId = null;
-      modalInitialState = null;
+    // "EP n" plus a countdown or outcome, shared by the cards and the page header.
+    function showAirSummary(show, statusKey) {
+      const total = show.total_episodes || 0;
+      let epLabel = '';
+      let airInfo = '';
+      let airClass = 'text-zinc-100';
+      let countdownAttr = '';
+      if (statusKey === 'COMPLETED') {
+        epLabel = total ? `${total} EP` : '';
+        airInfo = 'Completed';
+        airClass = 'text-zinc-300';
+      } else if (show.next_airing_episode && show.next_airing_at) {
+        const cd = formatEpisodeCountdown(show.next_airing_at);
+        if (cd === 'Aired' && show.last_confirmed_episode && show.last_confirmed_episode >= show.next_airing_episode) {
+          epLabel = `EP ${show.last_confirmed_episode}`;
+          airInfo = 'Downloaded';
+          airClass = 'text-emerald-300';
+        } else {
+          epLabel = `EP ${show.next_airing_episode}`;
+          airInfo = formatCardCountdown(cd, localDateTime(show.next_airing_at));
+          if (cd === 'Aired') airClass = 'text-amber-300';
+          countdownAttr = `data-air-at="${show.next_airing_at}" data-date-str="${localDateTime(show.next_airing_at)}"`;
+        }
+      } else if (show.last_confirmed_episode) {
+        epLabel = `EP ${show.last_confirmed_episode}`;
+      } else if (statusKey === 'STALLED') {
+        airInfo = 'Stalled';
+        airClass = 'text-rose-300';
+      }
+      return { epLabel, airInfo, airClass, countdownAttr };
     }
 
-    async function saveShowModal() {
-      if (!currentInspectedShowId) return;
+    function showBannerMarkup(show) {
+      const src = show.banner_image || show.cover_image;
+      if (!src) return '';
+      const cls = show.banner_image ? 'object-cover' : 'object-cover scale-125 blur-2xl opacity-60';
+      return `<img src="${escapeHtml(src)}" alt="" class="absolute inset-0 w-full h-full ${cls}" onerror="this.onerror=null;this.style.display='none'">`;
+    }
 
-      const feedSelect = document.getElementById('modal-feed-id');
-      const savePathInput = document.getElementById('modal-save-path');
-      const categoryInput = document.getElementById('modal-category');
-      const ratioInput = document.getElementById('modal-ratio-limit');
-      const mustContainInput = document.getElementById('modal-must-contain');
-      const mustNotContainInput = document.getElementById('modal-must-not-contain');
-      const aliasesInput = document.getElementById('modal-aliases');
+    // Drawn from the list data the page already has, so it appears instantly; the
+    // forms fill in when the detail request returns.
+    function renderShowHeader(show) {
+      const block = document.getElementById('show-title-block');
+      const poster = document.getElementById('show-poster');
+      const art = document.getElementById('show-banner-art');
+      const backdrop = document.getElementById('show-backdrop-art');
+      const titleEl = document.getElementById('page-title');
+      if (!block || !poster || !art) return;
 
-      const currentFeedId = feedSelect ? parseInt(feedSelect.value) : 0;
-      const currentSaveFolder = savePathInput ? savePathInput.value.trim() : '';
-      const currentCategory = categoryInput ? categoryInput.value.trim() : '';
-      const currentRatio = ratioInput && ratioInput.value !== '' ? parseFloat(ratioInput.value) : undefined;
-      const currentMustContain = mustContainInput ? mustContainInput.value.trim() : '';
-      const currentMustNotContain = mustNotContainInput ? mustNotContainInput.value.trim() : '';
-      const currentAliases = aliasesInput ? aliasesInput.value.trim() : '';
-
-      const hasChanged = !modalInitialState || (
-        currentFeedId !== modalInitialState.current_feed_id ||
-        currentSaveFolder !== modalInitialState.save_folder ||
-        currentCategory !== modalInitialState.category ||
-        currentRatio !== modalInitialState.ratio_limit ||
-        currentMustContain !== modalInitialState.must_contain ||
-        currentMustNotContain !== modalInitialState.must_not_contain ||
-        currentAliases !== modalInitialState.aliases
-      );
-
-      if (!hasChanged) {
-        closeRuleModal();
+      if (!show) {
+        block.dataset.sig = '';
+        art.dataset.sig = '';
+        art.innerHTML = '';
+        backdrop.innerHTML = '';
+        applyShowPalette(null);
+        poster.innerHTML = '';
+        block.innerHTML = '<div class="space-y-3"><div class="h-7 w-2/3 rounded-md bg-raised/60"></div><div class="h-4 w-1/3 rounded-md bg-raised/60"></div></div>';
         return;
       }
 
+      const sig = JSON.stringify(show);
+      if (block.dataset.sig === sig) return;
+      block.dataset.sig = sig;
+
+      const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
+      const { epLabel, airInfo, airClass, countdownAttr } = showAirSummary(show, statusKey);
+      const name = escapeHtml(show.display_name);
+      if (titleEl) titleEl.textContent = show.display_name;
+
+      const artSig = `${show.banner_image || ''}|${show.cover_image || ''}`;
+      if (art.dataset.sig !== artSig) {
+        art.dataset.sig = artSig;
+        art.innerHTML = showBannerMarkup(show);
+        const backdropSrc = show.banner_image || show.cover_image;
+        backdrop.innerHTML = backdropSrc
+          ? `<img src="${escapeHtml(backdropSrc)}" alt="" class="w-full h-full object-cover scale-110 blur-3xl opacity-60 saturate-150" onerror="this.onerror=null;this.style.display='none'">`
+          : '';
+      }
+
+      applyShowPalette(show.accent_hues);
+      if (!show.accent_ready) fetchShowAccent(show.id);
+
+      const dimClass = (isPaused || isCompleted) ? 'opacity-80 grayscale-[35%]' : '';
+      poster.innerHTML = show.cover_image
+        ? `<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="absolute inset-0 w-full h-full object-cover ${dimClass}" onerror="this.onerror=null;this.style.display='none'">`
+        : '<div class="absolute inset-0 flex items-center justify-center text-zinc-600 text-xs font-mono">No Art</div>';
+
+      const alt = [show.title_romaji, show.title_english].find(t => t && t !== show.display_name);
+      const season = show.season_name
+        ? `${show.season_name.charAt(0)}${show.season_name.slice(1).toLowerCase()}${show.season_year ? ` ${show.season_year}` : ''}`
+        : (show.season_year ? String(show.season_year) : '');
+      const subtitle = [alt, season].filter(Boolean).map(escapeHtml).join(' · ');
+
+      const downloaded = show.downloaded_episodes_count || 0;
+      const total = show.total_episodes || 0;
+      const showProgress = downloaded > 0 || total > 0;
+      const pct = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+      const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
+
+      const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
+      const lockIcon = show.feed_learned
+        ? `<svg class="w-3 h-3 flex-shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><title>Feed locked</title><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`
+        : '';
+
+      const pauseIcon = isPaused
+        ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
+        : '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+
+      const engineLine = block.dataset.engine ? `<p class="text-xs text-zinc-500 font-mono truncate">${escapeHtml(block.dataset.engine)}</p>` : '';
+
+      block.innerHTML = `
+        <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
+          <div class="min-w-0 flex-1 basis-64">
+            <div class="flex items-center gap-2 min-w-0">
+              <h2 class="text-xl md:text-2xl font-semibold text-zinc-50 leading-tight tracking-tight truncate" title="${name}">${name}</h2>
+              <a href="https://anilist.co/anime/${show.anilist_id}" target="_blank" rel="noopener noreferrer" class="flex-shrink-0 text-accent-soft hover:text-white transition-colors" title="Open on AniList" aria-label="Open on AniList">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+              </a>
+            </div>
+            ${subtitle ? `<p class="text-sm text-zinc-400 mt-1 truncate">${subtitle}</p>` : ''}
+          </div>
+          <div class="flex items-center gap-2 flex-shrink-0 ml-auto">
+            ${!isCompleted ? `<button type="button" onclick="togglePauseShow(${show.id})" class="btn btn-sm">${pauseIcon}${isPaused ? 'Resume' : 'Pause'}</button>` : ''}
+            <button type="button" onclick="deleteShow(${show.id})" class="btn btn-danger btn-sm">Delete</button>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs mt-3">
+          <span class="px-2 py-1 inline-flex items-center gap-1.5 rounded-full font-medium border ${cfg.bg}">
+            <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:${cfg.dot}"></span>${label}
+          </span>
+          ${(epLabel || airInfo) ? `
+          <span class="text-[13px]">
+            <span class="font-semibold tracking-wide text-zinc-100">${epLabel}</span>
+            <span class="show-countdown font-medium tabular-nums ml-1.5 ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
+          </span>` : ''}
+          <span class="inline-flex items-center gap-1.5 text-zinc-500 min-w-0" title="${feedName}">
+            <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
+            <span class="truncate">${feedName}</span>${lockIcon}
+          </span>
+        </div>
+        ${showProgress ? `
+        <div class="flex items-center gap-3 max-w-sm mt-3">
+          ${total > 0 ? `<div class="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>` : ''}
+          <span class="text-xs tabular-nums text-zinc-400">${downloaded}/${total || '?'} downloaded</span>
+        </div>` : ''}
+        ${engineLine ? `<div class="mt-3">${engineLine}</div>` : ''}`;
+    }
+
+    // Called after every list refresh, so pause/resume and the countdown stay current
+    // without touching the forms (which may hold unsaved edits).
+    function syncShowPageHeader() {
+      if (currentInspectedShowId === null) return;
+      const show = allShows.find(s => s.id === currentInspectedShowId);
+      if (!show) {
+        // Deleted, or a stale #show/<id> link.
+        showInitialState = null;
+        clearShowHash();
+        leaveShowPage();
+        return;
+      }
+      renderShowHeader(show);
+    }
+
+    function showIdFromHash() {
+      const m = /^#show[/]([0-9]+)$/.exec(location.hash);
+      return m ? parseInt(m[1]) : null;
+    }
+
+    function clearShowHash() {
+      if (showIdFromHash() !== null) history.replaceState(null, '', location.pathname + location.search);
+    }
+
+    // Per-show accent colours. The server reads them from the banner (or the poster
+    // when there is no banner); they arrive as RGB triples set as CSS variables on
+    // #tab-show, so everything inside it that uses the accent follows them.
+    function hslToRgb(h, s, l) {
+      const c = (1 - Math.abs(2 * l - 1)) * s;
+      const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+      const m = l - c / 2;
+      const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+      return [r + m, g + m, b + m].map(v => Math.round(v * 255));
+    }
+
+    function relativeLuminance([r, g, b]) {
+      const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    }
+
+    // `hues` is [primary hue, saturation, secondary hue].
+    // How strongly the page surfaces take the hue (0 keeps them grey).
+    const THEME_TINT = 0.6;
+
+    // `hues` is [accent hue, accent saturation, secondary hue, tint hue, tint saturation].
+    function paletteFromHues([h1, s1, h2, th, ts]) {
+      const s = Math.min(0.85, Math.max(0.4, s1));
+      const strong = hslToRgb(h1, s, 0.56);
+      const warm = th >= 10 && th <= 60 ? 0.7 : 1;
+      const t = Math.min(0.5, ts) * THEME_TINT * warm;
+      const surface = (l, k = 1) => hslToRgb(th, t * k, l).join(' ');
+      return {
+        bg: surface(0.085),
+        sunken: surface(0.065),
+        chrome: surface(0.10),
+        surface: surface(0.115),
+        field: surface(0.07),
+        raised: surface(0.155),
+        raised2: surface(0.19),
+        line: surface(0.21, 0.9),
+        lineSoft: surface(0.16, 0.9),
+        lineHover: surface(0.26, 0.9),
+        lineStrong: surface(0.32, 0.9),
+        ac: hslToRgb(h1, s, 0.62).join(' '),
+        soft: hslToRgb(h1, s, 0.76).join(' '),
+        strong: strong.join(' '),
+        ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
+        ac2: hslToRgb(h2, s, 0.62).join(' '),
+      };
+    }
+
+    // The variables live on <html>, so the sidebar and header bar inherit them too.
+    function applyShowPalette(hues) {
+      const section = document.documentElement;
+      const keys = {
+        '--ac': 'ac', '--ac-soft': 'soft', '--ac-strong': 'strong', '--ac-ink': 'ink', '--ac2': 'ac2',
+        '--bg': 'bg', '--sunken': 'sunken', '--chrome': 'chrome', '--surface': 'surface', '--field': 'field', '--raised': 'raised', '--raised2': 'raised2',
+        '--line': 'line', '--line-soft': 'lineSoft', '--line-hover': 'lineHover', '--line-strong': 'lineStrong',
+      };
+      const palette = hues ? paletteFromHues(hues) : null;
+      Object.keys(keys).forEach(name => {
+        if (palette) section.style.setProperty(name, palette[keys[name]]);
+        else section.style.removeProperty(name);
+      });
+    }
+
+    const DEFAULT_ACCENT = '#2dd4bf';
+    const ACCENT_PRESETS = [
+      ['Teal', '#2dd4bf'], ['Sky', '#38bdf8'], ['Indigo', '#818cf8'], ['Violet', '#a78bfa'], ['Pink', '#f472b6'],
+      ['Rose', '#fb7185'], ['Orange', '#fb923c'], ['Amber', '#fbbf24'], ['Lime', '#a3e635'], ['Emerald', '#34d399'],
+    ];
+    const ACCENT_TINTS = { off: 0, subtle: 0.22, full: 0.5 };
+    const ACCENT_CSS_KEY = 'kisetsu_accent_css';
+    const STOCK_ACCENT = { ac: '45 212 191', soft: '94 234 212', strong: '20 184 166', ink: '4 32 30', ac2: '56 189 248' };
+    let userAccent = { color: DEFAULT_ACCENT, tint: 'subtle' };
+
+    function hexToHsl(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      const r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+      const max = Math.max(r, g, b), min = Math.min(r, g, b);
+      const l = (max + min) / 2;
+      const d = max - min;
+      if (d === 0) return [0, 0, l];
+      const sat = d / (1 - Math.abs(2 * l - 1));
+      let h;
+      if (max === r) h = ((g - b) / d) % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      return [(h * 60 + 360) % 360, sat, l];
+    }
+
+    function userAccentCss(color, tint) {
+      const tintSat = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
+      if (color === DEFAULT_ACCENT && !tintSat) return '';
+      const [h, sat, l] = hexToHsl(color);
+      const pal = paletteFromHues([Math.round(h), sat, (Math.round(h) + 40) % 360, Math.round(h), tintSat]);
+      let accent = STOCK_ACCENT;
+      if (color !== DEFAULT_ACCENT) {
+        const s = Math.min(0.9, Math.max(0.4, sat));
+        const lightness = Math.min(0.72, Math.max(0.55, l));
+        const strong = hslToRgb(h, s, lightness - 0.08);
+        accent = {
+          ac: hslToRgb(h, s, lightness).join(' '),
+          soft: hslToRgb(h, s, Math.min(0.88, lightness + 0.13)).join(' '),
+          strong: strong.join(' '),
+          ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
+          ac2: pal.ac2,
+        };
+      }
+      const vars = {
+        '--ac': accent.ac, '--ac-soft': accent.soft, '--ac-strong': accent.strong, '--ac-ink': accent.ink, '--ac2': accent.ac2,
+      };
+      if (tintSat) {
+        Object.assign(vars, {
+          '--bg': pal.bg, '--sunken': pal.sunken, '--chrome': pal.chrome, '--surface': pal.surface, '--field': pal.field,
+          '--raised': pal.raised, '--raised2': pal.raised2, '--line': pal.line, '--line-soft': pal.lineSoft,
+          '--line-hover': pal.lineHover, '--line-strong': pal.lineStrong,
+        });
+      }
+      return ':root{' + Object.keys(vars).map(k => k + ':' + vars[k]).join(';') + '}';
+    }
+
+    function applyUserAccent(color, tint) {
+      userAccent = { color, tint };
+      const css = userAccentCss(color, tint);
+      let el = document.getElementById('user-accent');
+      if (!el) {
+        el = document.createElement('style');
+        el.id = 'user-accent';
+        document.head.appendChild(el);
+      }
+      el.textContent = css;
+      try {
+        if (css) localStorage.setItem(ACCENT_CSS_KEY, css);
+        else localStorage.removeItem(ACCENT_CSS_KEY);
+      } catch (err) {
+        // The cache only avoids a flash on load.
+      }
+      renderAppearancePicker();
+    }
+
+    function renderAppearancePicker() {
+      const box = document.getElementById('accent-swatches');
+      if (!box) return;
+      const isPreset = ACCENT_PRESETS.some(p => p[1] === userAccent.color);
+      const ring = (active) => active ? 'ring-2 ring-offset-2 ring-offset-surface ring-white/80' : 'hover:scale-110';
+      box.innerHTML = ACCENT_PRESETS.map(([name, hex]) => `
+        <button type="button" title="${name}" aria-label="${name}" onclick="setUserAccent('${hex}')" style="background:${hex}" class="w-6 h-6 rounded-full transition-transform ${ring(hex === userAccent.color)}"></button>`).join('') + `
+        <label title="Custom colour" class="relative w-6 h-6 rounded-full cursor-pointer overflow-hidden transition-transform ${ring(!isPreset)}" style="background:${isPreset ? 'conic-gradient(#fb7185, #fbbf24, #a3e635, #2dd4bf, #818cf8, #fb7185)' : userAccent.color}">
+          <input type="color" value="${userAccent.color}" onchange="setUserAccent(this.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+        </label>`;
+      Object.keys(ACCENT_TINTS).forEach(name => {
+        const button = document.getElementById(`btn-tint-${name}`);
+        if (button) button.className = name === userAccent.tint ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
+      });
+    }
+
+    async function saveAppearance(color, tint) {
+      const previous = userAccent;
+      applyUserAccent(color, tint);
+      try {
+        await apiFetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ accent_color: color, accent_tint: tint })
+        });
+        if (currentSettings) {
+          currentSettings.accent_color = color;
+          currentSettings.accent_tint = tint;
+        }
+      } catch (err) {
+        applyUserAccent(previous.color, previous.tint);
+        showToast(`Failed to save the colour: ${err.message || err}`, 'error');
+      }
+    }
+
+    function setUserAccent(color) {
+      saveAppearance(color.toLowerCase(), userAccent.tint);
+    }
+
+    function setAccentTint(tint) {
+      saveAppearance(userAccent.color, tint);
+    }
+
+    const accentTried = new Set();
+    const accentInFlight = new Set();
+
+    async function fetchShowAccent(showId) {
+      if (accentInFlight.has(showId)) return;
+      accentInFlight.add(showId);
+      try {
+        const result = await apiFetch(`/api/shows/${showId}/accent`);
+        const show = allShows.find(s => s.id === showId);
+        if (!show) return;
+        show.accent_hues = result.accent_hues;
+        show.accent_ready = result.accent_ready;
+        if (currentInspectedShowId === showId) renderShowHeader(show);
+      } catch (err) {
+        // Colours are decoration; the page works without them.
+      } finally {
+        accentInFlight.delete(showId);
+      }
+    }
+
+    // Reads the colours of every show in the background, so they are usually ready
+    // before a show is opened. Each show is tried once per page load.
+    async function warmAccents() {
+      for (const show of [...allShows]) {
+        if (show.accent_ready || accentTried.has(show.id) || !(show.banner_image || show.cover_image)) continue;
+        accentTried.add(show.id);
+        await fetchShowAccent(show.id);
+      }
+    }
+
+    // Runs `swap` inside a view transition when the browser has them, morphing
+    // `fromEl` into whatever `toEl()` returns once the swap has happened. `kind` is
+    // 'open' or 'close' and picks the direction of the page motion. Without support
+    // the swap happens and the incoming section animates with plain CSS.
+    let renderHold = null;
+
+    function runPageTransition(swap, fromEl, toEl, kind) {
+      const NAME = 'show-poster';
+      const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (reduce) {
+        swap();
+        return Promise.resolve();
+      }
+      if (!document.startViewTransition) {
+        swap();
+        const entering = document.getElementById(kind === 'open' ? 'tab-show' : 'main-scroll-container');
+        entering.classList.remove('page-enter');
+        void entering.offsetWidth;
+        entering.classList.add('page-enter');
+        setTimeout(() => entering.classList.remove('page-enter'), 400);
+        return Promise.resolve();
+      }
+      const root = document.documentElement;
+      if (fromEl && fromEl.offsetParent === null) fromEl = null;
+      if (fromEl) fromEl.style.viewTransitionName = NAME;
+      root.classList.add(`vt-${kind}`);
+      let target = null;
+      const transition = document.startViewTransition(() => {
+        if (fromEl) fromEl.style.viewTransitionName = '';
+        swap();
+        target = fromEl && toEl ? toEl() : null;
+        if (target && target.offsetParent !== null) target.style.viewTransitionName = NAME;
+        else target = null;
+      });
+      const done = transition.finished.catch(() => {}).then(() => {
+        root.classList.remove(`vt-${kind}`);
+        if (fromEl) fromEl.style.viewTransitionName = '';
+        if (target) target.style.viewTransitionName = '';
+        if (renderHold === done) renderHold = null;
+      });
+      // loadShows redraws every card; doing that mid-transition would delete the
+      // card being morphed into and cancel the animation, so it waits.
+      renderHold = done;
+      return done;
+    }
+
+    function openShowPage(showId, opts = {}) {
+      const container = document.getElementById('main-scroll-container');
+      const first = currentInspectedShowId === null;
+      if (first) {
+        showReturnTab = activeTab === 'calendar' ? 'calendar' : 'shows';
+        showReturnScroll = container.scrollTop;
+      }
+      const card = first && !opts.instant ? document.querySelector(`[data-poster-id="${showId}"]`) : null;
+
+      currentInspectedShowId = showId;
+      showContext = null;
+      showFeedState = null;
+      showInitialState = null;
+      showListTab = 'episodes';
+      updateSaveBar();
+
+      if (opts.push !== false) {
+        history.pushState({ show: showId }, '', `#show/${showId}`);
+        showPagePushed = true;
+      } else {
+        showPagePushed = opts.fromHistory === true;
+      }
+
+      const swap = () => {
+        const section = document.getElementById('tab-show');
+        container.classList.add('hidden');
+        document.body.classList.add('show-open');
+        section.classList.remove('hidden');
+        section.scrollTop = 0;
+        toggleSidebar(false);
+
+        const known = allShows.find(sh => sh.id === showId);
+        const titleEl = document.getElementById('page-title');
+        if (titleEl) titleEl.textContent = known ? known.display_name : 'Show';
+        const block = document.getElementById('show-title-block');
+        block.dataset.sig = '';
+        block.dataset.engine = '';
+        renderShowHeader(known);
+        loadShowPageBody(showId, true);
+      };
+      if (opts.instant) swap();
+      else runPageTransition(swap, card, () => document.getElementById('show-poster'), 'open');
+    }
+
+    async function loadShowPageBody(showId, withSkeleton) {
+      if (withSkeleton) showBodySkeleton();
+      try {
+        // The rule panel and the episode ledger are independent, so fetch both.
+        const pending = takeShowFetch(showId);
+        const [data, episodes] = await Promise.all([pending.rule, pending.episodes]);
+        if (!allFeeds.length) {
+          try {
+            allFeeds = await apiFetch('/api/feeds');
+          } catch (err) {
+            // The dropdown then only offers Auto-discover.
+          }
+        }
+        if (currentInspectedShowId !== showId) return;
+        renderShowBody(showId, data, Array.isArray(episodes) ? episodes : []);
+      } catch (err) {
+        if (currentInspectedShowId !== showId) return;
+        document.getElementById('show-side-form').innerHTML = '';
+        document.getElementById('show-col-feed').innerHTML = '';
+        document.getElementById('show-lists').innerHTML = `<div class="card p-4 flex-1 flex items-center justify-center text-rose-400 text-sm text-center">Failed loading show details: ${escapeHtml(err.message || err)}</div>`;
+      }
+    }
+
+    function renderShowBody(showId, data, episodes) {
+      const isCompleted = (data.status === 'completed');
+      const isPaused = (data.status === 'paused');
+      const isRuleActive = data.enabled === true;
+      const isDirect = data.download_mode === 'direct';
+
+      const engine = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
+      const titleBlock = document.getElementById('show-title-block');
+      if (titleBlock.dataset.engine !== engine) {
+        titleBlock.dataset.engine = engine;
+        titleBlock.dataset.sig = '';
+        renderShowHeader(allShows.find(s => s.id === showId));
+      }
+
+      let ruleStatusText = '';
+      if (isDirect) ruleStatusText = '';
+      else if (isCompleted) ruleStatusText = 'Completed';
+      else if (isPaused) ruleStatusText = 'Paused';
+      else if (isRuleActive) ruleStatusText = 'Rule enabled';
+      else ruleStatusText = 'Waiting for air date';
+
+      const isUpcoming = data.is_upcoming === true;
+      const isTesting = data.status === 'unconfirmed' && !isUpcoming && !data.feed_locked;
+
+      // Auto-discover only applies while the feed is genuinely undecided: no
+      // release seen, and nothing pinned. A feed that has already delivered is
+      // decided, and the selector must show it rather than hiding it.
+      const isAutoManaged = !isCompleted && !data.feed_locked && !data.has_learned_pattern;
+      const selectedFeedId = isAutoManaged ? 0 : (data.current_feed_id || 0);
+      const feedLabel = isUpcoming ? 'Feed (not decided yet)' : isTesting ? 'Feed (auto)' : 'Assigned feed';
+
+      const feedOptions = `<option value="0">[ Auto-discover ]</option>` +
+        allFeeds.map(f => `<option value="${f.id}" ${f.id === selectedFeedId ? 'selected' : ''}>#${f.priority} ${escapeHtml(f.qbit_feed_name)}</option>`).join('');
+
+      // One hint line, the most specific one that applies.
+      let feedHint = '';
+      if (data.feed_learned) {
+        feedHint = `Locked to ${escapeHtml(data.learned_feed_name || 'the delivering feed')} after a download.`;
+      } else if (data.feed_pinned) {
+        feedHint = 'Pinned by you.';
+      } else if (data.candidate_feed_id) {
+        feedHint = `May move to ${escapeHtml(data.candidate_feed_name || 'another feed')}, which posted first.`;
+      } else if (!isCompleted && data.has_rule && (isUpcoming || isTesting)) {
+        feedHint = isUpcoming ? 'Auto: first feed to post wins.' : 'Auto: testing feeds by priority.';
+      }
+      const feedUrlTitle = (data.feed_url && !isAutoManaged) ? escapeHtml(data.feed_url) : '';
+
+      const noRulePlaceholder = isCompleted
+        ? '<p class="field-hint !mt-0 sm:col-span-2">Completed. The rule is disabled.</p>'
+        : '<p class="field-hint !mt-0 sm:col-span-2">The rule arms when the first episode airs.</p>';
+
+      const aliasesSection = data.has_rule ? `
+        <div>
+          <label for="show-aliases" class="field-label">Custom aliases</label>
+          <input type="text" id="show-aliases" value="${escapeHtml((data.custom_aliases || []).join(', '))}" placeholder="Comma separated" class="field font-mono">
+        </div>
+      ` : '';
+
+      // Both patterns are honoured by the direct engine too: Must contain, when set,
+      // matches releases by pattern instead of by name, and Must not contain rejects
+      // a release however it matched.
+      const mustContainSections = data.has_rule ? `
+        <div class="sm:col-span-2">
+          <label for="show-must-contain" class="field-label">Must contain (regex)</label>
+          <input type="text" id="show-must-contain" value="${escapeHtml(data.must_contain || '')}" placeholder=".*" class="field font-mono">
+        </div>
+        <div class="sm:col-span-2">
+          <label for="show-must-not-contain" class="field-label">Must not contain</label>
+          <input type="text" id="show-must-not-contain" value="${escapeHtml(data.must_not_contain || '')}" placeholder="(720p|480p|...)" class="field font-mono">
+        </div>
+      ` : '';
+
+      const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
+
+      document.getElementById('show-side-form').innerHTML = `
+        <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent"></span>Feed &amp; matching<span class="ml-auto text-xs font-normal text-zinc-500">${ruleStatusText}</span></h3>
+        <div class="card p-4 flex-1 flex flex-col gap-4">
+         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label for="show-feed-id" class="field-label">${feedLabel}</label>
+            <select id="show-feed-id" class="field" title="${feedUrlTitle}">
+              ${feedOptions}
+            </select>
+            ${feedHint ? `<p class="field-hint">${feedHint}</p>` : ''}
+          </div>
+          ${regexSections}
+         </div>
+         <button type="button" onclick="showTriggerRediscover()" class="mt-auto self-start text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
+          Reset to Auto-Detect
+         </button>
+        </div>`;
+
+      document.getElementById('show-col-feed').innerHTML = `
+        <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent2"></span>Download</h3>
+        <div class="card p-4 flex-1 space-y-4">
+          <div>
+            <label for="show-save-path" class="field-label">Save path</label>
+            <input type="text" id="show-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
+          </div>
+          <div class="grid grid-cols-2 gap-3">
+            <div>
+              <label for="show-category" class="field-label">Category</label>
+              <input type="text" id="show-category" value="${escapeHtml(data.category || '')}" placeholder="${escapeHtml(currentSettings.default_category || 'anime')}" class="field font-mono">
+            </div>
+            <div>
+              <label for="show-ratio-limit" class="field-label">Seed ratio</label>
+              <input type="number" step="0.1" min="0" id="show-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="field font-mono">
+            </div>
+          </div>
+        </div>`;
+
+      // Whatever the form renders is the unmodified state.
+      showInitialState = readShowForm();
+      showContext = { showId, data, episodes };
+      document.getElementById('show-lists').innerHTML = showListsMarkup(showId, data, episodes, null);
+      updateSaveBar();
+      loadShowFeedMatches(showId);
+    }
+
+    function readShowForm() {
+      const val = (id) => {
+        const el = document.getElementById(id);
+        return el ? el.value : null;
+      };
+      const feed = val('show-feed-id');
+      const ratio = val('show-ratio-limit');
+      return {
+        current_feed_id: feed !== null ? parseInt(feed) : 0,
+        save_folder: (val('show-save-path') || '').trim(),
+        category: (val('show-category') || '').trim(),
+        ratio_limit: ratio !== null && ratio !== '' ? parseFloat(ratio) : undefined,
+        must_contain: (val('show-must-contain') || '').trim(),
+        must_not_contain: (val('show-must-not-contain') || '').trim(),
+        aliases: (val('show-aliases') || '').trim(),
+      };
+    }
+
+    function isShowFormDirty() {
+      if (!showInitialState) return false;
+      const now = readShowForm();
+      return Object.keys(showInitialState).some(k => now[k] !== showInitialState[k]);
+    }
+
+    function updateSaveBar() {
+      const bar = document.getElementById('show-save-bar');
+      if (!bar) return;
+      const dirty = isShowFormDirty();
+      bar.classList.toggle('opacity-0', !dirty);
+      bar.classList.toggle('translate-y-3', !dirty);
+      bar.classList.toggle('pointer-events-none', !dirty);
+      bar.inert = !dirty;
+      bar.setAttribute('aria-hidden', String(!dirty));
+    }
+
+    function confirmDiscardShowChanges() {
+      return !isShowFormDirty() || confirm('Discard unsaved changes?');
+    }
+
+    function discardShowChanges() {
+      if (!showContext) return;
+      renderShowBody(showContext.showId, showContext.data, showContext.episodes);
+    }
+
+    // Drops the open page's state and hides it; the caller decides which tab comes next.
+    function clearShowPageState() {
+      currentInspectedShowId = null;
+      showContext = null;
+      showFeedState = null;
+      showInitialState = null;
+      showPagePushed = false;
+      showLeaving = false;
+      updateSaveBar();
+      document.getElementById('tab-show').classList.add('hidden');
+      document.body.classList.remove('show-open');
+      applyShowPalette(null);
+      document.getElementById('main-scroll-container').classList.remove('hidden');
+    }
+
+    let showLeaving = false;
+    let ignoreNextPop = false;
+
+    // Animated exit. Going to the tab the show was opened from morphs the poster back
+    // into its card; any other tab just cross-fades.
+    function leaveShowPage(tab = showReturnTab) {
+      if (showLeaving) return Promise.resolve();
+      showLeaving = true;
+      const showId = currentInspectedShowId;
+      const morph = tab === showReturnTab;
+      const scroll = morph ? showReturnScroll : 0;
+      return runPageTransition(() => {
+        clearShowPageState();
+        switchTab(tab);
+        document.getElementById('main-scroll-container').scrollTop = scroll;
+      }, morph ? document.getElementById('show-poster') : null,
+      () => document.querySelector(`[data-poster-id="${showId}"]`), 'close');
+    }
+
+    // The back arrow and Escape. The animated exit starts straight from the click;
+    // the history entry we pushed is unwound once it has finished, and that popstate
+    // is ignored.
+    // A page loaded straight onto #show/<id> has no entry to unwind.
+    function closeShowPage() {
+      if (currentInspectedShowId === null || showLeaving) return;
+      if (!confirmDiscardShowChanges()) return;
+      showInitialState = null;
+      const pushed = showPagePushed;
+      leaveShowPage().then(() => {
+        if (pushed) {
+          ignoreNextPop = true;
+          history.back();
+        } else {
+          clearShowHash();
+        }
+      });
+    }
+
+    async function saveShowPage() {
+      const showId = currentInspectedShowId;
+      if (!showId || !isShowFormDirty()) return;
+
+      const now = readShowForm();
+      const init = showInitialState;
+
       // Picking another feed for a show locked to the one that delivered is an
       // explicit override; confirm it, then tell the server to release the lock.
-      const feedChanged = !modalInitialState || currentFeedId !== modalInitialState.current_feed_id;
-      const inspectedShow = allShows.find(s => s.id === currentInspectedShowId);
+      const feedChanged = now.current_feed_id !== init.current_feed_id;
+      const inspectedShow = allShows.find(s => s.id === showId);
       let releaseLearnedFeed = false;
-      if (feedChanged && inspectedShow && inspectedShow.feed_learned && currentFeedId !== inspectedShow.learned_feed_id) {
+      if (feedChanged && inspectedShow && inspectedShow.feed_learned && now.current_feed_id !== inspectedShow.learned_feed_id) {
         const lockedName = inspectedShow.learned_feed_name || 'the feed that delivered';
-        const target = allFeeds.find(f => f.id === currentFeedId);
+        const target = allFeeds.find(f => f.id === now.current_feed_id);
         const targetName = target ? `'${target.qbit_feed_name}'` : 'auto-detect';
         const ok = confirm(
           `'${inspectedShow.display_name}' is locked to '${lockedName}' because a release was recorded from it.\n\n` +
@@ -1570,54 +2146,52 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         releaseLearnedFeed = true;
       }
 
-      const btn = document.getElementById('btn-save-show-modal');
+      const btn = document.getElementById('btn-save-show');
       btn.disabled = true;
       btn.textContent = 'Saving...';
 
-      const isRegexChanged = modalInitialState && currentMustContain !== modalInitialState.must_contain;
-      const isMustNotChanged = modalInitialState && currentMustNotContain !== modalInitialState.must_not_contain;
-      const isAliasesChanged = modalInitialState && currentAliases !== modalInitialState.aliases;
-      const parsedAliases = currentAliases
-        ? currentAliases.split(',').map(a => a.trim()).filter(a => a.length > 0)
+      const parsedAliases = now.aliases
+        ? now.aliases.split(',').map(a => a.trim()).filter(a => a.length > 0)
         : [];
 
       const payload = {
         // Only sent when the feed was actually changed: an explicit pick pins the
         // feed, while saving other fields must leave auto-detect in charge.
-        current_feed_id: feedChanged ? currentFeedId : undefined,
+        current_feed_id: feedChanged ? now.current_feed_id : undefined,
         release_learned_feed: releaseLearnedFeed || undefined,
         // The field shows the resolved path, so it is only sent when edited;
         // otherwise every save would pin the show to today's absolute path.
         // An emptied field resets the show to the default folder.
-        save_folder: !modalInitialState || currentSaveFolder !== modalInitialState.save_folder ? currentSaveFolder : undefined,
-        category: currentCategory || undefined,
-        ratio_limit: currentRatio,
-        must_contain: isRegexChanged ? currentMustContain : undefined,
-        must_not_contain: isMustNotChanged ? currentMustNotContain : undefined,
-        aliases: isAliasesChanged ? parsedAliases : undefined,
+        save_folder: now.save_folder !== init.save_folder ? now.save_folder : undefined,
+        category: now.category || undefined,
+        ratio_limit: now.ratio_limit,
+        must_contain: now.must_contain !== init.must_contain ? now.must_contain : undefined,
+        must_not_contain: now.must_not_contain !== init.must_not_contain ? now.must_not_contain : undefined,
+        aliases: now.aliases !== init.aliases ? parsedAliases : undefined,
       };
 
       try {
-        const data = await apiFetch(`/api/shows/${currentInspectedShowId}/edit`, {
+        const data = await apiFetch(`/api/shows/${showId}/edit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
         showToast(data.message || 'Show updated.', 'success');
-        closeRuleModal();
-        loadShows();
+        // Redraw from the saved values, which also resets the dirty state.
+        await Promise.all([loadShows(), loadShowPageBody(showId, false)]);
       } catch (err) {
         showToast(`Save failed: ${err.message || err}`, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Save Changes';
+        btn.textContent = 'Save changes';
       }
     }
 
-    async function modalTriggerRediscover() {
-      if (!currentInspectedShowId) return;
+    async function showTriggerRediscover() {
       const showId = currentInspectedShowId;
+      if (!showId) return;
       const show = allShows.find(s => s.id === showId);
+      let force = false;
       if (show && show.feed_learned) {
         const feedName = show.learned_feed_name || show.current_feed_name || 'the feed that delivered';
         const ok = confirm(
@@ -1627,12 +2201,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           `Continue anyway?`
         );
         if (!ok) return;
-        closeRuleModal();
-        await rediscoverShow(showId, true);
-        return;
+        force = true;
       }
-      closeRuleModal();
-      await rediscoverShow(showId, false);
+      await rediscoverShow(showId, force);
+      if (currentInspectedShowId === showId) loadShowPageBody(showId, false);
     }
 
     async function quickDownloadMatch(showId, btn) {
@@ -1649,7 +2221,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           body: JSON.stringify({ title })
         });
         showToast(data.message || 'Download started.', 'success');
-        refreshModalLists(showId);
+        refreshShowLists(showId);
       } catch (err) {
         showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
       } finally {
@@ -1896,6 +2468,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
         updateTitleLanguageUi(s.title_language || 'english');
         updateDownloadModeUi(s.download_mode || 'rules');
+        applyUserAccent(s.accent_color || DEFAULT_ACCENT, s.accent_tint || 'subtle');
       } catch (err) {
         showToast(`Failed loading settings: ${err}`, 'error');
       }
@@ -2118,7 +2691,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
           <div class="text-right flex-shrink-0">
             <div class="text-xs text-zinc-400" title="${escapeHtml(fullTime)}">${formatRelativeTime(h.created_at)}</div>
-            <div class="text-[11px] text-zinc-600 mt-0.5 truncate max-w-[12rem]"><span class="${added ? 'text-emerald-400' : 'text-sky-400'}">${verb}</span>${h.feed_name ? ` · ${escapeHtml(h.feed_name)}` : ''}</div>
+            <div class="text-[11px] text-zinc-600 mt-0.5 truncate max-w-[12rem]"><span class="text-accent">${verb}</span>${h.feed_name ? ` · ${escapeHtml(h.feed_name)}` : ''}</div>
           </div>
         </div>
       `;
@@ -2173,7 +2746,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const timeStr = localTime(l.timestamp) || l.time_str || '';
 
         return `<div class="flex items-start gap-2.5 py-0.5 hover:bg-chrome px-1.5 rounded transition-colors leading-relaxed">
-          <span class="text-teal-500/60 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
+          <span class="text-accent/60 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
           <span class="shrink-0 text-[11px] font-mono">${levelBadge}</span>
           <span class="text-zinc-200 break-all select-text font-mono text-[11px] flex-1">${escapeHtml(l.message || '')}</span>
         </div>`;
@@ -2267,6 +2840,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         tickCountdown();
 
         document.getElementById('stat-working').textContent = `${st.counts.works} Working`;
+        const testingEl = document.getElementById('stat-testing');
+        testingEl.textContent = `${st.counts.testing} Testing`;
+        testingEl.classList.toggle('hidden', !st.counts.testing);
         document.getElementById('stat-upcoming').textContent = `${st.counts.upcoming} Upcoming`;
         const stalledEl = document.getElementById('stat-stalled');
         stalledEl.textContent = `${st.counts.stalled} Stalled`;
@@ -2286,6 +2862,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     loadShows();
     loadHistory();
     updateStatus();
+    if (showIdFromHash() !== null) openShowPage(showIdFromHash(), { push: false, instant: true });
     setInterval(updateStatus, 15000);
     setInterval(tickCountdown, 30000);
     toggleLogsAutoRefresh(true);
@@ -2295,11 +2872,25 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        const modal = document.getElementById('rule-modal');
-        if (modal && !modal.classList.contains('hidden')) {
-          saveShowModal();
+      if (e.key === 'Escape' && currentInspectedShowId !== null) closeShowPage();
+    });
+
+    // Browser back/forward moves between the list and a show page.
+    window.addEventListener('popstate', () => {
+      if (ignoreNextPop) {
+        ignoreNextPop = false;
+        return;
+      }
+      const id = showIdFromHash();
+      if (id !== null) {
+        if (id !== currentInspectedShowId) openShowPage(id, { push: false, fromHistory: true });
+      } else if (currentInspectedShowId !== null) {
+        if (!confirmDiscardShowChanges()) {
+          history.pushState({ show: currentInspectedShowId }, '', `#show/${currentInspectedShowId}`);
+          return;
         }
+        showInitialState = null;
+        leaveShowPage();
       }
     });
   </script>

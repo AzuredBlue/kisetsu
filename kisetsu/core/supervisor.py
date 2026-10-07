@@ -458,6 +458,9 @@ class Supervisor:
                 if data.get("cover_image") and show.cover_image != data.get("cover_image"):
                     show.cover_image = data.get("cover_image")
                     updated = True
+                if data.get("banner_image") and show.banner_image != data.get("banner_image"):
+                    show.banner_image = data.get("banner_image")
+                    updated = True
                 if data.get("season") and show.season_name != data.get("season"):
                     show.season_name = data.get("season")
                     updated = True
@@ -549,6 +552,7 @@ class Supervisor:
                     next_airing_at=data.get("next_airing_at"),
                     save_folder=sanitize_folder_name(chosen_name),
                     cover_image=data.get("cover_image"),
+                    banner_image=data.get("banner_image"),
                     season_name=data.get("season"),
                     season_year=data.get("season_year"),
                 )

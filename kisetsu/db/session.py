@@ -386,6 +386,9 @@ def init_db(engine=None):
             ("matched_title", "VARCHAR"),
             ("matched_release_group", "VARCHAR"),
             ("cover_image", "VARCHAR"),
+            ("banner_image", "VARCHAR"),
+            ("accent_hues", "VARCHAR"),
+            ("accent_src", "VARCHAR"),
             ("season_name", "VARCHAR"),
             ("season_year", "INTEGER"),
             ("title_romaji", "VARCHAR"),
@@ -438,6 +441,12 @@ def init_db(engine=None):
             session.commit()
         if "early_air_tolerance_hours" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN early_air_tolerance_hours INTEGER DEFAULT 6"))
+            session.commit()
+        if "accent_color" not in settings_cols:
+            session.exec(text("ALTER TABLE settings ADD COLUMN accent_color VARCHAR DEFAULT '#2dd4bf'"))
+            session.commit()
+        if "accent_tint" not in settings_cols:
+            session.exec(text("ALTER TABLE settings ADD COLUMN accent_tint VARCHAR DEFAULT 'subtle'"))
             session.commit()
 
         history_cols = get_table_columns(session, "match_history")

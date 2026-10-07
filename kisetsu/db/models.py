@@ -149,6 +149,8 @@ class Settings(SQLModel, table=True):
     download_mode: str = Field(default=DEFAULT_DOWNLOAD_MODE)
     backfill_window_days: int = Field(default=DEFAULT_BACKFILL_WINDOW_DAYS)
     early_air_tolerance_hours: int = Field(default=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
+    accent_color: str = Field(default="#2dd4bf")
+    accent_tint: str = Field(default="subtle")  # "off", "subtle" or "full"
 
 
 class SupervisionLease(SQLModel, table=True):
@@ -203,6 +205,11 @@ class Monitored(SQLModel, table=True):
     matched_title: Optional[str] = Field(default=None, nullable=True)
     matched_release_group: Optional[str] = Field(default=None, nullable=True)
     cover_image: Optional[str] = Field(default=None, nullable=True)
+    banner_image: Optional[str] = Field(default=None, nullable=True)
+    # Dominant colours of the banner (or cover) as "hue,saturation,secondary hue", or
+    # "" when the image has none. accent_src is the image they were read from.
+    accent_hues: Optional[str] = Field(default=None, nullable=True)
+    accent_src: Optional[str] = Field(default=None, nullable=True)
     season_name: Optional[str] = Field(default=None, nullable=True)
     season_year: Optional[int] = Field(default=None, nullable=True)
     status_before_pause: Optional[str] = Field(default=None, nullable=True)

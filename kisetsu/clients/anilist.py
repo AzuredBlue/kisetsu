@@ -36,6 +36,7 @@ query ($userName: String) {
           coverImage {
             large
           }
+          bannerImage
         }
       }
     }
@@ -287,6 +288,7 @@ class AniListClient:
                     "season": season,
                     "season_year": season_year,
                     "cover_image": (media.get("coverImage") or {}).get("large") or "",
+                    "banner_image": media.get("bannerImage") or "",
                 }
 
         return list(anime_dict.values())

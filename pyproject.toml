@@ -16,6 +16,7 @@ dependencies = [
     "rapidfuzz>=3.9.0",
     "fastapi>=0.110.0",
     "uvicorn>=0.28.0",
+    "pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]
