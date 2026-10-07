@@ -234,9 +234,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       </div>
     </header>
 
-    <div class="flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-7" id="main-scroll-container">
+    <div class="flex-1 overflow-y-auto px-4 pt-5 pb-5 md:px-8 md:pt-5 md:pb-7" id="main-scroll-container">
 
-      <section id="tab-shows" class="space-y-10 max-w-[1900px]">
+      <section id="tab-shows" class="space-y-5 max-w-[1900px]">
 
         <div id="section-releasing" class="space-y-4">
           <div class="flex items-center justify-between gap-3">
