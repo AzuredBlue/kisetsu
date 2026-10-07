@@ -497,7 +497,7 @@ class TestDirectScheduler(unittest.TestCase):
             episode_id=episode.id,
             kind="grab",
             status=TorrentOperationStatus.PREPARING,
-            operation_tag="qsa-op-pending",
+            operation_tag="kisetsu-op-pending",
             release_title="Pending Release",
             version=1,
             new_torrent_url="magnet:pending",

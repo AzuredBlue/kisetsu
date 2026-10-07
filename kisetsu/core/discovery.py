@@ -21,10 +21,10 @@ def get_max_same_host_feed_count(feed_urls: List[str]) -> int:
             continue
         try:
             host = urlsplit(url).netloc.lower()
-            if host:
-                hosts.append(host)
-        except Exception:
-            pass
+        except ValueError:
+            continue
+        if host:
+            hosts.append(host)
     if not hosts:
         return 1
     return max(Counter(hosts).values())

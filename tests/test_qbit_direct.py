@@ -21,7 +21,7 @@ def test_add_torrent_passes_direct_ownership_options():
         urls="magnet:test",
         save_path="/anime",
         category="Anime",
-        tags=["qsa-managed", "qsa-op-1"],
+        tags=["kisetsu-managed", "kisetsu-op-1"],
         is_paused=True,
         ratio_limit=1.5,
     )
@@ -30,7 +30,7 @@ def test_add_torrent_passes_direct_ownership_options():
         urls="magnet:test",
         save_path="/anime",
         category="Anime",
-        tags="qsa-managed,qsa-op-1",
+        tags="kisetsu-managed,kisetsu-op-1",
         is_paused=True,
         ratio_limit=1.5,
         use_auto_torrent_management=False,
@@ -79,11 +79,11 @@ def test_get_torrents_filters_by_hash_category_and_tag():
     client.get_torrents()
     assert underlying.torrents_info.call_args.kwargs == {}
 
-    client.get_torrents(hashes=["a", "b"], category="Anime", tag="qsa-managed")
+    client.get_torrents(hashes=["a", "b"], category="Anime", tag="kisetsu-managed")
     assert underlying.torrents_info.call_args.kwargs == {
         "torrent_hashes": ["a", "b"],
         "category": "Anime",
-        "tag": "qsa-managed",
+        "tag": "kisetsu-managed",
     }
 
 
@@ -91,14 +91,14 @@ def test_torrent_lookup_and_lifecycle_methods_delegate_to_client():
     client, underlying = _client()
     underlying.torrents_info.return_value = [MagicMock(hash="abc")]
 
-    torrents = client.get_torrents(tag="qsa-managed")
+    torrents = client.get_torrents(tag="kisetsu-managed")
     client.pause_torrents(["abc"])
     client.resume_torrents(["abc"])
     client.recheck_torrents(["abc"])
     client.delete_torrents(["abc"], delete_files=True)
 
     assert torrents[0].hash == "abc"
-    underlying.torrents_info.assert_called_once_with(tag="qsa-managed")
+    underlying.torrents_info.assert_called_once_with(tag="kisetsu-managed")
     underlying.torrents_pause.assert_called_once_with(torrent_hashes=["abc"])
     underlying.torrents_resume.assert_called_once_with(torrent_hashes=["abc"])
     underlying.torrents_recheck.assert_called_once_with(torrent_hashes=["abc"])

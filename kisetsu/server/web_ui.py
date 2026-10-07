@@ -659,6 +659,20 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }, 3500);
     }
 
+    const actionsInFlight = new Set();
+
+    // Ignores a repeat call while the same action is still running, so a double
+    // click cannot send two toggles or two deletes.
+    async function once(key, action) {
+      if (actionsInFlight.has(key)) return;
+      actionsInFlight.add(key);
+      try {
+        return await action();
+      } finally {
+        actionsInFlight.delete(key);
+      }
+    }
+
     async function apiFetch(url, options = {}) {
       const res = await fetch(url, options);
       let data = {};
@@ -2230,37 +2244,43 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
-    async function togglePauseShow(id) {
-      try {
-        const data = await apiFetch(`/api/shows/${id}/pause`, { method: 'POST' });
-        showToast(data.message, 'success');
-        loadShows();
-      } catch (err) {
-        showToast(`Action failed: ${err.message || err}`, 'error');
-      }
+    function togglePauseShow(id) {
+      return once(`pause-${id}`, async () => {
+        try {
+          const data = await apiFetch(`/api/shows/${id}/pause`, { method: 'POST' });
+          showToast(data.message, 'success');
+          loadShows();
+        } catch (err) {
+          showToast(`Action failed: ${err.message || err}`, 'error');
+        }
+      });
     }
 
-    async function rediscoverShow(id, force = false) {
-      try {
-        const data = await apiFetch(`/api/shows/${id}/rediscover${force ? '?force=true' : ''}`, { method: 'POST' });
-        showToast(data.message, 'success');
-        loadShows();
-      } catch (err) {
-        showToast(`Action failed: ${err.message || err}`, 'error');
-      }
+    function rediscoverShow(id, force = false) {
+      return once(`rediscover-${id}`, async () => {
+        try {
+          const data = await apiFetch(`/api/shows/${id}/rediscover${force ? '?force=true' : ''}`, { method: 'POST' });
+          showToast(data.message, 'success');
+          loadShows();
+        } catch (err) {
+          showToast(`Action failed: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     async function deleteShow(id) {
       const target = allShows.find(s => s.id === id);
       const name = target ? target.display_name : `#${id}`;
       if (!confirm(`Delete '${name}' from monitoring and remove its qBittorrent rule?`)) return;
-      try {
-        const data = await apiFetch(`/api/shows/${id}`, { method: 'DELETE' });
-        showToast(data.message, 'success');
-        loadShows();
-      } catch (err) {
-        showToast(`Delete failed: ${err.message || err}`, 'error');
-      }
+      await once(`delete-${id}`, async () => {
+        try {
+          const data = await apiFetch(`/api/shows/${id}`, { method: 'DELETE' });
+          showToast(data.message, 'success');
+          loadShows();
+        } catch (err) {
+          showToast(`Delete failed: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     let dragSourceIndex = null;
@@ -2407,22 +2427,18 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     async function setDownloadMode(mode) {
       if (!['rules', 'direct'].includes(mode)) return;
       try {
-        const res = await fetch('/api/settings', {
+        const data = await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ download_mode: mode })
         });
-        const data = await res.json();
-        if (!res.ok) {
-          updateDownloadModeUi(currentSettings.download_mode || 'rules');
-          throw new Error(data.detail || data.message || 'Mode switch failed');
-        }
         showToast(data.message || `Download engine switched to ${mode}.`, 'success');
         await loadSettings();
         await loadShows();
         updateStatus(true);
       } catch (err) {
-        showToast(`Mode switch failed: ${err}`, 'error');
+        updateDownloadModeUi((currentSettings && currentSettings.download_mode) || 'rules');
+        showToast(`Mode switch failed: ${err.message || err}`, 'error');
       }
     }
 
@@ -2445,8 +2461,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function loadSettings() {
       try {
-        const res = await fetch('/api/settings');
-        const s = await res.json();
+        const s = await apiFetch('/api/settings');
         currentSettings = s;
         document.getElementById('set-qbit-host').value = s.qbit_host || '';
         document.getElementById('set-qbit-user').value = s.qbit_username || '';
@@ -2463,7 +2478,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         updateDownloadModeUi(s.download_mode || 'rules');
         applyUserAccent(s.accent_color || DEFAULT_ACCENT, s.accent_tint || 'subtle');
       } catch (err) {
-        showToast(`Failed loading settings: ${err}`, 'error');
+        showToast(`Failed loading settings: ${err.message || err}`, 'error');
       }
     }
 
@@ -2486,20 +2501,20 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const pwd = document.getElementById('set-qbit-pass').value;
       if (pwd) payload.qbit_password = pwd;
 
-      try {
-        const res = await fetch('/api/settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || 'Failed to save settings.');
-        showToast(data.message || 'Settings saved.', 'success');
-        await loadSettings();
-        await loadShows();
-      } catch (err) {
-        showToast(`Failed saving settings: ${err}`, 'error');
-      }
+      await once('save-settings', async () => {
+        try {
+          const data = await apiFetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          showToast(data.message || 'Settings saved.', 'success');
+          await loadSettings();
+          await loadShows();
+        } catch (err) {
+          showToast(`Failed saving settings: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     async function testQbitConnection() {
@@ -2513,34 +2528,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const pwd = document.getElementById('set-qbit-pass').value;
       if (pwd) payload.qbit_password = pwd;
       try {
-        const res = await fetch('/api/settings/test-qbit', {
+        const data = await apiFetch('/api/settings/test-qbit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        if (res.ok) {
-          statusEl.textContent = `Connected (qBit ${data.app_version})`;
-          statusEl.className = 'text-xs font-mono text-emerald-400 font-semibold';
-        } else {
-          statusEl.textContent = `${data.detail}`;
-          statusEl.className = 'text-xs font-mono text-rose-400';
-        }
+        statusEl.textContent = `Connected (qBit ${data.app_version})`;
+        statusEl.className = 'text-xs font-mono text-emerald-400 font-semibold';
       } catch (err) {
-        statusEl.textContent = `Failed: ${err}`;
+        statusEl.textContent = err.status ? `${err.message}` : `Failed: ${err.message || err}`;
         statusEl.className = 'text-xs font-mono text-rose-400';
       }
     }
 
     async function clearAllShows() {
       if (!confirm('Delete ALL monitored shows and remove all qBittorrent RSS rules?')) return;
-      try {
-        const data = await apiFetch('/api/settings/clear-all', { method: 'POST' });
-        showToast(data.message || 'All shows cleared.', 'success');
-        loadShows();
-      } catch (err) {
-        showToast(`Clear failed: ${err}`, 'error');
-      }
+      await once('clear-all', async () => {
+        try {
+          const data = await apiFetch('/api/settings/clear-all', { method: 'POST' });
+          showToast(data.message || 'All shows cleared.', 'success');
+          loadShows();
+        } catch (err) {
+          showToast(`Clear failed: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     async function runCycleNow() {
@@ -2601,12 +2612,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
       historyLoadInFlight = true;
       try {
-        const res = await fetch('/api/history?limit=100');
-        cachedHistory = await res.json();
+        cachedHistory = await apiFetch('/api/history?limit=100');
         renderHistory();
         if (manual) showToast('History refreshed.', 'info');
       } catch (err) {
-        if (manual) showToast(`Failed to load history: ${err}`, 'error');
+        if (manual) showToast(`Failed to load history: ${err.message || err}`, 'error');
       } finally {
         historyLoadInFlight = false;
         if (historyLoadQueued) {
@@ -2692,13 +2702,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function clearHistory() {
       if (!confirm('Clear all match history?')) return;
-      try {
-        await apiFetch('/api/history', { method: 'DELETE' });
-        showToast('Match history cleared.', 'success');
-        loadHistory();
-      } catch (err) {
-        showToast(`Failed to clear history: ${err}`, 'error');
-      }
+      await once('clear-history', async () => {
+        try {
+          await apiFetch('/api/history', { method: 'DELETE' });
+          showToast('Match history cleared.', 'success');
+          loadHistory();
+        } catch (err) {
+          showToast(`Failed to clear history: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     let logsAutoRefreshInterval = null;
@@ -2707,12 +2719,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function loadLogs(manual = false) {
       try {
-        const res = await fetch('/api/logs?limit=250');
-        cachedLogs = await res.json();
+        cachedLogs = await apiFetch('/api/logs?limit=250');
         renderLogs();
         if (manual) showToast('Logs refreshed.', 'info');
       } catch (err) {
-        if (manual) showToast(`Failed to load logs: ${err}`, 'error');
+        if (manual) showToast(`Failed to load logs: ${err.message || err}`, 'error');
       }
     }
 

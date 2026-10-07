@@ -27,11 +27,26 @@ from kisetsu.db.models import (
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
-from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
+from kisetsu.core.discovery import flatten_rss_articles
+from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, show_torrent_hashes
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
-from kisetsu.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
+from kisetsu.core.rules import (
+    DEFAULT_MUST_NOT,
+    RULE_LEAD_TIME,
+    build_regex_pattern,
+    build_rule_name,
+    compress_home_path,
+    create_or_update_rule,
+    delete_rule,
+    effective_title,
+    is_show_rule_deferred,
+    is_show_rule_enabled,
+    is_show_rule_unreleased,
+    resolve_save_path,
+    sanitize_folder_name,
+)
 from kisetsu.workers.scheduler import calculate_next_poll_interval
 from kisetsu.server.state import state
 
@@ -181,7 +196,6 @@ def get_shows(session: Session = Depends(get_db)):
         romaji_title = s.title_romaji or s.display_name
         effective_display_name = effective_title(s, settings.title_language)
 
-        from kisetsu.core.rules import sanitize_folder_name, compress_home_path
         base_template = settings.base_dir or "~/Anime/{name}"
         is_custom_folder = bool(s.save_folder and s.save_folder != sanitize_folder_name(s.display_name) and s.save_folder != sanitize_folder_name(s.title_romaji or "") and s.save_folder != sanitize_folder_name(s.title_english or ""))
         if is_custom_folder and (s.save_folder.startswith("/") or s.save_folder.startswith("~")):
@@ -292,8 +306,7 @@ def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
 
         if direct:
             try:
-                torrents = qbit.get_torrents(tag=f"qsa-show-{show.id}")
-                hashes = [str(getattr(t, "hash", "")) for t in torrents if getattr(t, "hash", None)]
+                hashes = show_torrent_hashes(session, show)
                 if hashes:
                     qbit.resume_torrents(hashes)
                     state.add_log(f"Resumed {len(hashes)} torrent(s) for '{show.display_name}'.", "INFO")
@@ -326,8 +339,7 @@ def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
                 except Exception as e:
                     state.add_log(f"Warning cancelling operations for '{show.display_name}': {e}", "WARNING")
             try:
-                torrents = qbit.get_torrents(tag=f"qsa-show-{show.id}")
-                hashes = [str(getattr(t, "hash", "")) for t in torrents if getattr(t, "hash", None)]
+                hashes = show_torrent_hashes(session, show)
                 if hashes:
                     qbit.pause_torrents(hashes)
                     state.add_log(f"Paused {len(hashes)} torrent(s) for '{show.display_name}'.", "INFO")
@@ -454,8 +466,6 @@ def _effective_display_name(show: Monitored, settings: Settings) -> str:
 
 
 def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Settings, display_name: str) -> Dict[str, Any]:
-    from kisetsu.core.rules import resolve_save_path, sanitize_folder_name
-
     torrent_params = rule.get("torrentParams") or {}
 
     default_names = {
@@ -479,8 +489,6 @@ def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Setti
 
 
 def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> Optional[str]:
-    from kisetsu.core.discovery import flatten_rss_articles
-
     try:
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
@@ -555,7 +563,6 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
     effective_display_name = _effective_display_name(show, settings)
 
-    from kisetsu.core.rules import build_rule_name, is_show_rule_enabled, is_show_rule_unreleased, compress_home_path
     expected_rule_name = build_rule_name(show.id or 0, effective_display_name)
     rule_is_enabled = qbit_rule_data.get("enabled") if "enabled" in qbit_rule_data else is_show_rule_enabled(show)
 
@@ -622,7 +629,6 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
     feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
 
     try:
-        from kisetsu.core.discovery import flatten_rss_articles
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
         state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
@@ -654,7 +660,6 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
     saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
     if not matched_articles and feed_items and saved_regex:
         try:
-            import re
             must_re = re.compile(saved_regex, re.IGNORECASE)
             must_not_re = re.compile(saved_must_not, re.IGNORECASE) if saved_must_not else None
 
@@ -719,7 +724,7 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
 
     try:
         qbit.add_torrent(
-            url=url,
+            urls=url,
             save_path=params["save_path"],
             category=params["category"],
             ratio_limit=params["ratio_limit"],
@@ -831,7 +836,6 @@ def _set_episode_offset(session: Session, show: Monitored, feed_id: Optional[int
     session.add(mapping)
     session.commit()
     # Releases stored under the feed's raw numbering move to the right rows now.
-    from kisetsu.core.grabber import rebase_ledger
     rebase_ledger(session, show, feed_id, offset, target_count=show.total_episodes)
 
 
@@ -865,6 +869,9 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
 
     if req.current_feed_id is not None:
         _reject_learned_feed_change(show, new_feed_id, req.release_learned_feed, session)
+        # Checked before anything is edited: the episode offset below commits.
+        if new_feed_id is not None and session.get(Feed, new_feed_id) is None:
+            raise HTTPException(status_code=400, detail="Selected feed not found")
 
     if req.save_folder is not None:
         val = req.save_folder.strip()
@@ -923,7 +930,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             show.feed_pinned = False
             show.candidate_feed_id = None
             show.candidate_feed_since = None
-            show.status = MonitoredStatus.UNCONFIRMED
+            _set_status_keeping_pause(show, MonitoredStatus.UNCONFIRMED)
             session.add(show)
             session.commit()
             state.add_log(f"Reset '{show.display_name}' to Auto-Discover mode (direct engine).", "INFO")
@@ -944,8 +951,6 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         )
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
-
-    from kisetsu.core.rules import RULE_LEAD_TIME, create_or_update_rule, is_show_rule_deferred
 
     title_language = getattr(settings, "title_language", "english")
     feed_changed = req.current_feed_id is not None and new_feed_id != previous_feed_id
@@ -1007,7 +1012,6 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     parsed_articles = {}
     try:
         rss_data = qbit.get_rss_items(with_data=True)
-        from kisetsu.core.discovery import flatten_rss_articles
         articles_by_feed = flatten_rss_articles(rss_data)
         feed_articles = articles_by_feed.get(feed.qbit_feed_url, [])
 
@@ -1166,7 +1170,6 @@ def _sync_feeds(session: Session, qbit: QBitClient):
 
 @router.get("/settings")
 def get_current_settings(session: Session = Depends(get_db)):
-    from kisetsu.core.rules import compress_home_path
     s = get_settings(session)
     base_dir = s.base_dir or "~/Anime/{name}"
     if base_dir and "{name}" not in base_dir:
@@ -1563,15 +1566,7 @@ def get_system_status(session: Session = Depends(get_db)):
     testing = 0
     for s in shows:
         if s.status == MonitoredStatus.UNCONFIRMED:
-            airing_at = s.next_airing_at
-            if airing_at and airing_at.tzinfo is None:
-                airing_at = airing_at.replace(tzinfo=timezone.utc)
-            is_unreleased = (
-                (s.next_airing_episode == 1 or s.next_airing_episode is None)
-                and (s.last_confirmed_episode or 0) == 0
-                and (airing_at is None or airing_at > now)
-            )
-            if is_unreleased:
+            if is_show_rule_unreleased(s):
                 upcoming += 1
             else:
                 testing += 1

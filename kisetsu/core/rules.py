@@ -182,13 +182,13 @@ def compress_home_path(path: Optional[str]) -> str:
         return ""
     try:
         home = str(Path.home())
-        p_str = str(path).strip()
-        if p_str == home:
-            return "~"
-        if p_str.startswith(home + "/") or p_str.startswith(home + "\\"):
-            return "~" + p_str[len(home):]
-    except Exception:
-        pass
+    except (RuntimeError, KeyError, OSError):
+        return str(path)
+    p_str = str(path).strip()
+    if p_str == home:
+        return "~"
+    if p_str.startswith(home + "/") or p_str.startswith(home + "\\"):
+        return "~" + p_str[len(home):]
     return str(path)
 
 

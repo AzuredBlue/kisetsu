@@ -1,10 +1,14 @@
 import asyncio
+import ipaddress
+import os
+import socket
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Optional
+from urllib.parse import urlsplit
 import logging
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlmodel import Session, select
 
 from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS
@@ -274,9 +278,50 @@ async def lifespan(app: FastAPI):
             pass
 
 
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _request_host(host_header: str) -> str:
+    """The hostname of a Host header, without port or IPv6 brackets."""
+    return urlsplit(f"//{host_header}").hostname or ""
+
+
+def _host_allowed(host_header: str) -> bool:
+    """Whether the Host header names this machine rather than a rebound domain.
+
+    DNS rebinding points an attacker's domain at the loopback address, so the
+    browser sends that domain as Host. IP literals, localhost and this
+    machine's own hostname are accepted; KISETSU_ALLOWED_HOSTS (comma
+    separated) adds names for reverse proxies or a LAN hostname.
+    """
+    try:
+        host = _request_host(host_header).lower()
+    except ValueError:
+        return False
+    if not host or host == "localhost" or host.endswith(".localhost"):
+        return bool(host)
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    extra = {name.strip().lower() for name in os.environ.get("KISETSU_ALLOWED_HOSTS", "").split(",") if name.strip()}
+    return host in extra or host == socket.gethostname().lower()
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Kisetsu", lifespan=lifespan)
     app.include_router(router)
+
+    @app.middleware("http")
+    async def reject_foreign_hosts(request: Request, call_next):
+        host_header = request.headers.get("host", "")
+        if not _host_allowed(host_header):
+            return JSONResponse({"detail": "Host not allowed."}, status_code=403)
+        origin = request.headers.get("origin")
+        if origin and request.method not in _SAFE_METHODS and urlsplit(origin).netloc != host_header:
+            return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
+        return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)
     async def index():

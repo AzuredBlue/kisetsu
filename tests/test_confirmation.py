@@ -85,7 +85,8 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(self.hist.outcome, RuleOutcome.CONFIRMED)
         self.assertTrue(any("Confirmed rule" in log for log in logs))
         mock_qbit.find_log_acceptances.assert_called_once()
-        self.assertEqual(call_order, ["rule", "lookup"])
+        self.assertEqual(self.show.learned_feed_id, 1)
+        self.assertEqual(call_order, ["lookup", "rule"])
 
         # Recorded with qBittorrent's own acceptance time, not the article date.
         m_hist = self.session.exec(select(MatchHistory)).all()
@@ -125,8 +126,10 @@ class TestConfirmation(unittest.TestCase):
 
         self.assertFalse(any("Skipped" in log for log in logs))
         self.assertEqual(self.session.exec(select(MatchHistory)).all(), [])
-        # The supervisor still learns and repairs the rule from the release.
-        self.assertEqual(self.show.status, MonitoredStatus.FIXED)
+        # The release name is still learned, but without qBittorrent's evidence
+        # the show is neither Working nor locked to the feed.
+        self.assertEqual(self.show.status, MonitoredStatus.UNCONFIRMED)
+        self.assertIsNone(self.show.learned_feed_id)
         self.assertIsNone(self.show.last_confirmed_episode)
         self.assertEqual(self.show.matched_title, "Sousou no Frieren")
 

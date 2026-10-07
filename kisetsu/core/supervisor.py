@@ -10,11 +10,11 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionErro
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.grabber import cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
+from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
+from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
-from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
+from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 
 logger = logging.getLogger("kisetsu.core.supervisor")
@@ -57,18 +57,15 @@ def _rules_are_equivalent(current: Dict[str, Any], desired: Dict[str, Any]) -> b
     those change on every match, and comparing them would rewrite rules continuously,
     which is exactly what would wipe that state.
     """
-    try:
-        return (
-            current.get("mustContain") == desired.get("mustContain")
-            and current.get("mustNotContain") == desired.get("mustNotContain")
-            and current.get("affectedFeeds") == desired.get("affectedFeeds")
-            and current.get("savePath") == desired.get("savePath")
-            and (current.get("assignedCategory") or "") == (desired.get("assignedCategory") or "")
-            and current.get("useRegex") == desired.get("useRegex")
-            and current.get("enabled") == desired.get("enabled")
-        )
-    except Exception:
-        return False
+    return (
+        current.get("mustContain") == desired.get("mustContain")
+        and current.get("mustNotContain") == desired.get("mustNotContain")
+        and current.get("affectedFeeds") == desired.get("affectedFeeds")
+        and current.get("savePath") == desired.get("savePath")
+        and (current.get("assignedCategory") or "") == (desired.get("assignedCategory") or "")
+        and current.get("useRegex") == desired.get("useRegex")
+        and current.get("enabled") == desired.get("enabled")
+    )
 
 
 def delete_monitored_show(session: Session, qbit: QBitClient, show: Monitored, reason: str) -> None:
@@ -245,7 +242,7 @@ class Supervisor:
             return logs
 
         if not create_qbit_rules:
-            logs.extend(self._reassign_direct_feeds(all_feeds))
+            logs.extend(self._reassign_direct_feeds(all_feeds, rss_snapshot))
 
         top_feed = all_feeds[0]
         if parsed_articles is None:
@@ -452,6 +449,7 @@ class Supervisor:
         self.anilist_sync_succeeded = True
 
         new_shows_count = 0
+        rules_to_disable: List[str] = []
         pref_lang = getattr(self.settings, "title_language", "english")
 
         for data in seasonal_list:
@@ -522,7 +520,7 @@ class Supervisor:
                         if show.status != MonitoredStatus.COMPLETED:
                             show.status = MonitoredStatus.COMPLETED
                             if show.qbit_rule_name:
-                                disable_rule(self.qbit, show.qbit_rule_name)
+                                rules_to_disable.append(show.qbit_rule_name)
                             updated = True
                             if anilist_marked_complete:
                                 msg = f"Show '{show.display_name}' marked COMPLETED on AniList. Status -> COMPLETED, rule disabled."
@@ -539,7 +537,7 @@ class Supervisor:
                     if data.get("next_airing_episode") != show.next_airing_episode:
                         show.next_airing_episode = data.get("next_airing_episode")
                         updated = True
-                    if data.get("next_airing_at") != show.next_airing_at:
+                    if as_utc(data.get("next_airing_at")) != as_utc(show.next_airing_at):
                         show.next_airing_at = data.get("next_airing_at")
                         updated = True
 
@@ -563,7 +561,6 @@ class Supervisor:
                 if updated:
                     self.session.add(show)
             else:
-                from kisetsu.core.rules import sanitize_folder_name
                 new_show = Monitored(
                     anilist_id=aid,
                     display_name=chosen_name,
@@ -586,7 +583,10 @@ class Supervisor:
                 new_shows_count += 1
 
         self.session.commit()
-        logs.extend(self._remove_shows_off_list(seasonal_list, existing_shows))
+        # qBittorrent calls block, so they run off the event loop.
+        for rule_name in rules_to_disable:
+            await asyncio.to_thread(disable_rule, self.qbit, rule_name)
+        logs.extend(await asyncio.to_thread(self._remove_shows_off_list, seasonal_list, existing_shows))
         msg = f"Synced AniList schedule for {len(seasonal_list)} seasonal shows."
         if new_shows_count > 0:
             msg += f" (Discovered and added {new_shows_count} new seasonal shows to Monitored)"
@@ -692,14 +692,11 @@ class Supervisor:
             if entries is None:
                 missing.append(show.display_name)
                 continue
-            sync_show_episodes(self.session, show)
+            episodes_by_number = {
+                episode.episode_number: episode for episode in sync_show_episodes(self.session, show)
+            }
             for entry in entries:
-                episode = self.session.exec(
-                    select(Episode).where(
-                        Episode.monitored_id == show.id,
-                        Episode.episode_number == int(entry["episode"]),
-                    )
-                ).first()
+                episode = episodes_by_number.get(int(entry["episode"]))
                 if not episode:
                     continue
                 air_at = entry.get("airing_at")
@@ -743,7 +740,7 @@ class Supervisor:
             client = self.qbit.get_client()
             existing_rules = client.rss_rules()
         except Exception as e:
-            logger.debug(f"Could not fetch existing RSS rules from qBittorrent: {e}")
+            logger.warning(f"Could not fetch existing RSS rules from qBittorrent: {e}")
             existing_rules = {}
 
         refreshed = 0
@@ -1128,11 +1125,11 @@ class Supervisor:
             self.session.commit()
         return logs
 
-    def _reassign_direct_feeds(self, all_feeds: List[Feed]) -> List[str]:
+    def _reassign_direct_feeds(self, all_feeds: List[Feed], rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
         logs: List[str] = []
         now = utc_now()
         try:
-            cached_articles = RssSnapshot(self.qbit).get()
+            cached_articles = (rss_snapshot or RssSnapshot(self.qbit)).get()
         except QbitClientError as e:
             logger.debug(f"Feed reassignment skipped: {e}")
             return logs
@@ -1209,6 +1206,7 @@ class Supervisor:
             )
         }
         failed: List[str] = []
+        disabled_any = False
         for rule_name in sorted(owned_names):
             rule_def = rules.get(rule_name, {})
             if rule_def.get("enabled") is False:
@@ -1218,10 +1216,12 @@ class Supervisor:
                 updated["enabled"] = False
                 self.qbit.set_rss_rule(rule_name, updated)
                 logs.append(f"Disabled managed RSS rule '{rule_name}'.")
+                disabled_any = True
             except Exception as e:
                 failed.append(rule_name)
                 logger.warning(f"Could not disable managed RSS rule '{rule_name}': {e}")
-        current_rules = self.qbit.get_rss_rules()
+        # Rules that were already disabled need no second read to be verified.
+        current_rules = self.qbit.get_rss_rules() if (disabled_any or failed) else rules
         remaining = [
             rule_name
             for rule_name in owned_names
@@ -1267,11 +1267,13 @@ class Supervisor:
         """
         logs: List[str] = []
         try:
-            torrents = list(self.qbit.get_torrents(tag="qsa-managed"))
+            torrents = list(self.qbit.get_torrents(tag=MANAGED_TAG))
         except Exception as e:
             logger.warning(f"Could not read managed torrents for import: {e}")
             return [f"Could not import existing torrents: {e}"]
-        if not torrents:
+        # Without a configured category the fallback would list every torrent
+        # in the client, not just the ones this app is responsible for.
+        if not torrents and self.settings.default_category:
             try:
                 torrents = list(self.qbit.get_torrents(category=self.settings.default_category))
             except Exception as e:
@@ -1297,7 +1299,7 @@ class Supervisor:
                 ])
             )
         ).all()
-        candidates = [(show, prepare_aliases(show.aliases)) for show in shows]
+        candidates = [(show, prepare_aliases(show.aliases), build_regex_pattern(show.aliases)) for show in shows]
         parsed_cache: Dict[str, Dict[str, Any]] = {}
         # Built on first use: this runs every direct cycle, and most cycles
         # adopt nothing, so the RSS read is skipped unless it is needed.
@@ -1313,10 +1315,11 @@ class Supervisor:
             if raw_episode is None:
                 continue
             matched_show = None
-            for show, prepared in candidates:
+            for show, prepared, test_pattern in candidates:
                 if match_release_to_show(
                     name,
                     show.aliases,
+                    test_pattern=test_pattern,
                     prepared_aliases=prepared,
                     parsed_cache=parsed_cache,
                     ignore_arc_marker=False,
@@ -1436,6 +1439,30 @@ class Supervisor:
         logs.append(msg + ".")
         return logs
 
+    def cancel_direct_operations(self) -> List[str]:
+        """Stand down direct-engine operations still in flight.
+
+        Only the direct engine advances them, so left alone a replacement stays
+        paused (and its previous release stays) once rules mode takes over.
+        A replacement that is still downloading is left to finish.
+        """
+        logs: List[str] = []
+        operations = self.session.exec(
+            select(TorrentOperation).where(TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)))
+        ).all()
+        canceled = 0
+        for operation in operations:
+            episode = self.session.get(Episode, operation.episode_id)
+            show = self.session.get(Monitored, episode.monitored_id) if episode else None
+            if show is None:
+                continue
+            canceled += cancel_episode_operations(
+                self.session, self.qbit, show, episode, "Download mode switched to rules.",
+            )
+        if canceled:
+            logs.append(f"Canceled {canceled} in-flight direct download operation(s) for the switch to rules mode.")
+        return logs
+
     def prepare_download_mode(
         self,
         mode: str,
@@ -1450,6 +1477,7 @@ class Supervisor:
             logs.extend(self.import_existing_torrents(snapshot))
             logs.extend(self.disable_managed_rules())
             return logs
+        logs.extend(self.cancel_direct_operations())
         logs.extend(self.shield_owned_articles())
         logs.extend(self.bootstrap_unassigned_shows(
             rss_snapshot=snapshot,
@@ -1614,7 +1642,6 @@ class Supervisor:
         all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
 
         total_shows = self.session.exec(select(Monitored)).all()
-        now = utc_now()
         works_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.FIXED)
         stalled_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.STALLED)
         paused_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.PAUSED)
@@ -1623,15 +1650,7 @@ class Supervisor:
         testing_cnt = 0
         for s in total_shows:
             if s.status == MonitoredStatus.UNCONFIRMED:
-                air_at = s.next_airing_at
-                if air_at and air_at.tzinfo is None:
-                    air_at = air_at.replace(tzinfo=timezone.utc)
-                is_unreleased = (
-                    (s.next_airing_episode == 1 or s.next_airing_episode is None)
-                    and (s.last_confirmed_episode or 0) == 0
-                    and (air_at is None or air_at > now)
-                )
-                if is_unreleased:
+                if is_show_rule_unreleased(s):
                     upcoming_cnt += 1
                 else:
                     testing_cnt += 1

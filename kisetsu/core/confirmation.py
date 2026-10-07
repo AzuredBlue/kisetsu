@@ -224,7 +224,7 @@ def record_match_event(
 
         return record
     except Exception as e:
-        logger.debug(f"Could not record match event: {e}")
+        logger.warning(f"Could not record match event for '{release_title}': {e}")
         return None
 
 
@@ -370,6 +370,55 @@ def _find_release_on_feed(
         prepared_aliases,
         parsed_articles,
     )
+
+
+def _confirm_show_on_feed(
+    session: Session,
+    qbit_client: QBitClient,
+    settings: Settings,
+    show: Monitored,
+    feed: Feed,
+    matched_title: str,
+    best_ep: int,
+    known_categories: Optional[Set[str]],
+    logs: List[str],
+) -> None:
+    """Lock the show to a feed that qBittorrent really acted on and mark it Working."""
+    show.learned_feed_id = feed.id
+    if show.status != MonitoredStatus.UNCONFIRMED:
+        session.add(show)
+        return
+    show.status = MonitoredStatus.FIXED
+
+    latest_hist = session.exec(
+        select(RuleHistory)
+        .where(RuleHistory.monitored_id == show.id)
+        .order_by(RuleHistory.created_at.desc())
+        .limit(1)
+    ).first()
+    if latest_hist and latest_hist.outcome == RuleOutcome.PENDING:
+        latest_hist.outcome = RuleOutcome.CONFIRMED
+        latest_hist.note = f"Verified with RSS release: {matched_title}"
+        session.add(latest_hist)
+
+    try:
+        create_or_update_rule(
+            qbit_client=qbit_client,
+            monitored=show,
+            feed=feed,
+            base_dir=settings.base_dir,
+            category=settings.default_category,
+            ratio_limit=settings.default_seed_ratio,
+            release_group=show.matched_release_group,
+            known_categories=known_categories,
+        )
+    except Exception as e:
+        logger.warning(f"Could not update cleaned rule in qBittorrent for '{show.display_name}': {e}")
+
+    msg = f"Confirmed rule for '{show.display_name}' (Ep {best_ep}) via RSS '{matched_title}'. Cleaned up rule -> Working"
+    logger.info(msg)
+    logs.append(msg)
+    session.add(show)
 
 
 def verify_and_confirm_rules_from_feeds(
@@ -551,45 +600,8 @@ def verify_and_confirm_rules_from_feeds(
             if show.matched_release_group != best_parsed.get("release_group"):
                 show.matched_release_group = best_parsed.get("release_group")
 
-        # This release was seen on the feed the show currently sits on, so that
-        # feed is proven. Recording it keeps candidate nomination, stall fallback
-        # and rediscovery from ever moving the show off it.
-        show.learned_feed_id = feed.id
         show.candidate_feed_id = None
         show.candidate_feed_since = None
-
-        if show.status == MonitoredStatus.UNCONFIRMED:
-            show.status = MonitoredStatus.FIXED
-
-            hist_stmt = (
-                select(RuleHistory)
-                .where(RuleHistory.monitored_id == show.id)
-                .order_by(RuleHistory.created_at.desc())
-                .limit(1)
-            )
-            latest_hist = session.exec(hist_stmt).first()
-            if latest_hist and latest_hist.outcome == RuleOutcome.PENDING:
-                latest_hist.outcome = RuleOutcome.CONFIRMED
-                latest_hist.note = f"Verified with RSS release: {matched_title}"
-                session.add(latest_hist)
-
-            try:
-                create_or_update_rule(
-                    qbit_client=qbit_client,
-                    monitored=show,
-                    feed=feed,
-                    base_dir=settings.base_dir,
-                    category=settings.default_category,
-                    ratio_limit=settings.default_seed_ratio,
-                    release_group=show.matched_release_group,
-                    known_categories=known_categories,
-                )
-            except Exception as e:
-                logger.warning(f"Could not update cleaned rule in qBittorrent for '{show.display_name}': {e}")
-
-            msg = f"Confirmed rule for '{show.display_name}' (Ep {best_ep}) via RSS '{matched_title}'. Cleaned up rule -> Working"
-            logger.info(msg)
-            logs.append(msg)
 
         regex_pat = show.custom_regex or build_regex_pattern(
             aliases,
@@ -599,6 +611,7 @@ def verify_and_confirm_rules_from_feeds(
         pending_events.append({
             "show_id": show.id,
             "show_name": show.display_name,
+            "feed": feed,
             "feed_name": feed.qbit_feed_name,
             "feed_id": feed.id,
             "rule_name": rule_name,
@@ -653,6 +666,13 @@ def verify_and_confirm_rules_from_feeds(
                 f"accepted by qBittorrent — not recording it as a match."
             )
             continue
+
+        # qBittorrent's own log (or a torrent it added) is what proves the feed
+        # carries this show; a cached article matching locally proves nothing.
+        _confirm_show_on_feed(
+            session, qbit_client, settings, show, event["feed"], matched_title, event["episode"],
+            known_categories, logs,
+        )
 
         canonical_episode = _canonical_episode(
             session,

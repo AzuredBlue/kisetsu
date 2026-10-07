@@ -68,6 +68,48 @@ async def test_anilist_sync_leaves_hand_written_aliases_alone():
 
 
 @pytest.mark.asyncio
+async def test_anilist_sync_does_not_rewrite_a_show_whose_air_time_is_unchanged():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+    air_at = datetime(2030, 1, 5, 15, 30, tzinfo=timezone.utc)
+    settings = Settings(id=1, anilist_username="TestUser", base_dir="/tmp/Anime")
+    show = Monitored(
+        id=1,
+        anilist_id=154587,
+        display_name="Frieren",
+        aliases_json='["Frieren"]',
+        status=MonitoredStatus.UNCONFIRMED,
+        anilist_status="RELEASING",
+        schedule_stale=True,
+        total_episodes=12,
+        next_airing_episode=3,
+        next_airing_at=air_at,
+    )
+    session.add(settings)
+    session.add(show)
+    session.commit()
+    session.expire_all()
+
+    mock_anilist = MagicMock()
+    mock_anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[{
+        "anilist_id": 154587,
+        "display_name": "Frieren",
+        "status": "RELEASING",
+        "total_episodes": 12,
+        "next_airing_episode": 3,
+        "next_airing_at": air_at,
+        "aliases": ["Frieren"],
+    }])
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=mock_anilist, settings=settings)
+
+    with patch.object(session, "add", wraps=session.add) as add:
+        await supervisor.sync_anilist_schedule()
+
+    assert all(call.args[0] is not show for call in add.call_args_list)
+
+
+@pytest.mark.asyncio
 async def test_supervisor_full_cycle():
     engine = create_engine(
         "sqlite:///:memory:",

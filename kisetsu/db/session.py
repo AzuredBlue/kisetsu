@@ -576,6 +576,13 @@ def init_db(engine=None):
             session.commit()
 
 
+def _lease_time(value) -> datetime:
+    """A raw ``text()`` query hands SQLite timestamps back as strings."""
+    if isinstance(value, str):
+        value = datetime.fromisoformat(value)
+    return value.replace(tzinfo=None)
+
+
 def acquire_supervision_lease(engine: Engine, owner: str, stale_after_minutes: int = 60) -> bool:
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     cutoff = now - timedelta(minutes=max(1, stale_after_minutes))
@@ -584,7 +591,7 @@ def acquire_supervision_lease(engine: Engine, owner: str, stale_after_minutes: i
             row = connection.execute(
                 text("SELECT owner, heartbeat_at FROM supervision_leases WHERE id = 1")
             ).mappings().first()
-            if row and row["owner"] != owner and row["heartbeat_at"] > cutoff:
+            if row and row["owner"] != owner and _lease_time(row["heartbeat_at"]) > cutoff:
                 return False
             if row:
                 connection.execute(
@@ -597,7 +604,8 @@ def acquire_supervision_lease(engine: Engine, owner: str, stale_after_minutes: i
                     {"owner": owner, "now": now},
                 )
         return True
-    except Exception:
+    except Exception as e:
+        logging.getLogger("kisetsu.db.session").warning(f"Could not acquire supervision lease: {e}")
         return False
 
 
@@ -611,7 +619,8 @@ def heartbeat_supervision_lease(engine: Engine, owner: str) -> bool:
                 {"owner": owner, "now": now},
             )
         return bool(result.rowcount)
-    except Exception:
+    except Exception as e:
+        logging.getLogger("kisetsu.db.session").warning(f"Could not refresh supervision lease: {e}")
         return False
 
 

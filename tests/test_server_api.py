@@ -85,7 +85,7 @@ def client(db_engine, mock_qbit, monkeypatch):
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_qbit] = override_get_qbit
 
-    with TestClient(app) as test_client:
+    with TestClient(app, base_url="http://localhost") as test_client:
         yield test_client
 
 
@@ -1419,7 +1419,7 @@ def test_init_db_learns_the_delivering_feed_and_narrows_a_learned_filename(tmp_p
             episode_id=1,
             kind="grab",
             status="SEEDING",
-            operation_tag="qsa-op-1",
+            operation_tag="kisetsu-op-1",
             release_title="Blue.Box.S02E01.Deja.Vu.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv",
             new_torrent_url="https://nyaa.si/view/2169492",
         ))
@@ -1701,6 +1701,21 @@ def test_supervision_lease_allows_only_one_owner():
     engine.dispose()
 
 
+def test_supervision_lease_is_taken_over_once_its_heartbeat_is_stale():
+    engine = create_engine("sqlite:///:memory:", poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    assert acquire_supervision_lease(engine, "crashed-owner") is True
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE supervision_leases SET heartbeat_at = '2000-01-01 00:00:00.000000'"))
+
+    assert acquire_supervision_lease(engine, "new-owner") is True
+    with engine.begin() as connection:
+        owner = connection.execute(text("SELECT owner FROM supervision_leases WHERE id = 1")).scalar()
+    assert owner == "new-owner"
+    engine.dispose()
+
+
 def test_init_db_adds_rules_default_to_legacy_settings(tmp_path):
     engine = create_engine(
         f"sqlite:///{tmp_path / 'legacy.db'}",
@@ -1965,7 +1980,7 @@ def test_pause_in_direct_mode_does_not_enable_rules():
         app.dependency_overrides[get_db] = lambda: session
         app.dependency_overrides[get_qbit] = lambda: qbit
         try:
-            client = TestClient(app)
+            client = TestClient(app, base_url="http://localhost")
             paused = client.post("/api/shows/1/pause")
             assert paused.status_code == 200
             assert session.get(Monitored, 1).status == MonitoredStatus.PAUSED
@@ -2188,3 +2203,103 @@ def test_init_db_adds_the_early_air_tolerance_column_to_a_legacy_settings_table(
         assert settings.backfill_window_days == 14
         assert settings.early_air_tolerance_hours == 6
     engine.dispose()
+
+
+def test_quick_download_in_rules_mode_adds_the_torrent(client, session, mock_qbit):
+    from unittest.mock import create_autospec
+    from kisetsu.clients.qbit import QBitClient
+
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    show = Monitored(
+        id=1,
+        anilist_id=1,
+        display_name="Frieren",
+        status=MonitoredStatus.FIXED,
+        current_feed_id=1,
+        qbit_rule_name="[Seasonal] Frieren",
+    )
+    session.add(feed)
+    session.add(show)
+    session.commit()
+    title = "[SubsPlease] Frieren - 08 (1080p) [ABC].mkv"
+    qbit = create_autospec(QBitClient, instance=True)
+    qbit.get_rss_rules.return_value = {
+        "[Seasonal] Frieren": {"affectedFeeds": [feed.qbit_feed_url], "savePath": "/tmp/Anime/Frieren"}
+    }
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "1", "title": title, "torrentURL": "magnet:1"}]}
+    }
+    client.app.dependency_overrides[get_qbit] = lambda: qbit
+
+    response = client.post("/api/shows/1/quick-download", json={"title": title})
+
+    assert response.status_code == 200
+    assert qbit.add_torrent.call_args.kwargs["urls"] == "magnet:1"
+
+
+def test_resetting_a_paused_show_in_direct_mode_keeps_it_paused(client, session):
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    session.add(settings)
+    show = Monitored(
+        id=1,
+        anilist_id=1,
+        display_name="Frieren",
+        status=MonitoredStatus.PAUSED,
+        status_before_pause=MonitoredStatus.FIXED.value,
+    )
+    session.add(show)
+    session.commit()
+
+    response = client.post("/api/shows/1/edit", json={"current_feed_id": 0})
+
+    assert response.status_code == 200
+    session.expire_all()
+    show = session.get(Monitored, 1)
+    assert show.status == MonitoredStatus.PAUSED
+    assert show.status_before_pause == MonitoredStatus.UNCONFIRMED.value
+
+
+def test_edit_with_an_unknown_feed_changes_nothing(client, session):
+    show = Monitored(id=1, anilist_id=1, display_name="Frieren", status=MonitoredStatus.UNCONFIRMED, save_folder="Old")
+    session.add(show)
+    session.commit()
+
+    response = client.post("/api/shows/1/edit", json={"current_feed_id": 999, "save_folder": "New", "episode_offset": 12})
+
+    assert response.status_code == 400
+    session.expire_all()
+    assert session.get(Monitored, 1).save_folder == "Old"
+    assert session.exec(select(EpisodeNumberMapping)).all() == []
+
+
+def test_requests_with_a_foreign_host_header_are_rejected(client):
+    assert client.get("/api/status", headers={"Host": "attacker.example"}).status_code == 403
+    assert client.get("/api/status", headers={"Host": "192.168.1.5:8085"}).status_code == 200
+    assert client.get("/api/status", headers={"Host": "localhost:8085"}).status_code == 200
+
+
+def test_cross_origin_writes_are_rejected(client):
+    blocked = client.post("/api/history", headers={"Origin": "https://attacker.example"})
+    assert blocked.status_code == 403
+    same = client.delete("/api/history", headers={"Origin": "http://localhost"})
+    assert same.status_code == 200
+    foreign_delete = client.delete("/api/history", headers={"Origin": "https://attacker.example"})
+    assert foreign_delete.status_code == 403
+
+
+def test_pausing_a_direct_show_pauses_its_stored_torrent_hashes(client, session, mock_qbit):
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    session.add(settings)
+    session.add(Monitored(id=1, anilist_id=1, display_name="Frieren", status=MonitoredStatus.FIXED))
+    session.commit()
+    session.add(Episode(monitored_id=1, episode_number=1, status=EpisodeStatus.COMPLETED, torrent_hash="hash-1"))
+    session.add(Episode(monitored_id=1, episode_number=2, status=EpisodeStatus.DOWNLOADING, torrent_hash="hash-2"))
+    session.commit()
+
+    response = client.post("/api/shows/1/pause")
+
+    assert response.status_code == 200
+    mock_qbit.pause_torrents.assert_called_once_with(["hash-1", "hash-2"])
+    mock_qbit.get_torrents.assert_not_called()

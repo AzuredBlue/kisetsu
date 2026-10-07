@@ -174,7 +174,7 @@ class Feed(SQLModel, table=True):
 def _decode_aliases(raw: Optional[str]) -> List[str]:
     try:
         data = json.loads(raw or "[]")
-    except Exception:
+    except (ValueError, TypeError):
         return []
     return data if isinstance(data, list) else []
 

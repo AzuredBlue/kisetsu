@@ -411,8 +411,8 @@ def match_release_to_show(
             if matched_token:
                 parsed["title"] = matched_token
             return True, 100.0, parsed
-    except Exception as e:
-        logger.debug(f"Testing regex match error: {e}")
+    except re.error as e:
+        logger.warning(f"Invalid match pattern for '{raw_title}': {e}")
 
     parsed_title = parsed.get("title", "")
     score, best_alias = calculate_match_score(

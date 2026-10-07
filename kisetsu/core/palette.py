@@ -100,13 +100,16 @@ async def _fetch_hues(url: str) -> Tuple[bool, Optional[Hues]]:
     if not is_allowed_image_url(url):
         return False, None
     try:
-        async with httpx2.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            data = resp.content
-        if len(data) > MAX_IMAGE_BYTES:
-            return False, None
-        return True, await asyncio.to_thread(dominant_hues, data)
+        # Redirects stay off: the host allow-list only covers the URL asked for.
+        async with httpx2.AsyncClient(timeout=10.0, follow_redirects=False) as client:
+            async with client.stream("GET", url) as resp:
+                resp.raise_for_status()
+                data = bytearray()
+                async for chunk in resp.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > MAX_IMAGE_BYTES:
+                        return False, None
+        return True, await asyncio.to_thread(dominant_hues, bytes(data))
     except Exception as exc:
         logger.debug("Could not read colours from %s: %s", url, exc)
         return False, None

@@ -1,3 +1,4 @@
+import base64
 import logging
 import re
 from datetime import datetime, timedelta, timezone
@@ -9,8 +10,8 @@ from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from kisetsu.core.matching import match_release_to_show, parse_release_title
-from kisetsu.core.rules import effective_title, resolve_save_path
+from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
+from kisetsu.core.rules import build_regex_pattern, effective_title, resolve_save_path
 from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     CANCELLABLE_OPERATION_STATUSES,
@@ -42,18 +43,18 @@ MAX_OPERATION_ATTEMPTS = 8
 _INACTIVE_SHOW_STATUSES = (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
 
 
+MANAGED_TAG = "kisetsu-managed"
+OPERATION_TAG_PREFIX = "kisetsu-op-"
+
+
 def _operation_tag() -> str:
-    return f"qsa-op-{uuid4().hex}"
+    return f"{OPERATION_TAG_PREFIX}{uuid4().hex}"
 
 
-def _episode_tags(show: Monitored, operation_tag: str) -> List[str]:
-    # Both are queried: qsa-managed finds our torrents, qsa-show-<id> scopes
-    # pausing and resuming to one show.
-    return [
-        "qsa-managed",
-        f"qsa-show-{show.id}",
-        operation_tag,
-    ]
+def _episode_tags(operation_tag: str) -> List[str]:
+    # MANAGED_TAG finds our torrents; the operation tag only exists so the
+    # torrent can be found again until its hash is known.
+    return [MANAGED_TAG, operation_tag]
 
 
 def _torrent_hash(torrent: Any) -> Optional[str]:
@@ -86,7 +87,7 @@ def is_seeding_torrent(torrent: Any) -> bool:
 def _managed_torrents(qbit: QBitClient, settings: Settings) -> List[Any]:
     by_hash: Dict[str, Any] = {}
     try:
-        for torrent in qbit.get_torrents(tag="qsa-managed"):
+        for torrent in qbit.get_torrents(tag=MANAGED_TAG):
             torrent_hash = _torrent_hash(torrent)
             if torrent_hash:
                 by_hash[torrent_hash] = torrent
@@ -290,22 +291,30 @@ def _operation_torrent(qbit: QBitClient, operation: TorrentOperation) -> Optiona
     return torrents[0] if torrents else None
 
 
-def _delete_torrent_by_hash(qbit: QBitClient, torrent_hash: Optional[str]) -> None:
+def _content_path(torrent: Any) -> Optional[str]:
+    value = getattr(torrent, "content_path", None)
+    return str(value) if isinstance(value, str) and value else None
+
+
+def _delete_torrent_by_hash(qbit: QBitClient, torrent_hash: Optional[str], keep_files_of: Optional[str] = None) -> None:
+    """Delete a torrent with its files, unless ``keep_files_of`` still needs that path.
+
+    A replacement published under the same filename shares ``content_path`` with
+    the release it replaces, so deleting its files would delete that release.
+    """
     if not torrent_hash:
         return
     try:
         existing = list(qbit.get_torrents(hashes=[torrent_hash]))
+        protected = list(qbit.get_torrents(hashes=[keep_files_of])) if keep_files_of and keep_files_of != torrent_hash else []
     except Exception as e:
         raise QbitClientError(f"Could not read torrent {torrent_hash}: {e}") from e
     if not existing:
         return
+    path = _content_path(existing[0])
+    shares_files = bool(protected) and path is not None and path == _content_path(protected[0])
     qbit.pause_torrents([torrent_hash])
-    qbit.delete_torrents([torrent_hash], delete_files=True)
-
-
-def _content_path(torrent: Any) -> Optional[str]:
-    value = getattr(torrent, "content_path", None)
-    return str(value) if isinstance(value, str) and value else None
+    qbit.delete_torrents([torrent_hash], delete_files=not shares_files)
 
 
 def _remove_superseded_torrent(qbit: QBitClient, operation: TorrentOperation, new_torrent: Any) -> None:
@@ -436,19 +445,29 @@ def _normalize_hashed_operation(operation: TorrentOperation) -> None:
         operation.status = TorrentOperationStatus.ADDED
 
 
-def _pause_show_torrents(qbit: QBitClient, show: Monitored) -> None:
+def show_torrent_hashes(session: Session, show: Monitored) -> List[str]:
+    """Every torrent hash the ledger holds for a show, including in-flight replacements."""
     if not show.id:
-        return
+        return []
+    hashes = set(session.exec(
+        select(Episode.torrent_hash).where(Episode.monitored_id == show.id, Episode.torrent_hash.is_not(None))
+    ).all())
+    for new_hash, old_hash in session.exec(
+        select(TorrentOperation.new_torrent_hash, TorrentOperation.old_torrent_hash)
+        .join(Episode, Episode.id == TorrentOperation.episode_id)
+        .where(Episode.monitored_id == show.id, TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)))
+    ).all():
+        hashes.update(value for value in (new_hash, old_hash) if value)
+    return sorted(hashes)
+
+
+def _pause_show_torrents(session: Session, qbit: QBitClient, show: Monitored) -> None:
     try:
-        torrents = list(qbit.get_torrents(tag=f"qsa-show-{show.id}"))
-    except Exception:
-        return
-    hashes = [str(t.hash) for t in torrents if getattr(t, "hash", None)]
-    if hashes:
-        try:
+        hashes = show_torrent_hashes(session, show)
+        if hashes:
             qbit.pause_torrents(hashes)
-        except Exception:
-            pass
+    except QbitClientError as e:
+        logger.warning(f"Could not pause the torrents of '{show.display_name}': {e}")
 
 
 def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) -> List[str]:
@@ -596,7 +615,7 @@ def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[st
     """
     Remove per-operation tags left behind before the tag was released on success.
 
-    Earlier builds kept the random ``qsa-op-<uuid>`` tag on every torrent
+    Earlier builds kept the random ``kisetsu-op-<uuid>`` tag on every torrent
     forever, because nothing removed it once the hash made it redundant. This
     sweeps whatever is already sitting in the user's qBittorrent and converges:
     the column is cleared, so each episode is only ever cleaned once. It runs
@@ -1050,6 +1069,43 @@ def _set_operation_retry(
     session.commit()
 
 
+_MAGNET_HASH_RE = re.compile(r"xt=urn:btih:([0-9a-z]+)", re.IGNORECASE)
+
+
+def _magnet_info_hash(url: str) -> Optional[str]:
+    """The lowercase hex info-hash of a magnet link, or None for any other URL."""
+    match = _MAGNET_HASH_RE.search(url or "")
+    if not match:
+        return None
+    value = match.group(1)
+    if len(value) == 40:
+        return value.lower()
+    if len(value) == 32:
+        try:
+            return base64.b32decode(value.upper()).hex()
+        except ValueError:
+            return None
+    return None
+
+
+def _already_added_torrent(qbit: QBitClient, operation: TorrentOperation) -> Optional[Any]:
+    """The torrent qBittorrent already holds for this operation's magnet link.
+
+    A rejected add is ambiguous: qBittorrent answers a duplicate the same way it
+    answers a bad link. A torrent with the release's own info-hash means the
+    release is already there and only needs to be tracked.
+    """
+    info_hash = _magnet_info_hash(operation.new_torrent_url)
+    if not info_hash:
+        return None
+    try:
+        existing = list(qbit.get_torrents(hashes=[info_hash]))
+    except Exception as e:
+        logger.debug(f"Could not look for an existing torrent {info_hash}: {e}")
+        return None
+    return existing[0] if existing else None
+
+
 def _attempt_operation_add(
     session: Session,
     qbit: QBitClient,
@@ -1103,26 +1159,37 @@ def _attempt_operation_add(
     session.add(operation)
     session.add(episode)
     session.commit()
+    tags = _episode_tags(operation.operation_tag)
+    adopted: Optional[Any] = None
     try:
         qbit.add_torrent(
             urls=operation.new_torrent_url,
             save_path=save_path,
             category=settings.default_category,
-            tags=_episode_tags(show, operation.operation_tag),
+            tags=tags,
             is_paused=operation.kind == "replace",
             ratio_limit=settings.default_seed_ratio,
         )
     except Exception as e:
-        _set_operation_retry(
-            session,
-            operation,
-            episode,
-            str(e),
-            utc_now() + timedelta(minutes=15),
-            TorrentOperationStatus.UNKNOWN,
-            True,
-        )
-        return
+        adopted = _already_added_torrent(qbit, operation)
+        failure = e
+        if adopted is not None:
+            try:
+                qbit.add_torrent_tags([_torrent_hash(adopted)], tags)
+                failure = None
+            except QbitClientError as tag_error:
+                failure = tag_error
+        if failure is not None:
+            _set_operation_retry(
+                session,
+                operation,
+                episode,
+                str(failure),
+                utc_now() + timedelta(minutes=15),
+                TorrentOperationStatus.UNKNOWN,
+                True,
+            )
+            return
     # The feed that just delivered a release is now proven for this show. It is
     # recorded as learned so nothing downstream may quietly move the show
     # somewhere else on the strength of a heuristic.
@@ -1140,7 +1207,7 @@ def _attempt_operation_add(
     session.add(show)
     session.add(operation)
     session.commit()
-    torrent = _find_tagged(qbit, operation.operation_tag)
+    torrent = adopted if adopted is not None else _find_tagged(qbit, operation.operation_tag)
     if torrent:
         operation.new_torrent_hash = _torrent_hash(torrent)
         operation.status = TorrentOperationStatus.ADDED
@@ -1244,7 +1311,11 @@ def cancel_episode_operations(
             continue
         if operation.new_torrent_hash and operation.new_torrent_hash != operation.old_torrent_hash:
             try:
-                _delete_torrent_by_hash(qbit, operation.new_torrent_hash)
+                _delete_torrent_by_hash(
+                    qbit,
+                    operation.new_torrent_hash,
+                    keep_files_of=operation.old_torrent_hash if operation.kind == "replace" else None,
+                )
             except Exception as e:
                 operation.last_error = f"{reason} Cleanup failed: {e}"
                 session.add(operation)
@@ -1272,11 +1343,27 @@ def cancel_episode_operations(
         session.commit()
         canceled += 1
     if canceled and show.status == MonitoredStatus.PAUSED:
-        _pause_show_torrents(qbit, show)
+        _pause_show_torrents(session, qbit, show)
     return canceled
 
 
-def _decide(show: Monitored, title: str) -> Tuple[bool, Dict[str, Any]]:
+class _ShowMatcher(NamedTuple):
+    """What matching a show against many titles needs, built once per cycle."""
+    test_pattern: str
+    prepared_aliases: List[Tuple[str, str]]
+
+
+def _show_matcher(show: Monitored) -> _ShowMatcher:
+    aliases = show.aliases
+    return _ShowMatcher(build_regex_pattern(aliases), prepare_aliases(aliases))
+
+
+def _decide(
+    show: Monitored,
+    title: str,
+    matcher: Optional[_ShowMatcher] = None,
+    parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Tuple[bool, Dict[str, Any]]:
     custom = (show.custom_regex or "").strip()
     if custom:
         try:
@@ -1287,7 +1374,14 @@ def _decide(show: Monitored, title: str) -> Tuple[bool, Dict[str, Any]]:
                 return True, parse_release_title(title)
         except re.error:
             pass
-    matched, _, parsed = match_release_to_show(title, show.aliases, ignore_arc_marker=False)
+    matched, _, parsed = match_release_to_show(
+        title,
+        show.aliases,
+        test_pattern=matcher.test_pattern if matcher else None,
+        prepared_aliases=matcher.prepared_aliases if matcher else None,
+        parsed_cache=parsed_cache,
+        ignore_arc_marker=False,
+    )
     if matched and show.custom_must_not:
         try:
             if re.search(show.custom_must_not, title, re.IGNORECASE):
@@ -1421,7 +1515,9 @@ def evaluate_and_grab_releases(
     backfill_window_days = max(0, int(settings.backfill_window_days))
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     air_horizon = now + timedelta(hours=tolerance_hours)
+    parsed_cache: Dict[str, Dict[str, Any]] = {}
     for show in shows:
+        matcher = _show_matcher(show)
         episodes, episodes_by_number, failed_versions, target_count, latest_aired = _show_grab_context(
             session, show, now, air_horizon,
         )
@@ -1464,7 +1560,7 @@ def evaluate_and_grab_releases(
                 title = article.get("title", "")
                 if not title:
                     continue
-                matched, parsed = _decide(show, title)
+                matched, parsed = _decide(show, title, matcher, parsed_cache)
                 if not matched:
                     continue
                 raw_episode = parsed.get("episode")

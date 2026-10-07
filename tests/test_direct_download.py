@@ -9,7 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from kisetsu.clients.qbit import QbitClientError
 from kisetsu.core.discovery import RssSnapshot
-from kisetsu.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, sync_show_episodes, update_episode_status
+from kisetsu.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, show_torrent_hashes, sync_show_episodes, update_episode_status
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.db.models import (
     Episode,
@@ -54,7 +54,7 @@ def _qbit(title="[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", ev
     qbit = MagicMock()
     torrent = MagicMock(hash="hash-1", progress=0.1, state="downloading", name=title)
     qbit.ensure_category_exists.return_value = True
-    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed" else []
+    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("tag") == "kisetsu-managed" else []
     qbit.add_torrent.side_effect = lambda **kwargs: events.append("add") if events is not None else True
     qbit.pause_torrents.side_effect = lambda *args: events.append("pause") if events is not None else None
     qbit.delete_torrents.side_effect = lambda *args, **kwargs: events.append("delete") if events is not None else None
@@ -231,7 +231,7 @@ def test_direct_cycle_queues_two_backlog_episodes_once():
 
     def add_torrent(**kwargs):
         tags = kwargs["tags"]
-        operation_tag = next(tag for tag in tags if tag.startswith("qsa-op-"))
+        operation_tag = next(tag for tag in tags if tag.startswith("kisetsu-op-"))
         torrent = MagicMock(
             hash=f"hash-{operation_tag[-4:]}",
             progress=0.1,
@@ -246,9 +246,9 @@ def test_direct_cycle_queues_two_backlog_episodes_once():
     qbit.add_torrent.side_effect = add_torrent
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [torrents[kwargs["tag"]]]
-        if kwargs.get("tag", "").startswith("qsa-op-") and kwargs["tag"] in torrents
+        if kwargs.get("tag", "").startswith("kisetsu-op-") and kwargs["tag"] in torrents
         else list(torrents.values())
-        if kwargs.get("tag") == "qsa-managed"
+        if kwargs.get("tag") == "kisetsu-managed"
         else [torrent for torrent in torrents.values() if torrent.hash in kwargs.get("hashes", [])]
     )
     qbit.get_rss_items.return_value = {
@@ -300,7 +300,7 @@ def test_ambiguous_direct_add_retries_after_reconciliation_window():
     qbit.add_torrent.side_effect = add_torrent
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [torrent]
-        if visible["value"] and (kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed")
+        if visible["value"] and (kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("tag") == "kisetsu-managed")
         else [torrent]
         if visible["value"] and torrent.hash in kwargs.get("hashes", [])
         else []
@@ -341,7 +341,7 @@ def test_delayed_hash_after_restart_is_found_before_timeout_failure():
         monitored_id=show.id,
         episode_number=8,
         status=EpisodeStatus.QUEUED,
-        operation_tag="qsa-op-delayed",
+        operation_tag="kisetsu-op-delayed",
     )
     session.add(episode)
     session.flush()
@@ -349,7 +349,7 @@ def test_delayed_hash_after_restart_is_found_before_timeout_failure():
         episode_id=episode.id,
         kind="grab",
         status=TorrentOperationStatus.PREPARING,
-        operation_tag="qsa-op-delayed",
+        operation_tag="kisetsu-op-delayed",
         release_title="[SubsPlease] Sousou no Frieren - 08 (1080p).mkv",
         version=1,
         new_torrent_url="magnet:ep8",
@@ -363,7 +363,7 @@ def test_delayed_hash_after_restart_is_found_before_timeout_failure():
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [torrent]
         if kwargs.get("tag") == operation.operation_tag
-        or kwargs.get("tag") == "qsa-managed"
+        or kwargs.get("tag") == "kisetsu-managed"
         or torrent.hash in kwargs.get("hashes", [])
         else []
     )
@@ -497,7 +497,7 @@ def test_direct_grab_recovers_when_hash_appears_after_restart():
     show = _show(session)
     qbit, torrent = _qbit()
     visible = {"value": False}
-    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if visible["value"] and (kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("tag") == "qsa-managed") else []
+    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if visible["value"] and (kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("tag") == "kisetsu-managed") else []
     qbit.get_rss_items.return_value = {
         "SubsPlease": {
             "url": feed.qbit_feed_url,
@@ -564,13 +564,13 @@ def test_v2_add_is_paused_and_old_torrent_is_removed_only_after_new_one_complete
     new_torrent.hash = "new-hash"
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [new_torrent]
-        if kwargs.get("tag", "").startswith("qsa-op-")
+        if kwargs.get("tag", "").startswith("kisetsu-op-")
         else [new_torrent]
         if kwargs.get("hashes") == ["new-hash"]
         else [old_torrent]
         if kwargs.get("hashes") == ["old-hash"]
         else [old_torrent, new_torrent]
-        if kwargs.get("tag") == "qsa-managed"
+        if kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
@@ -698,6 +698,38 @@ def test_ambiguous_direct_add_failure_remains_retryable():
     engine.dispose()
 
 
+def test_rejected_add_of_a_torrent_qbit_already_holds_is_adopted():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    info_hash = "a" * 40
+    present = MagicMock(hash=info_hash, progress=1, state="stoppedUP")
+    present.name = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: [present] if kwargs.get("hashes") == [info_hash] else []
+    qbit.add_torrent.side_effect = QbitClientError("qBittorrent rejected torrent: Fails.")
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{"id": "ep8", "title": present.name, "torrentURL": f"magnet:?xt=urn:btih:{info_hash}"}],
+        }
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)).first()
+    operation = session.exec(select(TorrentOperation).where(TorrentOperation.episode_id == episode.id)).first()
+    assert operation.new_torrent_hash == info_hash
+    assert operation.status == TorrentOperationStatus.COMPLETED
+    assert episode.torrent_hash == info_hash
+    qbit.add_torrent_tags.assert_called_once()
+    session.close()
+    engine.dispose()
+
+
 def test_v2_replacement_continues_when_v1_was_already_removed():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
@@ -719,7 +751,7 @@ def test_v2_replacement_continues_when_v1_was_already_removed():
     new_torrent.hash = "new-hash"
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [new_torrent]
-        if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"] or kwargs.get("tag") == "qsa-managed"
+        if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"] or kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
@@ -962,7 +994,7 @@ async def test_supervisor_direct_cycle_keeps_rules_disabled():
     _show(session)
     qbit, torrent = _qbit()
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+        [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") else []
     )
     qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": feed.qbit_feed_url}]
     qbit.get_rss_rules.return_value = {}
@@ -1039,7 +1071,7 @@ async def test_supervisor_forced_direct_cycle_refreshes_before_grabbing():
     events = []
     qbit, torrent = _qbit(events=events)
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+        [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") else []
     )
     qbit.get_rss_feeds_flat.return_value = [{"name": "SubsPlease", "url": feed.qbit_feed_url}]
     qbit.get_rss_rules.return_value = {}
@@ -1095,7 +1127,7 @@ async def test_supervisor_partial_feed_failure_still_uses_healthy_feed():
     }
     qbit, torrent = _qbit()
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+        [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") else []
     )
     qbit.get_rss_feeds_flat.return_value = [
         {"name": "Healthy", "url": healthy.qbit_feed_url},
@@ -1250,9 +1282,9 @@ def test_paused_show_does_not_resume_operations_and_is_not_reopened():
     new_torrent.hash = "new-hash"
     old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        [new_torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"]
         else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
-        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
@@ -1303,9 +1335,9 @@ def test_completed_show_operation_is_not_resumed():
     new_torrent.hash = "new-hash"
     old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        [new_torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"]
         else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
-        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
@@ -1352,9 +1384,9 @@ def test_cancel_episode_operations_restores_previous_release():
     new_torrent.hash = "new-hash"
     old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [new_torrent] if kwargs.get("tag", "").startswith("qsa-op-") or kwargs.get("hashes") == ["new-hash"]
+        [new_torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"]
         else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
-        else [old_torrent, new_torrent] if kwargs.get("tag") == "qsa-managed"
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
@@ -1377,6 +1409,105 @@ def test_cancel_episode_operations_restores_previous_release():
     engine.dispose()
 
 
+def test_cancel_keeps_the_files_a_replacement_shares_with_the_previous_release():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title)
+    new_torrent.hash = "new-hash"
+    new_torrent.content_path = "/tmp/Anime/Frieren/episode.mkv"
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    old_torrent.content_path = "/tmp/Anime/Frieren/episode.mkv"
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "kisetsu-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    cancel_episode_operations(session, qbit, show, episode, "Show paused.")
+
+    qbit.delete_torrents.assert_called_once_with(["new-hash"], delete_files=False)
+    session.close()
+    engine.dispose()
+
+
+def test_switching_to_rules_cancels_in_flight_replacements():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title)
+    new_torrent.hash = "new-hash"
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent] if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent] if kwargs.get("tag") == "kisetsu-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.cancel_direct_operations()
+
+    operation = session.exec(select(TorrentOperation)).first()
+    assert operation.status == TorrentOperationStatus.CANCELED
+    assert episode.torrent_hash == "old-hash"
+    assert any("Canceled 1" in log for log in logs)
+    session.close()
+    engine.dispose()
+
+
+def test_show_torrent_hashes_cover_episodes_and_active_operations():
+    engine, session = _database()
+    show = _show(session, total_episodes=3)
+    sync_show_episodes(session, show)
+    episodes = {e.episode_number: e for e in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all()}
+    episodes[1].torrent_hash = "hash-1"
+    episodes[2].torrent_hash = "old-2"
+    session.add(episodes[1])
+    session.add(episodes[2])
+    for number, status, new_hash in ((2, TorrentOperationStatus.NEW_VERIFIED, "new-2"), (3, TorrentOperationStatus.COMPLETED, "done-3")):
+        session.add(TorrentOperation(
+            episode_id=episodes[number].id, kind="replace", status=status, operation_tag=f"kisetsu-op-{number}",
+            release_title="x", new_torrent_url="magnet:x", new_torrent_hash=new_hash, old_torrent_hash="old-2",
+        ))
+    session.commit()
+
+    assert show_torrent_hashes(session, show) == ["hash-1", "new-2", "old-2"]
+    session.close()
+    engine.dispose()
+
+
 def test_direct_imports_existing_qbit_torrents_before_deciding():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
@@ -1390,7 +1521,7 @@ def test_direct_imports_existing_qbit_torrents_before_deciding():
     # ``name`` is a MagicMock constructor argument, so it has to be set afterwards.
     existing.name = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
     qbit, _ = _qbit()
-    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "qsa-managed" else []
+    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "kisetsu-managed" else []
     qbit.get_rss_items.return_value = {
         "SubsPlease": {
             "url": feed.qbit_feed_url,
@@ -1431,7 +1562,7 @@ def test_import_of_a_release_no_feed_carries_never_locks_the_guessed_feed():
     # ``name`` is a MagicMock constructor argument, so it has to be set afterwards.
     existing.name = "Sousou.no.Frieren.S01E08.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv"
     qbit, _ = _qbit()
-    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "qsa-managed" else []
+    qbit.get_torrents.side_effect = lambda **kwargs: [existing] if kwargs.get("tag") == "kisetsu-managed" else []
     qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": []}}
     supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
 
@@ -1444,6 +1575,29 @@ def test_import_of_a_release_no_feed_carries_never_locks_the_guessed_feed():
     assert episode.feed_id is None
     session.refresh(show)
     assert show.learned_feed_id is None
+    session.close()
+    engine.dispose()
+
+
+def test_import_without_a_category_does_not_adopt_unmanaged_torrents():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    unrelated = MagicMock(hash="unrelated-hash", progress=1, state="stoppedUP")
+    unrelated.name = "Sousou.no.Frieren.S01E08.1080p.NF.WEB-DL.DUAL.DDP5.1.H.264-VARYG.mkv"
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: [] if kwargs.get("tag") == "kisetsu-managed" else [unrelated]
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.import_existing_torrents()
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode is None or episode.torrent_hash is None
     session.close()
     engine.dispose()
 
@@ -1473,7 +1627,7 @@ def test_stuck_loading_feed_does_not_discard_healthy_feed_articles():
     }
     qbit, torrent = _qbit()
     qbit.get_torrents.side_effect = lambda **kwargs: (
-        [torrent] if kwargs.get("tag", "").startswith("qsa-op-") else []
+        [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") else []
     )
     qbit.get_rss_items.return_value = tree
     qbit.refresh_rss_feeds.return_value = True
@@ -1841,11 +1995,11 @@ def test_the_random_operation_tag_is_removed_once_the_hash_is_known():
 
     operation = session.exec(select(TorrentOperation)).first()
     added_tags = qbit.add_torrent.call_args.kwargs["tags"]
-    assert any(tag.startswith("qsa-op-") for tag in added_tags)
+    assert any(tag.startswith("kisetsu-op-") for tag in added_tags)
     qbit.remove_torrent_tags.assert_called_once_with(["hash-1"], [operation.operation_tag])
     # The queried tags stay; only the per-operation one is dropped.
-    assert "qsa-managed" in added_tags
-    assert "qsa-show-1" in added_tags
+    assert "kisetsu-managed" in added_tags
+    assert len(added_tags) == 2
     session.close()
     engine.dispose()
 
@@ -1869,14 +2023,14 @@ def test_leftover_operation_tags_are_swept_from_existing_torrents():
         feed_id=feed.id,
         torrent_hash="hash-1",
         release_title=_qbit_title,
-        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+        operation_tag="kisetsu-op-834c6907af68485cabb2306495d634f9",
     ))
     session.commit()
 
     logs = update_episode_status(session, qbit, settings)
 
     qbit.remove_torrent_tags.assert_called_once_with(
-        ["hash-1"], ["qsa-op-834c6907af68485cabb2306495d634f9"]
+        ["hash-1"], ["kisetsu-op-834c6907af68485cabb2306495d634f9"]
     )
     assert any("leftover operation tag" in line for line in logs)
     # Cleared, so the same episode is never swept again.
@@ -1906,7 +2060,7 @@ def test_an_in_flight_operation_keeps_its_tag_for_lookup():
         feed_id=feed.id,
         torrent_hash="hash-1",
         release_title=_qbit_title,
-        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+        operation_tag="kisetsu-op-834c6907af68485cabb2306495d634f9",
     ))
     session.commit()
 
@@ -1915,7 +2069,7 @@ def test_an_in_flight_operation_keeps_its_tag_for_lookup():
     # Still downloading, so the tag is the only handle on the new torrent.
     qbit.remove_torrent_tags.assert_not_called()
     session.expire_all()
-    assert session.get(Episode, 1).operation_tag == "qsa-op-834c6907af68485cabb2306495d634f9"
+    assert session.get(Episode, 1).operation_tag == "kisetsu-op-834c6907af68485cabb2306495d634f9"
     session.close()
     engine.dispose()
 
@@ -1938,7 +2092,7 @@ def test_a_failed_tag_removal_never_disturbs_the_download():
         feed_id=feed.id,
         torrent_hash="hash-1",
         release_title=_qbit_title,
-        operation_tag="qsa-op-834c6907af68485cabb2306495d634f9",
+        operation_tag="kisetsu-op-834c6907af68485cabb2306495d634f9",
     ))
     session.commit()
     qbit.remove_torrent_tags.side_effect = QbitClientError("tag API unavailable")
@@ -2524,11 +2678,11 @@ def _replace_scenario(session, events, old_path=None, new_path=None):
     )
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [new_torrent]
-        if kwargs.get("tag", "").startswith("qsa-op-")
+        if kwargs.get("tag", "").startswith("kisetsu-op-")
         else [present[h] for h in kwargs["hashes"] if h in present]
         if kwargs.get("hashes")
         else list(present.values())
-        if kwargs.get("tag") == "qsa-managed"
+        if kwargs.get("tag") == "kisetsu-managed"
         else []
     )
     qbit.get_rss_items.return_value = {
