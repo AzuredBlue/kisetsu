@@ -582,6 +582,8 @@ def test_editing_other_fields_leaves_the_feed_and_pin_alone(client, session, moc
         status=MonitoredStatus.UNCONFIRMED,
         current_feed_id=feed.id,
         feed_pinned=True,
+        next_airing_episode=1,
+        next_airing_at=datetime.now(timezone.utc) + timedelta(days=2),
     )
     session.add(feed)
     session.add(show)

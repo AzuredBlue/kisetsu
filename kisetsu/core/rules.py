@@ -1,11 +1,11 @@
 import logging
 import os
 import re
-from datetime import timezone
+from datetime import timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 from kisetsu.clients.qbit import QBitClient, QbitClientError
-from kisetsu.db.models import Feed, Monitored, MonitoredStatus, utc_now
+from kisetsu.db.models import Feed, Monitored, MonitoredStatus, as_utc, utc_now
 
 logger = logging.getLogger("kisetsu.core.rules")
 
@@ -20,6 +20,7 @@ RELEASE_NAME_SPLIT_REGEX: re.Pattern[str] = re.compile(r"[\s._\-:–—/]+")
 RELEASE_NAME_JOINER = r"[\s._\-:–—/]+"
 MIN_PATTERN_TOKENS = 2
 MIN_PATTERN_CHARS = 6
+RULE_LEAD_TIME = timedelta(days=7)
 
 
 def generate_season_variants(alias: str) -> List[str]:
@@ -254,6 +255,20 @@ def is_show_rule_unreleased(monitored: Monitored) -> bool:
         and (air_at is None or air_at > now)
         and (monitored.last_confirmed_episode or 0) == 0
     )
+
+
+def is_show_rule_deferred(monitored: Monitored) -> bool:
+    """
+    True while a show's rule should not exist yet: it has not started airing, no
+    release has been matched, and its premiere is unknown or further away than
+    RULE_LEAD_TIME.
+    """
+    if monitored.status == MonitoredStatus.FIXED or monitored.matched_title:
+        return False
+    if not is_show_rule_unreleased(monitored):
+        return False
+    air_at = as_utc(monitored.next_airing_at)
+    return air_at is None or air_at > utc_now() + RULE_LEAD_TIME
 
 
 def is_show_rule_enabled(monitored: Monitored) -> bool:

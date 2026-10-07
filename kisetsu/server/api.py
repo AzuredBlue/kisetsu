@@ -945,7 +945,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
 
-    from kisetsu.core.rules import create_or_update_rule
+    from kisetsu.core.rules import RULE_LEAD_TIME, create_or_update_rule, is_show_rule_deferred
 
     title_language = getattr(settings, "title_language", "english")
     feed_changed = req.current_feed_id is not None and new_feed_id != previous_feed_id
@@ -1051,6 +1051,12 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         show.matched_title = None
         show.matched_release_group = None
         _set_status_keeping_pause(show, MonitoredStatus.UNCONFIRMED)
+        if is_show_rule_deferred(show):
+            session.add(show)
+            session.commit()
+            msg = f"Assigned to '{feed.qbit_feed_name}'. The rule will be created {RULE_LEAD_TIME.days} days before the premiere."
+            state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
+            return {"status": "success", "message": msg}
         rname = create_or_update_rule(
             qbit_client=qbit,
             monitored=show,

@@ -2406,13 +2406,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     async function setDownloadMode(mode) {
       if (!['rules', 'direct'].includes(mode)) return;
-      if (mode === 'direct' && !confirm(
-        'Switch to Direct downloads? Managed RSS rules will be disabled before Direct mode is enabled. Episode replacement operations will be managed by the application.'
-      )) {
-        // The user backed out, so the control has to show the real mode again.
-        updateDownloadModeUi(currentSettings.download_mode || 'rules');
-        return;
-      }
       try {
         const res = await fetch('/api/settings', {
           method: 'POST',

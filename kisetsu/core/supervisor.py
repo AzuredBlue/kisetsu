@@ -12,7 +12,7 @@ from kisetsu.core.confirmation import verify_and_confirm_torrents, has_downloade
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.grabber import is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule
+from kisetsu.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
 from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
@@ -318,6 +318,8 @@ class Supervisor:
                     target_feed = avail[0] if avail else None
 
                 if target_feed:
+                    if create_qbit_rules and is_show_rule_deferred(show):
+                        continue
                     if not create_qbit_rules:
                         show.current_feed_id = target_feed.id
                         if mark_fixed:
@@ -672,6 +674,7 @@ class Supervisor:
             existing_rules = {}
 
         refreshed = 0
+        removed = 0
         try:
             for show in active_shows:
                 feed = feeds_map.get(show.current_feed_id)
@@ -680,6 +683,17 @@ class Supervisor:
 
                 rule_name = show.qbit_rule_name or build_rule_name(show.id or 0, show.display_name)
                 current_def = existing_rules.get(rule_name)
+                if is_show_rule_deferred(show):
+                    if current_def is not None or show.qbit_rule_name:
+                        delete_rule(self.qbit, rule_name)
+                        show.qbit_rule_name = None
+                        self.session.add(show)
+                        removed += 1
+                        logs.append(
+                            f"Removed rule for '{show.display_name}' until its premiere is within "
+                            f"{RULE_LEAD_TIME.days} days."
+                        )
+                    continue
                 desired_def = build_rule_definition(
                     monitored=show,
                     feed_url=feed.qbit_feed_url,
@@ -711,7 +725,7 @@ class Supervisor:
         finally:
             # Commit even when bailing out, so rules already written to
             # qBittorrent and any earlier pending changes are not lost.
-            if had_pending_changes or refreshed > 0:
+            if had_pending_changes or refreshed > 0 or removed > 0:
                 self.session.commit()
 
         if refreshed > 0:
