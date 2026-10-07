@@ -82,12 +82,27 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.5rem; color: #9a9aa6; transition: background-color .15s, color .15s; }
     .seg > button:hover { color: #e4e4e7; }
 
+    /* Show cards: status chips are dots that grow into their label on hover, and the
+       pause/delete buttons fade in, both with the same timing. */
+    .show-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
+    /* The poster zoom grows the layer's box instead of using a transform. A transform is
+       rasterised as its own layer, and its clipped edge landed on a sub-pixel (card
+       heights are fractional) and showed as a seam. -2% on every side is a ~1.04 zoom. */
+    .poster-zoom { transition: inset .3s ease-out; }
+    .group:hover .poster-zoom { inset: -2%; }
+    .status-chip .status-label { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; margin-left: 0; transition: max-width .2s ease-out, opacity .2s ease-out, margin .2s ease-out; }
+    .group:hover .status-chip .status-label { max-width: 5rem; opacity: 1; margin-left: 0.375rem; }
+    .card-actions { opacity: 0; pointer-events: none; transition: opacity .2s ease-out; }
+    .group:hover .card-actions, .group:focus-within .card-actions { opacity: 1; pointer-events: auto; }
+
     @media (prefers-reduced-motion: reduce) {
       .group:hover { transform: none !important; }
+      .group:hover .poster-zoom { inset: 0; }
     }
 
     @media (hover: none) {
-      .card-actions { visibility: visible !important; }
+      .card-actions { opacity: 1 !important; pointer-events: auto !important; }
     }
   </style>
 </head>
@@ -192,7 +207,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               </button>
             </div>
           </div>
-          <div id="grid-releasing" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+          <div id="grid-releasing" class="show-grid">
           </div>
         </div>
 
@@ -204,7 +219,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               <span id="header-count-completed" class="text-xs text-zinc-500 tabular-nums">(0)</span>
             </div>
           </div>
-          <div id="grid-completed" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+          <div id="grid-completed" class="show-grid">
           </div>
         </div>
 
@@ -216,7 +231,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               <span id="header-count-planned" class="text-xs text-zinc-500 tabular-nums">(0)</span>
             </div>
           </div>
-          <div id="grid-planned" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-8 gap-4">
+          <div id="grid-planned" class="show-grid">
           </div>
         </div>
 
@@ -507,12 +522,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     // a state marker rather than the brightest thing on the poster. All pairs keep
     // >= 4.5:1 contrast against their own background.
     const STATUS_CONFIG = {
-      'FIXED': { label: 'Working', bg: 'bg-[#062b20] text-[#4fb188] border-[#0f5138]' },
-      'UNCONFIRMED': { label: 'Testing', bg: 'bg-[#2b2208] text-[#c2a03f] border-[#55430a]' },
-      'UPCOMING': { label: 'Upcoming', bg: 'bg-[#101a3d] text-[#6c93c9] border-[#1f3a6b]' },
-      'STALLED': { label: 'Stalled', bg: 'bg-[#2b1111] text-[#c26a6a] border-[#5e2323]' },
-      'COMPLETED': { label: 'Completed', bg: 'bg-[#312e81] text-[#c4b5fd] border-[#6366f1]' },
-      'PAUSED': { label: 'Paused', bg: 'bg-surface text-[#91919a] border-line' },
+      'FIXED': { label: 'Working', dot: '#34d399', bg: 'bg-[#062b20] text-[#4fb188] border-[#0f5138]' },
+      'UNCONFIRMED': { label: 'Testing', dot: '#e0b43c', bg: 'bg-[#2b2208] text-[#c2a03f] border-[#55430a]' },
+      'UPCOMING': { label: 'Upcoming', dot: '#60a5fa', bg: 'bg-[#101a3d] text-[#6c93c9] border-[#1f3a6b]' },
+      'STALLED': { label: 'Stalled', dot: '#f87171', bg: 'bg-[#2b1111] text-[#c26a6a] border-[#5e2323]' },
+      'COMPLETED': { label: 'Completed', dot: '#a78bfa', bg: 'bg-[#312e81] text-[#c4b5fd] border-[#6366f1]' },
+      'PAUSED': { label: 'Paused', dot: '#8b8b97', bg: 'bg-surface text-[#91919a] border-line' },
     };
 
     const NAV_INACTIVE_CLASS = 'nav-item w-full flex items-center gap-2.5 px-2.5 py-1.5 rounded-md text-sm font-medium transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-raised';
@@ -749,6 +764,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return `${Math.max(1, mins)}m`;
     }
 
+    // "in 2d 1h" / "Aired"; falls back to the local date when there is no countdown.
+    function formatCardCountdown(cd, dateStr) {
+      if (cd === 'Aired') return 'Aired';
+      return cd ? `in ${cd}` : (dateStr || '');
+    }
+
     function renderShowCard(show) {
       const rawStatus = (show.status || 'UNCONFIRMED').toUpperCase();
       const isPaused = rawStatus === 'PAUSED';
@@ -771,75 +792,110 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         cfg = STATUS_CONFIG['PAUSED'];
       }
 
-      let airInfo = '-';
+      // Overlay line: "EP n" on the left, countdown or outcome on the right.
+      const downloaded = show.downloaded_episodes_count || 0;
+      const total = show.total_episodes || 0;
+      let epLabel = '';
+      let airInfo = '';
+      let airClass = 'text-zinc-100';
       let countdownAttr = '';
       if (statusKey === 'COMPLETED') {
+        epLabel = total ? `${total} EP` : '';
         airInfo = 'Completed';
+        airClass = 'text-zinc-300';
       } else if (show.next_airing_episode && show.next_airing_at) {
         const cd = formatEpisodeCountdown(show.next_airing_at);
         if (cd === 'Aired' && show.last_confirmed_episode && show.last_confirmed_episode >= show.next_airing_episode) {
-          airInfo = `Ep ${show.last_confirmed_episode} (Downloaded)`;
+          epLabel = `EP ${show.last_confirmed_episode}`;
+          airInfo = 'Downloaded';
+          airClass = 'text-emerald-300';
         } else {
-          airInfo = `Ep ${show.next_airing_episode} (${cd || localDateTime(show.next_airing_at)})`;
-          countdownAttr = `data-air-at="${show.next_airing_at}" data-ep="${show.next_airing_episode}" data-date-str="${localDateTime(show.next_airing_at)}"`;
+          epLabel = `EP ${show.next_airing_episode}`;
+          airInfo = formatCardCountdown(cd, localDateTime(show.next_airing_at));
+          if (cd === 'Aired') airClass = 'text-amber-300';
+          countdownAttr = `data-air-at="${show.next_airing_at}" data-date-str="${localDateTime(show.next_airing_at)}"`;
         }
       } else if (show.last_confirmed_episode) {
-        airInfo = `Ep ${show.last_confirmed_episode}`;
+        epLabel = `EP ${show.last_confirmed_episode}`;
       } else if (statusKey === 'STALLED') {
         airInfo = 'Stalled';
+        airClass = 'text-rose-300';
       }
 
-      const feedName = show.current_feed_name || '[None]';
+      // The count is shown whenever something is downloaded; the bar only when the
+      // season total is known, since without it there is nothing to fill against.
+      const showProgress = downloaded > 0 || total > 0;
+      const showBar = total > 0;
+      const pct = showBar ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+      const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
+      const progressText = `${downloaded}/${total || '?'}`;
+      const hasOverlay = epLabel || airInfo || showProgress;
 
+      const name = escapeHtml(show.display_name);
       const isDimmed = isPaused || isCompleted;
-      const posterImg = show.cover_image 
-        ? `<img src="${show.cover_image}" alt="${show.display_name}" class="w-full h-full object-cover ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}" loading="lazy" onerror="this.onerror=null;this.src='https://via.placeholder.com/260x360/1a1a20/4a4a58?text=Poster'">`
-        : `<div class="w-full h-full flex items-center justify-center bg-surface text-zinc-600 text-xs font-mono ${isDimmed ? 'opacity-80 grayscale-[35%]' : ''}">No Art</div>`;
+      const dimClass = isDimmed ? 'opacity-80 grayscale-[35%]' : '';
+      const noArt = `<div class="absolute inset-0 flex items-center justify-center bg-surface text-zinc-600 text-xs font-mono ${dimClass}">No Art</div>`;
+      const art = show.cover_image
+        ? `${noArt}<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="absolute inset-0 w-full h-full object-cover ${dimClass}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
+        : noArt;
+      // The shade lives inside the zooming layer, so the art and its shade scale as one
+      // unit and no unshaded strip of poster can show behind the episode text.
+      const shade = hasOverlay ? '<div class="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/55 to-transparent"></div>' : '';
+      const posterImg = `<div class="absolute inset-0 overflow-hidden"><div class="poster-zoom absolute inset-0">${art}${shade}</div></div>`;
 
-      const pauseBtnBg = 'bg-black/70 hover:bg-black text-zinc-100';
+      // Every status is a dot until the card is hovered, then it grows into its label.
+      const statusChip = `
+        <span class="status-chip px-1.5 py-1 inline-flex items-center rounded-full text-[11px] font-medium border ${cfg.bg}" title="${label}">
+          <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background:${cfg.dot}"></span>
+          <span class="status-label">${label}</span>
+        </span>`;
 
-      const pauseIcon = isPaused 
-        ? `<svg class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
-        : `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+      const overlay = hasOverlay ? `
+            <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none px-2.5 pb-2.5">
+              <div class="flex items-baseline justify-between gap-2 text-[13px]">
+                <span class="font-semibold tracking-wide text-white">${epLabel}</span>
+                <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
+              </div>
+              ${showProgress ? `<div class="mt-0.5 text-right text-[10px] tabular-nums text-zinc-400">${progressText}</div>` : ''}
+            </div>
+            ${showBar ? `<div class="absolute inset-x-0 bottom-0 h-1 z-10 bg-white/15"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>` : ''}` : '';
+
+      const pauseIcon = isPaused
+        ? `<svg class="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
+        : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+
+      const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
+      const lockIcon = show.feed_learned
+        ? `<svg class="w-3 h-3 flex-shrink-0 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><title>Feed locked</title><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`
+        : '';
 
       return `
-        <div onclick="viewShowRule(${show.id})" onpointerenter="prefetchShowModal(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-xl flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
-          
+        <div onclick="viewShowRule(${show.id})" onpointerenter="prefetchShowModal(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
+
           <div class="relative w-full aspect-[2/3] bg-canvas overflow-hidden">
             ${posterImg}
+            ${overlay}
 
-            <div class="absolute top-2 right-2 z-10">
-              <span class="inline-block px-2 py-0.5 rounded-full text-[11px] font-medium border ${cfg.bg}">
-                ${label}
-              </span>
-            </div>
+            <div class="absolute top-2 right-2 z-20">${statusChip}</div>
 
-            <div class="card-actions absolute bottom-2 inset-x-2 flex items-center justify-between z-20 invisible group-hover:visible pointer-events-none">
-              
-              <div class="flex items-center gap-1.5 pointer-events-auto">
-                ${!isCompleted ? `
-                <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-8 h-8 rounded-lg flex items-center justify-center ${pauseBtnBg} transition-colors active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
-                  ${pauseIcon}
-                </button>
-                ` : ''}
-              </div>
-
-              <div class="pointer-events-auto">
-                <button onclick="event.stopPropagation(); deleteShow(${show.id}, '${show.display_name.replace(/'/g, "\\'")}')" class="w-8 h-8 rounded-lg flex items-center justify-center bg-black/70 hover:bg-rose-600 text-zinc-100 transition-colors active:scale-90" title="Delete show from monitoring">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-                </button>
-              </div>
+            <div class="card-actions absolute top-2 left-2 flex items-center gap-1.5 z-20">
+              ${!isCompleted ? `
+              <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-black text-zinc-100 transition-colors active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
+                ${pauseIcon}
+              </button>
+              ` : ''}
+              <button onclick="event.stopPropagation(); deleteShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-rose-600 text-zinc-100 transition-colors active:scale-90" title="Delete show from monitoring">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
             </div>
           </div>
 
-          <div class="p-3 flex flex-col justify-between bg-surface min-h-[6rem]">
-            <h3 class="text-[13px] font-medium text-zinc-200 group-hover:text-white leading-[1.4] line-clamp-2 min-h-[2.55rem] overflow-hidden pb-[1px]" title="${show.display_name}">
-              ${show.display_name}
-            </h3>
-
-            <div class="pt-2.5 border-t border-line-soft flex items-center justify-between gap-2.5 text-xs">
-              <span class="truncate text-zinc-500 min-w-0" title="${feedName}">${feedName}</span>
-              <span class="show-countdown flex-shrink-0 text-zinc-200 font-medium tabular-nums ml-auto" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
+          <div class="px-3 pt-2.5 pb-3 flex flex-col gap-1">
+            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-white leading-[1.4] line-clamp-2 min-h-[2.55rem] overflow-hidden pb-[1px]" title="${name}">${name}</h3>
+            <div class="flex items-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
+              <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
+              <span class="truncate">${feedName}</span>
+              ${lockIcon}
             </div>
           </div>
 
@@ -1622,7 +1678,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
-    async function deleteShow(id, name) {
+    async function deleteShow(id) {
+      const target = allShows.find(s => s.id === id);
+      const name = target ? target.display_name : `#${id}`;
       if (!confirm(`Delete '${name}' from monitoring and remove its qBittorrent rule?`)) return;
       try {
         const data = await apiFetch(`/api/shows/${id}`, { method: 'DELETE' });
@@ -2183,11 +2241,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       document.querySelectorAll('.show-countdown[data-air-at]').forEach(el => {
         const airAt = el.getAttribute('data-air-at');
-        const ep = el.getAttribute('data-ep');
         const dateStr = el.getAttribute('data-date-str');
-        if (airAt && ep) {
-          const cd = formatEpisodeCountdown(airAt);
-          el.textContent = `Ep ${ep} (${cd || dateStr || ''})`;
+        if (airAt) {
+          el.textContent = formatCardCountdown(formatEpisodeCountdown(airAt), dateStr);
         }
       });
     }
