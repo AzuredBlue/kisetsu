@@ -8,11 +8,11 @@ from sqlmodel import Session, select
 from kisetsu.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
-from kisetsu.core.confirmation import verify_and_confirm_torrents, has_downloaded_final_episode
+from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.grabber import is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
+from kisetsu.core.grabber import cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
+from kisetsu.core.rules import build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
 from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
@@ -69,6 +69,31 @@ def _rules_are_equivalent(current: Dict[str, Any], desired: Dict[str, Any]) -> b
         )
     except Exception:
         return False
+
+
+def delete_monitored_show(session: Session, qbit: QBitClient, show: Monitored, reason: str) -> None:
+    """Remove a show, its qBittorrent rule and its history; the caller commits.
+
+    The rule goes first and a failure to remove it raises, so the show is never
+    deleted while a rule nobody tracks keeps downloading for it.
+    """
+    if show.qbit_rule_name:
+        delete_rule(qbit, show.qbit_rule_name, raise_on_error=True)
+        show.qbit_rule_name = None
+
+    for h in session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
+        session.delete(h)
+    for m in session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
+        session.delete(m)
+    for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
+        session.delete(mapping)
+    for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
+        # Dispose of torrents an in-flight direct grab added; deleting the
+        # episode would otherwise orphan them in qBittorrent.
+        cancel_episode_operations(session, qbit, show, ep, reason)
+        session.delete(ep)
+    session.flush()
+    session.delete(show)
 
 
 class Supervisor:
@@ -188,7 +213,6 @@ class Supervisor:
         parsed_articles: Optional[Dict[str, Dict[str, Any]]] = None,
         known_categories: Optional[Set[str]] = None,
         create_qbit_rules: bool = True,
-        mark_fixed: bool = True,
     ) -> List[str]:
         """Discover feeds and assign shows to them, optionally creating RSS rules.
 
@@ -263,8 +287,7 @@ class Supervisor:
                 show.matched_release_group = obs_group
                 if not create_qbit_rules:
                     show.current_feed_id = chosen_feed.id
-                    if mark_fixed:
-                        show.status = MonitoredStatus.FIXED
+                    show.status = MonitoredStatus.FIXED
                     self.session.add(show)
                     self.session.add(RuleHistory(
                         monitored_id=show.id,
@@ -322,8 +345,7 @@ class Supervisor:
                         continue
                     if not create_qbit_rules:
                         show.current_feed_id = target_feed.id
-                        if mark_fixed:
-                            show.status = MonitoredStatus.FIXED
+                        show.status = MonitoredStatus.UNCONFIRMED
                         self.session.add(show)
                         self.session.add(RuleHistory(
                             monitored_id=show.id,
@@ -564,12 +586,63 @@ class Supervisor:
                 new_shows_count += 1
 
         self.session.commit()
+        logs.extend(self._remove_shows_off_list(seasonal_list, existing_shows))
         msg = f"Synced AniList schedule for {len(seasonal_list)} seasonal shows."
         if new_shows_count > 0:
             msg += f" (Discovered and added {new_shows_count} new seasonal shows to Monitored)"
         logs.append(msg)
         if direct_mode:
             logs.extend(await self._sync_episode_airing_schedules())
+        return logs
+
+    def _remove_shows_off_list(
+        self,
+        seasonal_list: List[Dict[str, Any]],
+        existing_shows: Dict[int, Monitored],
+    ) -> List[str]:
+        """Delete monitored shows that are no longer on the user's AniList list.
+
+        Every monitored show on a Watching, Planning or Completed entry comes
+        back from the fetch, so a missing one was dropped, paused or removed.
+        An empty response while shows are monitored is treated as a bad read,
+        not as the user emptying their list.
+        """
+        logs: List[str] = []
+        returned_ids = {
+            data.get("anilist_id") or data.get("id")
+            for data in seasonal_list
+        }
+        gone = [
+            show for aid, show in existing_shows.items()
+            if aid not in returned_ids
+        ]
+        if not gone:
+            return logs
+        if not seasonal_list:
+            msg = (
+                f"AniList returned an empty list while {len(gone)} show(s) are monitored; "
+                "not removing anything."
+            )
+            logger.warning(msg)
+            return [f"Warning: {msg}"]
+        for show in gone:
+            name = show.display_name
+            try:
+                delete_monitored_show(
+                    self.session,
+                    self.qbit,
+                    show,
+                    "Show left the AniList Watching/Planning list.",
+                )
+            except QbitClientError as e:
+                self.session.rollback()
+                logger.warning(f"Could not delete rule for '{name}'; keeping the show until the next sync: {e}")
+                logs.append(f"Warning: could not remove '{name}' (rule delete failed): {e}")
+                continue
+            self.session.commit()
+            msg = f"Removed '{name}': no longer on your AniList Watching/Planning list."
+            logger.info(msg)
+            logs.append(msg)
         return logs
 
     async def _sync_episode_airing_schedules(self) -> List[str]:
@@ -871,23 +944,11 @@ class Supervisor:
             if any(ep.status != EpisodeStatus.COMPLETED for ep in episodes):
                 continue
 
-            if show.qbit_rule_name:
-                try:
-                    delete_rule(self.qbit, show.qbit_rule_name)
-                except Exception as e:
-                    logger.debug(f"Could not delete rule '{show.qbit_rule_name}' during seasonal prune: {e}")
-                show.qbit_rule_name = None
-
-            for h in self.session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
-                self.session.delete(h)
-            for m in self.session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
-                self.session.delete(m)
-            for mapping in self.session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
-                self.session.delete(mapping)
-            for ep in episodes:
-                self.session.delete(ep)
-
-            self.session.delete(show)
+            try:
+                delete_monitored_show(self.session, self.qbit, show, "Show pruned at season change.")
+            except QbitClientError as e:
+                logger.warning(f"Could not delete rule for '{show.display_name}' during seasonal prune; retrying next cycle: {e}")
+                continue
             msg = f"Season transition ({cur_season} {cur_year}): Pruned completed show '{show.display_name}' from past season ({show.season_name} {show.season_year})."
             logger.info(msg)
             logs.append(msg)
@@ -1309,13 +1370,86 @@ class Supervisor:
             logs.append(f"Imported {imported} existing torrent(s) into the episode library.")
         return logs
 
-    def prepare_download_mode(self, mode: str, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
+    def _recheck_working_from_cache(self, rss_snapshot: RssSnapshot) -> List[str]:
+        """Keep a show Working only while a cached release on its feed backs it.
+
+        A show whose feed delivered a real release, or one the user pinned, is
+        left alone. Any other Working show is matched against the cached RSS
+        items of its current feed: a match re-learns the title and release
+        group the rule is built from, and no match drops it to Unconfirmed so
+        confirmation and stall handling watch it again.
+        """
+        logs: List[str] = []
+        shows = self.session.exec(
+            select(Monitored).where(
+                Monitored.status == MonitoredStatus.FIXED,
+                Monitored.learned_feed_id.is_(None),
+                Monitored.feed_pinned.isnot(True),
+                Monitored.current_feed_id.is_not(None),
+            )
+        ).all()
+        if not shows:
+            return logs
+        try:
+            articles_by_url = rss_snapshot.get()
+        except Exception as e:
+            logger.warning(f"Could not read the RSS cache to re-check Working shows: {e}")
+            return logs
+        feeds_map = {f.id: f for f in self.session.exec(select(Feed)).all()}
+        parsed_articles: Dict[str, Dict[str, Any]] = {}
+        checked = 0
+        confirmed = 0
+        demoted: List[str] = []
+        for show in shows:
+            feed = feeds_map.get(show.current_feed_id)
+            # A feed that failed to load has no cached items, which says nothing
+            # about whether the show is on it.
+            if not feed or feed.qbit_feed_url not in articles_by_url:
+                continue
+            checked += 1
+            aliases = show.effective_aliases
+            found = _find_release_on_feed(
+                feed,
+                articles_by_url,
+                aliases,
+                build_regex_pattern(aliases),
+                prepare_aliases(aliases),
+                parsed_articles,
+            )
+            if found is not None:
+                best_parsed = found[2]
+                if best_parsed:
+                    show.matched_title = best_parsed.get("title")
+                    show.matched_release_group = best_parsed.get("release_group")
+                confirmed += 1
+            else:
+                show.status = MonitoredStatus.UNCONFIRMED
+                demoted.append(show.display_name)
+            self.session.add(show)
+        if not checked:
+            return logs
+        self.session.commit()
+        msg = f"Re-checked {checked} Working show(s) against the RSS cache: {confirmed} confirmed"
+        if demoted:
+            msg += f", {len(demoted)} set to Unconfirmed (no matching release on their feed: {', '.join(demoted)})"
+        logger.info(msg)
+        logs.append(msg + ".")
+        return logs
+
+    def prepare_download_mode(
+        self,
+        mode: str,
+        rss_snapshot: Optional[RssSnapshot] = None,
+        recheck_working: bool = False,
+    ) -> List[str]:
+        snapshot = rss_snapshot or RssSnapshot(self.qbit)
+        logs: List[str] = []
+        if recheck_working:
+            logs.extend(self._recheck_working_from_cache(snapshot))
         if mode == "direct":
-            logs = self.import_existing_torrents(rss_snapshot)
+            logs.extend(self.import_existing_torrents(snapshot))
             logs.extend(self.disable_managed_rules())
             return logs
-        logs: List[str] = []
-        snapshot = rss_snapshot or RssSnapshot(self.qbit)
         logs.extend(self.shield_owned_articles())
         logs.extend(self.bootstrap_unassigned_shows(
             rss_snapshot=snapshot,
@@ -1452,7 +1586,6 @@ class Supervisor:
                 rss_snapshot,
                 parsed_articles,
                 self._known_categories,
-                True,
                 True,
             ))
             all_logs.extend(await asyncio.to_thread(

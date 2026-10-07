@@ -1744,7 +1744,7 @@ def test_settings_switch_to_direct_verifies_rule_ownership(client, session, monk
 
     assert response.status_code == 200
     assert response.json()["download_mode"] == "direct"
-    supervisor.prepare_download_mode.assert_called_once_with("direct")
+    supervisor.prepare_download_mode.assert_called_once_with("direct", recheck_working=True)
     session.expire_all()
     assert session.exec(select(Settings)).first().download_mode == "direct"
 

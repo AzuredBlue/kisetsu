@@ -28,7 +28,7 @@ from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClient
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab
-from kisetsu.core.supervisor import Supervisor
+from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
 from kisetsu.core.rules import DEFAULT_MUST_NOT, build_regex_pattern, delete_rule, effective_title
@@ -1092,29 +1092,15 @@ def _delete_show(show_id: int, session: Session, qbit: QBitClient):
         raise HTTPException(status_code=404, detail="Show not found")
 
     name = show.display_name
-    if show.qbit_rule_name:
-        try:
-            delete_rule(qbit, show.qbit_rule_name, raise_on_error=True)
-        except Exception as e:
-            state.add_log(f"Could not delete rule for '{name}': {e}", "WARNING")
-            raise HTTPException(
-                status_code=409,
-                detail=f"Could not delete existing rule: {e}",
-            )
-
-    for h in session.exec(select(RuleHistory).where(RuleHistory.monitored_id == show.id)).all():
-        session.delete(h)
-    for m in session.exec(select(MatchHistory).where(MatchHistory.monitored_id == show.id)).all():
-        session.delete(m)
-    for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
-        session.delete(mapping)
-    for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
-        # Dispose of torrents an in-flight direct grab added; deleting the
-        # episode would otherwise orphan them in qBittorrent.
-        cancel_episode_operations(session, qbit, show, ep, "Show deleted by user.")
-        session.delete(ep)
-    session.flush()
-    session.delete(show)
+    try:
+        delete_monitored_show(session, qbit, show, "Show deleted by user.")
+    except QbitClientError as e:
+        session.rollback()
+        state.add_log(f"Could not delete rule for '{name}': {e}", "WARNING")
+        raise HTTPException(
+            status_code=409,
+            detail=f"Could not delete existing rule: {e}",
+        )
     session.commit()
 
     state.add_log(f"Deleted show '{name}' from monitoring.", "INFO")
@@ -1330,7 +1316,7 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
             settings=s,
         )
         try:
-            preflight_logs = supervisor.prepare_download_mode(new_mode)
+            preflight_logs = supervisor.prepare_download_mode(new_mode, recheck_working=True)
         except Exception as e:
             session.rollback()
             state.add_log(f"Could not switch download mode: {e}", "ERROR")
@@ -1343,8 +1329,9 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
     session.add(s)
     session.commit()
 
-    if new_mode != previous_mode and new_mode == "direct":
-        state.request_rss_refresh()
+    if new_mode != previous_mode:
+        if new_mode == "direct":
+            state.request_rss_refresh()
         state.trigger_immediate_cycle()
 
     message = "Settings updated."
@@ -1423,7 +1410,6 @@ async def _sync_anilist_now(session: Session):
         bootstrap_logs = await asyncio.to_thread(
             sup.bootstrap_unassigned_shows,
             create_qbit_rules=not direct,
-            mark_fixed=not direct,
         )
         logs.extend(bootstrap_logs)
         if direct:
