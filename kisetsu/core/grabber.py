@@ -11,7 +11,11 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import build_regex_pattern, effective_title, resolve_save_path
+from kisetsu.core.rules import (
+    effective_title,
+    resolve_save_path,
+    show_match_patterns,
+)
 from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     CANCELLABLE_OPERATION_STATUSES,
@@ -1351,11 +1355,13 @@ class _ShowMatcher(NamedTuple):
     """What matching a show against many titles needs, built once per cycle."""
     test_pattern: str
     prepared_aliases: List[Tuple[str, str]]
+    learned_pattern: Optional[str] = None
 
 
 def _show_matcher(show: Monitored) -> _ShowMatcher:
     aliases = show.effective_aliases
-    return _ShowMatcher(build_regex_pattern(aliases), prepare_aliases(aliases))
+    pattern, learned_pattern = show_match_patterns(aliases, show.matched_title)
+    return _ShowMatcher(pattern, prepare_aliases(aliases), learned_pattern)
 
 
 def _decide(

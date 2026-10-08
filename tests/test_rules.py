@@ -2,7 +2,6 @@ import json
 import re
 import unittest
 from kisetsu.core.rules import (
-    RELEASE_NAME_JOINER,
     build_regex_pattern,
     build_release_name_pattern,
     build_rule_definition,
@@ -41,14 +40,11 @@ class TestRules(unittest.TestCase):
         but the episode it came from.
         """
         pattern = build_regex_pattern(aliases=[], matched_title="Blue.Box")
-        self.assertEqual(pattern, f"Blue{RELEASE_NAME_JOINER}Box")
-        for title in (
-            "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
-            "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
-            "[Varyg] Blue_Box - 03 [1080p].mkv",
-            "[Group] Blue-Box - 04.mkv",
-        ):
-            self.assertTrue(re.search(pattern, title, re.IGNORECASE), title)
+        self.assertEqual(pattern, r"Blue\.Box")
+        self.assertTrue(
+            re.search(pattern, "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv", re.IGNORECASE)
+        )
+        self.assertFalse(re.search(pattern, "[Group] BlueXBox - 04.mkv", re.IGNORECASE))
 
     def test_build_regex_pattern_broad(self):
         aliases = ["Sousou no Frieren", "Frieren: Beyond Journey's End"]
@@ -69,7 +65,7 @@ class TestRules(unittest.TestCase):
             aliases=["Mushoku Tensei: Isekai Ittara Honki Dasu 3rd Season", "Mushoku Tensei S3"],
             matched_title="Mushoku Tensei S3",
         )
-        self.assertIn(f"Mushoku{RELEASE_NAME_JOINER}Tensei{RELEASE_NAME_JOINER}S3", pattern)
+        self.assertIn("Mushoku Tensei S3", pattern)
         self.assertTrue(re.search(pattern, "[SubsPlease] Mushoku Tensei S3 - 09 (1080p) [DDF202A0].mkv", re.IGNORECASE))
         self.assertTrue(re.search(pattern, "[Erai-raws] Mushoku Tensei S3 - 09 (1080p).mkv", re.IGNORECASE))
         self.assertFalse(re.search(pattern, "[SubsPlease] Bleach - 45.mkv", re.IGNORECASE))
@@ -83,36 +79,23 @@ class TestRules(unittest.TestCase):
         self.assertTrue(
             re.search(pattern, "[Erai-raws] Koori no Jouheki 2nd Season - 02 [1080p NF WEB-DL][MultiSub].mkv", re.IGNORECASE)
         )
-        # Separator tolerance is still needed: groups are inconsistent about joining words.
-        self.assertTrue(re.search(pattern, "[Erai-raws] Koori.no.Jouheki.2nd.Season - 03 [1080p].mkv", re.IGNORECASE))
         # The un-numbered season 1 release must not be pulled in by the hedged "2" variant.
         self.assertFalse(re.search(pattern, "[Erai-raws] Koori no Jouheki - 01 [1080p].mkv", re.IGNORECASE))
 
-    def test_build_release_name_pattern_tolerates_separators(self):
+    def test_build_release_name_pattern_is_the_observed_name(self):
         pattern = build_release_name_pattern("Sousou no Frieren")
-        self.assertEqual(pattern, f"Sousou{RELEASE_NAME_JOINER}no{RELEASE_NAME_JOINER}Frieren")
+        self.assertEqual(pattern, "Sousou no Frieren")
         self.assertTrue(re.search(pattern, "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", re.IGNORECASE))
-        self.assertTrue(re.search(pattern, "[Erai-raws] Sousou.no.Frieren - 09.mkv", re.IGNORECASE))
-        self.assertTrue(re.search(pattern, "[Erai-raws] Sousou_no_Frieren - 10.mkv", re.IGNORECASE))
-        self.assertTrue(re.search(pattern, "[Erai-raws] Sousou-No-Frieren - 11.mkv", re.IGNORECASE))
+        self.assertFalse(re.search(pattern, "[Erai-raws] Sousou.no.Frieren - 09.mkv", re.IGNORECASE))
         self.assertFalse(re.search(pattern, "[SubsPlease] Sousou no Kappa - 01 (1080p).mkv", re.IGNORECASE))
 
-    def test_build_release_name_pattern_requires_a_separator_between_tokens(self):
-        pattern = build_release_name_pattern("Sousou no Frieren")
-        self.assertIn(RELEASE_NAME_JOINER, pattern)
-        # Zero-width joins would let words run together, so a separator is required.
-        self.assertFalse(re.search(pattern, "[Erai-raws] SousounoFrieren - 08.mkv", re.IGNORECASE))
-        self.assertFalse(re.search(pattern, "[Erai-raws] Sousou_noFrieren - 08.mkv", re.IGNORECASE))
+    def test_build_release_name_pattern_collapses_whitespace(self):
+        self.assertEqual(build_release_name_pattern("  Sousou   no Frieren "), "Sousou no Frieren")
 
     def test_build_release_name_pattern_escapes_metacharacters(self):
-        self.assertEqual(
-            build_release_name_pattern("Fate/stay night"),
-            f"Fate{RELEASE_NAME_JOINER}stay{RELEASE_NAME_JOINER}night",
-        )
-        self.assertEqual(
-            build_release_name_pattern("Re:Zero kara Hajimeru"),
-            f"Re{RELEASE_NAME_JOINER}Zero{RELEASE_NAME_JOINER}kara{RELEASE_NAME_JOINER}Hajimeru",
-        )
+        self.assertEqual(build_release_name_pattern("Fate/stay night"), "Fate/stay night")
+        self.assertEqual(build_release_name_pattern("Re:Zero kara Hajimeru"), "Re:Zero kara Hajimeru")
+        self.assertEqual(build_release_name_pattern("Kaguya-sama (Part 2)"), r"Kaguya-sama \(Part 2\)")
         self.assertTrue(
             re.search(build_release_name_pattern("86 Eighty-Six"), "[SubsPlease] 86 Eighty-Six - 05 (1080p).mkv", re.IGNORECASE)
         )
@@ -121,7 +104,6 @@ class TestRules(unittest.TestCase):
         self.assertEqual(build_release_name_pattern("SBR"), "SBR")
         self.assertEqual(build_release_name_pattern(""), "")
         self.assertEqual(build_release_name_pattern("   "), "")
-        # Too generic to generalize: stays a literal, so it keeps matching its own format.
         self.assertTrue(re.search(build_release_name_pattern("SBR"), "[Erai-raws] SBR - 01 [1080p].mkv", re.IGNORECASE))
 
     def test_build_release_name_pattern_bounds_bare_numeric_tokens(self):
@@ -137,13 +119,10 @@ class TestRules(unittest.TestCase):
             STEEL_BALL_RUN_ALIASES,
             matched_title="JoJo no Kimyou na Bouken: Steel Ball Run",
         )
-        self.assertIn(f"JoJo{RELEASE_NAME_JOINER}no", learned_pattern)
+        self.assertIn("JoJo no Kimyou", learned_pattern)
         for episode in ("01", "02", "11", "24"):
             release = f"[Erai-raws] JoJo no Kimyou na Bouken: Steel Ball Run - {episode} [1080p].mkv"
             self.assertTrue(re.search(learned_pattern, release, re.IGNORECASE), episode)
-        self.assertTrue(
-            re.search(learned_pattern, "JoJo.no.Kimyou.na.Bouken.Steel.Ball.Run - 12 [1080p].mkv", re.IGNORECASE)
-        )
         self.assertFalse(
             re.search(learned_pattern, "[Erai-raws] Some Completely Different Show - 02 [1080p].mkv", re.IGNORECASE)
         )
@@ -151,7 +130,7 @@ class TestRules(unittest.TestCase):
             re.search(learned_pattern, "[SubsPlease] Sousou no Frieren - 08 (1080p).mkv", re.IGNORECASE)
         )
 
-    def test_build_rule_definition_uses_learned_tolerant_pattern(self):
+    def test_build_rule_definition_uses_learned_pattern(self):
         show = Monitored(
             id=7,
             anilist_id=174051,

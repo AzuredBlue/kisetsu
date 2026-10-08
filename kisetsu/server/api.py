@@ -533,7 +533,6 @@ def _saved_patterns(session: Session, show: Monitored, qbit_rule_data: Dict[str,
         saved_regex = build_regex_pattern(
             show.effective_aliases,
             matched_title=show.matched_title,
-            release_group=show.matched_release_group,
         )
     return saved_regex, saved_must_not
 
@@ -1630,7 +1629,6 @@ def get_match_history(limit: int = 100, session: Session = Depends(get_db)):
             matched_reg = s_obj.custom_regex or build_regex_pattern(
                 s_obj.effective_aliases,
                 matched_title=s_obj.matched_title,
-                release_group=s_obj.matched_release_group,
             )
 
         res.append({

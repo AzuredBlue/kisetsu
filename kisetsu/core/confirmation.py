@@ -606,7 +606,6 @@ def verify_and_confirm_rules_from_feeds(
         regex_pat = show.custom_regex or build_regex_pattern(
             aliases,
             matched_title=show.matched_title,
-            release_group=show.matched_release_group,
         )
         pending_events.append({
             "show_id": show.id,

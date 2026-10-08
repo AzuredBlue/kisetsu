@@ -3,7 +3,7 @@ import os
 import re
 from datetime import timedelta, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.db.models import Feed, Monitored, MonitoredStatus, as_utc, utc_now
 
@@ -14,12 +14,11 @@ ROMAN_TO_INT = {"I": 1, "II": 2, "III": 3, "IV": 4, "V": 5, "VI": 6}
 INT_TO_ROMAN = {1: "I", 2: "II", 3: "III", 4: "IV", 5: "V", 6: "VI"}
 DEFAULT_MUST_NOT = r"(720p|480p|540p|360p|576p|batch|complete|\(\d+[-~]\d+\)|\[\d+[-~]\d+\])"
 
-RELEASE_NAME_SPLIT_REGEX: re.Pattern[str] = re.compile(r"[\s._\-:–—/]+")
-# At least one separator is required between tokens: the observed name had one
-# everywhere we split, and requiring it keeps "Foo Bar" from matching "FooBar".
-RELEASE_NAME_JOINER = r"[\s._\-:–—/]+"
-MIN_PATTERN_TOKENS = 2
 MIN_PATTERN_CHARS = 6
+# Release groups join the words of a title with spaces, dots, underscores or hyphens
+# (a feed title and the torrent's file name often differ), so matching ignores which.
+NAME_SEPARATORS = r"[\s._\-:–—/]+"
+_NAME_SPLIT = re.compile(NAME_SEPARATORS)
 RULE_LEAD_TIME = timedelta(days=7)
 
 
@@ -82,44 +81,69 @@ def sanitize_regex_token(title: str) -> str:
 
 def build_release_name_pattern(release_name: str) -> str:
     """
-    Build a separator-tolerant regex from a release name observed on a feed.
+    Build a regex from a release name observed on a feed.
 
-    Release groups are inconsistent about how they join the words of a title
-    (spaces, dots, underscores, hyphens, colons), so a literal token stops
-    matching as soon as the same show is announced differently. The episode
+    The name already showed how the release group writes the title, so the
+    pattern is that name with only regex metacharacters escaped. The episode
     number and quality tags are not part of the name, which keeps the pattern
     valid for every later episode of the same show.
     """
-    if not release_name:
+    stripped = (release_name or "").strip()
+    if not stripped:
         return ""
+    pattern = sanitize_regex_token(stripped)
+    if stripped[-1:].isdigit():
+        # "Foo 3" must not match "Foo 30", but "Foo 3 - 01" still matches.
+        pattern += r"(?!\d)"
+    return pattern
 
-    stripped = release_name.strip()
-    tokens = [token for token in RELEASE_NAME_SPLIT_REGEX.split(stripped) if token]
+
+def build_tolerant_name_pattern(name: str) -> str:
+    """A regex for a series name that matches whichever separators a release uses.
+
+    Only the words are fixed; "Blue Box S02", "Blue.Box.S02" and "Blue_Box_S02"
+    all match, while a missing separator ("BlueBox") does not.
+    """
+    stripped = (name or "").strip()
+    tokens = [token for token in _NAME_SPLIT.split(stripped) if token]
     if not tokens:
         return ""
-
-    if len(tokens) < MIN_PATTERN_TOKENS or len(stripped) < MIN_PATTERN_CHARS:
-        return sanitize_regex_token(stripped)
-
+    if len(tokens) < 2:
+        return build_release_name_pattern(stripped)
     escaped = []
     for token in tokens:
-        safe_token = sanitize_regex_token(token).replace("'", "['\u2019]?")
+        safe = sanitize_regex_token(token).replace("'", "['\u2019]?")
         if token.isdigit():
-            # Bare numeric season variants ("Foo 3") must not match "Foo 30".
-            safe_token += r"\b"
-        escaped.append(safe_token)
-    return RELEASE_NAME_JOINER.join(escaped)
+            # "Foo 3" must not match "Foo 30".
+            safe += r"\b"
+        escaped.append(safe)
+    pattern = NAME_SEPARATORS.join(escaped)
+    if tokens[-1][-1:].isdigit() and not tokens[-1].isdigit():
+        pattern += r"(?!\d)"
+    return pattern
+
+
+def show_match_patterns(aliases: List[str], matched_title: Optional[str]) -> Tuple[str, Optional[str]]:
+    """(pattern that finds a show's releases, the learned-name pattern or None).
+
+    The learned name is how the release group writes the title, so it is tried
+    alongside the aliases.
+    """
+    pattern = build_regex_pattern(aliases)
+    learned = (matched_title or "").strip()
+    if len(learned) < MIN_PATTERN_CHARS:
+        return pattern, None
+    learned_pattern = build_tolerant_name_pattern(learned)
+    return f"{learned_pattern}|{pattern}", learned_pattern
 
 
 def build_regex_pattern(
     aliases: List[str],
     matched_title: Optional[str] = None,
-    release_group: Optional[str] = None,
 ) -> str:
     """
     Build a case-insensitive qBittorrent RSS rule pattern.
     If matched_title is known, use it as the rule; otherwise build an alternation from aliases.
-    ``release_group`` is accepted for call compatibility but does not affect the pattern.
     """
     if matched_title and matched_title.strip():
         # The release group has already shown its naming, so the learned rule is
@@ -310,7 +334,6 @@ def build_rule_definition(
     state qBittorrent owns (when it last matched, which episodes it already has)
     is carried over instead of being reset by every write.
     """
-    effective_group = release_group or monitored.matched_release_group
     previous_state = previous_rule or {}
     
     regex = (
@@ -321,7 +344,6 @@ def build_rule_definition(
             or build_regex_pattern(
                 monitored.effective_aliases,
                 matched_title=monitored.matched_title,
-                release_group=effective_group,
             )
         )
     )

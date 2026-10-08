@@ -752,7 +752,7 @@ def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
     assert updated.status == MonitoredStatus.FIXED
     must_contain = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"]
     assert re.search(must_contain, "[SubsPlease] Ao Ashi S2 - 01 (1080p) [6DCF3E95].mkv", re.IGNORECASE)
-    assert re.search(must_contain, "[SubsPlease] Ao.Ashi S2 - 02 (1080p) [11111111].mkv", re.IGNORECASE)
+    assert re.search(must_contain, "[SubsPlease] Ao Ashi S2 - 02 (1080p) [11111111].mkv", re.IGNORECASE)
 
 
 def test_show_rule_endpoint_returns_only_hand_written_aliases(client, session, mock_qbit):
@@ -949,13 +949,12 @@ def test_rule_details_shows_the_learned_series_name_not_the_filename(client, ses
 
     body = client.get(f"/api/shows/{show.id}/rule").json()
 
-    assert body["must_contain"] == r"Blue[\s._\-:–—/]+Box"
-    for title in (
+    assert body["must_contain"] == r"Blue\.Box"
+    assert re.search(
+        body["must_contain"],
         "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
-        "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
-        "[Varyg] Blue_Box - 03 [1080p].mkv",
-    ):
-        assert re.search(body["must_contain"], title, re.IGNORECASE), title
+        re.IGNORECASE,
+    )
 
 
 def test_picking_auto_discover_feed_unpins_the_show(client, session, mock_qbit):
@@ -1434,16 +1433,14 @@ def test_init_db_learns_the_delivering_feed_and_narrows_a_learned_filename(tmp_p
         assert repaired.learned_feed_id == subs_id
         assert repaired.current_feed_id == subs_id
         assert repaired.feed_is_locked is True
-        # The filename is narrowed to the series name, which matches every
-        # separator style the release groups actually use.
+        # The filename is narrowed to the series name as the group wrote it.
         assert repaired.matched_title == "Blue.Box"
         pattern = build_regex_pattern([], matched_title=repaired.matched_title)
-        for title in (
+        assert re.search(
+            pattern,
             "[Erai-raws]  Blue.Box.S02E02.Adequate.1080p.CR.WEB-DL.AAC2.0-HYDE.mkv",
-            "[SubsPlease] Blue Box S02E02 (1080p) [B3B6B0F0].mkv",
-            "[Varyg] Blue_Box - 03 [1080p].mkv",
-        ):
-            assert re.search(pattern, title, re.IGNORECASE), title
+            re.IGNORECASE,
+        )
         # The failure record that excluded the working feed is gone.
         assert session.exec(
             select(RuleHistory).where(RuleHistory.monitored_id == 1)
