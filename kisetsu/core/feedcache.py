@@ -13,6 +13,7 @@ the feeds that carried it and switching its feed finds them at once.
 import json
 import logging
 import threading
+import weakref
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -42,6 +43,30 @@ _CHUNK = 500
 _failed_feed_names: List[str] = []
 # One copy from qBittorrent at a time; a second caller just waits and reads the settled result.
 _ingest_lock = threading.Lock()
+# Articles already matched against the followed shows are not matched again.
+_EVALUATED_CAP = 50_000
+
+
+class _Evaluated:
+    """The articles already matched for one database, valid for one set of followed shows."""
+
+    def __init__(self):
+        self.signature = None
+        self.keys: set = set()
+        self.lock = threading.Lock()
+
+
+_evaluated_by_engine: "weakref.WeakKeyDictionary[Any, _Evaluated]" = weakref.WeakKeyDictionary()
+_evaluated_guard = threading.Lock()
+
+
+def _evaluated_for(session: Session) -> _Evaluated:
+    engine = session.get_bind()
+    with _evaluated_guard:
+        state = _evaluated_by_engine.get(engine)
+        if state is None:
+            state = _evaluated_by_engine[engine] = _Evaluated()
+        return state
 
 
 def last_failed_feed_names() -> List[str]:
@@ -78,10 +103,14 @@ class _FollowedShows:
 
     def __init__(self, shows: Iterable[Monitored]):
         self._entries = []
+        parts = []
         for show in shows:
             aliases = show.effective_aliases
             pattern, _ = show_match_patterns(aliases, show.matched_title)
             self._entries.append((show.id, aliases, pattern, prepare_aliases(aliases)))
+            parts.append((show.id, tuple(aliases), show.matched_title or ""))
+        # Changes whenever a show is added or removed, or its aliases or learned name change.
+        self.signature = hash(tuple(sorted(parts)))
         self._parsed: Dict[str, Dict[str, Any]] = {}
 
     def matching_ids(self, title: str) -> List[int]:
@@ -125,10 +154,17 @@ def store_matches(
     """Keep the articles that match a followed show; returns how many rows were added.
 
     A release that matches two shows is kept for both. Rows that exist already
-    are left alone, so their first-seen time is the first one.
+    are left alone, so their first-seen time is the first one. An article that
+    was matched before is not matched again until the followed shows change.
     """
     followed = followed or _followed(session)
     now = _naive(now or utc_now())
+    state = _evaluated_for(session)
+    with state.lock:
+        if state.signature != followed.signature or len(state.keys) > _EVALUATED_CAP:
+            state.keys.clear()
+            state.signature = followed.signature
+        known = set(state.keys)
     rows: List[Dict[str, Any]] = []
     seen: set = set()
     for feed_url, articles in articles_by_url.items():
@@ -137,7 +173,7 @@ def store_matches(
             if not title:
                 continue
             item_id = item_id_of(article)
-            if (feed_url, item_id) in seen:
+            if (feed_url, item_id) in seen or (feed_url, item_id) in known:
                 continue
             seen.add((feed_url, item_id))
             show_ids = followed.matching_ids(title)
@@ -157,6 +193,9 @@ def store_matches(
                 })
     added = _insert_rows(session, rows) if rows else 0
     session.commit()
+    with state.lock:
+        if state.signature == followed.signature:
+            state.keys.update(seen)
     return added
 
 

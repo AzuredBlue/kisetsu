@@ -69,6 +69,10 @@ def flatten_rss_articles(rss_tree: Dict[str, Any]) -> Dict[str, List[Dict[str, A
     return feed_articles
 
 
+# The longest pause between two polls while waiting for feeds to settle.
+_MAX_SETTLE_POLL_SECONDS = 3.0
+
+
 def _rss_feed_states(rss_tree: Dict[str, Any]) -> List[Tuple[str, str, bool, bool]]:
     """(name, url, is_loading, has_error) for every feed in the RSS tree.
 
@@ -177,6 +181,7 @@ class RssSnapshot:
         feed, so a feed that is still loading at the deadline is reported as
         failed instead of failing the whole snapshot.
         """
+        wait = poll_interval_seconds
         while True:
             rss_tree = self.qbit_client.get_rss_items(with_data=True)
             states = _rss_feed_states(rss_tree)
@@ -188,7 +193,11 @@ class RssSnapshot:
                     for name, feed_url, loading, has_error in states
                 ]
             if poll_interval_seconds > 0:
-                time.sleep(poll_interval_seconds)
+                time.sleep(wait)
+                # qBittorrent takes tens of seconds to fetch its feeds, and only a full
+                # pull shows whether it is done, so back off instead of pulling the whole
+                # tree twice a second.
+                wait = min(_MAX_SETTLE_POLL_SECONDS, wait * 1.5)
 
     def refresh(
         self,

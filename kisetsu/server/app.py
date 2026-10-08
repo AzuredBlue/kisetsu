@@ -39,6 +39,7 @@ BUSY_RETRY_SECONDS = 5
 SETTLE_INTERVAL_SECONDS = 4
 INGEST_INTERVAL_SECONDS = 60
 INGEST_ERROR_SECONDS = 30
+INGEST_MAX_SECONDS = 15 * 60
 PRUNE_INTERVAL_SECONDS = 24 * 3600
 SETTLE_ERROR_SECONDS = 30
 
@@ -273,6 +274,14 @@ async def settle_task():
         await asyncio.sleep(delay)
 
 
+def _ingest_delay(qbit: QBitClient) -> int:
+    """Wait as long as qBittorrent does between refreshes: nothing new can show up sooner."""
+    try:
+        return min(INGEST_MAX_SECONDS, max(INGEST_INTERVAL_SECONDS, qbit.get_rss_refresh_interval_seconds()))
+    except Exception:
+        return INGEST_INTERVAL_SECONDS
+
+
 async def ingest_task():
     """Keep the feed cache current between checks.
 
@@ -302,6 +311,7 @@ async def ingest_task():
                 direct = (settings.download_mode or "rules") == "direct"
             if direct:
                 await asyncio.to_thread(ingest_rss, engine, qbit, False)
+                delay = await asyncio.to_thread(_ingest_delay, qbit)
                 if time.monotonic() - last_prune >= PRUNE_INTERVAL_SECONDS:
                     removed = await asyncio.to_thread(prune_cache, engine)
                     last_prune = time.monotonic()
