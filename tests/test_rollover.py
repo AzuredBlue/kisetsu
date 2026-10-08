@@ -4,7 +4,7 @@ import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from kisetsu.core.supervisor import Supervisor
-from kisetsu.db.models import Episode, Monitored, MonitoredStatus, Settings, utc_now
+from kisetsu.db.models import Episode, EpisodeStatus, Monitored, MonitoredStatus, Settings, utc_now
 
 
 @pytest.fixture
@@ -322,3 +322,36 @@ def test_direct_mode_keeps_an_overdue_episode_retryable_in_direct_mode(session):
     assert episode.schedule_state == "aired"
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
     assert air_at <= now
+
+
+def test_direct_mode_does_not_call_a_grabbed_episode_overdue(session):
+    """The ledger knows the episode is downloaded, so the stale air time is not news."""
+    now = utc_now()
+    show = Monitored(
+        id=5,
+        anilist_id=1005,
+        display_name="Grabbed Show",
+        aliases_json='["Grabbed Show"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=12,
+        next_airing_episode=2,
+        next_airing_at=now - timedelta(hours=3),
+    )
+    session.add(show)
+    session.commit()
+    session.add(Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.COMPLETED, air_at=now - timedelta(hours=3)))
+    session.commit()
+
+    settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+    supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=settings)
+
+    logs = supervisor.reconcile_schedule_rollover()
+    session.refresh(show)
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 2)
+    ).first()
+    assert not any("overdue" in log for log in logs)
+    assert episode.schedule_state == "aired"
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert show.next_airing_episode == 2

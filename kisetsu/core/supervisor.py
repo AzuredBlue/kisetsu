@@ -878,9 +878,10 @@ class Supervisor:
                 if episode.schedule_state != EpisodeScheduleState.AIRED.name.lower():
                     episode.schedule_state = EpisodeScheduleState.AIRED.name.lower()
                     self.session.add(episode)
-                msg = f"Show '{show.display_name}': Episode {current_ep} remains overdue at its authoritative air time."
-                logger.info(msg)
-                logs.append(msg)
+                if episode.status in {EpisodeStatus.WANTED, EpisodeStatus.FAILED, EpisodeStatus.MISSED}:
+                    msg = f"Show '{show.display_name}': Episode {current_ep} remains overdue at its authoritative air time."
+                    logger.info(msg)
+                    logs.append(msg)
                 continue
 
             has_confirmed_release = bool(show.last_confirmed_episode and show.last_confirmed_episode > 0)
