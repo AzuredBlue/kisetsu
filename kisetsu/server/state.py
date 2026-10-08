@@ -1,8 +1,9 @@
 from collections import deque
 from datetime import datetime, timezone
-from threading import Lock
+from threading import Condition, Lock
 from typing import Deque, Dict, Any, Optional
 import asyncio
+import time
 
 
 class ServerState:
@@ -12,6 +13,7 @@ class ServerState:
         self.log_wake_event: asyncio.Event = asyncio.Event()
         self.is_running_cycle: bool = False
         self.cycle_owner: Optional[str] = None
+        self.cycle_started: Optional[float] = None
         self.daemon_active: bool = False
         self.last_cycle_time: Optional[datetime] = None
         self.next_check_reason: str = "Initializing supervisor..."
@@ -22,6 +24,7 @@ class ServerState:
         # it already held the cycle.
         self._rss_refresh_requested = False
         self._cycle_mutex = Lock()
+        self._cycle_free = Condition(self._cycle_mutex)
         # The loop that owns the events. Sync endpoints run in a threadpool and
         # asyncio.Event is not thread-safe, so they must hand the set() over.
         self._loop: Optional[asyncio.AbstractEventLoop] = None
@@ -43,13 +46,20 @@ class ServerState:
         else:
             loop.call_soon_threadsafe(event.set)
 
-    def try_begin_cycle(self, owner: str) -> bool:
-        """Claim the single supervision cycle slot, or report it busy."""
+    def try_begin_cycle(self, owner: str, wait: float = 0.0) -> bool:
+        """Claim the single supervision cycle slot, or report it busy.
+
+        With ``wait`` the caller blocks up to that many seconds for the slot to
+        free up, so it must run on a thread, never on the event loop.
+        """
         with self._cycle_mutex:
+            if self.is_running_cycle and wait > 0:
+                self._cycle_free.wait_for(lambda: not self.is_running_cycle, timeout=wait)
             if self.is_running_cycle:
                 return False
             self.is_running_cycle = True
             self.cycle_owner = owner
+            self.cycle_started = time.monotonic()
             return True
 
     def end_cycle(self, owner: Optional[str] = None) -> None:
@@ -59,6 +69,8 @@ class ServerState:
                 return
             self.is_running_cycle = False
             self.cycle_owner = None
+            self.cycle_started = None
+            self._cycle_free.notify_all()
 
     def request_rss_refresh(self) -> None:
         with self._cycle_mutex:

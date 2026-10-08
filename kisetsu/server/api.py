@@ -1,5 +1,6 @@
 import asyncio
 import re
+import time
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import APIRouter, HTTPException, Depends
@@ -82,17 +83,29 @@ def uses_direct_engine(mode: str) -> bool:
     return mode == "direct"
 
 
-def require_exclusive_cycle() -> None:
-    """Reject a mutating request while a supervision cycle holds the slot.
+CYCLE_WAIT_SECONDS = 45.0
+
+# What the cycle slot's owner is doing, in words for the UI.
+_CYCLE_LABELS = {
+    "background": "background check",
+    "api-cycle": "manual sync",
+    "settle": "download check",
+    "api": "another change",
+}
+
+
+def require_exclusive_cycle(wait: float = CYCLE_WAIT_SECONDS) -> None:
+    """Claim the cycle slot for a mutating request, waiting for a running cycle.
 
     A change applied mid-cycle would land on top of a half-finished cycle, so
-    endpoints that call this (show edits and deletes) are
-    refused instead.
+    the request waits for the slot instead. It blocks the calling thread, which
+    is fine for the sync endpoints that run in the threadpool; async endpoints
+    must call it through ``asyncio.to_thread``.
     """
-    if not state.try_begin_cycle("api"):
+    if not state.try_begin_cycle("api", wait=wait):
         raise HTTPException(
             status_code=409,
-            detail="Another supervision or show mutation is already in progress",
+            detail="A background check is still running. Try again in a moment.",
         )
 
 
@@ -1380,7 +1393,7 @@ async def sync_anilist_now(session: Session = Depends(get_db)):
     if not s.anilist_username:
         raise HTTPException(status_code=400, detail="AniList username is not set in Settings.")
 
-    require_exclusive_cycle()
+    await asyncio.to_thread(require_exclusive_cycle)
     try:
         return await _sync_anilist_now(session)
     finally:
@@ -1581,11 +1594,15 @@ def get_system_status(session: Session = Depends(get_db)):
         select(func.count(Episode.id)).where(Episode.status == EpisodeStatus.WANTED)
     ).one()
 
+    cycle_owner, cycle_started = state.cycle_owner, state.cycle_started
+    running = state.is_running_cycle and cycle_started is not None
     return {
         "daemon_active": state.daemon_active,
         "download_mode": normalized_download_mode(session),
         "wanted_episodes": wanted,
         "is_running_cycle": state.is_running_cycle,
+        "cycle_label": _CYCLE_LABELS.get(cycle_owner or "", "background check") if running else None,
+        "cycle_seconds": int(time.monotonic() - cycle_started) if running else None,
         "last_cycle_time": state.last_cycle_time.isoformat() if state.last_cycle_time else None,
         "next_check_reason": state.next_check_reason,
         "next_check_seconds": remaining_seconds,

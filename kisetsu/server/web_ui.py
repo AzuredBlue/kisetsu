@@ -129,6 +129,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     #sidebar { view-transition-name: sidebar; }
     #main-shell > header { view-transition-name: topbar; }
     #main-scroll-container, #tab-show { view-transition-name: content; }
+    #toast-container { view-transition-name: toasts; }
+    ::view-transition-group(toasts) { animation: none; }
+    ::view-transition-old(toasts) { display: none; }
+    ::view-transition-new(toasts) { animation: none; }
     html.vt-open::view-transition-old(content) { animation: vt-fade-out .28s ease-out both; }
     html.vt-open::view-transition-new(content) { animation: vt-rise .28s ease-out both; }
     html.vt-close::view-transition-old(content) { animation: vt-drop .28s ease-out both; }
@@ -640,7 +644,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return d.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
     }
 
-    function showToast(message, type = 'info') {
+    // `sticky` keeps the toast until it is dismissed; the return value updates or removes it.
+    function showToast(message, type = 'info', { sticky = false } = {}) {
       const toast = document.createElement('div');
       const colors = {
         success: 'bg-[#142618] border-[#1f4a28] text-emerald-300',
@@ -653,10 +658,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       document.getElementById('toast-container').appendChild(toast);
       setTimeout(() => { toast.classList.remove('translate-y-2', 'opacity-0'); }, 10);
-      setTimeout(() => {
+      const dismiss = () => {
         toast.classList.add('opacity-0', 'translate-y-2');
         setTimeout(() => toast.remove(), 250);
-      }, 3500);
+      };
+      if (!sticky) setTimeout(dismiss, 3500);
+      return {
+        update: (text) => { const label = toast.querySelector('span'); if (label) label.textContent = text; },
+        dismiss,
+      };
     }
 
     const actionsInFlight = new Set();
@@ -673,21 +683,57 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
+    // A change that needs the cycle slot waits for a running check. If the answer
+    // is slow and a check is the reason, say so instead of leaving a dead button.
+    const BUSY_NOTICE_DELAY_MS = 800;
+
+    function watchForRunningCheck() {
+      let toast = null;
+      let ticker = null;
+      let stopped = false;
+      const timer = setTimeout(async () => {
+        try {
+          const st = await (await fetch('/api/status')).json();
+          if (stopped || !st.is_running_cycle) return;
+          const baseSeconds = st.cycle_seconds || 0;
+          const seenAt = Date.now();
+          const text = () => `Waiting for the ${st.cycle_label || 'background check'} to finish (${baseSeconds + Math.round((Date.now() - seenAt) / 1000)}s). Your change applies right after.`;
+          toast = showToast(text(), 'info', { sticky: true });
+          ticker = setInterval(() => toast.update(text()), 1000);
+        } catch {
+          // The notice is a courtesy; the request itself carries on.
+        }
+      }, BUSY_NOTICE_DELAY_MS);
+      return () => {
+        stopped = true;
+        clearTimeout(timer);
+        clearInterval(ticker);
+        if (toast) toast.dismiss();
+      };
+    }
+
     async function apiFetch(url, options = {}) {
-      const res = await fetch(url, options);
-      let data = {};
-      const text = await res.text();
+      const { notice = true, ...fetchOptions } = options;
+      const method = String(fetchOptions.method || 'GET').toUpperCase();
+      const stopWatching = method !== 'GET' && notice ? watchForRunningCheck() : null;
       try {
-        data = text ? JSON.parse(text) : {};
-      } catch {
-        data = { detail: text || res.statusText };
+        const res = await fetch(url, fetchOptions);
+        let data = {};
+        const text = await res.text();
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch {
+          data = { detail: text || res.statusText };
+        }
+        if (!res.ok) {
+          const err = new Error(data.detail || data.message || `HTTP ${res.status}: ${res.statusText}`);
+          err.status = res.status;
+          throw err;
+        }
+        return data;
+      } finally {
+        if (stopWatching) stopWatching();
       }
-      if (!res.ok) {
-        const err = new Error(data.detail || data.message || `HTTP ${res.status}: ${res.statusText}`);
-        err.status = res.status;
-        throw err;
-      }
-      return data;
     }
 
     async function loadShows() {
@@ -2564,7 +2610,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       text.textContent = 'Syncing...';
 
       try {
-        const data = await apiFetch('/api/cycle/run', { method: 'POST' });
+        const data = await apiFetch('/api/cycle/run', { method: 'POST', notice: false });
         showToast(data.message || 'Sync completed.', 'success');
         loadShows();
         updateStatus(true);
@@ -2799,9 +2845,17 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
     }
 
+    // Set from /api/status while a check holds the cycle slot.
+    let runningCheck = null;
+    let statusRepoll = null;
+
     function tickCountdown() {
       const nextEl = document.getElementById('sidebar-next-check');
-      if (nextEl) {
+      if (nextEl && runningCheck) {
+        const seconds = runningCheck.seconds + Math.round((Date.now() - runningCheck.seenAt) / 1000);
+        nextEl.textContent = `Checking… ${seconds}s`;
+        nextEl.title = `A ${runningCheck.label} is running.`;
+      } else if (nextEl) {
         if (!targetNextCheckTime) {
           nextEl.textContent = 'Routine check';
         } else {
@@ -2840,6 +2894,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         } else if (st.next_check_seconds !== undefined && st.next_check_seconds !== null) {
           targetNextCheckTime = Date.now() + (st.next_check_seconds * 1000);
         }
+
+        runningCheck = st.is_running_cycle
+          ? { label: st.cycle_label || 'background check', seconds: st.cycle_seconds || 0, seenAt: Date.now() }
+          : null;
+        clearTimeout(statusRepoll);
+        statusRepoll = runningCheck ? setTimeout(() => updateStatus(true), 2000) : null;
 
         tickCountdown();
 

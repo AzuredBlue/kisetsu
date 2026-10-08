@@ -2,6 +2,7 @@ import asyncio
 import ipaddress
 import os
 import socket
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -110,6 +111,7 @@ async def background_supervisor_task():
                     supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
 
                     state.add_log("Executing background supervision check...", "INFO")
+                    cycle_started = time.monotonic()
                     try:
                         logs = await supervisor.run_full_cycle(
                             hunting=hunting_next,
@@ -118,6 +120,9 @@ async def background_supervisor_task():
                         needs_rss_refresh = False
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
+                        cycle_seconds = int(time.monotonic() - cycle_started)
+                        if cycle_seconds >= 10:
+                            state.add_log(f"Supervision check took {cycle_seconds}s.", "INFO")
                         for l in logs:
                             state.add_log(f"Supervisor: {l}", "INFO")
                         if not logs:
