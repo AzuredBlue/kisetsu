@@ -150,6 +150,10 @@ def _operation_for_episode(session: Session, episode_id: int) -> Optional[Torren
 def _set_episode_release(session: Session, episode: Episode, operation: TorrentOperation, torrent_hash: Optional[str], status: EpisodeStatus) -> None:
     episode.status = status
     episode.version = operation.version
+    # A replacement from another feed makes that feed the episode's source; the
+    # rollback restores ``old_feed_id`` if the replace fails.
+    if operation.feed_id is not None:
+        episode.feed_id = operation.feed_id
     episode.release_title = operation.release_title
     episode.release_group = operation.release_group
     episode.torrent_url = operation.new_torrent_url

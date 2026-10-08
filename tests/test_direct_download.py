@@ -2768,3 +2768,35 @@ def test_giving_up_on_a_replacement_keeps_the_previous_release():
     assert episode.version == 1
     session.close()
     engine.dispose()
+
+
+def test_a_replacement_from_another_feed_becomes_the_episode_source():
+    from kisetsu.core.grabber import _set_episode_release
+
+    engine, session = _database()
+    session.add(Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct"))
+    old_feed = Feed(id=1, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=1)
+    new_feed = Feed(id=2, qbit_feed_name="Varyg", qbit_feed_url="https://varyg.example/rss", priority=2)
+    session.add(old_feed)
+    session.add(new_feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.feed_id = old_feed.id
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    operation = TorrentOperation(
+        episode_id=episode.id, kind="replace", status=TorrentOperationStatus.NEW_VERIFIED,
+        operation_tag="kisetsu-op-x", release_title="Frieren S01E01 Varyg", new_torrent_url="magnet:x",
+        new_torrent_hash="new-hash", old_torrent_hash="old-hash", feed_id=new_feed.id, old_feed_id=old_feed.id,
+    )
+    session.add(operation)
+    session.commit()
+
+    _set_episode_release(session, episode, operation, "new-hash", EpisodeStatus.DOWNLOADING)
+
+    assert episode.feed_id == new_feed.id
+    session.close()
+    engine.dispose()
+
