@@ -1861,7 +1861,11 @@ def _manual_refusal(
     """Why an explicit grab of ``version`` of ``episode`` must not go ahead."""
     if _operation_for_episode(session, episode.id):
         return f"Episode {episode.episode_number} already has a download in progress."
-    if _is_restore(episode) or other_source:
+    if _is_restore(episode):
+        return None
+    if other_source:
+        if episode.status == EpisodeStatus.COMPLETED and version < episode.version:
+            return f"Episode {episode.episode_number} already has v{episode.version}; an older version won't replace it."
         return None
     if episode.status in {
         EpisodeStatus.COMPLETED,

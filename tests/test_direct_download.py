@@ -2800,3 +2800,68 @@ def test_a_replacement_from_another_feed_becomes_the_episode_source():
     session.close()
     engine.dispose()
 
+
+def test_an_older_version_from_another_feed_is_not_offered_over_a_finished_repack():
+    from kisetsu.core.grabber import direct_feed_matches
+
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=2, qbit_feed_name="Toonshub", qbit_feed_url="https://toons.example/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, current_feed_id=feed.id)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    # The feed the repack came from is gone, so the ledger has no source feed.
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 2
+    episode.feed_id = None
+    episode.torrent_hash = "repack-hash"
+    episode.release_title = "Sousou.no.Frieren.S01E01.REPACK.1080p.WEB-DL-Group.mkv"
+    session.add(episode)
+    session.commit()
+    qbit, _ = _qbit()
+    articles = {feed.qbit_feed_url: [{
+        "id": "v1", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [AAAA1111].mkv", "torrentURL": "magnet:v1",
+    }]}
+
+    matches = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles)
+
+    assert matches and matches[0]["version"] == 1
+    assert matches[0]["downloadable"] is False
+    assert matches[0]["replaces"] is False
+    session.close()
+    engine.dispose()
+
+
+def test_removing_a_feed_clears_it_from_the_episodes_it_supplied():
+    engine, session = _database()
+    # Installed databases added episodes.feed_id by migration, without the
+    # foreign key, so nothing but the supervisor clears it there.
+    session.connection().exec_driver_sql("PRAGMA foreign_keys=OFF")
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    gone = Feed(id=1, qbit_feed_name="Old", qbit_feed_url="https://old.example/rss", priority=1)
+    kept = Feed(id=2, qbit_feed_name="Kept", qbit_feed_url="https://kept.example/rss", priority=2)
+    session.add(settings)
+    session.add(gone)
+    session.add(kept)
+    show = _show(session, total_episodes=3, next_airing_episode=3)
+    sync_show_episodes(session, show)
+    episodes = {e.episode_number: e for e in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all()}
+    episodes[1].feed_id = gone.id
+    episodes[2].feed_id = kept.id
+    session.add(episodes[1])
+    session.add(episodes[2])
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_rss_feeds_flat.return_value = [{"name": "Kept", "url": kept.qbit_feed_url}]
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.sync_feeds()
+
+    session.refresh(episodes[1])
+    session.refresh(episodes[2])
+    assert episodes[1].feed_id is None
+    assert episodes[2].feed_id == kept.id
+    session.close()
+    engine.dispose()

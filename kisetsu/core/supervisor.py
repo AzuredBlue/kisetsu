@@ -164,6 +164,10 @@ class Supervisor:
                         show.status = MonitoredStatus.UNCONFIRMED
                     self.session.add(show)
 
+                for episode in self.session.exec(select(Episode).where(Episode.feed_id == f.id)).all():
+                    episode.feed_id = None
+                    self.session.add(episode)
+
                 hist_on_feed = self.session.exec(
                     select(RuleHistory).where(RuleHistory.feed_id == f.id)
                 ).all()
