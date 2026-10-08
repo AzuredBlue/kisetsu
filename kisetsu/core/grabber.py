@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, parse_release_title, prepare_aliases
+from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, prepare_aliases
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -432,7 +432,6 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             release_title=operation.release_title,
             feed_name=feed.qbit_feed_name if feed else None,
             episode=episode.episode_number,
-            matched_regex=show.custom_regex,
         )
         session.commit()
     return f"Added '{show_name(episode, session)}' Ep {episode.episode_number} v{operation.version}"
@@ -1445,16 +1444,6 @@ def _decide(
     matcher: Optional[_ShowMatcher] = None,
     parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Tuple[bool, Dict[str, Any]]:
-    custom = (show.custom_regex or "").strip()
-    if custom:
-        try:
-            if re.search(custom, title, re.IGNORECASE):
-                excluded = show.custom_must_not or ""
-                if excluded and re.search(excluded, title, re.IGNORECASE):
-                    return False, {}
-                return True, parse_release_title(title)
-        except re.error:
-            pass
     if matcher is None:
         matcher = _show_matcher(show)
     # A title in the learned name that carries no arc marker shows that the group
@@ -1473,12 +1462,6 @@ def _decide(
         parsed_cache=parsed_cache,
         ignore_arc_marker=learned_without_marker,
     )
-    if matched and show.custom_must_not:
-        try:
-            if re.search(show.custom_must_not, title, re.IGNORECASE):
-                return False, {}
-        except re.error:
-            pass
     return matched, parsed
 
 

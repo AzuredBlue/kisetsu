@@ -564,6 +564,8 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
     settings = get_settings(session)
     feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
 
+    download_mode = normalized_download_mode(session)
+
     qbit_rule_data = _show_rule_data(qbit, show)
     saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
 
@@ -585,14 +587,12 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
     is_upcoming = is_show_rule_unreleased(show)
     has_learned_pattern = bool(show.matched_title or show.custom_regex)
 
-    download_mode = normalized_download_mode(session)
-
     return {
         "show_id": show.id,
         "display_name": effective_display_name,
         "cover_image": show.cover_image,
         "banner_image": show.banner_image,
-        "has_rule": bool(show.current_feed_id or show.qbit_rule_name or show.status == MonitoredStatus.COMPLETED or saved_regex),
+        "has_rule": bool(show.current_feed_id or show.qbit_rule_name or show.status == MonitoredStatus.COMPLETED or saved_regex or show.matched_title),
         # Whether a real qBittorrent RSS rule backs this show. Direct mode owns no
         # rule, so it is the difference between a Must Contain field that is read
         # by something and one that only looks meaningful.
@@ -603,6 +603,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "feed_url": feed.qbit_feed_url if feed else None,
         "must_contain": saved_regex,
         "must_not_contain": saved_must_not,
+        "matched_as": show.matched_title,
         "save_path": compress_home_path(download_params["save_path"]),
         "save_folder": download_params["custom_save_folder"],
         "current_feed_id": show.current_feed_id or 0,

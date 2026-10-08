@@ -2024,10 +2024,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         </div>
       ` : '';
 
-      // Both patterns are honoured by the direct engine too: Must contain, when set,
-      // matches releases by pattern instead of by name, and Must not contain rejects
-      // a release however it matched.
-      const mustContainSections = data.has_rule ? `
+      // Rules mode: the two patterns are the qBittorrent rule itself. Direct mode
+      // matches by the learned name and the aliases, so it only shows what it learned.
+      const rulePatternFields = `
         <div class="sm:col-span-2">
           <label for="show-must-contain" class="field-label">Must contain (regex)</label>
           <input type="text" id="show-must-contain" value="${escapeHtml(data.must_contain || '')}" placeholder=".*" class="field font-mono">
@@ -2035,14 +2034,21 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         <div class="sm:col-span-2">
           <label for="show-must-not-contain" class="field-label">Must not contain</label>
           <input type="text" id="show-must-not-contain" value="${escapeHtml(data.must_not_contain || '')}" placeholder="(720p|480p|...)" class="field font-mono">
-        </div>
-      ` : '';
+        </div>`;
+      const matchedAsField = `
+        <div class="sm:col-span-2">
+          <span class="field-label">Matched as</span>
+          ${data.matched_as
+            ? `<input type="text" readonly value="${escapeHtml(data.matched_as)}" onfocus="this.select()" class="field font-mono" title="${escapeHtml(data.matched_as)}">`
+            : '<p class="field-hint !mt-0">Matched by name and aliases until the first download.</p>'}
+        </div>`;
+      const mustContainSections = !data.has_rule ? '' : isDirect ? matchedAsField : rulePatternFields;
 
       const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
 
       document.getElementById('show-side-form').innerHTML = `
         <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent"></span>Feed &amp; matching<span class="ml-auto text-xs font-normal text-zinc-500">${ruleStatusText}</span></h3>
-        <div class="card p-4 flex-1 flex flex-col gap-4">
+        <div class="card p-4 flex flex-col gap-4">
          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <label for="show-feed-id" class="field-label">${feedLabel}</label>
@@ -2053,14 +2059,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
           ${regexSections}
          </div>
-         <button type="button" onclick="showTriggerRediscover()" class="mt-auto self-start text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
+         <button type="button" onclick="showTriggerRediscover()" class="self-start text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
           Reset to Auto-Detect
          </button>
         </div>`;
 
       document.getElementById('show-col-feed').innerHTML = `
         <h3 class="section-title mb-2 px-1 flex items-center gap-2"><span class="w-1.5 h-1.5 rounded-full bg-accent2"></span>Download</h3>
-        <div class="card p-4 flex-1 space-y-4">
+        <div class="card p-4 space-y-4">
           <div>
             <label for="show-save-path" class="field-label">Save path</label>
             <input type="text" id="show-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
