@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
+from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -930,11 +930,14 @@ def _mapped_episode(
     target_count: int,
     article: Dict[str, Any],
     learn: bool = True,
+    newest_raw: Optional[int] = None,
 ) -> Optional[int]:
     """Map a feed's raw episode number to the show's local one.
 
     ``learn=False`` is for read-only previews: it skips the offset inference
-    that can renumber stored releases.
+    that can renumber stored releases. ``newest_raw`` is the highest episode
+    number among the releases being mapped together; it lets absolute numbers
+    ("45", "46", "47", "48") be told apart when nothing else can.
     """
     mapping = session.exec(
         select(EpisodeNumberMapping).where(
@@ -960,7 +963,12 @@ def _mapped_episode(
             _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
         return by_date
     if latest_aired is not None and raw_episode > target_count and 1 <= latest_aired <= target_count:
-        return latest_aired
+        if newest_raw is None:
+            return latest_aired
+        # The newest release is taken to be the latest aired episode and the
+        # older ones count back from it.
+        local_episode = raw_episode - (newest_raw - latest_aired)
+        return local_episode if 1 <= local_episode <= latest_aired else None
     if 1 <= raw_episode <= target_count and (latest_aired is None or raw_episode <= latest_aired + 1):
         return raw_episode
     logger.info(
@@ -1389,13 +1397,23 @@ def _decide(
                 return True, parse_release_title(title)
         except re.error:
             pass
+    if matcher is None:
+        matcher = _show_matcher(show)
+    # A title in the learned name that carries no arc marker shows that the group
+    # does not label this show's cour, so there is nothing to compare with the
+    # aliases' marker. A title with a marker of its own is still checked.
+    learned_without_marker = bool(
+        matcher.learned_pattern
+        and extract_arc_qualifiers(title) is None
+        and re.search(matcher.learned_pattern, title, re.IGNORECASE)
+    )
     matched, _, parsed = match_release_to_show(
         title,
         show.effective_aliases,
-        test_pattern=matcher.test_pattern if matcher else None,
-        prepared_aliases=matcher.prepared_aliases if matcher else None,
+        test_pattern=matcher.test_pattern,
+        prepared_aliases=matcher.prepared_aliases,
         parsed_cache=parsed_cache,
-        ignore_arc_marker=False,
+        ignore_arc_marker=learned_without_marker,
     )
     if matched and show.custom_must_not:
         try:
@@ -1404,6 +1422,25 @@ def _decide(
         except re.error:
             pass
     return matched, parsed
+
+
+def _newest_raw_episode(
+    show: Monitored,
+    articles: List[Dict[str, Any]],
+    matcher: _ShowMatcher,
+    parsed_cache: Dict[str, Dict[str, Any]],
+) -> Optional[int]:
+    """The highest episode number among the show's matching releases in a feed."""
+    newest: Optional[int] = None
+    for article in articles:
+        title = article.get("title", "")
+        if not title:
+            continue
+        matched, parsed = _decide(show, title, matcher, parsed_cache)
+        raw_episode = parsed.get("episode")
+        if matched and raw_episode is not None and raw_episode > 0 and (newest is None or raw_episode > newest):
+            newest = int(raw_episode)
+    return newest
 
 
 def _mark_missed_episodes(
@@ -1571,6 +1608,7 @@ def evaluate_and_grab_releases(
             # a candidate, so it cannot hide a lower one that would still work.
             resolved = []
             best_version: Dict[int, int] = {}
+            newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
             for article in feed_articles:
                 title = article.get("title", "")
                 if not title:
@@ -1589,6 +1627,7 @@ def evaluate_and_grab_releases(
                     latest_aired,
                     target_count,
                     article,
+                    newest_raw=newest_raw,
                 )
                 if episode_number is None:
                     continue
@@ -1684,19 +1723,24 @@ def _manual_candidates(
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     context = _show_grab_context(session, show, now, _air_horizon(show, now, tolerance_hours))
     found = []
+    matcher = _show_matcher(show)
+    parsed_cache: Dict[str, Dict[str, Any]] = {}
     for feed in candidate_feeds:
-        for article in articles_by_url.get(feed.qbit_feed_url, []):
+        feed_articles = articles_by_url.get(feed.qbit_feed_url, [])
+        newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
+        for article in feed_articles:
             title = article.get("title", "")
             if not title:
                 continue
-            matched, parsed = _decide(show, title)
+            matched, parsed = _decide(show, title, matcher, parsed_cache)
             if not matched:
                 continue
             raw_episode = parsed.get("episode")
             if raw_episode is None or raw_episode <= 0:
                 continue
             episode_number = _mapped_episode(
-                session, show, feed, int(raw_episode), context.latest_aired, context.target_count, article, learn=False,
+                session, show, feed, int(raw_episode), context.latest_aired, context.target_count, article,
+                learn=False, newest_raw=newest_raw,
             )
             episode = context.episodes_by_number.get(episode_number) if episode_number is not None else None
             if episode is None:
