@@ -15,7 +15,7 @@ from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seed
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
-from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
+from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 
 logger = logging.getLogger("kisetsu.core.supervisor")
@@ -73,6 +73,8 @@ def delete_monitored_show(session: Session, qbit: QBitClient, show: Monitored, r
         session.delete(m)
     for mapping in session.exec(select(EpisodeNumberMapping).where(EpisodeNumberMapping.monitored_id == show.id)).all():
         session.delete(mapping)
+    for item in session.exec(select(MatchedFeedItem).where(MatchedFeedItem.monitored_id == show.id)).all():
+        session.delete(item)
     for ep in session.exec(select(Episode).where(Episode.monitored_id == show.id)).all():
         # Dispose of torrents an in-flight direct grab added; deleting the
         # episode would otherwise orphan them in qBittorrent.

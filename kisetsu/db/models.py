@@ -365,10 +365,29 @@ class SeenFeedItem(SQLModel, table=True):
     title: str = Field(default="")
     created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
     shielded_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
-    # The slimmed article as the feed delivered it, kept for releases that matter
-    # to a followed show so they outlive qBittorrent's own RSS cache.
-    data_json: Optional[str] = Field(default=None, nullable=True)
-    published_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
+
+
+class MatchedFeedItem(SQLModel, table=True):
+    """A feed release that matched a followed show, kept past qBittorrent's own RSS cache.
+
+    Rows come from every feed, not just the show's current one, so changing a
+    show's feed finds its releases at once. They go with the show.
+    """
+
+    __tablename__ = "matched_feed_items"
+    __table_args__ = (
+        UniqueConstraint("monitored_id", "feed_url", "item_id", name="uq_matched_feed_item"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    monitored_id: int = Field(foreign_key="monitored.id", ondelete="CASCADE", index=True)
+    feed_url: str = Field(index=True)
+    item_id: str
+    title: str = Field(default="")
+    published_at: Optional[NaiveDatetime] = Field(default=None, nullable=True)
+    first_seen_at: NaiveDatetime = Field(default_factory=utc_now)
+    # The article as the feed delivered it, slimmed to the fields anything reads.
+    data_json: str = Field(default="{}")
 
 
 class RuleHistory(SQLModel, table=True):

@@ -18,7 +18,7 @@ from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.core.confirmation import ingest_log_acceptances
-from kisetsu.core.feedcache import ingest_rss, prune_cache
+from kisetsu.core.feedcache import backfill_cache, ingest_rss, prune_cache
 from kisetsu.core.grabber import has_unsettled_work, update_episode_status
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
@@ -281,6 +281,12 @@ async def ingest_task():
     """
     engine = get_engine()
     await asyncio.sleep(STARTUP_GRACE_SECONDS)
+    try:
+        moved = await asyncio.to_thread(backfill_cache, engine)
+        if moved:
+            logger.info(f"Moved {moved} cached feed item(s) to the matched items table.")
+    except Exception as e:
+        logger.warning(f"Could not move the old feed cache: {e}", exc_info=True)
     last_prune = float("-inf")
     while True:
         delay = INGEST_INTERVAL_SECONDS

@@ -509,8 +509,6 @@ def init_db(engine=None):
             ("title", "VARCHAR DEFAULT ''"),
             ("created_at", "TIMESTAMP"),
             ("shielded_at", "TIMESTAMP"),
-            ("data_json", "TEXT"),
-            ("published_at", "TIMESTAMP"),
         ]:
             if col_name not in seen_cols:
                 session.exec(text(f"ALTER TABLE seen_feed_items ADD COLUMN {col_name} {col_type}"))

@@ -12,7 +12,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, prepare_aliases
-from kisetsu.core.feedcache import cached_articles, item_id_of, upsert_feed_items
+from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, store_matches
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -28,7 +28,6 @@ from kisetsu.db.models import (
     Feed,
     Monitored,
     MonitoredStatus,
-    SeenFeedItem,
     Settings,
     TorrentOperation,
     TorrentOperationStatus,
@@ -204,30 +203,17 @@ def _sync_seen_items(
     feeds: List[Feed],
     articles_by_url: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[Tuple[str, str], datetime]:
-    """When each item was first seen, recording the ones worth keeping."""
-    upsert_feed_items(session, {feed.qbit_feed_url: articles_by_url.get(feed.qbit_feed_url, []) for feed in feeds})
-    first_seen: Dict[Tuple[str, str], datetime] = {}
+    """When each item was first seen, keeping the ones that match a followed show."""
+    store_matches(session, {feed.qbit_feed_url: articles_by_url.get(feed.qbit_feed_url, []) for feed in feeds})
+    keys = [
+        (feed.qbit_feed_url, item_id_of(article))
+        for feed in feeds
+        for article in articles_by_url.get(feed.qbit_feed_url, [])
+        if article.get("title")
+    ]
+    known = first_seen_map(session, keys)
     now = utc_now()
-    for feed in feeds:
-        item_ids = {
-            item_id_of(article)
-            for article in articles_by_url.get(feed.qbit_feed_url, [])
-            if article.get("title")
-        }
-        if not item_ids:
-            continue
-        known = {
-            row.item_id: row.created_at
-            for row in session.exec(
-                select(SeenFeedItem).where(
-                    SeenFeedItem.feed_url == feed.qbit_feed_url,
-                    SeenFeedItem.item_id.in_(list(item_ids)),
-                )
-            ).all()
-        }
-        for item_id in item_ids:
-            first_seen[(feed.qbit_feed_url, item_id)] = known.get(item_id, now)
-    return first_seen
+    return {key: known.get(key, now) for key in keys}
 
 
 def sync_show_episodes(session: Session, show: Monitored) -> List[Episode]:

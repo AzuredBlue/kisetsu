@@ -1,19 +1,22 @@
-"""Kisetsu's own copy of the RSS articles that matter, kept in ``seen_feed_items``.
+"""Kisetsu's own copy of the feed releases that matter, kept in ``matched_feed_items``.
 
 qBittorrent's RSS cache is what the feeds delivered last: it must be refreshed
 and settled before it can be read, it is mostly releases for shows nobody
 follows, and it is gone when a feed is removed. This keeps the releases that
-matter to followed shows, slimmed down, so checks, discovery and the UI read the
+matched a followed show, slimmed down, so checks, discovery and the UI read the
 database instead of waiting on qBittorrent.
+
+Every feed is matched against every followed show, so a show has rows from all
+the feeds that carried it and switching its feed finds them at once.
 """
 
 import json
 import logging
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import delete, func, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlmodel import Session, select
 
@@ -21,18 +24,18 @@ from kisetsu.clients.qbit import QBitClient
 from kisetsu.core.discovery import RssSnapshot, parse_article_date
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.rules import show_match_patterns
-from kisetsu.db.models import Feed, Monitored, MonitoredStatus, SeenFeedItem, utc_now
+from kisetsu.db.models import Feed, MatchedFeedItem, Monitored, MonitoredStatus, SeenFeedItem, utc_now
 
 logger = logging.getLogger("kisetsu.core.feedcache")
 
 # The only article fields anything reads; the rest (description, seeders, ...) is dropped.
 CACHE_FIELDS = ("id", "title", "link", "torrentURL", "date", "infoHash", "size")
-# Items this young are kept whatever they are, so a show added today can still be
-# found in what the feeds posted in the last few days.
-RECENT_DAYS = 3
-# Older items are kept only while they match a followed show, and never past a season.
-MAX_AGE_DAYS = 120
-PER_FEED_CAP = 1000
+# A finished show's releases stay this long (its Restore may still be wanted).
+COMPLETED_KEEP_DAYS = 60
+# Newest releases kept per show; a season of episodes and their variants fits well within it.
+PER_SHOW_CAP = 300
+# Rules mode's shield rows aside, an unshielded "seen" row has no use beyond this.
+SEEN_KEEP_DAYS = 3
 _CHUNK = 500
 
 # Feeds the last ingest could not read; their (stale) cache is not treated as current.
@@ -71,27 +74,28 @@ def _naive(value: datetime) -> datetime:
 
 
 class _FollowedShows:
-    """Whether a release title belongs to a show that is still being followed."""
+    """Which followed show, if any, a release title belongs to."""
 
     def __init__(self, shows: Iterable[Monitored]):
         self._entries = []
         for show in shows:
             aliases = show.effective_aliases
             pattern, _ = show_match_patterns(aliases, show.matched_title)
-            self._entries.append((aliases, pattern, prepare_aliases(aliases)))
+            self._entries.append((show.id, aliases, pattern, prepare_aliases(aliases)))
         self._parsed: Dict[str, Dict[str, Any]] = {}
 
-    def matches(self, title: str) -> bool:
-        return any(
-            match_release_to_show(
+    def matching_ids(self, title: str) -> List[int]:
+        return [
+            show_id
+            for show_id, aliases, pattern, prepared in self._entries
+            if match_release_to_show(
                 title,
                 aliases,
                 test_pattern=pattern,
                 prepared_aliases=prepared,
                 parsed_cache=self._parsed,
             )[0]
-            for aliases, pattern, prepared in self._entries
-        )
+        ]
 
 
 def _followed(session: Session) -> _FollowedShows:
@@ -99,73 +103,78 @@ def _followed(session: Session) -> _FollowedShows:
     return _FollowedShows(shows)
 
 
-def upsert_feed_items(
+def _insert_rows(session: Session, rows: List[Dict[str, Any]]) -> int:
+    """Insert rows, ignoring any that exist already (safe against a concurrent writer)."""
+    added = 0
+    for start in range(0, len(rows), _CHUNK):
+        result = session.execute(
+            sqlite_insert(MatchedFeedItem).values(rows[start:start + _CHUNK]).on_conflict_do_nothing(
+                index_elements=["monitored_id", "feed_url", "item_id"]
+            )
+        )
+        added += max(0, result.rowcount or 0)
+    return added
+
+
+def store_matches(
     session: Session,
     articles_by_url: Dict[str, List[Dict[str, Any]]],
     followed: Optional[_FollowedShows] = None,
     now: Optional[datetime] = None,
 ) -> int:
-    """Record the articles worth keeping; returns how many rows were added.
+    """Keep the articles that match a followed show; returns how many rows were added.
 
-    Safe against a concurrent writer: new rows are inserted with ON CONFLICT DO
-    NOTHING, and first-seen and shield times of existing rows are never touched.
+    A release that matches two shows is kept for both. Rows that exist already
+    are left alone, so their first-seen time is the first one.
     """
     followed = followed or _followed(session)
     now = _naive(now or utc_now())
-    recent_cutoff = now - timedelta(days=RECENT_DAYS)
-    added = 0
+    rows: List[Dict[str, Any]] = []
+    seen: set = set()
     for feed_url, articles in articles_by_url.items():
-        wanted: Dict[str, tuple] = {}
         for article in articles:
             title = article.get("title") or ""
             if not title:
                 continue
             item_id = item_id_of(article)
-            if item_id in wanted:
+            if (feed_url, item_id) in seen:
                 continue
+            seen.add((feed_url, item_id))
+            show_ids = followed.matching_ids(title)
+            if not show_ids:
+                continue
+            data = json.dumps(_slim(article), separators=(",", ":"))
             published = _published_at(article)
-            if (published is None or published >= recent_cutoff) or followed.matches(title):
-                wanted[item_id] = (article, published)
-        if not wanted:
-            continue
-
-        ids = list(wanted)
-        existing: Dict[str, SeenFeedItem] = {}
-        for start in range(0, len(ids), _CHUNK):
-            for row in session.exec(
-                select(SeenFeedItem).where(
-                    SeenFeedItem.feed_url == feed_url,
-                    SeenFeedItem.item_id.in_(ids[start:start + _CHUNK]),
-                )
-            ).all():
-                existing[row.item_id] = row
-
-        new_rows = []
-        for item_id, (article, published) in wanted.items():
-            row = existing.get(item_id)
-            if row is None:
-                new_rows.append({
+            for show_id in show_ids:
+                rows.append({
+                    "monitored_id": show_id,
                     "feed_url": feed_url,
                     "item_id": item_id,
-                    "title": article.get("title", ""),
-                    "created_at": now,
-                    "data_json": json.dumps(_slim(article), separators=(",", ":")),
+                    "title": title,
                     "published_at": published,
+                    "first_seen_at": now,
+                    "data_json": data,
                 })
-            elif row.data_json is None:
-                row.data_json = json.dumps(_slim(article), separators=(",", ":"))
-                row.published_at = published
-                session.add(row)
-        for start in range(0, len(new_rows), _CHUNK):
-            chunk = new_rows[start:start + _CHUNK]
-            result = session.execute(
-                sqlite_insert(SeenFeedItem).values(chunk).on_conflict_do_nothing(
-                    index_elements=["feed_url", "item_id"]
-                )
-            )
-            added += max(0, result.rowcount or 0)
+    added = _insert_rows(session, rows) if rows else 0
     session.commit()
     return added
+
+
+def first_seen_map(session: Session, keys: Iterable[Tuple[str, str]]) -> Dict[Tuple[str, str], datetime]:
+    """When each (feed_url, item_id) was first seen, for the ones that are stored."""
+    by_feed: Dict[str, List[str]] = {}
+    for feed_url, item_id in keys:
+        by_feed.setdefault(feed_url, []).append(item_id)
+    seen: Dict[Tuple[str, str], datetime] = {}
+    for feed_url, item_ids in by_feed.items():
+        for start in range(0, len(item_ids), _CHUNK):
+            for item_id, first in session.exec(
+                select(MatchedFeedItem.item_id, func.min(MatchedFeedItem.first_seen_at))
+                .where(MatchedFeedItem.feed_url == feed_url, MatchedFeedItem.item_id.in_(item_ids[start:start + _CHUNK]))
+                .group_by(MatchedFeedItem.item_id)
+            ).all():
+                seen[(feed_url, item_id)] = first
+    return seen
 
 
 def cached_articles(session: Session) -> Dict[str, List[Dict[str, Any]]]:
@@ -177,12 +186,15 @@ def cached_articles(session: Session) -> Dict[str, List[Dict[str, Any]]]:
     articles: Dict[str, List[Dict[str, Any]]] = {
         url: [] for url in session.exec(select(Feed.qbit_feed_url)).all()
     }
+    seen: set = set()
     rows = session.exec(
-        select(SeenFeedItem.feed_url, SeenFeedItem.data_json)
-        .where(SeenFeedItem.data_json.is_not(None))
-        .order_by(SeenFeedItem.published_at.desc(), SeenFeedItem.created_at.desc())
+        select(MatchedFeedItem.feed_url, MatchedFeedItem.item_id, MatchedFeedItem.data_json)
+        .order_by(MatchedFeedItem.published_at.desc(), MatchedFeedItem.first_seen_at.desc())
     ).all()
-    for feed_url, data_json in rows:
+    for feed_url, item_id, data_json in rows:
+        if (feed_url, item_id) in seen:
+            continue
+        seen.add((feed_url, item_id))
         try:
             article = json.loads(data_json)
         except (TypeError, ValueError):
@@ -199,49 +211,97 @@ def cached_articles(session: Session) -> Dict[str, List[Dict[str, Any]]]:
 
 
 def prune(session: Session, now: Optional[datetime] = None) -> int:
-    """Drop what no longer makes sense to keep; returns how many rows went.
+    """Drop what no longer makes sense to keep; returns how many cache rows went.
 
-    Unshielded rows older than RECENT_DAYS go unless they match a followed show,
-    and nothing stays past MAX_AGE_DAYS. Each feed is then cut to PER_FEED_CAP.
+    Rows go when their feed is gone, when their show has been COMPLETED for
+    COMPLETED_KEEP_DAYS, or beyond the PER_SHOW_CAP newest of a show. (Rows of a
+    deleted show go with it.) Unshielded "seen" rows from before the cache, and
+    from rules mode, older than SEEN_KEEP_DAYS go too.
     """
     now = _naive(now or utc_now())
-    recent_cutoff = now - timedelta(days=RECENT_DAYS)
-    old_cutoff = now - timedelta(days=MAX_AGE_DAYS)
-    followed = _followed(session)
-    stale: List[int] = []
-    for row_id, title, created_at, published_at in session.exec(
-        select(SeenFeedItem.id, SeenFeedItem.title, SeenFeedItem.created_at, SeenFeedItem.published_at)
-        .where(SeenFeedItem.shielded_at.is_(None))
-    ).all():
-        reference = published_at or created_at
-        if reference is None or reference >= recent_cutoff:
-            continue
-        if reference < old_cutoff or not followed.matches(title or ""):
-            stale.append(row_id)
+    removed = 0
 
-    for feed_url, count in session.exec(
-        select(SeenFeedItem.feed_url, func.count(SeenFeedItem.id)).group_by(SeenFeedItem.feed_url)
-    ).all():
-        if count <= PER_FEED_CAP:
-            continue
-        keep = set(session.exec(
-            select(SeenFeedItem.id)
-            .where(SeenFeedItem.feed_url == feed_url)
-            .order_by(SeenFeedItem.published_at.desc(), SeenFeedItem.created_at.desc())
-            .limit(PER_FEED_CAP)
-        ).all())
-        stale.extend(
-            row_id for row_id in session.exec(
-                select(SeenFeedItem.id).where(SeenFeedItem.feed_url == feed_url, SeenFeedItem.shielded_at.is_(None))
-            ).all() if row_id not in keep
+    feed_urls = set(session.exec(select(Feed.qbit_feed_url)).all())
+    if feed_urls:
+        removed += session.execute(
+            delete(MatchedFeedItem).where(MatchedFeedItem.feed_url.not_in(feed_urls))
+        ).rowcount or 0
+
+    completed_ids = select(Monitored.id).where(Monitored.status == MonitoredStatus.COMPLETED)
+    cutoff = now - timedelta(days=COMPLETED_KEEP_DAYS)
+    removed += session.execute(
+        delete(MatchedFeedItem).where(
+            MatchedFeedItem.monitored_id.in_(completed_ids),
+            func.coalesce(MatchedFeedItem.published_at, MatchedFeedItem.first_seen_at) < cutoff,
         )
+    ).rowcount or 0
 
-    stale = list(dict.fromkeys(stale))
-    for start in range(0, len(stale), _CHUNK):
-        for row in session.exec(select(SeenFeedItem).where(SeenFeedItem.id.in_(stale[start:start + _CHUNK]))).all():
-            session.delete(row)
+    for monitored_id, count in session.exec(
+        select(MatchedFeedItem.monitored_id, func.count(MatchedFeedItem.id)).group_by(MatchedFeedItem.monitored_id)
+    ).all():
+        if count <= PER_SHOW_CAP:
+            continue
+        keep = select(MatchedFeedItem.id).where(MatchedFeedItem.monitored_id == monitored_id).order_by(
+            MatchedFeedItem.published_at.desc(), MatchedFeedItem.first_seen_at.desc()
+        ).limit(PER_SHOW_CAP)
+        removed += session.execute(
+            delete(MatchedFeedItem).where(
+                MatchedFeedItem.monitored_id == monitored_id,
+                MatchedFeedItem.id.not_in(keep),
+            )
+        ).rowcount or 0
+
+    removed += session.execute(
+        delete(SeenFeedItem).where(
+            SeenFeedItem.shielded_at.is_(None),
+            SeenFeedItem.created_at < now - timedelta(days=SEEN_KEEP_DAYS),
+        )
+    ).rowcount or 0
     session.commit()
-    return len(stale)
+    return removed
+
+
+def _parse_stored_time(value: Any) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return _naive(value)
+    try:
+        return _naive(datetime.fromisoformat(str(value))) if value else None
+    except ValueError:
+        return None
+
+
+def backfill_from_seen(session: Session) -> int:
+    """Move releases kept in ``seen_feed_items`` by the first version of the cache.
+
+    Runs while ``matched_feed_items`` is empty and only if the old ``data_json``
+    column exists. The old data is cleared afterwards so nothing is kept twice.
+    """
+    if session.exec(select(MatchedFeedItem.id).limit(1)).first() is not None:
+        return 0
+    columns = {row[1] for row in session.exec(text("PRAGMA table_info(seen_feed_items)")).all()}
+    if "data_json" not in columns:
+        return 0
+    old_rows = session.exec(text(
+        "SELECT feed_url, item_id, title, data_json, published_at, created_at "
+        "FROM seen_feed_items WHERE data_json IS NOT NULL"
+    )).all()
+    followed = _followed(session)
+    rows: List[Dict[str, Any]] = []
+    for feed_url, item_id, title, data_json, published_at, created_at in old_rows:
+        for show_id in followed.matching_ids(title or ""):
+            rows.append({
+                "monitored_id": show_id,
+                "feed_url": feed_url,
+                "item_id": item_id,
+                "title": title or "",
+                "published_at": _parse_stored_time(published_at),
+                "first_seen_at": _parse_stored_time(created_at) or _naive(utc_now()),
+                "data_json": data_json,
+            })
+    added = _insert_rows(session, rows) if rows else 0
+    session.execute(text("UPDATE seen_feed_items SET data_json = NULL WHERE data_json IS NOT NULL"))
+    session.commit()
+    return added
 
 
 def ingest_rss(engine, qbit: QBitClient, force: bool = False) -> int:
@@ -256,12 +316,17 @@ def ingest_rss(engine, qbit: QBitClient, force: bool = False) -> int:
         articles = snapshot.refresh() if force else snapshot.get()
         _failed_feed_names[:] = snapshot.failed_feed_names
         with Session(engine) as session:
-            return upsert_feed_items(session, articles)
+            return store_matches(session, articles)
 
 
 def prune_cache(engine) -> int:
     with Session(engine) as session:
         return prune(session)
+
+
+def backfill_cache(engine) -> int:
+    with Session(engine) as session:
+        return backfill_from_seen(session)
 
 
 class CachedRssSnapshot(RssSnapshot):
@@ -283,5 +348,5 @@ class CachedRssSnapshot(RssSnapshot):
         live = RssSnapshot(self.qbit_client)
         articles = live.refresh(**kwargs)
         _failed_feed_names[:] = live.failed_feed_names
-        upsert_feed_items(self.session, articles)
+        store_matches(self.session, articles)
         return self.get()

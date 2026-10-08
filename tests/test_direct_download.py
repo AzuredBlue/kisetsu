@@ -16,9 +16,9 @@ from kisetsu.db.models import (
     EpisodeNumberMapping,
     EpisodeStatus,
     Feed,
+    MatchedFeedItem,
     Monitored,
     MonitoredStatus,
-    SeenFeedItem,
     Settings,
     TorrentOperation,
     TorrentOperationStatus,
@@ -124,7 +124,7 @@ def test_duplicate_feed_item_ids_are_ingested_once():
 
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
-    assert len(session.exec(select(SeenFeedItem)).all()) == 1
+    assert len(session.exec(select(MatchedFeedItem)).all()) == 1
     assert qbit.add_torrent.call_count == 1
     session.close()
     engine.dispose()
