@@ -29,7 +29,7 @@ from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClient
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.discovery import flatten_rss_articles
-from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, show_torrent_hashes
+from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode, show_torrent_hashes
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -653,7 +653,13 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
         except Exception as e:
             state.add_log(f"Warning listing direct feed matches: {e}", "DEBUG")
             matches = []
-        return {"matched_articles": [], "feed_matches": matches}
+        other_feeds: List[Dict[str, Any]] = []
+        if not matches:
+            try:
+                other_feeds = releases_in_other_feeds(session, show, articles_by_url)
+            except Exception as e:
+                state.add_log(f"Warning looking for releases in other feeds: {e}", "DEBUG")
+        return {"matched_articles": [], "feed_matches": matches, "other_feeds": other_feeds}
 
     matched_articles: List[str] = []
     qbit_rule_data = _show_rule_data(qbit, show)
@@ -765,7 +771,41 @@ def _direct_quick_download(show: Monitored, title: str, session: Session, qbit: 
     # The grab writes the episode ledger, so it must not interleave with a cycle.
     require_exclusive_cycle()
     try:
+        # The show was read before this request got the slot; start from its current state.
+        session.refresh(show)
         message = manual_grab(session, qbit, get_settings(session), show, title)
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    finally:
+        release_cycle()
+    state.add_log(message, "INFO")
+    return {"status": "success", "message": message}
+
+
+@router.post("/shows/{show_id}/episodes/{episode_id}/restore")
+def restore_show_episode(
+    show_id: int,
+    episode_id: int,
+    session: Session = Depends(get_db),
+    qbit: QBitClient = Depends(get_qbit),
+):
+    """Put a finished episode that Kisetsu holds no torrent for under management."""
+    show = session.get(Monitored, show_id)
+    episode = session.get(Episode, episode_id)
+    if not show or not episode or episode.monitored_id != show_id:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    if not uses_direct_engine(normalized_download_mode(session)):
+        raise HTTPException(status_code=409, detail="Restoring an episode needs the direct download mode.")
+
+    # The restore writes the episode ledger, so it must not interleave with a cycle.
+    require_exclusive_cycle()
+    try:
+        # Both rows were read before this request got the slot; start from their current state.
+        session.refresh(show)
+        session.refresh(episode)
+        message = restore_episode(session, qbit, get_settings(session), show, episode)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
     except QbitClientError as e:

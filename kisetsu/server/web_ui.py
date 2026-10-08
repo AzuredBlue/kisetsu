@@ -1296,10 +1296,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 
+    const SPINNER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="w-3.5 h-3.5 animate-spin"><path d="M12 3a9 9 0 1 0 9 9"/></svg>';
+
+    // Downloads whose request is still running, so a redraw keeps their button disabled.
+    const pendingDownloads = new Set();
+    const pendingKey = (showId, title) => `${showId}|${title}`;
+
+    // Rows carry a key and a signature of what they draw, so a redraw can keep the
+    // elements that did not change instead of replacing them under the pointer.
+    function rowAttrs(key, sig) {
+      return `data-key="${escapeHtml(key)}" data-sig="${escapeHtml(String(sig))}"`;
+    }
+
     function downloadButton(showId, title, tip) {
-      return `<button type="button" data-title="${escapeHtml(title)}" onclick="quickDownloadMatch(${showId}, this)"
-        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-accent/10 hover:bg-accent/25 border border-accent/30 hover:border-accent/60 text-accent-soft transition-colors active:scale-95"
-        title="${escapeHtml(tip)}">${DOWNLOAD_ICON}</button>`;
+      const pending = pendingDownloads.has(pendingKey(showId, title));
+      return `<button type="button" data-title="${escapeHtml(title)}" onclick="quickDownloadMatch(${showId}, this)" ${pending ? 'disabled' : ''}
+        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-accent/10 hover:bg-accent/25 border border-accent/30 hover:border-accent/60 text-accent-soft transition-colors active:scale-95 ${pending ? 'opacity-50 pointer-events-none' : ''}"
+        title="${escapeHtml(tip)}">${pending ? SPINNER_ICON : DOWNLOAD_ICON}</button>`;
+    }
+
+    function restoreButton(showId, ep) {
+      const pending = pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
+      return `<button type="button" onclick="restoreEpisode(${showId}, ${ep.id}, this)" ${pending ? 'disabled' : ''}
+        class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-accent/10 hover:bg-accent/25 border border-accent/30 hover:border-accent/60 text-accent-soft transition-colors active:scale-95 ${pending ? 'opacity-50 pointer-events-none' : ''}"
+        title="Restore: find this torrent in qBittorrent and manage it, or add it again from the feed.">${pending ? SPINNER_ICON : DOWNLOAD_ICON}</button>`;
     }
 
     function listShell(rows, emptyText) {
@@ -1315,24 +1335,38 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
         const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : 'text-zinc-500';
+        const unmanaged = isDirect && done && !ep.torrent_hash;
+        const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
         return `
-          <li class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, ep.status, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
-            <span class="shrink-0 ${statusCls}">${escapeHtml(ep.status)}</span>
+            <span class="shrink-0 h-7 flex items-center justify-end gap-2">
+              <span class="${statusCls}">${escapeHtml(ep.status)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
+              ${unmanaged ? restoreButton(showId, ep) : ''}
+            </span>
           </li>`;
       }).join('');
 
       if (isDirect) {
         const matches = feed ? (feed.feed_matches || []) : [];
         const feedRows = matches.map(m => `
-          <li class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`f:${m.title}`, [m.episode, m.version, m.downloadable ? 1 : 0, m.restore ? 1 : 0, m.episode_status, pendingDownloads.has(pendingKey(showId, m.title)) ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
-            <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.title)}">${escapeHtml(m.title)}</span>
-            ${m.downloadable
-              ? downloadButton(showId, m.title, 'Download this release now. It is tracked like any other episode.')
-              : `<span class="shrink-0 text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
+            <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.display_title && m.display_title !== m.title ? `${m.display_title}\n${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
+            <span class="shrink-0 w-24 h-7 flex items-center justify-end">
+              ${m.downloadable
+                ? downloadButton(showId, m.title, m.restore
+                  ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.'
+                  : 'Download this release now. It is tracked like any other episode.')
+                : `<span class="text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
+            </span>
           </li>`).join('');
+        const elsewhere = feed ? (feed.other_feeds || []) : [];
+        const feedName = escapeHtml(data.feed_name || 'the assigned feed');
+        const emptyFeedText = elsewhere.length
+          ? `Nothing in ${feedName} matches this show. Found in ${elsewhere.map(f => `${escapeHtml(f.feed_name)} (${f.count})`).join(', ')}. Change the feed to use ${elsewhere.length === 1 ? 'it' : 'one of them'}.`
+          : 'Nothing in the feed matches this show right now.';
         return `
           <div class="flex-1 min-h-0 flex flex-col gap-3">
             <div class="flex items-center justify-between gap-3">
@@ -1343,7 +1377,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} in feed` : 'checking feed…'}</span>
             </div>
             <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${showListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
-            <div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${showListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? 'Nothing in the feed matches this show right now.' : loadingText)}</div>
+            <div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${showListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? emptyFeedText : loadingText)}</div>
           </div>`;
       }
 
@@ -1351,7 +1385,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const articles = feed ? (feed.matched_articles || []) : [];
       const count = articles.length;
       const ruleRows = articles.map(a => `
-        <li class="flex items-center gap-3 py-1.5 text-xs">
+        <li ${rowAttrs(`r:${a}`, pendingDownloads.has(pendingKey(showId, a)) ? 1 : 0)} class="flex items-center gap-3 py-1.5 text-xs">
           <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
           ${downloadButton(showId, a, 'Download this release now with the same save path, category and ratio as the rule')}
         </li>`).join('');
@@ -1379,10 +1413,58 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     let showFeedState = null;
     let showInitialState = null;
 
+    // What #show-lists currently shows, so a redraw with identical content can be
+    // skipped instead of replacing buttons under the pointer.
+    let drawnListsHtml = '';
+
+    function setShowListsHtml(html) {
+      drawnListsHtml = html;
+      document.getElementById('show-lists').innerHTML = html;
+    }
+
     function rerenderShowLists() {
       const target = document.getElementById('show-lists');
       if (!target || !showContext || currentInspectedShowId !== showContext.showId) return;
-      target.innerHTML = showListsMarkup(showContext.showId, showContext.data, showContext.episodes, showFeedState);
+      const html = showListsMarkup(showContext.showId, showContext.data, showContext.episodes, showFeedState);
+      if (html === drawnListsHtml) return;
+      syncShowLists(target, html);
+      drawnListsHtml = html;
+    }
+
+    // Make a list's rows match the new ones, keeping the existing element for every
+    // row whose signature is unchanged. Returns false when the rows carry no keys.
+    function syncListRows(current, next) {
+      const nextRows = Array.from(next.children);
+      if (!nextRows.every(row => row.dataset.key)) return false;
+      const currentByKey = new Map();
+      Array.from(current.children).forEach(row => { if (row.dataset.key) currentByKey.set(row.dataset.key, row); });
+      const wanted = nextRows.map(row => {
+        const existing = currentByKey.get(row.dataset.key);
+        return existing && existing.dataset.sig === row.dataset.sig ? existing : row;
+      });
+      wanted.forEach((row, index) => {
+        if (current.children[index] !== row) current.insertBefore(row, current.children[index] || null);
+      });
+      while (current.children.length > wanted.length) current.lastElementChild.remove();
+      return true;
+    }
+
+    // Redraw #show-lists without replacing the rows that did not change: a click
+    // that starts on a button must still land on it when a refresh arrives
+    // between the press and the release.
+    function syncShowLists(target, html) {
+      const next = document.createElement('div');
+      next.innerHTML = html;
+      const currentLists = Array.from(target.querySelectorAll('ul'));
+      const nextLists = Array.from(next.querySelectorAll('ul'));
+      const scrolls = currentLists.map(list => list.scrollTop);
+      if (currentLists.length && currentLists.length === nextLists.length) {
+        currentLists.forEach((list, index) => {
+          if (syncListRows(list, nextLists[index])) nextLists[index].replaceWith(list);
+        });
+      }
+      target.replaceChildren(...next.childNodes);
+      target.querySelectorAll('ul').forEach((list, index) => { list.scrollTop = scrolls[index] || 0; });
     }
 
     async function loadShowFeedMatches(showId) {
@@ -1407,7 +1489,44 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       } catch (err) {
         // The lists are informational; the toast from the download already reported the outcome.
       }
-      loadShowFeedMatches(showId);
+      await loadShowFeedMatches(showId);
+      scheduleShowPoll(showId);
+    }
+
+    // Episodes in flight change on the server without any click, so while one is
+    // queued, downloading or replacing the episode list is re-read every few
+    // seconds. When the last one settles the feed list is refreshed once too.
+    const IN_FLIGHT_EPISODE_STATUSES = new Set(['queued', 'downloading', 'replacing']);
+    const SHOW_POLL_MS = 4000;
+    let showPollTimer = null;
+    let showPollActive = false;
+
+    function scheduleShowPoll(showId) {
+      clearTimeout(showPollTimer);
+      showPollTimer = null;
+      if (!showContext || currentInspectedShowId !== showId) { showPollActive = false; return; }
+      const inFlight = showContext.episodes.some(ep => IN_FLIGHT_EPISODE_STATUSES.has(String(ep.status).toLowerCase()));
+      if (!inFlight) {
+        if (showPollActive) {
+          showPollActive = false;
+          loadShowFeedMatches(showId);
+        }
+        return;
+      }
+      showPollActive = true;
+      showPollTimer = setTimeout(async () => {
+        if (currentInspectedShowId !== showId) { showPollActive = false; return; }
+        try {
+          const episodes = await apiFetch(`/api/shows/${showId}/episodes`);
+          if (currentInspectedShowId === showId && showContext) {
+            showContext.episodes = Array.isArray(episodes) ? episodes : [];
+            rerenderShowLists();
+          }
+        } catch (err) {
+          // Try again on the next tick.
+        }
+        scheduleShowPoll(showId);
+      }, SHOW_POLL_MS);
     }
 
     // Started when the pointer enters a card, so the data is usually there by the
@@ -1442,7 +1561,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     function showBodySkeleton() {
       const block = '<div class="h-4 mb-2.5"></div><div class="flex-1 min-h-[12rem] rounded-xl bg-raised/60"></div>';
       document.getElementById('show-side-form').innerHTML = block;
-      document.getElementById('show-lists').innerHTML = block;
+      setShowListsHtml(block);
       document.getElementById('show-col-feed').innerHTML = block;
     }
 
@@ -1962,7 +2081,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (currentInspectedShowId !== showId) return;
         document.getElementById('show-side-form').innerHTML = '';
         document.getElementById('show-col-feed').innerHTML = '';
-        document.getElementById('show-lists').innerHTML = `<div class="card p-4 flex-1 flex items-center justify-center text-rose-400 text-sm text-center">Failed loading show details: ${escapeHtml(err.message || err)}</div>`;
+        setShowListsHtml(`<div class="card p-4 flex-1 flex items-center justify-center text-rose-400 text-sm text-center">Failed loading show details: ${escapeHtml(err.message || err)}</div>`);
       }
     }
 
@@ -2086,9 +2205,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       // Whatever the form renders is the unmodified state.
       showInitialState = readShowForm();
       showContext = { showId, data, episodes };
-      document.getElementById('show-lists').innerHTML = showListsMarkup(showId, data, episodes, null);
+      setShowListsHtml(showListsMarkup(showId, data, episodes, null));
       updateSaveBar();
       loadShowFeedMatches(showId);
+      scheduleShowPoll(showId);
     }
 
     function readShowForm() {
@@ -2276,6 +2396,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     async function quickDownloadMatch(showId, btn) {
       const title = btn.dataset.title;
       if (!title) return;
+      const key = pendingKey(showId, title);
+      if (pendingDownloads.has(key)) return;
+      pendingDownloads.add(key);
 
       btn.disabled = true;
       btn.classList.add('opacity-50', 'pointer-events-none');
@@ -2287,12 +2410,34 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           body: JSON.stringify({ title })
         });
         showToast(data.message || 'Download started.', 'success');
-        refreshShowLists(showId);
+        await refreshShowLists(showId);
       } catch (err) {
         showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
       } finally {
+        pendingDownloads.delete(key);
         btn.disabled = false;
         btn.classList.remove('opacity-50', 'pointer-events-none');
+        rerenderShowLists();
+      }
+    }
+
+    async function restoreEpisode(showId, episodeId, btn) {
+      const key = pendingKey(showId, `restore:${episodeId}`);
+      if (pendingDownloads.has(key)) return;
+      pendingDownloads.add(key);
+
+      btn.disabled = true;
+      btn.classList.add('opacity-50', 'pointer-events-none');
+
+      try {
+        const data = await apiFetch(`/api/shows/${showId}/episodes/${episodeId}/restore`, { method: 'POST' });
+        showToast(data.message || 'Restored.', 'success');
+        await refreshShowLists(showId);
+      } catch (err) {
+        showToast(err.message || 'Restore failed.', err.status === 409 ? 'info' : 'error');
+      } finally {
+        pendingDownloads.delete(key);
+        rerenderShowLists();
       }
     }
 

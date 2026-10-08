@@ -10,7 +10,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionErro
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, sync_show_episodes
+from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
@@ -25,18 +25,6 @@ EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 
 # How long another feed has to keep carrying a release before a show moves to it.
 FEED_SWITCH_GRACE_SECONDS = 300
-
-
-_VIDEO_EXTENSIONS = (".mkv", ".mp4", ".avi")
-
-
-def _normalize_release_name(name: str) -> str:
-    """Compare torrent names and RSS titles regardless of case or file extension."""
-    value = name.strip().casefold()
-    for extension in _VIDEO_EXTENSIONS:
-        if value.endswith(extension):
-            return value[: -len(extension)]
-    return value
 
 
 def _format_age(seconds: float) -> str:
@@ -1248,14 +1236,20 @@ class Supervisor:
             if feed_id is None:
                 continue
             for article in articles:
-                title = _normalize_release_name(str(article.get("title") or ""))
+                title = release_key(str(article.get("title") or ""))
                 if title:
                     index.setdefault(title, set()).add(feed_id)
         return index
 
     @staticmethod
     def _feed_carrying_release(name: str, feed_ids_by_title: Dict[str, Set[int]]) -> Optional[int]:
-        feed_ids = feed_ids_by_title.get(_normalize_release_name(name), set())
+        key = release_key(name)
+        feed_ids = set(feed_ids_by_title.get(key, set()))
+        if key and not feed_ids:
+            # The feed title may extend the torrent's name ("... (Ao no Hako Season 2, ...)").
+            for title, ids in feed_ids_by_title.items():
+                if title.startswith(key + " ") or key.startswith(title + " "):
+                    feed_ids |= ids
         # A release mirrored on several feeds proves none of them in particular.
         return next(iter(feed_ids)) if len(feed_ids) == 1 else None
 

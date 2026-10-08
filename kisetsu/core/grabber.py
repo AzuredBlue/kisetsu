@@ -172,11 +172,19 @@ def _complete_episode(session: Session, episode: Episode, reason: Optional[str] 
         session.add(show)
 
 
+def _is_restore_operation(operation: TorrentOperation) -> bool:
+    """A grab of an episode that was already COMPLETED, to bring its torrent under management."""
+    return (
+        operation.kind != "replace"
+        and str(operation.old_episode_status or "").strip().lower() == EpisodeStatus.COMPLETED.value
+    )
+
+
 def _fail_operation(session: Session, operation: TorrentOperation, episode: Episode, error: str) -> None:
     operation.status = TorrentOperationStatus.FAILED
     operation.last_error = error
     operation.updated_at = utc_now()
-    if operation.kind == "replace":
+    if operation.kind == "replace" or _is_restore_operation(operation):
         # The previous release is still intact, so the episode keeps it rather
         # than being reported as failed.
         _restore_episode_before_operation(session, operation, episode, error, None)
@@ -263,10 +271,8 @@ def _find_old_hash(qbit: QBitClient, settings: Settings, show: Monitored, episod
         return episode.torrent_hash
     if not episode.release_title:
         return None
-    expected = episode.release_title.strip().casefold()
     for torrent in _managed_torrents(qbit, settings):
-        name = str(getattr(torrent, "name", "") or "").strip().casefold()
-        if name == expected:
+        if same_release(str(getattr(torrent, "name", "") or ""), episode.release_title):
             return _torrent_hash(torrent)
     return None
 
@@ -409,10 +415,15 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
 
     _set_episode_release(session, episode, operation, operation.new_torrent_hash, EpisodeStatus.DOWNLOADING)
     try:
-        finished = is_seeding_torrent(_operation_torrent(qbit, operation))
+        torrent = _operation_torrent(qbit, operation)
     except QbitClientError:
-        finished = False
-    if finished:
+        torrent = None
+    # From here the ledger names the release as qBittorrent does; the feed title
+    # it was chosen by stays on the operation and in the match history.
+    torrent_name = getattr(torrent, "name", None)
+    if isinstance(torrent_name, str) and torrent_name.strip():
+        episode.release_title = torrent_name.strip()
+    if torrent is not None and is_seeding_torrent(torrent):
         _complete_episode(session, episode)
     operation.status = TorrentOperationStatus.COMPLETED
     operation.next_retry_at = None
@@ -579,7 +590,7 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             name = str(getattr(torrent, "name", "") or "").strip()
             if not name or not episode.release_title:
                 continue
-            if name.casefold() != episode.release_title.strip().casefold():
+            if not same_release(name, episode.release_title):
                 continue
             episode.torrent_hash = _torrent_hash(torrent)
             episode.release_title = name
@@ -1091,7 +1102,7 @@ def _restore_episode_before_operation(
     error: str,
     retry_at: Optional[datetime],
 ) -> None:
-    if operation.kind == "replace":
+    if operation.kind == "replace" or _is_restore_operation(operation):
         episode.status = EpisodeStatus(operation.old_episode_status)
         episode.version = operation.old_version
         episode.feed_id = operation.old_feed_id
@@ -1166,13 +1177,54 @@ def _already_added_torrent(qbit: QBitClient, operation: TorrentOperation) -> Opt
     """
     info_hash = _magnet_info_hash(operation.new_torrent_url)
     if not info_hash:
-        return None
+        return _already_added_by_name(qbit, operation)
     try:
         existing = list(qbit.get_torrents(hashes=[info_hash]))
     except Exception as e:
         logger.debug(f"Could not look for an existing torrent {info_hash}: {e}")
         return None
     return existing[0] if existing else None
+
+
+def release_key(name: str) -> str:
+    """A release name reduced to its words, so naming styles compare equal.
+
+    A feed title ("Blue Box S02E01 … H.264-VARYG (Ao no Hako …)") and the
+    torrent's file name ("Blue.Box.S02E01.….H.264-VARYG.mkv") name one release.
+    """
+    key = re.sub(r"\.(mkv|mp4|avi)$", "", (name or "").strip(), flags=re.IGNORECASE)
+    return re.sub(r"[^0-9a-z]+", " ", key.lower()).strip()
+
+
+def same_release(first: str, second: str) -> bool:
+    """Whether two names are one release: equal words, or one extends the other by whole words."""
+    a, b = release_key(first), release_key(second)
+    if not a or not b:
+        return False
+    return a == b or a.startswith(b + " ") or b.startswith(a + " ")
+
+
+def _find_torrent_by_name(qbit: QBitClient, title: str) -> Optional[Any]:
+    """The one torrent qBittorrent holds under this release name, whatever its tag or category.
+
+    A .torrent link carries no info-hash, so a torrent can only be recognised by
+    name. Adopting needs a single unambiguous match.
+    """
+    if not release_key(title):
+        return None
+    try:
+        matches = [
+            torrent for torrent in qbit.get_torrents()
+            if same_release(str(getattr(torrent, "name", "") or ""), title)
+        ]
+    except Exception as e:
+        logger.debug(f"Could not look for an existing torrent named '{title}': {e}")
+        return None
+    return matches[0] if len(matches) == 1 else None
+
+
+def _already_added_by_name(qbit: QBitClient, operation: TorrentOperation) -> Optional[Any]:
+    return _find_torrent_by_name(qbit, operation.release_title)
 
 
 def _attempt_operation_add(
@@ -1401,7 +1453,7 @@ def cancel_episode_operations(
             reason,
             utc_now() + timedelta(minutes=15),
         )
-        if operation.kind == "replace":
+        if operation.kind == "replace" or _is_restore_operation(operation):
             episode.retry_after = None
         else:
             episode.status = EpisodeStatus.WANTED
@@ -1728,10 +1780,17 @@ def evaluate_and_grab_releases(
     return logs
 
 
+def _is_restore(episode: Episode) -> bool:
+    """A downloaded episode Kisetsu holds no torrent for, so it cannot manage it."""
+    return episode.status == EpisodeStatus.COMPLETED and not episode.torrent_hash
+
+
 def _manual_refusal(session: Session, episode: Episode, version: int) -> Optional[str]:
     """Why an explicit grab of ``version`` of ``episode`` must not go ahead."""
     if _operation_for_episode(session, episode.id):
         return f"Episode {episode.episode_number} already has a download in progress."
+    if _is_restore(episode):
+        return None
     if episode.status in {
         EpisodeStatus.COMPLETED,
         EpisodeStatus.DOWNLOADING,
@@ -1805,18 +1864,94 @@ def direct_feed_matches(
         session, qbit, settings, show, articles_by_url,
     ):
         refusal = _manual_refusal(session, episode, version)
+        title = article.get("title", "")
+        info_hash = str(article.get("infoHash") or "").lower()
+        # Once the release is downloaded, name it as the ledger (and qBittorrent) does.
+        is_this_release = bool(episode.release_title) and (
+            bool(info_hash and episode.torrent_hash and episode.torrent_hash.lower() == info_hash)
+            or same_release(episode.release_title, title)
+        )
         matches.append({
-            "title": article.get("title", ""),
+            "title": title,
+            "display_title": episode.release_title if is_this_release else title,
             "feed_id": feed.id,
             "feed_name": feed.qbit_feed_name,
             "episode": episode_number,
             "version": version,
             "episode_status": episode.status.value,
+            "restore": _is_restore(episode),
             "downloadable": refusal is None,
         })
         if len(matches) >= limit:
             break
     return matches
+
+
+def restore_episode(
+    session: Session,
+    qbit: QBitClient,
+    settings: Settings,
+    show: Monitored,
+    episode: Episode,
+) -> str:
+    """Bring a finished episode with no tracked torrent under management.
+
+    The torrent is adopted if qBittorrent still holds it, otherwise the release
+    is added again from the feed. Either way the ledger ends up with its hash.
+    """
+    if not _is_restore(episode):
+        raise ValueError(f"Episode {episode.episode_number} is already managed.")
+    if _operation_for_episode(session, episode.id):
+        raise ValueError(f"Episode {episode.episode_number} already has a download in progress.")
+    title = (episode.release_title or "").strip()
+    if not title:
+        raise ValueError(f"No release is recorded for episode {episode.episode_number}.")
+    torrent = _find_torrent_by_name(qbit, title)
+    if torrent is not None:
+        torrent_hash = _torrent_hash(torrent)
+        qbit.add_torrent_tags([torrent_hash], [MANAGED_TAG])
+        episode.torrent_hash = torrent_hash
+        episode.status = EpisodeStatus.COMPLETED if is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
+        episode.last_error = None
+        session.add(episode)
+        session.commit()
+        return f"Restored {show.display_name} Ep {episode.episode_number}: now managed."
+    try:
+        return manual_grab(session, qbit, settings, show, title, fuzzy=True, expect_episode=episode.episode_number)
+    except ValueError as e:
+        raise ValueError(f"Not in qBittorrent. {e}") from e
+
+
+def releases_in_other_feeds(
+    session: Session,
+    show: Monitored,
+    articles_by_url: Dict[str, List[Dict[str, Any]]],
+) -> List[Dict[str, Any]]:
+    """Feeds the show may not read that still carry releases that match it.
+
+    A show locked or pinned to one feed only ever sees that feed, so when it is
+    empty this says where the releases are instead.
+    """
+    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+    own = {feed.id for feed in _grab_feeds(session, show, feeds)}
+    matcher = _show_matcher(show)
+    parsed_cache: Dict[str, Dict[str, Any]] = {}
+    found = []
+    for feed in feeds:
+        if feed.id in own:
+            continue
+        count = 0
+        for article in articles_by_url.get(feed.qbit_feed_url, []):
+            title = article.get("title", "")
+            if not title:
+                continue
+            matched, parsed = _decide(show, title, matcher, parsed_cache)
+            raw_episode = parsed.get("episode")
+            if matched and raw_episode is not None and raw_episode > 0:
+                count += 1
+        if count:
+            found.append({"feed_id": feed.id, "feed_name": feed.qbit_feed_name, "count": count})
+    return found
 
 
 def manual_grab(
@@ -1825,6 +1960,8 @@ def manual_grab(
     settings: Settings,
     show: Monitored,
     title: str,
+    fuzzy: bool = False,
+    expect_episode: Optional[int] = None,
 ) -> str:
     """Queue one named release through the normal operation path.
 
@@ -1832,19 +1969,29 @@ def manual_grab(
     do not apply: a MISSED or FAILED episode that is still in the feed may be
     fetched again. Everything else (ledger, tags, v2 replacement, feed lock)
     goes through ``_start_operation`` exactly like a cycle grab.
+
+    With ``fuzzy`` the title may be the release under another name (a torrent's
+    file name rather than the feed title); the one feed item that is the same
+    release is used.
     """
     if show.status == MonitoredStatus.PAUSED:
         raise ValueError("This show is paused. Resume it before downloading.")
     wanted_title = title.strip()
-    candidate = next(
-        (item for item in _manual_candidates(session, qbit, settings, show) if item[1].get("title") == wanted_title),
-        None,
-    )
+    candidates = _manual_candidates(session, qbit, settings, show)
+    candidate = next((item for item in candidates if item[1].get("title") == wanted_title), None)
+    if candidate is None and fuzzy:
+        near = [item for item in candidates if same_release(item[1].get("title", ""), wanted_title)]
+        if len(near) > 1:
+            raise ValueError("Several releases in the feed match that name; pick one from the In feed tab.")
+        candidate = near[0] if near else None
     if candidate is None:
         raise ValueError(
             "That release is not in this show's feed any more, or does not match this show."
         )
     feed, article, parsed, raw_episode, episode_number, version, episode, _context = candidate
+    if expect_episode is not None and episode_number != expect_episode:
+        raise ValueError(f"The matching release in the feed is episode {episode_number}, not episode {expect_episode}.")
+    wanted_title = article.get("title", wanted_title)
     refusal = _manual_refusal(session, episode, version)
     if refusal:
         raise ValueError(refusal)
@@ -1856,5 +2003,10 @@ def manual_grab(
         show.current_feed_id = feed.id
         session.add(show)
         session.commit()
-    action = "replacement" if operation.kind == "replace" else "download"
+    if operation.kind == "replace":
+        action = "replacement"
+    elif _is_restore_operation(operation):
+        action = "restore"
+    else:
+        action = "download"
     return f"Manually queued {action} for {show.display_name} Ep {episode_number} v{version}: {wanted_title}"
