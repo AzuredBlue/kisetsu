@@ -245,6 +245,15 @@ class Monitored(SQLModel, table=True):
         return list(dict.fromkeys(self.aliases + self.custom_aliases))
 
     @property
+    def in_premiere(self) -> bool:
+        """True while nothing has been downloaded for the show.
+
+        Only then is AniList's air time unproven, which is what the early-air
+        window exists for. The first grab ends it, since that learns the feed.
+        """
+        return not (self.last_confirmed_episode or 0) and self.learned_feed_id is None
+
+    @property
     def feed_is_locked(self) -> bool:
         """
         True when no automatic path may move this show to another feed.

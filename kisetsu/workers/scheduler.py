@@ -118,7 +118,9 @@ def classify_shows(
             air_times = {episode.episode_number: as_utc(episode.air_at) for episode in scheduled}
             # Start hunting a little before the stated air time, so a release
             # that lands early is still picked up promptly.
-            horizon = now + timedelta(hours=max(0, early_air_tolerance_hours))
+            # The early-air window only covers a show's first episodes; after that
+            # AniList's air times are taken as stated.
+            horizon = now + timedelta(hours=max(0, early_air_tolerance_hours)) if s.in_premiere else now
             aired_numbers = [n for n, air in air_times.items() if air and air <= horizon]
             latest_aired_episode = max(aired_numbers, default=0)
             if latest_aired_episode == 0 and airing_at is not None and s.next_airing_episode is not None:

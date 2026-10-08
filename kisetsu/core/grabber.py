@@ -1351,6 +1351,15 @@ def cancel_episode_operations(
     return canceled
 
 
+def _air_horizon(show: Monitored, now: datetime, tolerance_hours: int) -> datetime:
+    """When an episode counts as aired for this show.
+
+    The early-air tolerance only covers a show's first episodes, because after
+    the first release AniList's air times can be taken as stated.
+    """
+    return now + timedelta(hours=tolerance_hours) if show.in_premiere else now
+
+
 class _ShowMatcher(NamedTuple):
     """What matching a show against many titles needs, built once per cycle."""
     test_pattern: str
@@ -1520,10 +1529,10 @@ def evaluate_and_grab_releases(
     now = utc_now()
     backfill_window_days = max(0, int(settings.backfill_window_days))
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
-    air_horizon = now + timedelta(hours=tolerance_hours)
     parsed_cache: Dict[str, Dict[str, Any]] = {}
     for show in shows:
         matcher = _show_matcher(show)
+        air_horizon = _air_horizon(show, now, tolerance_hours)
         episodes, episodes_by_number, failed_versions, target_count, latest_aired = _show_grab_context(
             session, show, now, air_horizon,
         )
@@ -1673,7 +1682,7 @@ def _manual_candidates(
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     now = utc_now()
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
-    context = _show_grab_context(session, show, now, now + timedelta(hours=tolerance_hours))
+    context = _show_grab_context(session, show, now, _air_horizon(show, now, tolerance_hours))
     found = []
     for feed in candidate_feeds:
         for article in articles_by_url.get(feed.qbit_feed_url, []):

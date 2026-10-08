@@ -569,7 +569,7 @@ class TestEarlyAirTolerance(unittest.TestCase):
             )
 
     def test_hunting_opens_the_tolerance_window_early(self):
-        _scheduled_show(self.session)
+        _scheduled_show(self.session, wanted_episode=1, done_through=0)
         # Five hours before the stated air time is inside a six hour window.
         self.assertFalse(self._hunting_at(AIR - timedelta(hours=7), 6))
         self.assertTrue(self._hunting_at(AIR - timedelta(hours=5, minutes=30), 6))
@@ -582,9 +582,15 @@ class TestEarlyAirTolerance(unittest.TestCase):
         self.assertTrue(self._hunting_at(AIR + timedelta(minutes=30), 0))
 
     def test_a_wider_tolerance_starts_hunting_even_earlier(self):
-        _scheduled_show(self.session)
+        _scheduled_show(self.session, wanted_episode=1, done_through=0)
         self.assertTrue(self._hunting_at(AIR - timedelta(hours=20), 24))
         self.assertFalse(self._hunting_at(AIR - timedelta(hours=20), 6))
+
+    def test_a_show_that_already_has_episodes_waits_for_the_stated_time(self):
+        _scheduled_show(self.session)
+        self.assertFalse(self._hunting_at(AIR - timedelta(hours=5), 6))
+        self.assertFalse(self._hunting_at(AIR - timedelta(minutes=30), 6))
+        self.assertTrue(self._hunting_at(AIR + timedelta(minutes=30), 6))
 
     def test_a_resolved_episode_does_not_keep_the_show_hunting(self):
         show = _scheduled_show(self.session)

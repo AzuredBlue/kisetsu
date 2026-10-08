@@ -408,7 +408,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <input id="set-backfill-window" type="number" min="0" max="365" required class="field">
               </div>
               <div>
-                <label class="field-label" for="set-early-air-tolerance" title="Start looking this long before AniList's air time. 0 waits for the stated time.">Early air (h)</label>
+                <label class="field-label" for="set-early-air-tolerance" title="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time.">Early air (h)</label>
                 <input id="set-early-air-tolerance" type="number" min="0" max="168" required class="field">
               </div>
             </div>
