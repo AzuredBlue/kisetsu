@@ -54,7 +54,15 @@ def _qbit(title="[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv", ev
     qbit = MagicMock()
     torrent = MagicMock(hash="hash-1", progress=0.1, state="downloading", name=title)
     qbit.ensure_category_exists.return_value = True
-    qbit.get_torrents.side_effect = lambda **kwargs: [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("tag") == "kisetsu-managed" else []
+    old_release = MagicMock(hash="old-hash", progress=1.0, state="uploading")
+
+    def get_torrents(**kwargs):
+        # A finished episode's own torrent is still in qBittorrent.
+        if kwargs.get("hashes") == ["old-hash"]:
+            return [old_release]
+        return [torrent] if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("tag") == "kisetsu-managed" else []
+
+    qbit.get_torrents.side_effect = get_torrents
     qbit.add_torrent.side_effect = lambda **kwargs: events.append("add") if events is not None else True
     qbit.pause_torrents.side_effect = lambda *args: events.append("pause") if events is not None else None
     qbit.delete_torrents.side_effect = lambda *args, **kwargs: events.append("delete") if events is not None else None
@@ -749,10 +757,11 @@ def test_v2_replacement_continues_when_v1_was_already_removed():
     title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
     qbit, new_torrent = _qbit(title=title, events=events)
     new_torrent.hash = "new-hash"
+    old_release = MagicMock(hash="old-hash", progress=1.0, state="uploading")
     qbit.get_torrents.side_effect = lambda **kwargs: (
         [new_torrent]
         if kwargs.get("tag", "").startswith("kisetsu-op-") or kwargs.get("hashes") == ["new-hash"] or kwargs.get("tag") == "kisetsu-managed"
-        else []
+        else [old_release] if kwargs.get("hashes") == ["old-hash"] else []
     )
     qbit.get_rss_items.return_value = {
         "SubsPlease": {
@@ -2739,8 +2748,9 @@ def test_giving_up_on_a_replacement_keeps_the_previous_release():
     engine, session = _database()
     events = []
     settings, feed, show, episode, qbit, new_torrent = _replace_scenario(session, events)
-    # qBittorrent accepts the add but never exposes the torrent.
-    qbit.get_torrents.side_effect = lambda **kwargs: []
+    # qBittorrent accepts the add but never exposes the new torrent; the previous one stays.
+    old_release = MagicMock(hash="old-hash", progress=1.0, state="uploading")
+    qbit.get_torrents.side_effect = lambda **kwargs: [old_release] if kwargs.get("hashes") == ["old-hash"] else []
 
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
     operation = session.exec(select(TorrentOperation)).first()

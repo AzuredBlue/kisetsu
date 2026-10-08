@@ -10,7 +10,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionErro
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, release_key, sync_show_episodes
+from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
@@ -1601,6 +1601,9 @@ class Supervisor:
             beat()
             if self.anilist_sync_succeeded is not False:
                 all_logs.extend(await asyncio.to_thread(self.reconcile_schedule_rollover))
+            if self.anilist_sync_succeeded is not None:
+                # Checking qBittorrent for deleted torrents rides along with the AniList sync.
+                all_logs.extend(await asyncio.to_thread(reconcile_removed_torrents, self.session, self.qbit))
         else:
             all_logs.extend(await asyncio.to_thread(
                 self.shield_owned_articles_from_snapshot,

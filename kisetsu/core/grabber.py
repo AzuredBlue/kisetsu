@@ -1,6 +1,7 @@
 import base64
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 from uuid import uuid4
@@ -632,6 +633,78 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
     logs.extend(_release_stale_operation_tags(session, qbit))
     _sweep_operation_tags(session, qbit)
     session.commit()
+    return logs
+
+
+def _present_torrents(qbit: QBitClient, hashes: List[str]) -> Dict[str, Any]:
+    present: Dict[str, Any] = {}
+    for start in range(0, len(hashes), 100):
+        for torrent in qbit.get_torrents(hashes=hashes[start:start + 100]):
+            torrent_hash = _torrent_hash(torrent)
+            if torrent_hash:
+                present[torrent_hash.lower()] = torrent
+    return present
+
+
+def reconcile_removed_torrents(session: Session, qbit: QBitClient) -> List[str]:
+    """Forget the torrent of a finished episode that the user deleted in qBittorrent.
+
+    The episode stays COMPLETED; with no stored torrent it reads "unmanaged" and
+    offers Restore, the same state as an episode that was never adopted. If the
+    torrent comes back, the import adopts it again. Torrents that are still there
+    also give their real name to the episode. Runs once per AniList sync.
+    """
+    episodes = session.exec(select(Episode).where(
+        Episode.status == EpisodeStatus.COMPLETED,
+        Episode.torrent_hash.is_not(None),
+    )).all()
+    by_hash: Dict[str, List[Episode]] = {}
+    for episode in episodes:
+        by_hash.setdefault(str(episode.torrent_hash).lower(), []).append(episode)
+    if not by_hash:
+        return []
+
+    try:
+        hashes = list(by_hash)
+        present = _present_torrents(qbit, hashes)
+        renamed = False
+        for torrent_hash, torrent in present.items():
+            torrent_name = getattr(torrent, "name", None)
+            if not isinstance(torrent_name, str) or not torrent_name.strip():
+                continue
+            for episode in by_hash.get(torrent_hash, []):
+                if episode.release_title != torrent_name.strip():
+                    episode.release_title = torrent_name.strip()
+                    session.add(episode)
+                    renamed = True
+        if renamed:
+            session.commit()
+        missing = [h for h in hashes if h not in present]
+        if not missing:
+            return []
+        if len(hashes) >= 3 and not present:
+            # None of them exist: qBittorrent has most likely not loaded its torrents yet.
+            return []
+        # Ask again before believing it, so a moment of qBittorrent listing too little is not enough.
+        time.sleep(2)
+        still_present = _present_torrents(qbit, missing)
+        gone = [h for h in missing if h not in still_present]
+    except QbitClientError as e:
+        logger.debug(f"Could not check for removed torrents: {e}")
+        return []
+
+    logs: List[str] = []
+    for torrent_hash in gone:
+        for episode in by_hash[torrent_hash]:
+            episode.torrent_hash = None
+            episode.last_error = None
+            session.add(episode)
+            logs.append(
+                f"{show_name(episode, session)} Ep {episode.episode_number}: its torrent was removed "
+                f"from qBittorrent, so the episode is now unmanaged."
+            )
+    if logs:
+        session.commit()
     return logs
 
 
@@ -1368,6 +1441,10 @@ def _start_operation(
     )
     is_replace = (version > previous_version) and has_existing
     old_torrent_hash = _find_old_hash(qbit, settings, show, episode) if is_replace else None
+    if is_replace and not old_torrent_hash and episode.release_title and _find_torrent_by_name(qbit, episode.release_title) is None:
+        # The previous release is gone from qBittorrent (the user deleted it), so
+        # there is nothing to replace: take the newer one as a plain download.
+        is_replace = False
     if is_replace and not old_torrent_hash:
         episode.last_error = "Cannot safely replace an episode without a verified torrent hash."
         episode.retry_after = None
