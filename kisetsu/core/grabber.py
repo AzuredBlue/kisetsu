@@ -1354,7 +1354,7 @@ class _ShowMatcher(NamedTuple):
 
 
 def _show_matcher(show: Monitored) -> _ShowMatcher:
-    aliases = show.aliases
+    aliases = show.effective_aliases
     return _ShowMatcher(build_regex_pattern(aliases), prepare_aliases(aliases))
 
 
@@ -1376,7 +1376,7 @@ def _decide(
             pass
     matched, _, parsed = match_release_to_show(
         title,
-        show.aliases,
+        show.effective_aliases,
         test_pattern=matcher.test_pattern if matcher else None,
         prepared_aliases=matcher.prepared_aliases if matcher else None,
         parsed_cache=parsed_cache,

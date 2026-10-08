@@ -1299,7 +1299,10 @@ class Supervisor:
                 ])
             )
         ).all()
-        candidates = [(show, prepare_aliases(show.aliases), build_regex_pattern(show.aliases)) for show in shows]
+        candidates = [
+            (show, prepare_aliases(show.effective_aliases), build_regex_pattern(show.effective_aliases))
+            for show in shows
+        ]
         parsed_cache: Dict[str, Dict[str, Any]] = {}
         # Built on first use: this runs every direct cycle, and most cycles
         # adopt nothing, so the RSS read is skipped unless it is needed.
@@ -1318,7 +1321,7 @@ class Supervisor:
             for show, prepared, test_pattern in candidates:
                 if match_release_to_show(
                     name,
-                    show.aliases,
+                    show.effective_aliases,
                     test_pattern=test_pattern,
                     prepared_aliases=prepared,
                     parsed_cache=parsed_cache,
