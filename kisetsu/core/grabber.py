@@ -129,6 +129,9 @@ def _release_operation_tag(qbit: QBitClient, torrent_hash: Optional[str], operat
         return
     try:
         qbit.remove_torrent_tags([torrent_hash], [operation_tag])
+        # Taking the tag off the torrent leaves it in qBittorrent's tag list, so
+        # delete it as well. It is unique to this operation.
+        qbit.delete_tags([operation_tag])
     except QbitClientError as e:
         # The tag is cosmetic from here on, so a failure must not disturb the
         # download or the operation it belongs to.
@@ -405,6 +408,12 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
                 return None
 
     _set_episode_release(session, episode, operation, operation.new_torrent_hash, EpisodeStatus.DOWNLOADING)
+    try:
+        finished = is_seeding_torrent(_operation_torrent(qbit, operation))
+    except QbitClientError:
+        finished = False
+    if finished:
+        _complete_episode(session, episode)
     operation.status = TorrentOperationStatus.COMPLETED
     operation.next_retry_at = None
     operation.last_error = None
@@ -611,6 +620,7 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             episode.last_error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
             session.add(episode)
     logs.extend(_release_stale_operation_tags(session, qbit))
+    _sweep_operation_tags(session, qbit)
     session.commit()
     return logs
 
@@ -645,6 +655,54 @@ def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[st
             f"Ep {episode.episode_number}"
         )
     return logs
+
+
+_OPERATION_TAG_PATTERN = re.compile(r"^kisetsu-op-[0-9a-f]{32}$")
+
+
+def _sweep_operation_tags(session: Session, qbit: QBitClient) -> None:
+    """Delete operation tags from qBittorrent's tag list that nothing needs any more.
+
+    A tag is needed only while it is the sole way to find a torrent, i.e. for an
+    operation or in-flight episode that has no hash yet. Every other
+    ``kisetsu-op-`` tag is left over from a finished, failed or canceled
+    operation. Tags with any other name are never touched.
+    """
+    try:
+        defined = [tag for tag in qbit.get_tags() if _OPERATION_TAG_PATTERN.match(tag)]
+        if not defined:
+            return
+        needed = set(session.exec(
+            select(TorrentOperation.operation_tag).where(
+                TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)),
+                TorrentOperation.new_torrent_hash.is_(None),
+            )
+        ).all())
+        needed.update(session.exec(
+            select(Episode.operation_tag).where(
+                Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING]),
+                Episode.torrent_hash.is_(None),
+            )
+        ).all())
+        stale = [tag for tag in defined if tag not in needed]
+        if stale:
+            qbit.delete_tags(stale)
+            logger.debug(f"Deleted {len(stale)} leftover operation tag(s) from qBittorrent.")
+    except QbitClientError as e:
+        logger.debug(f"Could not sweep operation tags: {e}")
+
+
+def has_unsettled_work(session: Session) -> bool:
+    """Whether an operation or episode is still in flight and needs checking against qBittorrent."""
+    if session.exec(
+        select(TorrentOperation.id).where(TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES))).limit(1)
+    ).first() is not None:
+        return True
+    return session.exec(
+        select(Episode.id).where(
+            Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING])
+        ).limit(1)
+    ).first() is not None
 
 
 def _grab_feeds(session: Session, show: Monitored, feeds: List[Feed]) -> List[Feed]:

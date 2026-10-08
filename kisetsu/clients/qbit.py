@@ -405,6 +405,24 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to remove tags {tags} from torrents: {e}") from e
 
+    def get_tags(self) -> List[str]:
+        """Every tag defined in qBittorrent, whether or not a torrent carries it."""
+        client = self.get_client()
+        try:
+            return [str(tag) for tag in client.torrents_tags()]
+        except Exception as e:
+            raise QbitClientError(f"Failed to list tags: {e}") from e
+
+    def delete_tags(self, tags: List[str]) -> None:
+        """Delete tags from qBittorrent's tag list (and from any torrent that has them)."""
+        if not tags:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_delete_tags(tags=tags)
+        except Exception as e:
+            raise QbitClientError(f"Failed to delete tags {tags}: {e}") from e
+
     def add_torrent_tags(self, torrent_hashes: List[str], tags: List[str]) -> None:
         """Add tags to torrents, leaving the existing ones untouched."""
         if not torrent_hashes or not tags:

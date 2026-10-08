@@ -5,7 +5,7 @@ import socket
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import List, Optional
 from urllib.parse import urlsplit
 import logging
 from fastapi import FastAPI, Request
@@ -18,6 +18,7 @@ from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.core.confirmation import ingest_log_acceptances
+from kisetsu.core.grabber import has_unsettled_work, update_episode_status
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
 from kisetsu.server.api import router
@@ -34,6 +35,8 @@ QBIT_RETRY_DELAYS = (1, 2, 4, 8, 16, 30, 60)
 QBIT_AUTH_RETRY_SECONDS = 300
 STARTUP_GRACE_SECONDS = 5
 BUSY_RETRY_SECONDS = 5
+SETTLE_INTERVAL_SECONDS = 4
+SETTLE_ERROR_SECONDS = 30
 
 
 def _format_sleep(seconds: int) -> str:
@@ -100,7 +103,7 @@ async def background_supervisor_task():
                     if not state.try_begin_cycle("background"):
                         # A manual cycle or show edit holds the slot. Wait for it
                         # briefly instead of re-probing and logging every second.
-                        if not busy_logged:
+                        if not busy_logged and state.cycle_owner != "settle":
                             state.add_log("Another supervision or show mutation is already in progress; waiting for it to finish.", "INFO")
                             busy_logged = True
                         await asyncio.sleep(BUSY_RETRY_SECONDS)
@@ -199,6 +202,56 @@ async def background_supervisor_task():
             await asyncio.sleep(60)
 
 
+def _settle_once(engine) -> Optional[List[str]]:
+    """Check in-flight downloads against qBittorrent once; None when there was nothing to do.
+
+    Runs on a thread: it opens its own session and holds the cycle slot only
+    while it works, and skips the round if a cycle or request has the slot.
+    """
+    with Session(engine) as session:
+        settings = get_settings(session)
+        if (settings.download_mode or "rules") != "direct":
+            return None
+        if not has_unsettled_work(session) or not state.try_begin_cycle("settle"):
+            return None
+        try:
+            qbit = QBitClient(
+                host=settings.qbit_host,
+                username=settings.qbit_username,
+                password=settings.qbit_password,
+                timeout=10,
+            )
+            return update_episode_status(session, qbit, settings)
+        finally:
+            state.end_cycle("settle")
+
+
+async def settle_task():
+    """Pick up torrents qBittorrent lists late and mark finished ones complete.
+
+    The full cycle only runs every so often, so a torrent that qBittorrent was
+    still fetching when it was added, or one that has since finished, would
+    otherwise wait for it.
+    """
+    engine = get_engine()
+    await asyncio.sleep(STARTUP_GRACE_SECONDS)
+    while True:
+        delay = SETTLE_INTERVAL_SECONDS
+        try:
+            logs = await asyncio.to_thread(_settle_once, engine)
+            for line in logs or []:
+                state.add_log(f"Supervisor: {line}", "INFO")
+        except asyncio.CancelledError:
+            raise
+        except QbitClientError as e:
+            logger.debug(f"Settle check skipped, qBittorrent unavailable: {e}")
+            delay = SETTLE_ERROR_SECONDS
+        except Exception as e:
+            logger.warning(f"Settle check failed: {e}", exc_info=True)
+            delay = SETTLE_ERROR_SECONDS
+        await asyncio.sleep(delay)
+
+
 async def qbit_rule_observer_task():
     """Watch qBittorrent's rule state and record newly accepted releases.
 
@@ -273,10 +326,11 @@ async def lifespan(app: FastAPI):
 
     bg_task = asyncio.create_task(background_supervisor_task())
     observer_task = asyncio.create_task(qbit_rule_observer_task())
+    settle = asyncio.create_task(settle_task())
     yield
-    for task in (bg_task, observer_task):
+    for task in (bg_task, observer_task, settle):
         task.cancel()
-    for task in (bg_task, observer_task):
+    for task in (bg_task, observer_task, settle):
         try:
             await task
         except asyncio.CancelledError:
