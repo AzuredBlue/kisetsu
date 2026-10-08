@@ -1401,6 +1401,7 @@ def _start_operation(
     article: Dict[str, Any],
     parsed: Dict[str, Any],
     version: int,
+    switch_source: bool = False,
 ) -> Optional[TorrentOperation]:
     if _operation_for_episode(session, episode.id):
         return None
@@ -1413,7 +1414,7 @@ def _start_operation(
         or episode.release_title
         or episode.status in {EpisodeStatus.DOWNLOADING, EpisodeStatus.COMPLETED, EpisodeStatus.REPLACING}
     )
-    is_replace = (version > previous_version) and has_existing
+    is_replace = (version > previous_version or switch_source) and has_existing
     old_torrent_hash = _find_old_hash(qbit, settings, show, episode) if is_replace else None
     if is_replace and not old_torrent_hash and episode.release_title and _find_torrent_by_name(qbit, episode.release_title) is None:
         # The previous release is gone from qBittorrent (the user deleted it), so
@@ -1836,11 +1837,32 @@ def _is_restore(episode: Episode) -> bool:
     return episode.status == EpisodeStatus.COMPLETED and not episode.torrent_hash
 
 
-def _manual_refusal(session: Session, episode: Episode, version: int) -> Optional[str]:
+def _other_source(episode: Episode, feed: Feed, article: Dict[str, Any]) -> bool:
+    """Whether ``article`` is another copy of a finished, managed episode.
+
+    That is a different feed than the one the episode came from, or, when the
+    feed was not recorded, a release that is not the one already downloaded.
+    """
+    if episode.status != EpisodeStatus.COMPLETED or not episode.torrent_hash:
+        return False
+    info_hash = str(article.get("infoHash") or "").lower()
+    if info_hash and info_hash == episode.torrent_hash.lower():
+        return False
+    if episode.feed_id is not None:
+        return episode.feed_id != feed.id
+    return not (episode.release_title and same_release(episode.release_title, article.get("title", "")))
+
+
+def _manual_refusal(
+    session: Session,
+    episode: Episode,
+    version: int,
+    other_source: bool = False,
+) -> Optional[str]:
     """Why an explicit grab of ``version`` of ``episode`` must not go ahead."""
     if _operation_for_episode(session, episode.id):
         return f"Episode {episode.episode_number} already has a download in progress."
-    if _is_restore(episode):
+    if _is_restore(episode) or other_source:
         return None
     if episode.status in {
         EpisodeStatus.COMPLETED,
@@ -1914,7 +1936,8 @@ def direct_feed_matches(
     for feed, article, _parsed, _raw, episode_number, version, episode, _context in _manual_candidates(
         session, qbit, settings, show, articles_by_url,
     ):
-        refusal = _manual_refusal(session, episode, version)
+        replaces = _other_source(episode, feed, article)
+        refusal = _manual_refusal(session, episode, version, replaces)
         title = article.get("title", "")
         info_hash = str(article.get("infoHash") or "").lower()
         # Once the release is downloaded, name it as the ledger (and qBittorrent) does.
@@ -1931,6 +1954,7 @@ def direct_feed_matches(
             "version": version,
             "episode_status": episode.status.value,
             "restore": _is_restore(episode),
+            "replaces": replaces and refusal is None,
             "downloadable": refusal is None,
         })
         if len(matches) >= limit:
@@ -2043,11 +2067,14 @@ def manual_grab(
     if expect_episode is not None and episode_number != expect_episode:
         raise ValueError(f"The matching release in the feed is episode {episode_number}, not episode {expect_episode}.")
     wanted_title = article.get("title", wanted_title)
-    refusal = _manual_refusal(session, episode, version)
+    switch_source = _other_source(episode, feed, article)
+    refusal = _manual_refusal(session, episode, version, switch_source)
     if refusal:
         raise ValueError(refusal)
     _record_mapping_evidence(session, show, feed, raw_episode, episode_number)
-    operation = _start_operation(session, qbit, settings, show, feed, episode, article, parsed, version)
+    operation = _start_operation(
+        session, qbit, settings, show, feed, episode, article, parsed, version, switch_source=switch_source,
+    )
     if operation is None:
         raise ValueError(episode.last_error or "Could not start the download for that release.")
     if show.current_feed_id != feed.id:

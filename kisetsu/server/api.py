@@ -387,10 +387,12 @@ def get_show_episodes(show_id: int, session: Session = Depends(get_db)):
         .where(Episode.monitored_id == show_id)
         .order_by(Episode.episode_number)
     ).all()
+    feed_names = {feed.id: feed.qbit_feed_name for feed in session.exec(select(Feed)).all()}
     return [
         {
             "id": episode.id,
             "episode_number": episode.episode_number,
+            "feed_name": feed_names.get(episode.feed_id),
             "source_episode": episode.source_episode,
             "air_at": episode.air_at.isoformat() if episode.air_at else None,
             "schedule_state": episode.schedule_state,

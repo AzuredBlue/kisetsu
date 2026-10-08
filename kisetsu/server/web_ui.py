@@ -1296,6 +1296,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
 
+    const SWAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M17 3l4 4-4 4"/><path d="M3 7h18"/><path d="M7 21l-4-4 4-4"/><path d="M21 17H3"/></svg>';
+
     const SPINNER_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" class="w-3.5 h-3.5 animate-spin"><path d="M12 3a9 9 0 1 0 9 9"/></svg>';
 
     // Downloads whose request is still running, so a redraw keeps their button disabled.
@@ -1308,11 +1310,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return `data-key="${escapeHtml(key)}" data-sig="${escapeHtml(String(sig))}"`;
     }
 
-    function downloadButton(showId, title, tip) {
+    function downloadButton(showId, title, tip, icon = DOWNLOAD_ICON) {
       const pending = pendingDownloads.has(pendingKey(showId, title));
       return `<button type="button" data-title="${escapeHtml(title)}" onclick="quickDownloadMatch(${showId}, this)" ${pending ? 'disabled' : ''}
         class="shrink-0 w-7 h-7 rounded-md flex items-center justify-center bg-accent/10 hover:bg-accent/25 border border-accent/30 hover:border-accent/60 text-accent-soft transition-colors active:scale-95 ${pending ? 'opacity-50 pointer-events-none' : ''}"
-        title="${escapeHtml(tip)}">${pending ? SPINNER_ICON : DOWNLOAD_ICON}</button>`;
+        title="${escapeHtml(tip)}">${pending ? SPINNER_ICON : icon}</button>`;
+    }
+
+    function replaceTip(episode, fromFeed) {
+      return `Replace Ep ${episode} with this release. The current copy${fromFeed ? ` from ${fromFeed}` : ''} is deleted with its files once this one is seeding.`;
     }
 
     function restoreButton(showId, ep) {
@@ -1331,19 +1337,28 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const isDirect = data.download_mode === 'direct';
       const loadingText = 'Checking the feed…';
 
+      const replacements = new Map();
+      ((feed && feed.feed_matches) || []).forEach(m => {
+        const best = replacements.get(m.episode);
+        if (m.replaces && (!best || m.version > best.version)) replacements.set(m.episode, m);
+      });
+
       const episodeRows = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
         const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : 'text-zinc-500';
         const unmanaged = isDirect && done && !ep.torrent_hash;
         const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
+        const swap = isDirect && done && ep.torrent_hash ? replacements.get(ep.episode_number) : null;
+        const swapPending = swap && pendingDownloads.has(pendingKey(showId, swap.title));
         return `
-          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, ep.status, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, ep.status, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
               <span class="${statusCls}">${escapeHtml(ep.status)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
               ${unmanaged ? restoreButton(showId, ep) : ''}
+              ${swap ? downloadButton(showId, swap.title, replaceTip(ep.episode_number, ep.feed_name), SWAP_ICON) : ''}
             </span>
           </li>`;
       }).join('');
@@ -1351,14 +1366,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       if (isDirect) {
         const matches = feed ? (feed.feed_matches || []) : [];
         const feedRows = matches.map(m => `
-          <li ${rowAttrs(`f:${m.title}`, [m.episode, m.version, m.downloadable ? 1 : 0, m.restore ? 1 : 0, m.episode_status, pendingDownloads.has(pendingKey(showId, m.title)) ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`f:${m.title}`, [m.episode, m.version, m.downloadable ? 1 : 0, m.restore ? 1 : 0, m.replaces ? 1 : 0, m.episode_status, pendingDownloads.has(pendingKey(showId, m.title)) ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.display_title && m.display_title !== m.title ? `${m.display_title}\n${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
             <span class="shrink-0 w-24 h-7 flex items-center justify-end">
               ${m.downloadable
-                ? downloadButton(showId, m.title, m.restore
-                  ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.'
-                  : 'Download this release now. It is tracked like any other episode.')
+                ? (m.replaces
+                  ? downloadButton(showId, m.title, replaceTip(m.episode, ''), SWAP_ICON)
+                  : downloadButton(showId, m.title, m.restore
+                    ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.'
+                    : 'Download this release now. It is tracked like any other episode.'))
                 : `<span class="text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
             </span>
           </li>`).join('');
