@@ -365,6 +365,10 @@ class SeenFeedItem(SQLModel, table=True):
     title: str = Field(default="")
     created_at: NaiveDatetime = Field(default_factory=utc_now, index=True)
     shielded_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
+    # The slimmed article as the feed delivered it, kept for releases that matter
+    # to a followed show so they outlive qBittorrent's own RSS cache.
+    data_json: Optional[str] = Field(default=None, nullable=True)
+    published_at: Optional[NaiveDatetime] = Field(default=None, nullable=True, index=True)
 
 
 class RuleHistory(SQLModel, table=True):

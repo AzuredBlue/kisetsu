@@ -29,6 +29,7 @@ from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClient
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.discovery import flatten_rss_articles
+from kisetsu.core.feedcache import cached_articles, ingest_rss
 from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode, show_torrent_hashes
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
@@ -641,13 +642,14 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
     settings = get_settings(session)
     feed = session.get(Feed, show.current_feed_id) if show.current_feed_id else None
 
+    direct = uses_direct_engine(normalized_download_mode(session))
     try:
-        articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
+        articles_by_url = cached_articles(session) if direct else flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
         state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
         articles_by_url = {}
 
-    if uses_direct_engine(normalized_download_mode(session)):
+    if direct:
         try:
             matches = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles_by_url)
         except Exception as e:
@@ -1532,21 +1534,14 @@ def _clear_all_monitored(session: Session, qbit: QBitClient):
     return {"status": "success", "message": f"Cleared all {count} shows."}
 
 
+_CYCLE_BUSY = "Another supervision or show mutation is already in progress"
+
+
 @router.post("/cycle/run")
 async def run_cycle_now(session: Session = Depends(get_db)):
-    if not state.try_begin_cycle("api-cycle"):
-        raise HTTPException(
-            status_code=409,
-            detail="Another supervision or show mutation is already in progress",
-        )
+    if state.is_running_cycle:
+        raise HTTPException(status_code=409, detail=_CYCLE_BUSY)
 
-    try:
-        return await _run_cycle_now(session)
-    finally:
-        state.end_cycle("api-cycle")
-
-
-async def _run_cycle_now(session: Session):
     s = get_settings(session)
     qbit = _qbit_from_settings(s)
 
@@ -1560,12 +1555,33 @@ async def _run_cycle_now(session: Session):
         state.add_log(f"Manual cycle skipped: qBittorrent is unavailable: {e}", "ERROR")
         raise HTTPException(status_code=503, detail=f"qBittorrent is unavailable: {e}")
 
+    # Refreshing qBittorrent's feeds is the slow part and needs none of our data,
+    # so it is done before the slot is taken; the cycle then reads the cache.
+    use_feed_cache = uses_direct_engine(normalized_download_mode(session))
+    if use_feed_cache:
+        try:
+            await asyncio.to_thread(ingest_rss, session.get_bind(), qbit, True)
+        except QbitClientError as e:
+            state.add_log(f"Manual cycle skipped: could not refresh the RSS feeds: {e}", "ERROR")
+            raise HTTPException(status_code=503, detail=f"Could not refresh the RSS feeds: {e}")
+
+    if not state.try_begin_cycle("api-cycle"):
+        raise HTTPException(status_code=409, detail=_CYCLE_BUSY)
+
+    try:
+        return await _run_cycle_now(session, s, qbit, use_feed_cache)
+    finally:
+        state.end_cycle("api-cycle")
+
+
+async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_feed_cache: bool = False):
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
 
     state.add_log("Manual sync initiated from WebUI.", "INFO")
     state.trigger_immediate_rule_check()
     try:
-        logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True)
+        cycle_options = {"feed_cache": True} if use_feed_cache else {}
+        logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True, **cycle_options)
         state.last_cycle_time = datetime.now(timezone.utc)
         for l in logs:
             state.add_log(f"Supervisor: {l}", "INFO")

@@ -12,6 +12,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, prepare_aliases
+from kisetsu.core.feedcache import cached_articles, item_id_of, upsert_feed_items
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -203,42 +204,29 @@ def _sync_seen_items(
     feeds: List[Feed],
     articles_by_url: Dict[str, List[Dict[str, Any]]],
 ) -> Dict[Tuple[str, str], datetime]:
+    """When each item was first seen, recording the ones worth keeping."""
+    upsert_feed_items(session, {feed.qbit_feed_url: articles_by_url.get(feed.qbit_feed_url, []) for feed in feeds})
     first_seen: Dict[Tuple[str, str], datetime] = {}
     now = utc_now()
-    changed = False
     for feed in feeds:
-        articles_by_id: Dict[str, Dict[str, Any]] = {}
-        for article in articles_by_url.get(feed.qbit_feed_url, []):
-            if not article.get("title"):
-                continue
-            item_id = str(
-                article.get("id")
-                or article.get("torrentURL")
-                or article.get("link")
-                or article.get("title", "")
-            )
-            articles_by_id.setdefault(item_id, article)
-        if not articles_by_id:
+        item_ids = {
+            item_id_of(article)
+            for article in articles_by_url.get(feed.qbit_feed_url, [])
+            if article.get("title")
+        }
+        if not item_ids:
             continue
-        rows = session.exec(
-            select(SeenFeedItem).where(
-                SeenFeedItem.feed_url == feed.qbit_feed_url,
-                SeenFeedItem.item_id.in_(list(articles_by_id)),
-            )
-        ).all()
-        known = {row.item_id: row.created_at for row in rows}
-        for item_id, article in articles_by_id.items():
+        known = {
+            row.item_id: row.created_at
+            for row in session.exec(
+                select(SeenFeedItem).where(
+                    SeenFeedItem.feed_url == feed.qbit_feed_url,
+                    SeenFeedItem.item_id.in_(list(item_ids)),
+                )
+            ).all()
+        }
+        for item_id in item_ids:
             first_seen[(feed.qbit_feed_url, item_id)] = known.get(item_id, now)
-            if item_id not in known:
-                session.add(SeenFeedItem(
-                    feed_url=feed.qbit_feed_url,
-                    item_id=item_id,
-                    title=article.get("title", ""),
-                ))
-                known[item_id] = now
-                changed = True
-    if changed:
-        session.commit()
     return first_seen
 
 
@@ -1895,7 +1883,7 @@ def _manual_candidates(
     if not candidate_feeds:
         return []
     if articles_by_url is None:
-        articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
+        articles_by_url = cached_articles(session)
     now = utc_now()
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     context = _show_grab_context(session, show, now, _air_horizon(show, now, tolerance_hours))

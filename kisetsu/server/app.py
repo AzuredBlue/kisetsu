@@ -18,6 +18,7 @@ from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.core.confirmation import ingest_log_acceptances
+from kisetsu.core.feedcache import ingest_rss, prune_cache
 from kisetsu.core.grabber import has_unsettled_work, update_episode_status
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
@@ -36,6 +37,9 @@ QBIT_AUTH_RETRY_SECONDS = 300
 STARTUP_GRACE_SECONDS = 5
 BUSY_RETRY_SECONDS = 5
 SETTLE_INTERVAL_SECONDS = 4
+INGEST_INTERVAL_SECONDS = 60
+INGEST_ERROR_SECONDS = 30
+PRUNE_INTERVAL_SECONDS = 24 * 3600
 SETTLE_ERROR_SECONDS = 30
 
 
@@ -100,32 +104,48 @@ async def background_supervisor_task():
 
                 if connection_ready:
                     state.daemon_active = True
-                    if not state.try_begin_cycle("background"):
-                        # A manual cycle or show edit holds the slot. Wait for it
-                        # briefly instead of re-probing and logging every second.
-                        if not busy_logged and state.cycle_owner != "settle":
-                            state.add_log("Another supervision or show mutation is already in progress; waiting for it to finish.", "INFO")
-                            busy_logged = True
-                        await asyncio.sleep(BUSY_RETRY_SECONDS)
-                        continue
-                    busy_logged = False
                     # A switch to the direct engine asks for fresh feeds first.
                     needs_rss_refresh = state.consume_rss_refresh_request() or needs_rss_refresh
                     supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
-
-                    state.add_log("Executing background supervision check...", "INFO")
-                    cycle_started = time.monotonic()
+                    use_feed_cache = (settings.download_mode or "rules") == "direct"
+                    cycle_forced = needs_rss_refresh
+                    feeds_seconds = 0
+                    holding_slot = False
                     try:
+                        if use_feed_cache:
+                            # Waiting for qBittorrent's feeds to settle is the slow part of a
+                            # check and touches none of our data, so it happens before the
+                            # slot is taken; the check then reads the copy in the database.
+                            feeds_started = time.monotonic()
+                            await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh)
+                            feeds_seconds = int(time.monotonic() - feeds_started)
+                            needs_rss_refresh = False
+                        if not state.try_begin_cycle("background"):
+                            # A manual cycle or show edit holds the slot. Wait for it
+                            # briefly instead of re-probing and logging every second.
+                            if not busy_logged and state.cycle_owner != "settle":
+                                state.add_log("Another supervision or show mutation is already in progress; waiting for it to finish.", "INFO")
+                                busy_logged = True
+                            await asyncio.sleep(BUSY_RETRY_SECONDS)
+                            continue
+                        holding_slot = True
+                        busy_logged = False
+                        state.add_log("Executing background supervision check...", "INFO")
+                        cycle_started = time.monotonic()
                         logs = await supervisor.run_full_cycle(
                             hunting=hunting_next,
-                            force_rss_refresh=needs_rss_refresh,
+                            force_rss_refresh=cycle_forced,
+                            feed_cache=use_feed_cache,
                         )
                         needs_rss_refresh = False
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
                         cycle_seconds = int(time.monotonic() - cycle_started)
-                        if cycle_seconds >= 10:
-                            state.add_log(f"Supervision check took {cycle_seconds}s.", "INFO")
+                        if cycle_seconds >= 10 or feeds_seconds >= 10:
+                            state.add_log(
+                                f"Supervision check took {cycle_seconds}s (feeds ready in {feeds_seconds}s, before it started).",
+                                "INFO",
+                            )
                         for l in logs:
                             state.add_log(f"Supervisor: {l}", "INFO")
                         if not logs:
@@ -149,7 +169,8 @@ async def background_supervisor_task():
                         state.add_log(f"Supervisor cycle error: {e}", "ERROR")
                         logger.error(f"Supervisor error: {e}", exc_info=True)
                     finally:
-                        state.end_cycle("background")
+                        if holding_slot:
+                            state.end_cycle("background")
 
                     if connection_ready:
                         default_interval = max(60, settings.refresh_interval_minutes * 60)
@@ -252,6 +273,45 @@ async def settle_task():
         await asyncio.sleep(delay)
 
 
+async def ingest_task():
+    """Keep the feed cache current between checks.
+
+    Checks, the feed list and discovery read the copy in the database, so this
+    is the only place that waits on qBittorrent's RSS feeds.
+    """
+    engine = get_engine()
+    await asyncio.sleep(STARTUP_GRACE_SECONDS)
+    last_prune = float("-inf")
+    while True:
+        delay = INGEST_INTERVAL_SECONDS
+        try:
+            with Session(engine) as session:
+                settings = get_settings(session)
+                qbit = QBitClient(
+                    host=settings.qbit_host,
+                    username=settings.qbit_username,
+                    password=settings.qbit_password,
+                    timeout=10,
+                )
+                direct = (settings.download_mode or "rules") == "direct"
+            if direct:
+                await asyncio.to_thread(ingest_rss, engine, qbit, False)
+                if time.monotonic() - last_prune >= PRUNE_INTERVAL_SECONDS:
+                    removed = await asyncio.to_thread(prune_cache, engine)
+                    last_prune = time.monotonic()
+                    if removed:
+                        logger.info(f"Pruned {removed} old feed cache item(s).")
+        except asyncio.CancelledError:
+            raise
+        except QbitClientError as e:
+            logger.debug(f"Feed cache update skipped, qBittorrent unavailable: {e}")
+            delay = INGEST_ERROR_SECONDS
+        except Exception as e:
+            logger.warning(f"Feed cache update failed: {e}", exc_info=True)
+            delay = INGEST_ERROR_SECONDS
+        await asyncio.sleep(delay)
+
+
 async def qbit_rule_observer_task():
     """Watch qBittorrent's rule state and record newly accepted releases.
 
@@ -327,10 +387,11 @@ async def lifespan(app: FastAPI):
     bg_task = asyncio.create_task(background_supervisor_task())
     observer_task = asyncio.create_task(qbit_rule_observer_task())
     settle = asyncio.create_task(settle_task())
+    ingest = asyncio.create_task(ingest_task())
     yield
-    for task in (bg_task, observer_task, settle):
+    for task in (bg_task, observer_task, settle, ingest):
         task.cancel()
-    for task in (bg_task, observer_task, settle):
+    for task in (bg_task, observer_task, settle, ingest):
         try:
             await task
         except asyncio.CancelledError:

@@ -10,6 +10,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionErro
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
+from kisetsu.core.feedcache import CachedRssSnapshot
 from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
@@ -1489,6 +1490,7 @@ class Supervisor:
         hunting: bool = False,
         force_rss_refresh: bool = False,
         force_anilist: bool = False,
+        feed_cache: bool = False,
     ) -> List[str]:
         """Execute one complete supervision iteration.
 
@@ -1500,6 +1502,9 @@ class Supervisor:
         before deciding, because a stale snapshot would otherwise be acted upon.
         ``force_anilist`` queries AniList even when the cached schedule is fresh,
         so a manual sync picks up shows the user just added.
+        ``feed_cache`` makes the direct engine read the feed cache in the database
+        instead of qBittorrent's RSS; the caller has already copied qBittorrent's
+        feeds into it (``feedcache.ingest_rss``), refreshed if ``force_rss_refresh``.
         """
         engine = self.session.get_bind()
         owner = f"supervisor:{uuid4().hex}"
@@ -1510,6 +1515,7 @@ class Supervisor:
                 hunting=hunting,
                 force_rss_refresh=force_rss_refresh,
                 force_anilist=force_anilist,
+                feed_cache=feed_cache,
                 lease_owner=owner,
             )
         except Exception:
@@ -1527,10 +1533,12 @@ class Supervisor:
         hunting: bool = False,
         force_rss_refresh: bool = False,
         force_anilist: bool = False,
+        feed_cache: bool = False,
         lease_owner: Optional[str] = None,
     ) -> List[str]:
         all_logs: List[str] = []
-        rss_snapshot = RssSnapshot(self.qbit)
+        use_cache = feed_cache and self.download_mode() == "direct"
+        rss_snapshot = CachedRssSnapshot(self.qbit, self.session) if use_cache else RssSnapshot(self.qbit)
         parsed_articles: Dict[str, Dict[str, Any]] = {}
         self._known_categories.clear()
         engine = self.session.get_bind()
@@ -1561,8 +1569,11 @@ class Supervisor:
 
         if mode == "direct":
             if force_rss_refresh:
-                refreshed_articles = await asyncio.to_thread(rss_snapshot.refresh)
-                all_logs.append("Refreshed qBittorrent RSS feeds before direct evaluation.")
+                if use_cache:
+                    refreshed_articles = rss_snapshot.get()
+                else:
+                    refreshed_articles = await asyncio.to_thread(rss_snapshot.refresh)
+                    all_logs.append("Refreshed qBittorrent RSS feeds before direct evaluation.")
                 all_feeds = self.session.exec(select(Feed)).all()
                 expected_urls = {feed.qbit_feed_url for feed in all_feeds}
                 failed_feed_urls = {
