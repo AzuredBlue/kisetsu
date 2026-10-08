@@ -28,7 +28,7 @@ from kisetsu.db.models import (
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
-from kisetsu.core.discovery import flatten_rss_articles
+from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss
 from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode, show_torrent_hashes
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
@@ -450,7 +450,9 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient, force: bo
         except Exception as e:
             state.add_log(f"Warning: Could not delete rule '{show.qbit_rule_name}': {e}", "WARNING")
 
-    if old_feed_id and old_feed_id != show.learned_feed_id:
+    direct = uses_direct_engine(normalized_download_mode(session))
+    # In direct mode a reset says nothing about the feed, so it is not held against it.
+    if old_feed_id and old_feed_id != show.learned_feed_id and not direct:
         hist = RuleHistory(
             monitored_id=show.id,
             feed_id=old_feed_id,
@@ -470,6 +472,9 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient, force: bo
     show.status = MonitoredStatus.UNCONFIRMED
     session.add(show)
     session.commit()
+
+    if direct:
+        return {"status": "success", "message": _auto_discover_now(session, qbit, show)}
 
     state.add_log(f"Reset rule for '{show.display_name}'. Will rediscover on next supervision cycle.", "INFO")
     return {"status": "success", "message": f"Reset '{show.display_name}'. Will rediscover on next cycle."}
@@ -902,6 +907,64 @@ def _set_status_keeping_pause(show: Monitored, status: MonitoredStatus) -> None:
         show.status = status
 
 
+def _auto_discover_now(session: Session, qbit: QBitClient, show: Monitored) -> str:
+    """Look for the show in the feed cache right away instead of at the next check.
+
+    The feed is a finding, not proof, so ``learned_feed_id`` stays unset until a
+    release is downloaded from it.
+    """
+    # An explicit request starts fresh: feeds that failed this show before are
+    # not skipped here, only by the unattended check.
+    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+    found = discover_feed_for_show(
+        monitored=show,
+        feeds=feeds,
+        qbit_client=qbit,
+        cached_articles_by_url=cached_articles(session),
+        parsed_articles={},
+    ) if feeds else None
+    if not found:
+        state.add_log(f"Auto-Discover for '{show.display_name}': nothing in the feed cache yet.", "INFO")
+        return (
+            f"'{show.display_name}' set to Auto-Discover. No matching release is in the feed cache yet; "
+            "it will be picked up as soon as one appears."
+        )
+    feed, release_group, matched_title = found
+    show.current_feed_id = feed.id
+    show.matched_title = matched_title
+    show.matched_release_group = release_group
+    _set_status_keeping_pause(show, MonitoredStatus.FIXED)
+    session.add(show)
+    session.add(RuleHistory(
+        monitored_id=show.id,
+        feed_id=feed.id,
+        outcome=RuleOutcome.CONFIRMED,
+        note=f"Auto-detected on '{feed.qbit_feed_name}' (direct mode)",
+    ))
+    session.commit()
+    state.add_log(f"Auto-Discover for '{show.display_name}': found on '{feed.qbit_feed_name}'.", "INFO")
+    return f"Auto-discovered on '{feed.qbit_feed_name}' (matched as '{matched_title}')."
+
+
+def _learn_name_from_feed(session: Session, qbit: QBitClient, show: Monitored, feed: Feed) -> Optional[str]:
+    """Take the series name from a matching release already cached for this feed."""
+    found = discover_feed_for_show(
+        monitored=show,
+        feeds=[feed],
+        qbit_client=qbit,
+        cached_articles_by_url=cached_articles(session),
+        parsed_articles={},
+    )
+    if not found:
+        return None
+    _, release_group, matched_title = found
+    show.matched_title = matched_title
+    show.matched_release_group = release_group
+    session.add(show)
+    session.commit()
+    return matched_title
+
+
 @router.post("/shows/{show_id}/edit")
 def edit_show(show_id: int, req: EditShowRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
     require_exclusive_cycle()
@@ -989,7 +1052,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             session.add(show)
             session.commit()
             state.add_log(f"Reset '{show.display_name}' to Auto-Discover mode (direct engine).", "INFO")
-            return {"status": "success", "message": f"'{show.display_name}' set to Auto-Discover."}
+            return {"status": "success", "message": _auto_discover_now(session, qbit, show)}
 
         feed = session.get(Feed, new_feed_id)
         if not feed:
@@ -999,10 +1062,12 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             show.status = MonitoredStatus.FIXED
         session.add(show)
         session.commit()
+        matched = _learn_name_from_feed(session, qbit, show, feed)
+        verb = "Pinned to" if show.feed_pinned else "Assigned to"
         msg = (
-            f"Pinned to '{feed.qbit_feed_name}'. Waiting for a matching direct release."
-            if show.feed_pinned
-            else f"Assigned to '{feed.qbit_feed_name}'. The direct engine will watch it for a matching release."
+            f"{verb} '{feed.qbit_feed_name}' (matched as '{matched}')."
+            if matched
+            else f"{verb} '{feed.qbit_feed_name}'. Nothing there matches yet; the engine will watch it for a matching release."
         )
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}

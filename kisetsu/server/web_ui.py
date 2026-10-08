@@ -2134,7 +2134,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       const noRulePlaceholder = isCompleted
         ? '<p class="field-hint !mt-0 sm:col-span-2">Completed. The rule is disabled.</p>'
-        : '<p class="field-hint !mt-0 sm:col-span-2">The rule arms when the first episode airs.</p>';
+        : isDirect
+          ? '<p class="field-hint !mt-0 sm:col-span-2">No release found yet. The feed cache is checked now and on every check.</p>'
+          : '<p class="field-hint !mt-0 sm:col-span-2">The rule arms when the first episode airs.</p>';
 
       const aliasesSection = data.has_rule ? `
         <div>
@@ -2159,7 +2161,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           <span class="field-label">Matched as</span>
           ${data.matched_as
             ? `<input type="text" readonly value="${escapeHtml(data.matched_as)}" onfocus="this.select()" class="field font-mono" title="${escapeHtml(data.matched_as)}">`
-            : '<p class="field-hint !mt-0">Matched by name and aliases until the first download.</p>'}
+            : `<p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet.` : 'Matched by name and aliases until a release appears.'}</p>`}
         </div>`;
       const mustContainSections = !data.has_rule ? '' : isDirect ? matchedAsField : rulePatternFields;
 

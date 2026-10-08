@@ -82,6 +82,34 @@ def delete_monitored_show(session: Session, qbit: QBitClient, show: Monitored, r
     session.delete(show)
 
 
+def record_direct_discovery(
+    session: Session,
+    show: Monitored,
+    feed: Feed,
+    release_group: Optional[str],
+    matched_title: Optional[str],
+) -> str:
+    """Assign a show to the feed a matching release was found on (direct mode).
+
+    The feed is a finding, not proof: ``learned_feed_id`` stays unset until a
+    release is actually downloaded from it.
+    """
+    show.matched_title = matched_title
+    show.matched_release_group = release_group
+    show.current_feed_id = feed.id
+    show.status = MonitoredStatus.FIXED
+    session.add(show)
+    session.add(RuleHistory(
+        monitored_id=show.id,
+        feed_id=feed.id,
+        created_at=utc_now(),
+        outcome=RuleOutcome.CONFIRMED,
+        note=f"Auto-detected on '{feed.qbit_feed_name}' (direct mode)",
+    ))
+    session.commit()
+    return f"Assigned '{show.display_name}' to feed '{feed.qbit_feed_name}' (direct mode)"
+
+
 class Supervisor:
     def __init__(self, session: Session, qbit: QBitClient, anilist: AniListClient, settings: Settings):
         self.session = session
@@ -272,18 +300,7 @@ class Supervisor:
                 show.matched_title = matched_title
                 show.matched_release_group = obs_group
                 if not create_qbit_rules:
-                    show.current_feed_id = chosen_feed.id
-                    show.status = MonitoredStatus.FIXED
-                    self.session.add(show)
-                    self.session.add(RuleHistory(
-                        monitored_id=show.id,
-                        feed_id=chosen_feed.id,
-                        created_at=utc_now(),
-                        outcome=RuleOutcome.CONFIRMED,
-                        note=f"Auto-detected on '{chosen_feed.qbit_feed_name}' (direct mode)",
-                    ))
-                    self.session.commit()
-                    msg = f"Assigned '{show.display_name}' to feed '{chosen_feed.qbit_feed_name}' (direct mode)"
+                    msg = record_direct_discovery(self.session, show, chosen_feed, obs_group, matched_title)
                     logger.info(msg)
                     logs.append(msg)
                     continue
