@@ -4,6 +4,7 @@ from kisetsu.core.matching import (
     match_release_to_show,
     normalize_title,
     parse_release_title,
+    release_arc_qualifier,
 )
 
 
@@ -154,6 +155,18 @@ class TestMatching(unittest.TestCase):
         is_match, score, _ = match_release_to_show(unrelated, aliases)
         self.assertFalse(is_match)
         self.assertLess(score, 85.0)
+
+    def test_release_arc_marker_is_read_from_the_series_name_only(self):
+        varyg = (
+            "JoJos Bizarre Adventure S06E03 The Desert-Born Outlaws 1080p NF WEB-DL DUAL AAC2.0 H.264-VARYG "
+            "(JoJo no Kimyou na Bouken Part 5: Ougon no Kaze, Dual-Audio, Multi-Subs)"
+        )
+        self.assertIsNone(release_arc_qualifier(varyg))
+        self.assertIsNone(release_arc_qualifier("Sparks of Tomorrow S01E09 Time to Part 1080p NF WEB-DL"))
+        self.assertEqual(release_arc_qualifier("[Erai-raws] Grand Blue Season 3 - 05 [1080p]"), "season3")
+        self.assertEqual(release_arc_qualifier("Steel Ball Run 2nd Stage - 05 [1080p]"), "stage2")
+        self.assertEqual(release_arc_qualifier("Show Part 2 S01E05 Title"), "part2")
+        self.assertEqual(release_arc_qualifier("Show Season 2 (Batch)"), "season2")
 
 
 if __name__ == "__main__":

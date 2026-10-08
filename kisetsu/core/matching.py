@@ -340,6 +340,19 @@ def extract_arc_qualifiers(text: str) -> Optional[str]:
     return None
 
 
+_EPISODE_TOKEN = re.compile(r"\bS\d{1,2}\s*[-_.]?\s*E\d{1,4}\b|\s-\s*\d{1,4}(?:v\d+)?(?=[\s\[(.]|$)", re.IGNORECASE)
+
+
+def release_arc_qualifier(raw_title: str) -> Optional[str]:
+    """The arc marker in a release's series name, ignoring what follows the episode number.
+
+    Episode names, quality tags and alternate-title blocks come after the episode
+    number and can mention a "Part 5" or "Part 1080p" that is not the show's arc.
+    """
+    token = _EPISODE_TOKEN.search(raw_title or "")
+    return extract_arc_qualifiers(raw_title[:token.start()] if token else raw_title)
+
+
 def _alias_arc_requirement(aliases: List[str]) -> Optional[str]:
     """The arc marker a show's aliases insist on, if any.
 
@@ -395,7 +408,7 @@ def match_release_to_show(
         return False, 0.0, parsed
 
     requirement = _alias_arc_requirement(aliases)
-    if requirement and not ignore_arc_marker and not _arc_is_compatible(requirement, extract_arc_qualifiers(raw_title)):
+    if requirement and not ignore_arc_marker and not _arc_is_compatible(requirement, release_arc_qualifier(raw_title)):
         logger.info(
             f"Rejected '{raw_title}': show requires arc marker '{requirement}'."
         )

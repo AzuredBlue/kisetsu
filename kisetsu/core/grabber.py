@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from kisetsu.core.matching import extract_arc_qualifiers, match_release_to_show, prepare_aliases
+from kisetsu.core.matching import match_release_to_show, prepare_aliases, release_arc_qualifier
 from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, store_matches
 from kisetsu.core.rules import (
     effective_title,
@@ -1550,7 +1550,7 @@ def _decide(
     # aliases' marker. A title with a marker of its own is still checked.
     learned_without_marker = bool(
         matcher.learned_pattern
-        and extract_arc_qualifiers(title) is None
+        and release_arc_qualifier(title) is None
         and re.search(matcher.learned_pattern, title, re.IGNORECASE)
     )
     matched, _, parsed = match_release_to_show(
