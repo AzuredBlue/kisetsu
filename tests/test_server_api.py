@@ -2285,7 +2285,7 @@ def test_cross_origin_writes_are_rejected(client):
     assert foreign_delete.status_code == 403
 
 
-def test_pausing_a_direct_show_pauses_its_stored_torrent_hashes(client, session, mock_qbit):
+def test_pausing_a_direct_show_leaves_its_torrents_running(client, session, mock_qbit):
     settings = session.exec(select(Settings)).first()
     settings.download_mode = "direct"
     session.add(settings)
@@ -2298,5 +2298,11 @@ def test_pausing_a_direct_show_pauses_its_stored_torrent_hashes(client, session,
     response = client.post("/api/shows/1/pause")
 
     assert response.status_code == 200
-    mock_qbit.pause_torrents.assert_called_once_with(["hash-1", "hash-2"])
-    mock_qbit.get_torrents.assert_not_called()
+    mock_qbit.pause_torrents.assert_not_called()
+    mock_qbit.resume_torrents.assert_not_called()
+    mock_qbit.delete_torrents.assert_not_called()
+
+    response = client.post("/api/shows/1/pause")
+
+    assert response.status_code == 200
+    mock_qbit.resume_torrents.assert_not_called()

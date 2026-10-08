@@ -459,15 +459,6 @@ def show_torrent_hashes(session: Session, show: Monitored) -> List[str]:
     return sorted(hashes)
 
 
-def _pause_show_torrents(session: Session, qbit: QBitClient, show: Monitored) -> None:
-    try:
-        hashes = show_torrent_hashes(session, show)
-        if hashes:
-            qbit.pause_torrents(hashes)
-    except QbitClientError as e:
-        logger.warning(f"Could not pause the torrents of '{show.display_name}': {e}")
-
-
 def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) -> List[str]:
     logs: List[str] = []
     operations = session.exec(
@@ -481,7 +472,7 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
         if not episode:
             continue
         show = session.get(Monitored, episode.monitored_id)
-        if show is not None and show.status in _INACTIVE_SHOW_STATUSES:
+        if show is not None and show.status in _INACTIVE_SHOW_STATUSES and not operation.new_torrent_hash:
             if not operation.last_error:
                 operation.last_error = "Suspended: show is paused or completed."
                 operation.next_retry_at = None
@@ -1463,8 +1454,12 @@ def cancel_episode_operations(
     show: Monitored,
     episode: Episode,
     reason: str,
+    keep_added: bool = False,
 ) -> int:
     """Cancel in-flight operations for an episode and dispose of new torrents.
+
+    With ``keep_added`` an operation whose torrent is already in qBittorrent is
+    left to finish.
 
     Only a retried failure is cancellable; a hard failure is terminal. Any
     torrent the operation added is deleted, and a replacement restores the
@@ -1481,6 +1476,8 @@ def cancel_episode_operations(
     ).all()
     for operation in operations:
         if operation.status == TorrentOperationStatus.SEEDING:
+            continue
+        if keep_added and operation.new_torrent_hash:
             continue
         if operation.new_torrent_hash and operation.new_torrent_hash != operation.old_torrent_hash:
             try:
@@ -1515,8 +1512,6 @@ def cancel_episode_operations(
         session.add(episode)
         session.commit()
         canceled += 1
-    if canceled and show.status == MonitoredStatus.PAUSED:
-        _pause_show_torrents(session, qbit, show)
     return canceled
 
 

@@ -30,7 +30,7 @@ from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss
-from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode, show_torrent_hashes
+from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -318,15 +318,7 @@ def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
             show.status = MonitoredStatus.UNCONFIRMED
         show.status_before_pause = None
 
-        if direct:
-            try:
-                hashes = show_torrent_hashes(session, show)
-                if hashes:
-                    qbit.resume_torrents(hashes)
-                    state.add_log(f"Resumed {len(hashes)} torrent(s) for '{show.display_name}'.", "INFO")
-            except Exception as e:
-                state.add_log(f"Warning resuming torrents for '{show.display_name}': {e}", "WARNING")
-        elif show.qbit_rule_name and owns_rules:
+        if not direct and show.qbit_rule_name and owns_rules:
             try:
                 rules = qbit.get_rss_rules()
                 if show.qbit_rule_name in rules:
@@ -349,16 +341,9 @@ def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
                 select(Episode).where(Episode.monitored_id == show.id)
             ).all():
                 try:
-                    cancel_episode_operations(session, qbit, show, episode, "Show paused by user.")
+                    cancel_episode_operations(session, qbit, show, episode, "Show paused by user.", keep_added=True)
                 except Exception as e:
                     state.add_log(f"Warning cancelling operations for '{show.display_name}': {e}", "WARNING")
-            try:
-                hashes = show_torrent_hashes(session, show)
-                if hashes:
-                    qbit.pause_torrents(hashes)
-                    state.add_log(f"Paused {len(hashes)} torrent(s) for '{show.display_name}'.", "INFO")
-            except Exception as e:
-                state.add_log(f"Warning pausing torrents for '{show.display_name}': {e}", "WARNING")
         elif show.qbit_rule_name and owns_rules:
             try:
                 rules = qbit.get_rss_rules()

@@ -1270,7 +1270,7 @@ def test_backfilled_episode_outside_window_is_skipped():
     engine.dispose()
 
 
-def test_paused_show_does_not_resume_operations_and_is_not_reopened():
+def test_paused_show_still_finishes_a_replacement_already_in_qbittorrent():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -1315,15 +1315,16 @@ def test_paused_show_does_not_resume_operations_and_is_not_reopened():
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
     session.refresh(operation)
-    assert operation.status == TorrentOperationStatus.NEW_VERIFIED
+    session.refresh(episode)
+    assert operation.status != TorrentOperationStatus.NEW_VERIFIED
     assert show.status == MonitoredStatus.PAUSED
-    assert episode.torrent_hash == "old-hash"
-    qbit.delete_torrents.assert_not_called()
+    assert episode.torrent_hash == "new-hash"
+    assert episode.status == EpisodeStatus.COMPLETED
     session.close()
     engine.dispose()
 
 
-def test_completed_show_operation_is_not_resumed():
+def test_completed_show_still_finishes_a_replacement_already_in_qbittorrent():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -1365,9 +1366,8 @@ def test_completed_show_operation_is_not_resumed():
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
     session.refresh(operation)
-    assert operation.status == TorrentOperationStatus.NEW_VERIFIED
+    assert operation.status != TorrentOperationStatus.NEW_VERIFIED
     assert show.status == MonitoredStatus.COMPLETED
-    qbit.delete_torrents.assert_not_called()
     session.close()
     engine.dispose()
 
