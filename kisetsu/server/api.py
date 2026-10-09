@@ -31,7 +31,7 @@ from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss
-from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode
+from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, manual_grab, rebase_ledger, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -735,7 +735,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
 @router.get("/shows/{show_id}/feed-matches")
 def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
-    """Releases currently in the show's feed, for the dialog's "In feed" list.
+    """Releases the feeds carry for the show, grouped by feed, for the dialog's "Releases" list.
 
     Reads qBittorrent's RSS cache, so it is slower than ``/rule`` and is fetched
     after the dialog is already open.
@@ -756,17 +756,11 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
 
     if direct:
         try:
-            matches = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles_by_url)
+            groups = direct_feed_matches(session, qbit, settings, show, limit=300, articles_by_url=articles_by_url)
         except Exception as e:
             state.add_log(f"Warning listing direct feed matches: {e}", "DEBUG")
-            matches = []
-        other_feeds: List[Dict[str, Any]] = []
-        if not matches:
-            try:
-                other_feeds = releases_in_other_feeds(session, show, articles_by_url)
-            except Exception as e:
-                state.add_log(f"Warning looking for releases in other feeds: {e}", "DEBUG")
-        return {"matched_articles": [], "feed_matches": matches, "other_feeds": other_feeds}
+            groups = []
+        return {"matched_articles": [], "feed_groups": groups}
 
     matched_articles: List[str] = []
     qbit_rule_data = _show_rule_data(qbit, show)

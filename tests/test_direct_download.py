@@ -2874,11 +2874,39 @@ def test_an_older_version_from_another_feed_is_not_offered_over_a_finished_repac
         "id": "v1", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [AAAA1111].mkv", "torrentURL": "magnet:v1",
     }]}
 
-    matches = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles)
+    groups = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles)
 
+    matches = groups[0]["matches"]
     assert matches and matches[0]["version"] == 1
     assert matches[0]["downloadable"] is False
     assert matches[0]["replaces"] is False
+    session.close()
+    engine.dispose()
+
+
+def test_releases_of_other_feeds_are_listed_apart_and_never_offered():
+    from kisetsu.core.grabber import direct_feed_matches
+
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    own = Feed(id=1, qbit_feed_name="Own", qbit_feed_url="https://own.example/rss", priority=1)
+    other = Feed(id=2, qbit_feed_name="Other", qbit_feed_url="https://other.example/rss", priority=2)
+    session.add(settings)
+    session.add(own)
+    session.add(other)
+    show = _show(session, total_episodes=2, next_airing_episode=2, current_feed_id=own.id, learned_feed_id=own.id)
+    sync_show_episodes(session, show)
+    qbit, _ = _qbit()
+    articles = {
+        own.qbit_feed_url: [{"id": "a", "title": "[SubsPlease] Sousou no Frieren - 01 (1080p) [AAAA1111].mkv", "torrentURL": "magnet:a"}],
+        other.qbit_feed_url: [{"id": "b", "title": "[Erai-raws] Sousou no Frieren - 01 [1080p].mkv", "torrentURL": "magnet:b"}],
+    }
+
+    groups = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles)
+
+    assert [(g["feed_id"], g["role"], g["usable"]) for g in groups] == [(1, "locked", True), (2, "other", False)]
+    assert groups[0]["matches"][0]["downloadable"] is True
+    assert groups[1]["matches"] and not any(m["downloadable"] or m["replaces"] for m in groups[1]["matches"])
     session.close()
     engine.dispose()
 

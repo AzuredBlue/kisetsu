@@ -1452,10 +1452,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const loadingText = 'Checking the feed…';
 
       const replacements = new Map();
-      ((feed && feed.feed_matches) || []).forEach(m => {
+      const groups = (feed && feed.feed_groups) || [];
+      groups.filter(g => g.usable).forEach(g => g.matches.forEach(m => {
         const best = replacements.get(m.episode);
         if (m.replaces && (!best || m.version > best.version)) replacements.set(m.episode, m);
-      });
+      }));
 
       const episodeRows = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
@@ -1478,9 +1479,18 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }).join('');
 
       if (isDirect) {
-        const matches = feed ? (feed.feed_matches || []) : [];
-        const feedRows = matches.map(m => `
-          <li ${rowAttrs(`f:${m.title}`, [m.episode, m.version, m.downloadable ? 1 : 0, m.restore ? 1 : 0, m.replaces ? 1 : 0, m.episode_status, pendingDownloads.has(pendingKey(showId, m.title)) ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
+        const groups = feed ? (feed.feed_groups || []) : [];
+        const matches = groups.filter(g => g.usable).flatMap(g => g.matches);
+        const ROLE_LABELS = { locked: 'Locked', picked: 'Picked', assigned: 'Assigned', other: 'Not used by this show' };
+        const groupHeader = g => `
+          <li ${rowAttrs(`h:${g.feed_id}`, [g.feed_name, g.role, g.matches.length].join('|'))} class="flex items-center gap-2 py-2 text-xs sticky top-0 z-10" style="background-color: rgb(var(--field))">
+            <span class="font-medium text-zinc-200 truncate">${escapeHtml(g.feed_name)}</span>
+            ${ROLE_LABELS[g.role] ? `<span class="shrink-0 text-zinc-500">· ${ROLE_LABELS[g.role]}</span>` : ''}
+            <span class="shrink-0 ml-auto text-zinc-500 tabular-nums">${g.matches.length}</span>
+            ${g.role === 'other' ? `<button type="button" onclick="useFeedFromReleases(${g.feed_id})" class="shrink-0 text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Move this show to ${escapeHtml(g.feed_name)}">Use this feed</button>` : ''}
+          </li>`;
+        const matchRow = (g, m) => `
+          <li ${rowAttrs(`f:${g.feed_id}:${m.title}`, [m.episode, m.version, m.downloadable ? 1 : 0, m.restore ? 1 : 0, m.replaces ? 1 : 0, m.episode_status, pendingDownloads.has(pendingKey(showId, m.title)) ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${m.episode}${m.version > 1 ? ` · v${m.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(m.display_title && m.display_title !== m.title ? `${m.display_title}\n${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
             <span class="shrink-0 w-24 h-7 flex items-center justify-end">
@@ -1492,20 +1502,20 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                     : 'Download this release now. It is tracked like any other episode.'))
                 : `<span class="text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
             </span>
-          </li>`).join('');
-        const elsewhere = feed ? (feed.other_feeds || []) : [];
-        const feedName = escapeHtml(data.feed_name || 'the assigned feed');
-        const emptyFeedText = elsewhere.length
-          ? `Nothing in ${feedName} matches this show. Found in ${elsewhere.map(f => `${escapeHtml(f.feed_name)} (${f.count})`).join(', ')}. Change the feed to use ${elsewhere.length === 1 ? 'it' : 'one of them'}.`
-          : 'Nothing in the feed matches this show right now.';
+          </li>`;
+        const feedRows = groups.map(g => groupHeader(g) + g.matches.map(m => matchRow(g, m)).join('')).join('');
+        const emptyFeedText = 'Nothing in any feed matches this show right now. Try Search older.';
         return `
           <div class="flex-1 min-h-0 flex flex-col gap-3">
             <div class="flex items-center justify-between gap-3">
               <div class="seg">
                 <button type="button" id="show-tab-episodes" onclick="setShowListTab('episodes')" class="${showListTab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
-                <button type="button" id="show-tab-feed" onclick="setShowListTab('feed')" class="${showListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">In feed</button>
+                <button type="button" id="show-tab-feed" onclick="setShowListTab('feed')" class="${showListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Releases</button>
               </div>
-              <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} in feed` : 'checking feed…'}</span>
+              <span class="flex items-center gap-3">
+                <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} release${matches.length === 1 ? '' : 's'}` : 'checking feed…'}</span>
+                <button type="button" onclick="searchPastReleases(this)" class="text-xs text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>
+              </span>
             </div>
             <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${showListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
             <div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${showListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? emptyFeedText : loadingText)}</div>
@@ -1603,7 +1613,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       try {
         result = await apiFetch(`/api/shows/${showId}/feed-matches`);
       } catch (err) {
-        result = { matched_articles: [], feed_matches: [] };
+        result = { matched_articles: [], feed_groups: [] };
       }
       if (currentInspectedShowId !== showId) return;
       showFeedState = result;
@@ -2404,9 +2414,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           <button type="button" onclick="showTriggerRediscover()" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
            Reset to auto-discover
           </button>
-          <button type="button" onclick="searchPastReleases(this)" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">
+          ${isDirect ? '' : `<button type="button" onclick="searchPastReleases(this)" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">
            Search past releases
-          </button>
+          </button>`}
          </div>
         </div>`;
 
@@ -2632,6 +2642,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       if (currentInspectedShowId === showId) loadShowPageBody(showId, false);
     }
 
+    // Moves the show to a feed that carries its releases. The save does the rest:
+    // the lock confirmation, the canceled-downloads note and the pin.
+    function useFeedFromReleases(feedId) {
+      const select = document.getElementById('show-feed-id');
+      if (!select) return;
+      select.value = String(feedId);
+      return saveShowPage();
+    }
+
     function searchPastReleases(btn) {
       const showId = currentInspectedShowId;
       if (!showId) return;
@@ -2646,7 +2665,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               : `Searched the feeds for episode ${episodes}; nothing found.`,
             data.added ? 'success' : 'info'
           );
-          if (data.added && currentInspectedShowId === showId) loadShowPageBody(showId, false);
+          if (data.added && currentInspectedShowId === showId) {
+            setShowListTab('feed');
+            await refreshShowLists(showId);
+          }
         } catch (err) {
           showToast(`Search failed: ${err.message || err}`, 'error');
         } finally {

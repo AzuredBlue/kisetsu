@@ -2183,14 +2183,19 @@ def _manual_candidates(
     settings: Settings,
     show: Monitored,
     articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    feeds: Optional[List[Feed]] = None,
 ) -> List[Tuple[Feed, Dict[str, Any], Dict[str, Any], int, int, int, Episode, _GrabContext]]:
     """Every feed article the grabber would accept for ``show``, with its episode.
 
     Reads only the feeds the show may use (so the feed lock is honoured) and never
-    writes: the mapping is resolved with ``learn=False``.
+    writes: the mapping is resolved with ``learn=False``. ``feeds`` replaces that
+    set, for listing what other feeds carry; nothing is ever grabbed from them.
     """
-    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
-    candidate_feeds = _grab_feeds(session, show, feeds)
+    if feeds is None:
+        all_feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+        candidate_feeds = _grab_feeds(session, show, all_feeds)
+    else:
+        candidate_feeds = feeds
     if not candidate_feeds:
         return []
     if articles_by_url is None:
@@ -2234,35 +2239,67 @@ def direct_feed_matches(
     limit: int = 30,
     articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Releases in the show's feed that the direct engine recognises, for the UI."""
-    matches = []
-    for feed, article, _parsed, _raw, episode_number, version, episode, _context in _manual_candidates(
-        session, qbit, settings, show, articles_by_url,
-    ):
-        replaces = _other_source(episode, feed, article)
-        refusal = _manual_refusal(session, episode, version, replaces)
-        title = article.get("title", "")
-        info_hash = str(article.get("infoHash") or "").lower()
-        # Once the release is downloaded, name it as the ledger (and qBittorrent) does.
-        is_this_release = bool(episode.release_title) and (
-            bool(info_hash and episode.torrent_hash and episode.torrent_hash.lower() == info_hash)
-            or same_release(episode.release_title, title)
-        )
-        matches.append({
-            "title": title,
-            "display_title": episode.release_title if is_this_release else title,
-            "feed_id": feed.id,
-            "feed_name": feed.qbit_feed_name,
-            "episode": episode_number,
-            "version": version,
-            "episode_status": episode.status.value,
-            "restore": _is_restore(episode),
-            "replaces": replaces and refusal is None,
-            "downloadable": refusal is None,
-        })
-        if len(matches) >= limit:
-            break
-    return matches
+    """Releases the direct engine recognises, grouped by feed, for the UI.
+
+    The feeds the show may read come first, each with a ``role`` (``locked``,
+    ``picked``, ``assigned`` or ``discovery``) and its releases ready to download.
+    Other feeds that carry releases follow as ``other`` groups, listed for
+    information only: nothing is offered to download from them, because that
+    would bypass the feed lock. Feeds with no releases are left out.
+    """
+    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+    if articles_by_url is None:
+        articles_by_url = cached_articles(session)
+    own = _grab_feeds(session, show, feeds)
+    own_ids = {feed.id for feed in own}
+
+    def role_of(feed: Feed) -> str:
+        if feed.id == show.learned_feed_id:
+            return "locked"
+        if show.feed_pinned and feed.id == show.current_feed_id:
+            return "picked"
+        return "assigned" if feed.id == show.current_feed_id else "discovery"
+
+    groups: Dict[int, Dict[str, Any]] = {}
+
+    def add(feed: Feed, role: str, usable: bool, candidates) -> None:
+        for _feed, article, _parsed, _raw, episode_number, version, episode, _context in candidates:
+            group = groups.setdefault(feed.id, {
+                "feed_id": feed.id, "feed_name": feed.qbit_feed_name, "role": role, "usable": usable, "matches": [],
+            })
+            if len(group["matches"]) >= limit:
+                break
+            title = article.get("title", "")
+            if usable:
+                replaces = _other_source(episode, feed, article)
+                refusal = _manual_refusal(session, episode, version, replaces)
+            else:
+                replaces, refusal = False, "other feed"
+            info_hash = str(article.get("infoHash") or "").lower()
+            # Once the release is downloaded, name it as the ledger (and qBittorrent) does.
+            is_this_release = bool(episode.release_title) and (
+                bool(info_hash and episode.torrent_hash and episode.torrent_hash.lower() == info_hash)
+                or same_release(episode.release_title, title)
+            )
+            group["matches"].append({
+                "title": title,
+                "display_title": episode.release_title if is_this_release else title,
+                "feed_id": feed.id,
+                "feed_name": feed.qbit_feed_name,
+                "episode": episode_number,
+                "version": version,
+                "episode_status": episode.status.value,
+                "restore": usable and _is_restore(episode),
+                "replaces": bool(replaces) and refusal is None,
+                "downloadable": refusal is None,
+            })
+
+    for feed, *rest in _manual_candidates(session, qbit, settings, show, articles_by_url):
+        add(feed, role_of(feed), True, [(feed, *rest)])
+    for feed in feeds:
+        if feed.id not in own_ids:
+            add(feed, "other", False, _manual_candidates(session, qbit, settings, show, articles_by_url, feeds=[feed]))
+    return list(groups.values())
 
 
 def restore_episode(
@@ -2298,38 +2335,6 @@ def restore_episode(
         return manual_grab(session, qbit, settings, show, title, fuzzy=True, expect_episode=episode.episode_number)
     except ValueError as e:
         raise ValueError(f"Not in qBittorrent. {e}") from e
-
-
-def releases_in_other_feeds(
-    session: Session,
-    show: Monitored,
-    articles_by_url: Dict[str, List[Dict[str, Any]]],
-) -> List[Dict[str, Any]]:
-    """Feeds the show may not read that still carry releases that match it.
-
-    A show locked or pinned to one feed only ever sees that feed, so when it is
-    empty this says where the releases are instead.
-    """
-    feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
-    own = {feed.id for feed in _grab_feeds(session, show, feeds)}
-    matcher = _show_matcher(show)
-    parsed_cache: Dict[str, Dict[str, Any]] = {}
-    found = []
-    for feed in feeds:
-        if feed.id in own:
-            continue
-        count = 0
-        for article in articles_by_url.get(feed.qbit_feed_url, []):
-            title = article.get("title", "")
-            if not title:
-                continue
-            matched, parsed = _decide(show, title, matcher, parsed_cache)
-            raw_episode = parsed.get("episode")
-            if matched and raw_episode is not None and raw_episode > 0:
-                count += 1
-        if count:
-            found.append({"feed_id": feed.id, "feed_name": feed.qbit_feed_name, "count": count})
-    return found
 
 
 def manual_grab(
