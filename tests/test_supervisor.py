@@ -772,6 +772,45 @@ def _direct_supervisor(session, settings, qbit):
     return Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
 
 
+def test_direct_show_with_no_match_is_not_given_a_guessed_feed():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Medalist Movie",
+            aliases_json='["Medalist Movie"]',
+            status=MonitoredStatus.UNCONFIRMED,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": []},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        logs = supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+        session.refresh(show)
+
+        # Nothing carries the show, so no feed is picked: the grabber keeps
+        # discovering across every feed instead of reading only a guessed one.
+        assert show.current_feed_id is None
+        assert show.status == MonitoredStatus.UNCONFIRMED
+        assert not any("Assigned" in line for line in logs)
+        assert session.exec(select(RuleHistory)).all() == []
+    engine.dispose()
+
+
 def test_direct_show_moves_to_the_feed_that_carries_its_release():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)

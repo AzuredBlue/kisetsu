@@ -349,29 +349,18 @@ class Supervisor:
                     err_msg = f"Failed creating rule for '{show.display_name}': {e}"
                     logger.error(err_msg)
             else:
+                if not create_qbit_rules:
+                    # Direct mode: nothing matched, so there is nothing to assign. The
+                    # grabber discovers across every feed in priority order while
+                    # current_feed_id is None; a guessed feed would narrow it to one.
+                    continue
                 target_feed = top_feed
                 if top_feed.id in excluded:
                     avail = [f for f in all_feeds if f.id not in excluded]
                     target_feed = avail[0] if avail else None
 
                 if target_feed:
-                    if create_qbit_rules and is_show_rule_deferred(show):
-                        continue
-                    if not create_qbit_rules:
-                        show.current_feed_id = target_feed.id
-                        show.status = MonitoredStatus.UNCONFIRMED
-                        self.session.add(show)
-                        self.session.add(RuleHistory(
-                            monitored_id=show.id,
-                            feed_id=target_feed.id,
-                            created_at=utc_now(),
-                            outcome=RuleOutcome.PENDING,
-                            note=f"Assigned to #{target_feed.priority} feed '{target_feed.qbit_feed_name}' (direct mode)",
-                        ))
-                        self.session.commit()
-                        msg = f"Assigned '{show.display_name}' to Priority #{target_feed.priority} feed '{target_feed.qbit_feed_name}' (direct mode)"
-                        logger.info(msg)
-                        logs.append(msg)
+                    if is_show_rule_deferred(show):
                         continue
                     try:
                         rule_name = create_or_update_rule(
