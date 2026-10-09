@@ -2413,3 +2413,19 @@ def test_the_page_draws_a_bar_for_unknown_totals_and_warns_before_dropping_downl
     assert "set-backfill-window" not in page
 
 
+def test_the_page_runs_one_view_transition_at_a_time_and_keeps_heavy_work_out_of_it(client):
+    page = client.get("/").text
+
+    # A second transition (Escape while opening) waits for the first one's clean-up.
+    assert "async function runPageTransition(" in page
+    assert "previous.transition.skipTransition();" in page
+    assert "await previous.done;" in page
+    assert "if (activeTransition === current) activeTransition = null;" in page
+    # A prefetched show body is drawn inside the swap, never held back until the animation ends.
+    assert "afterTransition" not in page and "body-enter" not in page
+    assert "if (withSkeleton && pending.ready && allFeeds.length) {" in page
+    # The grid is not rebuilt unchanged.
+    assert "function setGridHtml(grid, html)" in page
+    # Only the content and the toasts are captured separately; the blur art is drawn small.
+    assert "view-transition-name: sidebar" not in page and "view-transition-name: topbar" not in page
+    assert ".blur-art { position: absolute;" in page

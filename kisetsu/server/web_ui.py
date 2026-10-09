@@ -28,6 +28,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             raised2: 'rgb(var(--raised2) / <alpha-value>)',
             'line-soft': 'rgb(var(--line-soft) / <alpha-value>)',
             line: 'rgb(var(--line) / <alpha-value>)',
+            'line-hover': 'rgb(var(--line-hover) / <alpha-value>)',
             'line-strong': 'rgb(var(--line-strong) / <alpha-value>)',
             accent: { DEFAULT: 'rgb(var(--ac) / <alpha-value>)', strong: 'rgb(var(--ac-strong) / <alpha-value>)', soft: 'rgb(var(--ac-soft) / <alpha-value>)' },
             accent2: 'rgb(var(--ac2) / <alpha-value>)',
@@ -93,12 +94,13 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
        pause/delete buttons fade in, both with the same timing. */
     .show-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
-    /* The poster zoom grows the layer's box instead of using a transform. A transform is
-       rasterised as its own layer, and its clipped edge landed on a sub-pixel (card
-       heights are fractional) and showed as a seam. -2% on every side is a ~1.04 zoom. */
-    .poster-zoom { transition: inset .3s ease-out; }
-    .group:hover .poster-zoom { inset: -2%; }
-    .status-chip { position: relative; }
+    /* The poster zoom is a transform, so the browser only scales an existing layer instead
+       of laying the image out and resampling it on every frame. The layer bleeds 1px past
+       the card so the clipped edge of the scaled layer never lands on a sub-pixel (card
+       heights are fractional) and shows as a seam. */
+    .poster-zoom { inset: -1px !important; transition: transform .3s cubic-bezier(.2, .8, .2, 1); backface-visibility: hidden; }
+    .group:hover .poster-zoom { transform: scale(1.04); }
+    .status-chip { position: relative; contain: layout style; }
     .status-chip::before { content: ''; position: absolute; inset: -10px; }
     .status-chip .status-label { max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; margin-left: 0; transition: max-width .2s ease-out, opacity .2s ease-out, margin .2s ease-out; }
     .status-chip:hover .status-label, .status-chip:focus-visible .status-label { max-width: 5rem; opacity: 1; margin-left: 0.375rem; }
@@ -107,7 +109,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     #tab-show { background-color: rgb(var(--bg)); }
     body.show-open #sidebar .btn:hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
-    #tab-show .card { background-color: rgb(var(--surface) / .85); border-color: rgb(var(--line)); backdrop-filter: blur(10px); }
+    #tab-show .card { background-color: rgb(var(--surface) / .92); border-color: rgb(var(--line)); }
     #tab-show .field, #tab-show .seg { background-color: rgb(var(--field)); border-color: rgb(var(--line)); }
     #tab-show .field:focus { border-color: rgb(var(--ac)); box-shadow: 0 0 0 3px rgb(var(--ac) / .2); }
     #tab-show .bg-canvas { background-color: rgb(var(--field) / .85); }
@@ -116,6 +118,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         #tab-show .btn:not(.btn-primary):not(.btn-danger):hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
     #tab-show .section-title { color: rgb(var(--ac-soft)); }
     #tab-show #show-save-bar { border-color: rgb(var(--ac) / .5); background-color: rgb(var(--surface) / .95); }
+    #show-backdrop-art, #show-banner-art { contain: paint; will-change: transform; }
     #show-backdrop-art { -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); }
     #show-banner-art { -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); }
     #tab-show ::selection { background: rgb(var(--ac) / .35); color: #fff; }
@@ -125,25 +128,36 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     @keyframes vt-drop { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateY(8px); } }
     @keyframes vt-fade-in { from { opacity: 0; } to { opacity: 1; } }
     @keyframes vt-fade-out { from { opacity: 1; } to { opacity: 0; } }
-    .page-enter { animation: vt-rise .26s ease-out; }
-    #sidebar { view-transition-name: sidebar; }
-    #main-shell > header { view-transition-name: topbar; }
+    .page-enter { animation: vt-rise .26s cubic-bezier(.2, .8, .2, 1); }
     #main-scroll-container, #tab-show { view-transition-name: content; }
     #toast-container { view-transition-name: toasts; }
     ::view-transition-group(toasts) { animation: none; }
     ::view-transition-old(toasts) { display: none; }
     ::view-transition-new(toasts) { animation: none; }
-    html.vt-open::view-transition-old(content) { animation: vt-fade-out .28s ease-out both; }
-    html.vt-open::view-transition-new(content) { animation: vt-rise .28s ease-out both; }
-    html.vt-close::view-transition-old(content) { animation: vt-drop .28s ease-out both; }
-    html.vt-close::view-transition-new(content) { animation: vt-fade-in .28s ease-out both; }
+    html.vt-open::view-transition-old(content) { animation: vt-fade-out .28s cubic-bezier(.2, .8, .2, 1) both; }
+    html.vt-open::view-transition-new(content) { animation: vt-rise .28s cubic-bezier(.2, .8, .2, 1) both; }
+    html.vt-close::view-transition-old(content) { animation: vt-drop .28s cubic-bezier(.2, .8, .2, 1) both; }
+    html.vt-close::view-transition-new(content) { animation: vt-fade-in .28s cubic-bezier(.2, .8, .2, 1) both; }
     ::view-transition-group(show-poster) { animation-duration: .32s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
+    /* Keep the transition cheap to composite: the page background, sidebar and top bar do
+       not change, so they are no longer separate snapshots (two fewer captures per
+       transition) and the root is shown as it is instead of cross-fading two full copies; the page content blends normally rather than additively; and the poster keeps
+       its aspect while it morphs instead of being stretched and resampled. */
+    ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+    ::view-transition-old(root) { display: none; }
+    ::view-transition-old(content), ::view-transition-new(content) { mix-blend-mode: normal; }
+    ::view-transition-old(show-poster), ::view-transition-new(show-poster) { height: 100%; object-fit: cover; }
+    /* The blurred art is drawn small and scaled up: a blur costs by area, so this gives
+       the same soft look for about 1/64 of the work. */
+    .blur-art { position: absolute; left: 0; top: 0; width: 12.5%; height: 12.5%; object-fit: cover; transform-origin: 0 0; }
+    .blur-art-backdrop { transform: scale(8.8); filter: blur(5px) saturate(1.5); opacity: .6; }
+    .blur-art-banner { transform: scale(10); filter: blur(5px); opacity: .6; }
 
     @media (prefers-reduced-motion: reduce) {
       ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
       .page-enter { animation: none; }
       .group:hover { transform: none !important; }
-      .group:hover .poster-zoom { inset: 0; }
+      .group:hover .poster-zoom { transform: none; }
     }
 
     @media (hover: none) {
@@ -649,7 +663,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         info: 'bg-surface border-line text-zinc-200',
       }[type] || 'bg-surface border-line text-white';
 
-      toast.className = `border rounded-xl px-3.5 py-2.5 text-[13px] shadow-xl shadow-black/40 transition-all duration-200 translate-y-2 opacity-0 flex items-center justify-between gap-3 ${colors}`;
+      toast.className = `border rounded-xl px-3.5 py-2.5 text-[13px] shadow-xl shadow-black/40 transition-[transform,opacity] duration-200 translate-y-2 opacity-0 flex items-center justify-between gap-3 ${colors}`;
       toast.innerHTML = `<span>${escapeHtml(message)}</span><button onclick="this.parentElement.remove()" class="text-zinc-400 hover:text-white text-xs">✕</button>`;
 
       document.getElementById('toast-container').appendChild(toast);
@@ -814,6 +828,15 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return copy;
     }
 
+    // A card grid is only rebuilt when its markup changed, so coming back from a show
+    // (or a refresh that found nothing new) does not recreate every poster.
+    const gridDrawn = new Map();
+    function setGridHtml(grid, html) {
+      if (gridDrawn.get(grid.id) === html) return;
+      gridDrawn.set(grid.id, html);
+      grid.innerHTML = html;
+    }
+
     function renderShows() {
       updateSortButtonStyles();
       // Completed shows sit in their own section, so they are pulled out first
@@ -832,9 +855,9 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const gridPlanned = document.getElementById('grid-planned');
       const gridCompleted = document.getElementById('grid-completed');
 
-      gridReleasing.innerHTML = releasingShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No currently releasing anime.</div>';
-      gridPlanned.innerHTML = plannedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No planned upcoming anime.</div>';
-      gridCompleted.innerHTML = completedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No completed anime.</div>';
+      setGridHtml(gridReleasing, releasingShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No currently releasing anime.</div>');
+      setGridHtml(gridPlanned, plannedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No planned upcoming anime.</div>');
+      setGridHtml(gridCompleted, completedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No completed anime.</div>');
 
       // Releasing is always shown so the page is never blank; the trailing
       // sections are noise when they have nothing in them.
@@ -946,7 +969,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         : '';
 
       return `
-        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:shadow-md hover:shadow-black/30 rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-[transform,box-shadow] duration-150 ease-out">
+        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:-translate-y-1 hover:border-line-hover rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-[transform,border-color] duration-150 ease-out">
 
           <div data-poster-id="${show.id}" class="relative w-full aspect-[2/3] bg-canvas overflow-hidden">
             ${posterImg}
@@ -1571,6 +1594,12 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         episodes: apiFetch(`/api/shows/${showId}/episodes`).catch(() => []),
       };
       entry.rule.catch(() => {});
+      // Once both have arrived the page can be drawn without waiting.
+      Promise.all([entry.rule, entry.episodes]).then(([data, episodes]) => {
+        entry.data = data;
+        entry.episodeList = Array.isArray(episodes) ? episodes : [];
+        entry.ready = true;
+      }).catch(() => {});
       return entry;
     }
 
@@ -1654,8 +1683,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     function showBannerMarkup(show) {
       const src = show.banner_image || show.cover_image;
       if (!src) return '';
-      const cls = show.banner_image ? 'object-cover' : 'object-cover scale-125 blur-2xl opacity-60';
-      return `<img src="${escapeHtml(src)}" alt="" class="absolute inset-0 w-full h-full ${cls}" onerror="this.onerror=null;this.style.display='none'">`;
+      if (!show.banner_image) {
+        return `<img src="${escapeHtml(src)}" alt="" class="blur-art blur-art-banner" onerror="this.onerror=null;this.style.display='none'">`;
+      }
+      return `<img src="${escapeHtml(src)}" alt="" class="absolute inset-0 w-full h-full object-cover" onerror="this.onerror=null;this.style.display='none'">`;
     }
 
     // Drawn from the list data the page already has, so it appears instantly; the
@@ -1694,7 +1725,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         art.innerHTML = showBannerMarkup(show);
         const backdropSrc = show.banner_image || show.cover_image;
         backdrop.innerHTML = backdropSrc
-          ? `<img src="${escapeHtml(backdropSrc)}" alt="" class="w-full h-full object-cover scale-110 blur-3xl opacity-60 saturate-150" onerror="this.onerror=null;this.style.display='none'">`
+          ? `<img src="${escapeHtml(backdropSrc)}" alt="" class="blur-art blur-art-backdrop" onerror="this.onerror=null;this.style.display='none'">`
           : '';
       }
 
@@ -2005,14 +2036,26 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     // `fromEl` into whatever `toEl()` returns once the swap has happened. `kind` is
     // 'open' or 'close' and picks the direction of the page motion. Without support
     // the swap happens and the incoming section animates with plain CSS.
+    //
+    // Only one transition runs at a time. A second request (Escape while the page is
+    // still opening, a click while it is closing) skips the running one, waits for
+    // its clean-up to finish and only then names the poster and starts its own.
+    // Starting both at once let the first one's clean-up clear the name the second
+    // had just set, so the exit lost its poster morph.
     let renderHold = null;
+    let activeTransition = null;
 
-    function runPageTransition(swap, fromEl, toEl, kind) {
+    async function runPageTransition(swap, fromEl, toEl, kind) {
       const NAME = 'show-poster';
       const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      if (activeTransition) {
+        const previous = activeTransition;
+        previous.transition.skipTransition();
+        await previous.done;
+      }
       if (reduce) {
         swap();
-        return Promise.resolve();
+        return;
       }
       if (!document.startViewTransition) {
         swap();
@@ -2021,13 +2064,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         void entering.offsetWidth;
         entering.classList.add('page-enter');
         setTimeout(() => entering.classList.remove('page-enter'), 400);
-        return Promise.resolve();
+        return;
       }
       const root = document.documentElement;
       if (fromEl && fromEl.offsetParent === null) fromEl = null;
       if (fromEl) fromEl.style.viewTransitionName = NAME;
       root.classList.add(`vt-${kind}`);
       let target = null;
+      const current = {};
       const transition = document.startViewTransition(() => {
         if (fromEl) fromEl.style.viewTransitionName = '';
         swap();
@@ -2035,16 +2079,19 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         if (target && target.offsetParent !== null) target.style.viewTransitionName = NAME;
         else target = null;
       });
-      const done = transition.finished.catch(() => {}).then(() => {
+      current.transition = transition;
+      current.done = transition.finished.catch(() => {}).then(() => {
         root.classList.remove(`vt-${kind}`);
         if (fromEl) fromEl.style.viewTransitionName = '';
         if (target) target.style.viewTransitionName = '';
-        if (renderHold === done) renderHold = null;
+        if (activeTransition === current) activeTransition = null;
+        if (renderHold === current.done) renderHold = null;
       });
+      activeTransition = current;
       // loadShows redraws every card; doing that mid-transition would delete the
       // card being morphed into and cancel the animation, so it waits.
-      renderHold = done;
-      return done;
+      renderHold = current.done;
+      return current.done;
     }
 
     function openShowPage(showId, opts = {}) {
@@ -2092,10 +2139,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     }
 
     async function loadShowPageBody(showId, withSkeleton) {
+      const pending = takeShowFetch(showId);
+      // Prefetched on hover: draw the body right away, inside the page swap, so it
+      // is part of the first frame of the animation.
+      if (withSkeleton && pending.ready && allFeeds.length) {
+        renderShowBody(showId, pending.data, pending.episodeList);
+        return;
+      }
       if (withSkeleton) showBodySkeleton();
       try {
         // The rule panel and the episode ledger are independent, so fetch both.
-        const pending = takeShowFetch(showId);
         const [data, episodes] = await Promise.all([pending.rule, pending.episodes]);
         if (!allFeeds.length) {
           try {
