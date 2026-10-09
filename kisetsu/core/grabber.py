@@ -1872,11 +1872,27 @@ def evaluate_and_grab_releases(
         discovering = show.current_feed_id is None and show.learned_feed_id is None
         top_feed = candidate_feeds[0] if candidate_feeds else None
         grabbed_from: Optional[int] = None
-        has_feed_articles = False
-        for feed in candidate_feeds:
+        has_feed_articles = any(articles_by_url.get(feed.qbit_feed_url) for feed in candidate_feeds)
+        feeds_to_read = candidate_feeds
+        if discovering and len(candidate_feeds) > 1:
+            # Only the best-ranked feed that carries a release for a wanted episode takes
+            # part in the grace window. Two lower-ranked feeds carrying the same release
+            # would otherwise take the single candidate slot from each other every cycle,
+            # and neither would ever finish its window.
+            for feed in candidate_feeds:
+                _, carried = _resolve_feed_articles(
+                    session, show, feed, articles_by_url.get(feed.qbit_feed_url, []), matcher, parsed_cache,
+                    latest_aired, target_count, episodes_by_number, failed_versions,
+                    first_air, tolerance_hours, learn=False,
+                )
+                if any(
+                    episodes_by_number[number].status in (EpisodeStatus.WANTED, EpisodeStatus.MISSED)
+                    for number in carried
+                ):
+                    feeds_to_read = [feed]
+                    break
+        for feed in feeds_to_read:
             feed_articles = articles_by_url.get(feed.qbit_feed_url, [])
-            if feed_articles:
-                has_feed_articles = True
             if grabbed_from is not None:
                 break
             # Resolve every article first so a refresh carrying v1 and v2 of the

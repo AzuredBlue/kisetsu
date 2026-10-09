@@ -2987,3 +2987,41 @@ def test_a_release_off_the_schedule_or_naming_another_stage_still_needs_its_mark
     assert urls == []
 
 
+def test_two_lower_ranked_feeds_carrying_a_release_do_not_block_each_others_adoption():
+    """Discovery keeps one candidate; two feeds both below the top one must not keep replacing it."""
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    top = Feed(id=1, qbit_feed_name="Top", qbit_feed_url="https://top.example/rss", priority=1)
+    second = Feed(id=2, qbit_feed_name="Second", qbit_feed_url="https://second.example/rss", priority=2)
+    third = Feed(id=3, qbit_feed_name="Third", qbit_feed_url="https://third.example/rss", priority=3)
+    session.add_all([settings, top, second, third])
+    show = _show(session, total_episodes=12, next_airing_episode=2, next_airing_at=datetime.now(timezone.utc) + timedelta(days=6))
+    for episode in sync_show_episodes(session, show):
+        episode.air_at = datetime.now(timezone.utc) - timedelta(hours=30)
+        session.add(episode)
+    session.commit()
+    published = format_datetime(datetime.now(timezone.utc) - timedelta(hours=2))
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "Top": {"url": top.qbit_feed_url, "articles": []},
+        "Second": {"url": second.qbit_feed_url, "articles": [{
+            "id": "second-1", "title": "Sousou no Frieren - 01 [1080p] Second", "torrentURL": "magnet:second", "date": published}]},
+        "Third": {"url": third.qbit_feed_url, "articles": [{
+            "id": "third-1", "title": "Sousou no Frieren - 01 [1080p] Third", "torrentURL": "magnet:third", "date": published}]},
+    }
+    feeds = [top, second, third]
+
+    evaluate_and_grab_releases(session, qbit, settings, feeds, mode="direct")
+    session.refresh(show)
+    assert qbit.add_torrent.call_count == 0
+    assert show.candidate_feed_id == second.id
+
+    # The window runs from the release's own publish time, so the next pass adopts the
+    # best-ranked feed that carries it; the third feed must not have taken its place.
+    evaluate_and_grab_releases(session, qbit, settings, feeds, mode="direct")
+
+    assert [call.kwargs.get("urls") for call in qbit.add_torrent.call_args_list] == ["magnet:second"]
+    session.close()
+    engine.dispose()
+
+
