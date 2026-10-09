@@ -2403,3 +2403,13 @@ def test_the_show_list_counts_unfinished_downloads_per_feed(client, session, moc
     assert entry["unfinished_downloads_by_feed"] == {"1": 1}
 
 
+def test_the_page_draws_a_bar_for_unknown_totals_and_warns_before_dropping_downloads(client):
+    page = client.get("/").text
+
+    assert "function progressFraction(show)" in page
+    assert page.count("progressFraction(show)") >= 3  # defined once, used by the card and the header
+    assert "unfinished_downloads_by_feed" in page
+    assert "will be canceled and fetched again from the new one" in page
+    assert "set-backfill-window" not in page
+
+

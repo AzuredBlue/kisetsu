@@ -874,6 +874,22 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return cd ? `in ${cd}` : (dateStr || '');
     }
 
+    // How full the progress bar is. With a known season total it is downloaded/total.
+    // While the total is unknown it is downloaded out of the episodes out so far plus the
+    // one still to come, so a running show never looks finished and a backlog shows.
+    function progressFraction(show) {
+      const downloaded = show.downloaded_episodes_count || 0;
+      const total = show.total_episodes || 0;
+      if (total > 0) return Math.min(1, downloaded / total);
+      const next = show.next_airing_episode;
+      let aired = downloaded;
+      if (next) {
+        const at = show.next_airing_at ? Date.parse(show.next_airing_at) : NaN;
+        aired = (!isNaN(at) && at <= Date.now()) ? next : next - 1;
+      }
+      return Math.min(1, downloaded / (Math.max(aired, downloaded) + 1));
+    }
+
     function renderShowCard(show) {
       const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
 
@@ -882,14 +898,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const total = show.total_episodes || 0;
       const { epLabel, airInfo, airClass, countdownAttr } = showAirSummary(show, statusKey);
 
-      // The count is shown whenever something is downloaded; the bar only when the
-      // season total is known, since without it there is nothing to fill against.
+      // The count is shown whenever something is downloaded. The bar also covers a show
+      // whose total is unknown, filling against the episodes that are out (progressFraction).
       const showProgress = downloaded > 0 || total > 0;
-      const showBar = total > 0;
-      const pct = showBar ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+      const showBar = total > 0 || downloaded > 0 || !!show.next_airing_episode;
+      const pct = showBar ? Math.round(progressFraction(show) * 100) : 0;
       const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
       const progressText = `${downloaded}/${total || '?'}`;
-      const hasOverlay = epLabel || airInfo || showProgress;
+      const hasOverlay = epLabel || airInfo || showProgress || showBar;
 
       const name = escapeHtml(show.display_name);
       const isDimmed = isPaused || isCompleted;
@@ -1698,8 +1714,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       const downloaded = show.downloaded_episodes_count || 0;
       const total = show.total_episodes || 0;
-      const showProgress = downloaded > 0 || total > 0;
-      const pct = total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+      const showProgress = downloaded > 0 || total > 0 || !!show.next_airing_episode;
+      const pct = Math.round(progressFraction(show) * 100);
       const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
@@ -1745,7 +1761,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         </div>
         ${showProgress ? `
         <div class="flex items-center gap-3 max-w-sm mt-3">
-          ${total > 0 ? `<div class="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>` : ''}
+          <div class="flex-1 h-1.5 rounded-full bg-white/10 overflow-hidden"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>
           <span class="text-xs tabular-nums text-zinc-400">${downloaded}/${total || '?'} downloaded</span>
         </div>` : ''}
         ${engineLine ? `<div class="mt-3">${engineLine}</div>` : ''}`;
