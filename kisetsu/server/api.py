@@ -309,62 +309,145 @@ def _toggle_pause_show(show_id: int, session: Session, qbit: QBitClient):
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
 
-    mode = normalized_download_mode(session)
-    direct = uses_direct_engine(mode)
-    owns_rules = mode == "rules"
-
     if show.status == MonitoredStatus.PAUSED:
-        if show.status_before_pause:
-            try:
-                show.status = MonitoredStatus(show.status_before_pause)
-            except ValueError:
-                show.status = MonitoredStatus.UNCONFIRMED
-        elif show.current_feed_id and show.matched_release_group:
-            show.status = MonitoredStatus.FIXED
-        else:
-            show.status = MonitoredStatus.UNCONFIRMED
-        show.status_before_pause = None
-
-        if not direct and show.qbit_rule_name and owns_rules:
-            try:
-                rules = qbit.get_rss_rules()
-                if show.qbit_rule_name in rules:
-                    rdef = rules[show.qbit_rule_name]
-                    rdef["enabled"] = True
-                    qbit.set_rss_rule(show.qbit_rule_name, rdef)
-            except Exception as e:
-                state.add_log(f"Warning enabling qBit rule for '{show.display_name}': {e}", "WARNING")
-
-        session.add(show)
+        _resume_show(session, qbit, show)
         session.commit()
         state.add_log(f"Resumed show '{show.display_name}'.", "INFO")
         return {"status": "success", "new_status": show.status.value, "message": f"Resumed '{show.display_name}'"}
+    _pause_show(session, qbit, show)
+    session.commit()
+    state.add_log(f"Paused show '{show.display_name}'.", "INFO")
+    return {"status": "success", "new_status": show.status.value, "message": f"Paused '{show.display_name}'"}
+
+
+def _resume_show(session: Session, qbit: QBitClient, show: Monitored) -> None:
+    """Undo a pause; the caller commits."""
+    mode = normalized_download_mode(session)
+    direct = uses_direct_engine(mode)
+    if show.status_before_pause:
+        try:
+            show.status = MonitoredStatus(show.status_before_pause)
+        except ValueError:
+            show.status = MonitoredStatus.UNCONFIRMED
+    elif show.current_feed_id and show.matched_release_group:
+        show.status = MonitoredStatus.FIXED
     else:
-        show.status_before_pause = show.status.value
-        show.status = MonitoredStatus.PAUSED
+        show.status = MonitoredStatus.UNCONFIRMED
+    show.status_before_pause = None
+    show.paused_by_all = False
 
-        if direct:
-            for episode in session.exec(
-                select(Episode).where(Episode.monitored_id == show.id)
-            ).all():
-                try:
-                    cancel_episode_operations(session, qbit, show, episode, "Show paused by user.", keep_added=True)
-                except Exception as e:
-                    state.add_log(f"Warning cancelling operations for '{show.display_name}': {e}", "WARNING")
-        elif show.qbit_rule_name and owns_rules:
+    if not direct and show.qbit_rule_name and mode == "rules":
+        try:
+            rules = qbit.get_rss_rules()
+            if show.qbit_rule_name in rules:
+                rdef = rules[show.qbit_rule_name]
+                rdef["enabled"] = True
+                qbit.set_rss_rule(show.qbit_rule_name, rdef)
+        except Exception as e:
+            state.add_log(f"Warning enabling qBit rule for '{show.display_name}': {e}", "WARNING")
+    session.add(show)
+
+
+def _pause_show(session: Session, qbit: QBitClient, show: Monitored, by_all: bool = False) -> None:
+    """Pause a show and stop what it has in flight; the caller commits."""
+    mode = normalized_download_mode(session)
+    direct = uses_direct_engine(mode)
+    show.status_before_pause = show.status.value
+    show.status = MonitoredStatus.PAUSED
+    show.paused_by_all = by_all
+
+    if direct:
+        for episode in session.exec(
+            select(Episode).where(Episode.monitored_id == show.id)
+        ).all():
             try:
-                rules = qbit.get_rss_rules()
-                if show.qbit_rule_name in rules:
-                    rdef = rules[show.qbit_rule_name]
-                    rdef["enabled"] = False
-                    qbit.set_rss_rule(show.qbit_rule_name, rdef)
+                cancel_episode_operations(session, qbit, show, episode, "Show paused by user.", keep_added=True)
             except Exception as e:
-                state.add_log(f"Warning disabling qBit rule for '{show.display_name}': {e}", "WARNING")
+                state.add_log(f"Warning cancelling operations for '{show.display_name}': {e}", "WARNING")
+    elif show.qbit_rule_name and mode == "rules":
+        try:
+            rules = qbit.get_rss_rules()
+            if show.qbit_rule_name in rules:
+                rdef = rules[show.qbit_rule_name]
+                rdef["enabled"] = False
+                qbit.set_rss_rule(show.qbit_rule_name, rdef)
+        except Exception as e:
+            state.add_log(f"Warning disabling qBit rule for '{show.display_name}': {e}", "WARNING")
+    session.add(show)
 
-        session.add(show)
+
+@router.post("/shows/pause-all")
+def pause_all_shows(session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        count = 0
+        for show in session.exec(select(Monitored)).all():
+            if show.status in (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED):
+                continue
+            _pause_show(session, qbit, show, by_all=True)
+            count += 1
+        settings = get_settings(session)
+        settings.all_paused = True
+        session.add(settings)
         session.commit()
-        state.add_log(f"Paused show '{show.display_name}'.", "INFO")
-        return {"status": "success", "new_status": show.status.value, "message": f"Paused '{show.display_name}'"}
+        state.add_log(f"Paused everything ({count} shows).", "INFO")
+        return {"status": "success", "paused": count, "message": f"Paused {count} show(s)."}
+    finally:
+        release_cycle()
+
+
+@router.post("/shows/resume-all")
+def resume_all_shows(session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        count = 0
+        for show in session.exec(select(Monitored).where(Monitored.paused_by_all == True)).all():  # noqa: E712
+            if show.status == MonitoredStatus.PAUSED:
+                _resume_show(session, qbit, show)
+                count += 1
+            else:
+                show.paused_by_all = False
+                session.add(show)
+        settings = get_settings(session)
+        settings.all_paused = False
+        session.add(settings)
+        session.commit()
+        state.add_log(f"Resumed everything ({count} shows).", "INFO")
+    finally:
+        release_cycle()
+    state.trigger_immediate_cycle()
+    return {"status": "success", "resumed": count, "message": f"Resumed {count} show(s)."}
+
+
+@router.post("/shows/auto-discover-all")
+def auto_discover_all_shows(session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    """Send every show back to Auto-Discover, except completed ones and shows whose feed is locked."""
+    require_exclusive_cycle()
+    try:
+        reset = locked = failed = 0
+        for show in session.exec(select(Monitored)).all():
+            if show.status == MonitoredStatus.COMPLETED:
+                continue
+            if show.learned_feed_id is not None:
+                locked += 1
+                continue
+            try:
+                _edit_show(show.id, EditShowRequest(current_feed_id=0), session, qbit)
+                reset += 1
+            except Exception as e:
+                session.rollback()
+                failed += 1
+                state.add_log(f"Auto-Discover all: '{show.display_name}' failed: {e}", "WARNING")
+        state.add_log(f"Auto-Discover all: {reset} reset, {locked} kept on a locked feed, {failed} failed.", "INFO")
+    finally:
+        release_cycle()
+    state.trigger_immediate_cycle()
+    message = f"Reset {reset} show(s) to Auto-Discover."
+    if locked:
+        message += f" {locked} kept their locked feed."
+    if failed:
+        message += f" {failed} failed (see logs)."
+    return {"status": "success", "reset": reset, "locked": locked, "failed": failed, "message": message}
 
 
 @router.get("/shows/{show_id}/episodes")
@@ -1756,6 +1839,7 @@ def get_system_status(session: Session = Depends(get_db)):
     return {
         "daemon_active": state.daemon_active,
         "download_mode": normalized_download_mode(session),
+        "all_paused": bool(get_settings(session).all_paused),
         "wanted_episodes": wanted,
         "is_running_cycle": state.is_running_cycle,
         "cycle_label": _CYCLE_LABELS.get(cycle_owner or "", "background check") if running else None,

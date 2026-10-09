@@ -401,6 +401,7 @@ def init_db(engine=None):
             ("candidate_feed_id", "INTEGER"),
             ("candidate_feed_since", "DATETIME"),
             ("custom_aliases_json", "VARCHAR"),
+            ("paused_by_all", "BOOLEAN DEFAULT 0"),
         ]:
             if col_name not in monitored_cols:
                 session.exec(text(f"ALTER TABLE monitored ADD COLUMN {col_name} {col_type}"))
@@ -436,6 +437,9 @@ def init_db(engine=None):
         session.exec(text("UPDATE settings SET download_mode = 'direct' WHERE download_mode = 'observe'"))
         session.exec(text("DROP TABLE IF EXISTS grab_decisions"))
         session.commit()
+        if "all_paused" not in settings_cols:
+            session.exec(text("ALTER TABLE settings ADD COLUMN all_paused BOOLEAN DEFAULT 0"))
+            session.commit()
         if "backfill_window_days" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN backfill_window_days INTEGER DEFAULT 14"))
             session.commit()

@@ -170,6 +170,60 @@ def test_toggle_pause_show(client, session):
     assert res2.json()["new_status"] == MonitoredStatus.UNCONFIRMED.value
 
 
+def test_resume_all_keeps_shows_that_were_paused_by_hand(client, session):
+    by_hand = Monitored(anilist_id=2101, display_name="By Hand", status=MonitoredStatus.PAUSED,
+                        status_before_pause=MonitoredStatus.FIXED.value)
+    working = Monitored(anilist_id=2102, display_name="Working", status=MonitoredStatus.FIXED)
+    done = Monitored(anilist_id=2103, display_name="Done", status=MonitoredStatus.COMPLETED)
+    session.add_all([by_hand, working, done])
+    session.commit()
+
+    assert client.post("/api/shows/pause-all").json()["paused"] == 1
+    assert client.get("/api/status").json()["all_paused"] is True
+
+    assert client.post("/api/shows/resume-all").json()["resumed"] == 1
+    assert client.get("/api/status").json()["all_paused"] is False
+    session.expire_all()
+    assert session.get(Monitored, by_hand.id).status == MonitoredStatus.PAUSED
+    assert session.get(Monitored, working.id).status == MonitoredStatus.FIXED
+    assert session.get(Monitored, working.id).paused_by_all is False
+    assert session.get(Monitored, done.id).status == MonitoredStatus.COMPLETED
+
+
+def test_a_manual_resume_during_pause_all_drops_the_marker(client, session):
+    show = Monitored(anilist_id=2111, display_name="Manual", status=MonitoredStatus.FIXED)
+    session.add(show)
+    session.commit()
+    client.post("/api/shows/pause-all")
+    client.post(f"/api/shows/{show.id}/pause")
+    session.expire_all()
+    shown = session.get(Monitored, show.id)
+    assert shown.status == MonitoredStatus.FIXED
+    assert shown.paused_by_all is False
+
+
+def test_auto_discover_all_skips_locked_and_completed_shows(client, session, mock_qbit):
+    feed = Feed(qbit_feed_name="Feed A", qbit_feed_url="https://feed.a/rss", priority=1)
+    session.add(feed)
+    session.commit()
+    session.refresh(feed)
+    picked = Monitored(anilist_id=2121, display_name="Picked", status=MonitoredStatus.FIXED,
+                       current_feed_id=feed.id, feed_pinned=True)
+    locked = Monitored(anilist_id=2122, display_name="Locked", status=MonitoredStatus.FIXED,
+                       current_feed_id=feed.id, learned_feed_id=feed.id)
+    done = Monitored(anilist_id=2123, display_name="Done", status=MonitoredStatus.COMPLETED,
+                     current_feed_id=feed.id)
+    session.add_all([picked, locked, done])
+    session.commit()
+
+    body = client.post("/api/shows/auto-discover-all").json()
+    assert (body["reset"], body["locked"], body["failed"]) == (1, 1, 0)
+    session.expire_all()
+    assert session.get(Monitored, picked.id).feed_pinned is False
+    assert session.get(Monitored, locked.id).current_feed_id == feed.id
+    assert session.get(Monitored, done.id).current_feed_id == feed.id
+
+
 def test_feeds_and_reorder(client, session):
     f1 = Feed(qbit_feed_name="Feed A", qbit_feed_url="https://feed.a/rss", priority=1)
     f2 = Feed(qbit_feed_name="Feed B", qbit_feed_url="https://feed.b/rss", priority=2)

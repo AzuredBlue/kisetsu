@@ -227,10 +227,17 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         <span id="sidebar-next-check" class="text-zinc-300 text-xs tabular-nums" title="">Calculating...</span>
       </div>
 
-      <button onclick="runCycleNow()" id="btn-run-cycle" title="Re-sync AniList, refresh RSS feeds, grab or confirm new episodes and reconcile with qBittorrent" class="btn btn-sm w-full">
-        <svg id="spinner-run-cycle" class="w-4 h-4 hidden animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
-        <span id="text-run-cycle">Sync Now</span>
-      </button>
+      <div class="flex gap-2">
+        <button onclick="runCycleNow()" id="btn-run-cycle" title="Re-sync AniList, refresh RSS feeds, grab or confirm new episodes and reconcile with qBittorrent" class="btn btn-sm flex-1">
+          <svg id="spinner-run-cycle" class="w-4 h-4 hidden animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path></svg>
+          <span id="text-run-cycle">Sync Now</span>
+        </button>
+
+        <button onclick="togglePause()" id="btn-pause" title="Pause downloading" aria-label="Pause downloading" class="btn btn-sm px-2.5 flex-shrink-0">
+          <svg id="icon-pause" class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+          <svg id="icon-resume" class="w-4 h-4 hidden text-amber-400" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+      </div>
     </div>
   </aside>
 
@@ -245,6 +252,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       </div>
 
       <div class="flex items-center gap-3 text-xs font-medium flex-shrink-0">
+        <span id="stat-all-paused" class="text-amber-400 hidden">Paused</span>
         <span id="stat-working" class="text-emerald-400">0 Working</span>
         <span id="stat-testing" class="text-amber-400 hidden">0 Testing</span>
         <span id="stat-upcoming" class="text-sky-400">0 Upcoming</span>
@@ -263,6 +271,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
               <h2 class="section-title">Releasing</h2>
               <span id="header-count-releasing" class="text-xs text-zinc-500 tabular-nums">(0)</span>
             </div>
+            <div class="flex items-center gap-2">
+            <button type="button" onclick="autoDiscoverShows()" class="btn btn-sm" title="Reset every show to Auto-Discover. Hand-picked feeds are cleared; shows locked to a feed they downloaded from are kept.">Auto-Discover</button>
             <div class="flex items-center gap-0.5 bg-sunken p-0.5 rounded-lg border border-line-soft text-xs">
               <button onclick="setSortMode('airing')" id="sort-btn-airing" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Sort by Next Episode Airing (Soonest first)">
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
@@ -276,6 +286,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                 <span>Default</span>
               </button>
+            </div>
             </div>
           </div>
           <div id="grid-releasing" class="show-grid">
@@ -2577,6 +2588,35 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       });
     }
 
+    let allPaused = false;
+
+    function togglePause() {
+      const resuming = allPaused;
+      return once('pause-all', async () => {
+        try {
+          const data = await apiFetch(resuming ? '/api/shows/resume-all' : '/api/shows/pause-all', { method: 'POST' });
+          showToast(data.message, 'success');
+          loadShows();
+          updateStatus(true);
+        } catch (err) {
+          showToast(`Action failed: ${err.message || err}`, 'error');
+        }
+      });
+    }
+
+    function autoDiscoverShows() {
+      if (!confirm(`Reset every show to Auto-Discover?\n\nHand-picked feeds are cleared. Shows locked to a feed they already downloaded from, and completed shows, are kept.`)) return;
+      return once('auto-discover-all', async () => {
+        try {
+          const data = await apiFetch('/api/shows/auto-discover-all', { method: 'POST' });
+          showToast(data.message, data.failed ? 'info' : 'success');
+          loadShows();
+        } catch (err) {
+          showToast(`Action failed: ${err.message || err}`, 'error');
+        }
+      });
+    }
+
     function rediscoverShow(id, force = false) {
       return once(`rediscover-${id}`, async () => {
         try {
@@ -3176,6 +3216,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
         tickCountdown();
 
+        allPaused = !!st.all_paused;
+        document.getElementById('stat-all-paused').classList.toggle('hidden', !allPaused);
+        const pauseBtn = document.getElementById('btn-pause');
+        const pauseLabel = allPaused
+          ? 'Resume downloading (shows you paused yourself stay paused)'
+          : 'Pause downloading';
+        pauseBtn.title = pauseLabel;
+        pauseBtn.setAttribute('aria-label', pauseLabel);
+        document.getElementById('icon-pause').classList.toggle('hidden', allPaused);
+        document.getElementById('icon-resume').classList.toggle('hidden', !allPaused);
         document.getElementById('stat-working').textContent = `${st.counts.works} Working`;
         const testingEl = document.getElementById('stat-testing');
         testingEl.textContent = `${st.counts.testing} Testing`;

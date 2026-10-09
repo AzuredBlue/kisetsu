@@ -584,6 +584,10 @@ class Supervisor:
                     season_year=data.get("season_year"),
                 )
                 new_show.aliases = data.get("aliases", [])
+                if self.settings.all_paused:
+                    new_show.status = MonitoredStatus.PAUSED
+                    new_show.status_before_pause = MonitoredStatus.UNCONFIRMED.value
+                    new_show.paused_by_all = True
                 self.session.add(new_show)
                 existing_shows[aid] = new_show
                 new_shows_count += 1

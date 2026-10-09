@@ -151,6 +151,8 @@ class Settings(SQLModel, table=True):
     early_air_tolerance_hours: int = Field(default=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
     accent_color: str = Field(default="#2dd4bf")
     accent_tint: str = Field(default="subtle")  # "off", "subtle" or "full"
+    # "Pause all" is on: shows added from now on start paused too.
+    all_paused: bool = Field(default=False)
 
 
 class SupervisionLease(SQLModel, table=True):
@@ -213,6 +215,8 @@ class Monitored(SQLModel, table=True):
     season_name: Optional[str] = Field(default=None, nullable=True)
     season_year: Optional[int] = Field(default=None, nullable=True)
     status_before_pause: Optional[str] = Field(default=None, nullable=True)
+    # Paused by "Pause all" rather than by hand; "Resume all" only resumes these.
+    paused_by_all: bool = Field(default=False)
     custom_regex: Optional[str] = Field(default=None, nullable=True)
     custom_must_not: Optional[str] = Field(default=None, nullable=True)
     feed_pinned: bool = Field(default=False)
