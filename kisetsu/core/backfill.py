@@ -257,8 +257,8 @@ def _searchable_feeds(show: Monitored, feeds: List[Feed]) -> List[Feed]:
     if show.feed_is_locked:
         # A locked show reads one feed; searching others would only fill the cache with
         # releases it may not use.
-        wanted = show.learned_feed_id if show.learned_feed_id is not None else show.current_feed_id
-        feeds = [f for f in feeds if f.id == wanted][:1]
+        locked = [f for f in feeds if f.id in (show.learned_feed_id, show.current_feed_id)]
+        feeds = locked[:1]
     return [f for f in feeds if _site_of(f.qbit_feed_url)]
 
 

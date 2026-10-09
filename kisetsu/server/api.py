@@ -163,8 +163,7 @@ async def get_show_accent(show_id: int):
         task = asyncio.ensure_future(fetch_hues(banner, cover))
         _accent_tasks[show_id] = task
         task.add_done_callback(lambda _t: _accent_tasks.pop(show_id, None))
-    # Shielded: the task is shared, so one request disconnecting must not cancel it for the others.
-    ok, hues = await asyncio.shield(task)
+    ok, hues = await task
 
     with Session(engine) as session:
         show = session.get(Monitored, show_id)

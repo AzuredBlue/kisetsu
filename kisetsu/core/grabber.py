@@ -826,10 +826,7 @@ def _grab_feeds(session: Session, show: Monitored, feeds: List[Feed]) -> List[Fe
     if not feeds:
         return []
     if show.feed_is_locked:
-        # The learned feed is the evidence; the assignment is only a fallback for a
-        # feed the user pinned before anything was downloaded.
-        locked_id = show.learned_feed_id if show.learned_feed_id is not None else show.current_feed_id
-        locked = next((feed for feed in feeds if feed.id == locked_id), None)
+        locked = next((feed for feed in feeds if feed.id == show.learned_feed_id or feed.id == show.current_feed_id), None)
         # A locked show reads one feed or none at all. Fanning out here would be
         # exactly the "grab from any feed" behaviour the lock exists to prevent.
         return [locked] if locked is not None else []
