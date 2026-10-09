@@ -2340,16 +2340,28 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const feedChanged = now.current_feed_id !== init.current_feed_id;
       const inspectedShow = allShows.find(s => s.id === showId);
       let releaseLearnedFeed = false;
+      // Choosing a feed cancels what is still downloading from the other ones (finished
+      // downloads stay); the server does it, the confirmation just says so.
+      const unfinishedElsewhere = (inspectedShow && feedChanged && now.current_feed_id > 0)
+        ? Object.entries(inspectedShow.unfinished_downloads_by_feed || {})
+            .filter(([feedId]) => Number(feedId) !== now.current_feed_id)
+            .reduce((sum, [, count]) => sum + count, 0)
+        : 0;
+      const cancelNote = unfinishedElsewhere > 0
+        ? `\n\n${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled and fetched again from the new one.`
+        : '';
       if (feedChanged && inspectedShow && inspectedShow.feed_learned && now.current_feed_id !== inspectedShow.learned_feed_id) {
         const lockedName = inspectedShow.learned_feed_name || 'the feed that delivered';
         const target = allFeeds.find(f => f.id === now.current_feed_id);
         const targetName = target ? `'${target.qbit_feed_name}'` : 'auto-detect';
         const ok = confirm(
           `'${inspectedShow.display_name}' is locked to '${lockedName}' because a release was recorded from it.\n\n` +
-          `Move it to ${targetName} anyway? The next release downloaded will lock the show to that feed.`
+          `Move it to ${targetName} anyway? The next release downloaded will lock the show to that feed.` + cancelNote
         );
         if (!ok) return;
         releaseLearnedFeed = true;
+      } else if (cancelNote && !confirm(`Change the feed for '${inspectedShow.display_name}'?` + cancelNote)) {
+        return;
       }
 
       const btn = document.getElementById('btn-save-show');

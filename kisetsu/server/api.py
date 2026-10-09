@@ -31,7 +31,7 @@ from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss
-from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode
+from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -233,6 +233,10 @@ def get_shows(session: Session = Depends(get_db)):
             1 for e in show_episodes
             if e.status == EpisodeStatus.COMPLETED and (e.version or 1) > 1
         )
+        unfinished_by_feed: Dict[int, int] = {}
+        for e in show_episodes:
+            if e.status in (EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING) and e.feed_id:
+                unfinished_by_feed[e.feed_id] = unfinished_by_feed.get(e.feed_id, 0) + 1
         episode_mappings = [
             {
                 "feed_id": mapping.feed_id,
@@ -277,6 +281,8 @@ def get_shows(session: Session = Depends(get_db)):
             "learned_feed_name": feeds.get(s.learned_feed_id) if s.learned_feed_id else None,
             "candidate_feed_id": s.candidate_feed_id,
             "downloaded_episodes_count": downloaded_count,
+            "unfinished_downloads_count": sum(unfinished_by_feed.values()),
+            "unfinished_downloads_by_feed": unfinished_by_feed,
             "wanted_episodes_count": wanted_count,
             "missed_episodes_count": missed_count,
             "failed_episodes_count": failed_count,
@@ -1030,6 +1036,25 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             # leaving it pointing at a feed we have left.
             show.learned_feed_id = None
 
+    canceled_note = ""
+    if direct and req.current_feed_id is not None and new_feed_id is not None:
+        # Choosing a feed means the old one is no longer wanted for this show: what is still
+        # downloading from it is dropped and fetched again from the new feed. Finished
+        # downloads stay. (Auto-Discover is left out: it may pick the old feed again.)
+        try:
+            canceled = cancel_unfinished_downloads(
+                session, qbit, show, new_feed_id, "Canceled: the show's feed was changed.",
+            )
+        except QbitClientError as e:
+            raise HTTPException(status_code=503, detail=f"Could not cancel the unfinished downloads: {e}")
+        if canceled:
+            numbers = ", ".join(str(number) for number in canceled)
+            canceled_note = (
+                f" Canceled {len(canceled)} unfinished download(s) from the old feed (Ep {numbers}); "
+                f"they will be fetched from the new one."
+            )
+            state.add_log(f"Show '{show.display_name}':{canceled_note}", "INFO")
+
     if req.episode_offset is not None:
         _set_episode_offset(session, show, new_feed_id or show.current_feed_id, int(req.episode_offset))
 
@@ -1079,7 +1104,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             f"{verb} '{feed.qbit_feed_name}' (matched as '{matched}')."
             if matched
             else f"{verb} '{feed.qbit_feed_name}'. Nothing there matches yet; the engine will watch it for a matching release."
-        )
+        ) + canceled_note
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
 

@@ -2335,3 +2335,71 @@ def test_search_past_releases_names_the_missing_episodes_it_searches_for(client,
     assert response.json() == {"added": 2, "searched": True, "missing": [3, 4]}
 
 
+def _show_downloading_from_old_feed(session, mock_qbit, progress=0.3):
+    settings = session.exec(select(Settings)).first()
+    settings.download_mode = "direct"
+    old = Feed(id=1, qbit_feed_name="Old", qbit_feed_url="https://old.example/rss", priority=1)
+    new = Feed(id=2, qbit_feed_name="New", qbit_feed_url="https://new.example/rss", priority=2)
+    show = Monitored(
+        id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]', status=MonitoredStatus.FIXED,
+        current_feed_id=1, learned_feed_id=1,
+    )
+    session.add_all([old, new, show])
+    session.flush()
+    session.add(Episode(
+        monitored_id=1, episode_number=1, status=EpisodeStatus.DOWNLOADING, feed_id=1, torrent_hash="h1",
+        release_title="Show - 01",
+    ))
+    session.commit()
+    mock_qbit.get_torrents.side_effect = lambda **kw: [
+        MagicMock(hash="h1", progress=progress, state="downloading", content_path="/d/h1")
+    ] if kw.get("hashes") else []
+
+
+def test_choosing_another_feed_cancels_the_unfinished_downloads_from_the_old_one(client, session, mock_qbit, monkeypatch):
+    _show_downloading_from_old_feed(session, mock_qbit)
+    monkeypatch.setattr(api_module, "_learn_name_from_feed", lambda *a, **k: None)
+
+    response = client.post("/api/shows/1/edit", json={"current_feed_id": 2, "release_learned_feed": True})
+
+    assert response.status_code == 200
+    assert "Canceled 1 unfinished download(s) from the old feed (Ep 1)" in response.json()["message"]
+    session.expire_all()
+    episode = session.exec(select(Episode)).one()
+    assert episode.status == EpisodeStatus.WANTED and episode.torrent_hash is None
+    assert mock_qbit.delete_torrents.call_args.args[0] == ["h1"]
+
+
+def test_keeping_the_feed_or_going_to_auto_discover_cancels_nothing(client, session, mock_qbit, monkeypatch):
+    _show_downloading_from_old_feed(session, mock_qbit)
+    monkeypatch.setattr(api_module, "_learn_name_from_feed", lambda *a, **k: None)
+    monkeypatch.setattr(api_module, "_auto_discover_now", lambda *a, **k: "ok")
+
+    assert client.post("/api/shows/1/edit", json={"current_feed_id": 1}).status_code == 200
+    assert client.post("/api/shows/1/edit", json={"current_feed_id": 0, "release_learned_feed": True}).status_code == 200
+
+    mock_qbit.delete_torrents.assert_not_called()
+    session.expire_all()
+    assert session.exec(select(Episode)).one().status == EpisodeStatus.DOWNLOADING
+
+
+def test_a_finished_download_survives_a_feed_change(client, session, mock_qbit, monkeypatch):
+    _show_downloading_from_old_feed(session, mock_qbit, progress=1.0)
+    monkeypatch.setattr(api_module, "_learn_name_from_feed", lambda *a, **k: None)
+
+    response = client.post("/api/shows/1/edit", json={"current_feed_id": 2, "release_learned_feed": True})
+
+    assert response.status_code == 200
+    assert "Canceled" not in response.json()["message"]
+    mock_qbit.delete_torrents.assert_not_called()
+
+
+def test_the_show_list_counts_unfinished_downloads_per_feed(client, session, mock_qbit):
+    _show_downloading_from_old_feed(session, mock_qbit)
+
+    entry = client.get("/api/shows").json()[0]
+
+    assert entry["unfinished_downloads_count"] == 1
+    assert entry["unfinished_downloads_by_feed"] == {"1": 1}
+
+

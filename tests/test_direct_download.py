@@ -9,7 +9,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from kisetsu.clients.qbit import QbitClientError
 from kisetsu.core.discovery import RssSnapshot
-from kisetsu.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, evaluate_and_grab_releases, show_torrent_hashes, sync_show_episodes, update_episode_status
+from kisetsu.core.grabber import FEED_DISCOVERY_GRACE_SECONDS, cancel_episode_operations, cancel_unfinished_downloads, evaluate_and_grab_releases, show_torrent_hashes, sync_show_episodes, update_episode_status
 from kisetsu.core.supervisor import Supervisor
 from kisetsu.db.models import (
     Episode,
@@ -3094,3 +3094,130 @@ def test_two_lower_ranked_feeds_carrying_a_release_do_not_block_each_others_adop
     engine.dispose()
 
 
+def _torrent(torrent_hash, progress, name="x"):
+    return MagicMock(hash=torrent_hash, progress=progress, state="downloading", name=name, content_path=f"/d/{torrent_hash}")
+
+
+def _feed_switch_setup():
+    """A show locked to the old feed with episodes 1-4 in different stages of being fetched from it."""
+    engine, session = _database()
+    old = Feed(id=1, qbit_feed_name="Old", qbit_feed_url="https://old.example/rss", priority=1)
+    new = Feed(id=2, qbit_feed_name="New", qbit_feed_url="https://new.example/rss", priority=2)
+    session.add_all([old, new])
+    show = _show(session, current_feed_id=1, learned_feed_id=1, status=MonitoredStatus.FIXED, total_episodes=12)
+    episodes = {e.episode_number: e for e in sync_show_episodes(session, show)}
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=0, source="CONFIRMED", evidence_count=2))
+    session.commit()
+    return engine, session, show, episodes
+
+
+def _hold(session, episode, feed_id, torrent_hash, status=EpisodeStatus.DOWNLOADING, op_status=TorrentOperationStatus.COMPLETED, tag=None):
+    episode.status = status
+    episode.feed_id = feed_id
+    episode.torrent_hash = torrent_hash
+    session.add(episode)
+    session.flush()
+    operation = TorrentOperation(
+        episode_id=episode.id, kind="grab", status=op_status, operation_tag=tag or f"kisetsu-op-{episode.episode_number}",
+        release_title=f"release {episode.episode_number}", new_torrent_url="magnet:x", new_torrent_hash=torrent_hash,
+        version=1, feed_id=feed_id, old_episode_status="wanted",
+    )
+    session.add(operation)
+    session.commit()
+    return operation
+
+
+def test_switching_feed_cancels_unfinished_downloads_and_keeps_finished_ones():
+    engine, session, show, episodes = _feed_switch_setup()
+    _hold(session, episodes[1], 1, "h-partial")                      # still downloading
+    _hold(session, episodes[2], 1, "h-done")                         # finished in qBittorrent
+    _hold(session, episodes[3], 2, "h-new-feed")                     # already from the new feed
+    _hold(session, episodes[4], 1, None, status=EpisodeStatus.QUEUED, op_status=TorrentOperationStatus.PREPARING, tag="kisetsu-op-sent-unrecorded")
+    torrents = {
+        "h-partial": _torrent("h-partial", 0.3), "h-done": _torrent("h-done", 1.0),
+        "h-new-feed": _torrent("h-new-feed", 0.1), "h-tagged": _torrent("h-tagged", 0.0),
+    }
+    qbit = MagicMock()
+
+    def get_torrents(**kwargs):
+        if kwargs.get("hashes"):
+            return [torrents[h] for h in kwargs["hashes"] if h in torrents]
+        return [torrents["h-tagged"]] if kwargs.get("tag") == "kisetsu-op-sent-unrecorded" else []
+
+    qbit.get_torrents.side_effect = get_torrents
+
+    reset = cancel_unfinished_downloads(session, qbit, show, 2, "Canceled: the show's feed was changed.")
+
+    assert reset == [1, 4]
+    deleted = sorted(call.args[0][0] for call in qbit.delete_torrents.call_args_list)
+    assert deleted == ["h-partial", "h-tagged"]
+    assert all(call.kwargs.get("delete_files") is True for call in qbit.delete_torrents.call_args_list)
+    for number in (1, 4):
+        session.refresh(episodes[number])
+        assert episodes[number].status == EpisodeStatus.WANTED
+        assert episodes[number].torrent_hash is None and episodes[number].feed_id is None
+    for number, status in ((2, EpisodeStatus.DOWNLOADING), (3, EpisodeStatus.DOWNLOADING)):
+        session.refresh(episodes[number])
+        assert episodes[number].status == status
+    assert {op.status for op in session.exec(select(TorrentOperation).where(TorrentOperation.episode_id.in_([episodes[1].id, episodes[4].id]))).all()} == {TorrentOperationStatus.CANCELED}
+    session.close()
+    engine.dispose()
+
+
+def test_switching_feed_releases_the_old_feeds_lock_once_nothing_from_it_remains():
+    engine, session, show, episodes = _feed_switch_setup()
+    _hold(session, episodes[1], 1, "h-partial")
+    qbit = MagicMock()
+    qbit.get_torrents.side_effect = lambda **kw: [_torrent("h-partial", 0.2)] if kw.get("hashes") else []
+
+    cancel_unfinished_downloads(session, qbit, show, 2, "Canceled.")
+
+    session.refresh(show)
+    assert show.learned_feed_id is None
+    assert session.exec(select(EpisodeNumberMapping)).all() == []
+    session.close()
+    engine.dispose()
+
+
+def test_switching_feed_leaves_an_episode_of_unknown_origin_alone():
+    engine, session, show, episodes = _feed_switch_setup()
+    episodes[1].status = EpisodeStatus.DOWNLOADING
+    episodes[1].torrent_hash = "h-adopted"
+    session.add(episodes[1])
+    session.commit()
+    qbit = MagicMock()
+
+    assert cancel_unfinished_downloads(session, qbit, show, 2, "Canceled.") == []
+    qbit.delete_torrents.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_switching_feed_restores_the_previous_release_of_an_episode_being_replaced():
+    engine, session, show, episodes = _feed_switch_setup()
+    episode = episodes[1]
+    episode.status = EpisodeStatus.REPLACING
+    episode.feed_id = 1
+    episode.torrent_hash = "h-v1"
+    episode.release_title = "release v1"
+    episode.version = 2
+    session.add(episode)
+    session.flush()
+    session.add(TorrentOperation(
+        episode_id=episode.id, kind="replace", status=TorrentOperationStatus.SEEDING, operation_tag="kisetsu-op-r",
+        release_title="release v2", new_torrent_url="magnet:v2", new_torrent_hash="h-v2", old_torrent_hash="h-v1",
+        old_release_title="release v1", old_version=1, version=2, feed_id=1, old_feed_id=1, old_episode_status="completed",
+    ))
+    session.commit()
+    torrents = {"h-v2": _torrent("h-v2", 0.4), "h-v1": _torrent("h-v1", 1.0)}
+    qbit = MagicMock()
+    qbit.get_torrents.side_effect = lambda **kw: [torrents[h] for h in kw.get("hashes", []) if h in torrents]
+
+    assert cancel_unfinished_downloads(session, qbit, show, 2, "Canceled.") == [1]
+
+    session.refresh(episode)
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert episode.torrent_hash == "h-v1" and episode.release_title == "release v1" and episode.version == 1
+    assert [call.args[0] for call in qbit.delete_torrents.call_args_list] == [["h-v2"]]
+    session.close()
+    engine.dispose()

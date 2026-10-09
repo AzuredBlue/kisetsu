@@ -1601,6 +1601,101 @@ def cancel_episode_operations(
     return canceled
 
 
+def cancel_unfinished_downloads(
+    session: Session,
+    qbit: QBitClient,
+    show: Monitored,
+    keep_feed_id: Optional[int],
+    reason: str,
+) -> List[int]:
+    """Cancel the show's unfinished downloads that came from a feed other than ``keep_feed_id``.
+
+    For a user who switched feeds: what is still downloading from the old feed is
+    deleted with its partial files and the episode is wanted again, so the new feed
+    supplies it. A finished torrent is never touched, nor is an episode whose origin
+    is unknown (no feed recorded). A torrent whose hash was never recorded is found
+    by its operation tag. Returns the episode numbers that were reset.
+    """
+    reset: List[int] = []
+    old_feeds: set = set()
+    episodes = session.exec(
+        select(Episode).where(
+            Episode.monitored_id == show.id,
+            Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING]),
+        ).order_by(Episode.episode_number)
+    ).all()
+    for episode in episodes:
+        operations = list(session.exec(
+            select(TorrentOperation).where(
+                TorrentOperation.episode_id == episode.id,
+                TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)),
+            )
+        ).all())
+        if episode.torrent_hash:
+            # A grab that finished its bookkeeping while its torrent is still downloading.
+            operations += [
+                op for op in session.exec(
+                    select(TorrentOperation).where(
+                        TorrentOperation.episode_id == episode.id,
+                        TorrentOperation.status == TorrentOperationStatus.COMPLETED,
+                        TorrentOperation.new_torrent_hash == episode.torrent_hash,
+                    )
+                ).all()
+                if op not in operations
+            ]
+        replacing = any(op.kind == "replace" for op in operations)
+        from_feed = next((op.feed_id for op in operations if op.feed_id), None) or episode.feed_id
+        if from_feed is None or from_feed == keep_feed_id:
+            continue
+
+        hashes = [op.new_torrent_hash for op in operations if op.new_torrent_hash]
+        if episode.torrent_hash and not replacing:
+            hashes.append(episode.torrent_hash)
+        torrents: Dict[str, Any] = {}
+        for torrent_hash in dict.fromkeys(hashes):
+            for torrent in qbit.get_torrents(hashes=[torrent_hash]):
+                torrents[str(_torrent_hash(torrent) or torrent_hash).lower()] = torrent
+        for op in operations:
+            if not op.new_torrent_hash and op.operation_tag:
+                torrent = _find_tagged(qbit, op.operation_tag)
+                if torrent is not None:
+                    torrents[str(_torrent_hash(torrent)).lower()] = torrent
+        if any(_torrent_progress(torrent) >= 1.0 for torrent in torrents.values()):
+            continue
+
+        old_hash = next((op.old_torrent_hash for op in operations if op.kind == "replace"), None)
+        for torrent_hash in torrents:
+            _delete_torrent_by_hash(qbit, torrent_hash, keep_files_of=old_hash)
+        for op in operations:
+            op.status = TorrentOperationStatus.CANCELED
+            op.last_error = reason
+            op.next_retry_at = None
+            op.updated_at = utc_now()
+            _restore_episode_before_operation(session, op, episode, reason, None)
+            session.add(op)
+        if not replacing:
+            episode.status = EpisodeStatus.WANTED
+            episode.version = 1
+            episode.release_title = None
+            episode.release_group = None
+            episode.feed_id = None
+            episode.feed_item_id = None
+            episode.torrent_url = None
+            episode.torrent_hash = None
+            episode.operation_tag = None
+            episode.source_episode = None
+            episode.downloaded_at = None
+        episode.last_error = reason
+        episode.retry_after = None
+        session.add(episode)
+        session.commit()
+        reset.append(episode.episode_number)
+        old_feeds.add(from_feed)
+    for feed_id in old_feeds:
+        _unwind_unproven_feed(session, show, feed_id)
+    return reset
+
+
 def _air_horizon(show: Monitored, now: datetime, tolerance_hours: int) -> datetime:
     """When an episode counts as aired for this show.
 
