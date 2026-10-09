@@ -1645,7 +1645,6 @@ async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_fe
             default_interval_seconds=default_interval,
             qbit_client=qbit,
             download_mode=s.download_mode,
-            backfill_window_days=s.backfill_window_days,
             early_air_tolerance_hours=s.early_air_tolerance_hours,
         )
         now_utc = datetime.now(timezone.utc)

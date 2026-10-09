@@ -182,7 +182,6 @@ async def background_supervisor_task():
                                 default_interval_seconds=default_interval,
                                 qbit_client=qbit,
                                 download_mode=settings.download_mode,
-                                backfill_window_days=settings.backfill_window_days,
                                 early_air_tolerance_hours=settings.early_air_tolerance_hours,
                             )
                         except QbitAuthenticationError as e:
@@ -198,7 +197,6 @@ async def background_supervisor_task():
                                 is_hunting,
                                 session,
                                 download_mode=settings.download_mode,
-                                backfill_window_days=settings.backfill_window_days,
                                 early_air_tolerance_hours=settings.early_air_tolerance_hours,
                             )
                             _set_next_check(sleep_seconds, deferred_reason or reason)

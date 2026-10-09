@@ -5,7 +5,7 @@ from typing import List, Optional, Tuple
 from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient
 from kisetsu.config import (
-    DEFAULT_BACKFILL_WINDOW_DAYS,
+    HUNTING_RECENT_DAYS,
     DEFAULT_DOWNLOAD_MODE,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
@@ -60,7 +60,6 @@ def classify_shows(
     session: Session,
     *,
     download_mode: str = DEFAULT_DOWNLOAD_MODE,
-    backfill_window_days: int = DEFAULT_BACKFILL_WINDOW_DAYS,
     early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> PollClassification:
     """Split active shows into hunting and not-yet-aired.
@@ -133,7 +132,7 @@ def classify_shows(
                 latest_air_at = air_times.get(latest_aired_episode)
                 latest_is_recent = (
                     latest_air_at is None
-                    or now - latest_air_at <= timedelta(days=max(0, backfill_window_days))
+                    or now - latest_air_at <= timedelta(days=HUNTING_RECENT_DAYS)
                 )
                 newest_wanted = session.exec(
                     select(Episode.id).where(
@@ -191,7 +190,6 @@ def is_hunting(
     session: Session,
     *,
     download_mode: str = DEFAULT_DOWNLOAD_MODE,
-    backfill_window_days: int = DEFAULT_BACKFILL_WINDOW_DAYS,
     early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> bool:
     """True when at least one show is waiting on a release we have not confirmed."""
@@ -199,7 +197,6 @@ def is_hunting(
         classify_shows(
             session,
             download_mode=download_mode,
-            backfill_window_days=backfill_window_days,
             early_air_tolerance_hours=early_air_tolerance_hours,
         ).hunting
     )
@@ -211,7 +208,6 @@ def calculate_next_poll_interval(
     hunting_interval_seconds: Optional[int] = None,
     qbit_client: Optional[QBitClient] = None,
     download_mode: str = DEFAULT_DOWNLOAD_MODE,
-    backfill_window_days: int = DEFAULT_BACKFILL_WINDOW_DAYS,
     early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> Tuple[int, str]:
     """
@@ -229,7 +225,6 @@ def calculate_next_poll_interval(
     classification = classify_shows(
         session,
         download_mode=download_mode,
-        backfill_window_days=backfill_window_days,
         early_air_tolerance_hours=early_air_tolerance_hours,
     )
     hunting_shows = classification.hunting

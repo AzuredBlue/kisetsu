@@ -408,10 +408,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
                 <input id="set-interval" type="number" min="5" required class="field">
               </div>
               <div>
-                <label class="field-label" for="set-backfill-window" title="How far back to look for missed episodes.">Backfill (days)</label>
-                <input id="set-backfill-window" type="number" min="0" max="365" required class="field">
-              </div>
-              <div>
                 <label class="field-label" for="set-early-air-tolerance" title="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time.">Early air (h)</label>
                 <input id="set-early-air-tolerance" type="number" min="0" max="168" required class="field">
               </div>
@@ -2688,7 +2684,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         document.getElementById('set-stall-window').value = s.stall_wait_hours ?? 24;
         document.getElementById('set-anilist-user').value = s.anilist_username || '';
         document.getElementById('set-interval').value = s.refresh_interval_minutes ?? 360;
-        document.getElementById('set-backfill-window').value = s.backfill_window_days ?? 14;
         document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
         updateTitleLanguageUi(s.title_language || 'english');
         updateDownloadModeUi(s.download_mode || 'rules');
@@ -2709,7 +2704,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         stall_wait_hours: parseInt(document.getElementById('set-stall-window').value),
         anilist_username: document.getElementById('set-anilist-user').value,
         refresh_interval_minutes: parseInt(document.getElementById('set-interval').value),
-        backfill_window_days: parseInt(document.getElementById('set-backfill-window').value),
         early_air_tolerance_hours: parseInt(document.getElementById('set-early-air-tolerance').value),
         title_language: document.getElementById('set-title-language').value,
         download_mode: document.getElementById('set-download-mode').value,

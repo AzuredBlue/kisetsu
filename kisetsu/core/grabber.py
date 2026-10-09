@@ -9,6 +9,7 @@ from uuid import uuid4
 from sqlmodel import Session, select
 
 from kisetsu.clients.qbit import QBitClient, QbitClientError
+from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import match_release_to_show, prepare_aliases, release_arc_qualifier
@@ -885,6 +886,38 @@ def _date_mapped_episode(
     return episode.episode_number
 
 
+# A release is allowed to be published this much before the air time AniList gives
+# (AniList air times drift by a day or more from the real release); an older season is off by months.
+PUBLISHED_BEFORE_AIR_SLACK_HOURS = 48
+
+
+def _published_before_air(
+    article: Dict[str, Any],
+    episode: Episode,
+    show: Monitored,
+    tolerance_hours: int,
+    first_air: Optional[datetime] = None,
+) -> bool:
+    """Whether a dated release was published before its episode could have aired.
+
+    Season tags and episode numbers differ from group to group, so a release of an
+    earlier season can carry a number that fits this one. Its publish date cannot:
+    it is long before the episode. An episode without an air time is held to the
+    show's first one, since nothing can predate the whole run. Undated articles
+    and shows with nothing scheduled cannot be judged and are left alone. (The
+    stored air times stay good while a schedule sync is pending: they can move by
+    hours, not by seasons, so ``schedule_stale`` does not switch this off.)
+    """
+    reference = episode.air_at or first_air
+    if reference is None:
+        return False
+    published = parse_article_date(article)
+    if published.year <= 2000:
+        return False
+    slack = timedelta(hours=max(PUBLISHED_BEFORE_AIR_SLACK_HOURS, tolerance_hours))
+    return published < as_utc(reference) - slack
+
+
 _RELEASE_HOLDING = {
     EpisodeStatus.COMPLETED,
     EpisodeStatus.DOWNLOADING,
@@ -1073,6 +1106,15 @@ def _mapped_episode(
             _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
         return by_date
     if latest_aired is not None and raw_episode > target_count and 1 <= latest_aired <= target_count:
+        # "The newest release is the latest aired episode" only holds while the show is
+        # current; for a season that ended long ago it would pin any new item to its end.
+        latest_row = session.exec(select(Episode).where(
+            Episode.monitored_id == show.id, Episode.episode_number == latest_aired,
+        )).first()
+        if latest_row is not None and latest_row.air_at is not None and (
+            utc_now() - as_utc(latest_row.air_at) > timedelta(days=HUNTING_RECENT_DAYS)
+        ):
+            return None
         if newest_raw is None:
             return latest_aired
         # The newest release is taken to be the latest aired episode and the
@@ -1594,12 +1636,11 @@ def _mark_missed_episodes(
     now: datetime,
     air_horizon: datetime,
     latest_aired: Optional[int],
-    backfill_window_days: int,
 ) -> List[str]:
     """Mark aired WANTED episodes that the feeds can no longer deliver as MISSED.
 
-    A WANTED episode that is stale, older than the latest aired one, or followed
-    by a downloaded one fell out of the RSS cache and will not come back.
+    A WANTED episode that is older than the latest aired one, or followed by a
+    downloaded one, fell out of the RSS cache.
     """
     logs: List[str] = []
     for episode in episodes:
@@ -1619,10 +1660,6 @@ def _mark_missed_episodes(
         if not has_aired:
             continue
 
-        is_stale_air = (
-            episode_air_at is not None
-            and now - episode_air_at > timedelta(days=backfill_window_days)
-        )
         is_older_than_latest = (
             latest_aired is not None
             and episode.episode_number < latest_aired
@@ -1631,7 +1668,7 @@ def _mark_missed_episodes(
             e.episode_number > episode.episode_number and e.status in _RELEASE_HOLDING
             for e in episodes
         )
-        if is_stale_air or is_older_than_latest or has_newer_downloaded:
+        if is_older_than_latest or has_newer_downloaded:
             episode.status = EpisodeStatus.MISSED
             session.add(episode)
             msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
@@ -1681,6 +1718,68 @@ def _show_grab_context(
     return _GrabContext(episodes, episodes_by_number, failed_versions, target_count, latest_aired)
 
 
+def _resolve_feed_articles(
+    session: Session,
+    show: Monitored,
+    feed: Feed,
+    feed_articles: List[Dict[str, Any]],
+    matcher: _ShowMatcher,
+    parsed_cache: Dict[str, Dict[str, Any]],
+    latest_aired: Optional[int],
+    target_count: int,
+    episodes_by_number: Dict[int, Episode],
+    failed_versions: Dict[int, set],
+    first_air: Optional[datetime],
+    tolerance_hours: int,
+    learn: bool = True,
+) -> Tuple[List[Tuple[Any, ...]], Dict[int, int]]:
+    """Which episode each of a feed's articles is for, and the newest usable version of each.
+
+    The one place that decides whether an article is this show's release of one of
+    its episodes: the grab loop acts on the result. ``learn=False`` keeps it read-only.
+    """
+    resolved: List[Tuple[Any, ...]] = []
+    best_version: Dict[int, int] = {}
+    newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
+    for article in feed_articles:
+        title = article.get("title", "")
+        if not title:
+            continue
+        matched, parsed = _decide(show, title, matcher, parsed_cache)
+        if not matched:
+            continue
+        raw_episode = parsed.get("episode")
+        if raw_episode is None or raw_episode <= 0:
+            continue
+        episode_number = _mapped_episode(
+            session,
+            show,
+            feed,
+            int(raw_episode),
+            latest_aired,
+            target_count,
+            article,
+            learn=learn,
+            newest_raw=newest_raw,
+        )
+        if episode_number is None:
+            continue
+        episode = episodes_by_number.get(episode_number)
+        if not episode:
+            continue
+        if _published_before_air(article, episode, show, tolerance_hours, first_air):
+            logger.debug(
+                f"'{show.display_name}': '{title}' was published before episode "
+                f"{episode_number} aired; it belongs to an earlier season."
+            )
+            continue
+        version = int(parsed.get("version") or 1)
+        resolved.append((article, title, parsed, raw_episode, episode_number, episode, version))
+        if version not in failed_versions.get(episode.id, set()):
+            best_version[episode_number] = max(best_version.get(episode_number, 0), version)
+    return resolved, best_version
+
+
 def evaluate_and_grab_releases(
     session: Session,
     qbit: QBitClient,
@@ -1708,7 +1807,6 @@ def evaluate_and_grab_releases(
         MonitoredStatus.STALLED,
     ]))).all()
     now = utc_now()
-    backfill_window_days = max(0, int(settings.backfill_window_days))
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     parsed_cache: Dict[str, Dict[str, Any]] = {}
     for show in shows:
@@ -1720,6 +1818,7 @@ def evaluate_and_grab_releases(
         airing_at = as_utc(show.next_airing_at)
         if show.next_airing_episode == 1 and airing_at and airing_at > air_horizon:
             continue
+        first_air = min((episode.air_at for episode in episodes if episode.air_at), default=None)
         newest_wanted = max(
             (
                 episode.episode_number
@@ -1750,49 +1849,31 @@ def evaluate_and_grab_releases(
             # same episode only grabs the newest, instead of adding v1 and then
             # replacing it a moment later. A version that already failed is not
             # a candidate, so it cannot hide a lower one that would still work.
-            resolved = []
-            best_version: Dict[int, int] = {}
-            newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
-            for article in feed_articles:
-                title = article.get("title", "")
-                if not title:
-                    continue
-                matched, parsed = _decide(show, title, matcher, parsed_cache)
-                if not matched:
-                    continue
-                raw_episode = parsed.get("episode")
-                if raw_episode is None or raw_episode <= 0:
-                    continue
-                episode_number = _mapped_episode(
-                    session,
-                    show,
-                    feed,
-                    int(raw_episode),
-                    latest_aired,
-                    target_count,
-                    article,
-                    newest_raw=newest_raw,
-                )
-                if episode_number is None:
-                    continue
-                episode = episodes_by_number.get(episode_number)
-                if not episode:
-                    continue
-                version = int(parsed.get("version") or 1)
-                resolved.append((article, title, parsed, raw_episode, episode_number, episode, version))
-                if version not in failed_versions.get(episode.id, set()):
-                    best_version[episode_number] = max(best_version.get(episode_number, 0), version)
+            resolved, best_version = _resolve_feed_articles(
+                session, show, feed, feed_articles, matcher, parsed_cache,
+                latest_aired, target_count, episodes_by_number, failed_versions,
+                first_air, tolerance_hours,
+            )
             for article, title, parsed, raw_episode, episode_number, episode, version in resolved:
                 if version < best_version.get(episode_number, version):
                     continue
                 episode_air_at = as_utc(episode.air_at)
                 is_upgrade = version > episode.version
-                if not is_upgrade:
-                    if episode_air_at is None:
-                        if newest_wanted is not None and episode_number < newest_wanted:
-                            continue
-                    elif now - episode_air_at > timedelta(days=backfill_window_days):
+                # The whole season is eligible however long ago an episode aired; the date
+                # guards above keep earlier seasons out. An episode with no air time at all
+                # cannot be placed in the season, so only the newest wanted one is taken.
+                if not is_upgrade and episode_air_at is None:
+                    if newest_wanted is not None and episode_number < newest_wanted:
                         continue
+                # An undated item cannot be checked against the season, so it only fills
+                # an episode that aired recently.
+                if (
+                    not is_upgrade
+                    and episode_air_at is not None
+                    and parse_article_date(article).year <= 2000
+                    and now - episode_air_at > timedelta(days=HUNTING_RECENT_DAYS)
+                ):
+                    continue
                 if episode.retry_after and as_utc(episode.retry_after) > now:
                     continue
                 if version in failed_versions.get(episode.id, set()):
@@ -1819,7 +1900,7 @@ def evaluate_and_grab_releases(
                         logs.append(f"Queued {show.display_name} Ep {episode_number} v{version}: {title}")
         if mode == "direct" and has_feed_articles:
             logs.extend(_mark_missed_episodes(
-                session, show, episodes, now, air_horizon, latest_aired, backfill_window_days,
+                session, show, episodes, now, air_horizon, latest_aired,
             ))
         if grabbed_from is not None and show.current_feed_id != grabbed_from:
             # The feed that produced the release becomes the assignment, and the

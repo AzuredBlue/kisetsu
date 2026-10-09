@@ -376,7 +376,6 @@ class TestDirectScheduler(unittest.TestCase):
             default_interval_seconds=21600,
             hunting_interval_seconds=300,
             download_mode="direct",
-            backfill_window_days=14,
         )
 
         self.assertEqual(duration, 21600)

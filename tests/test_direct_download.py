@@ -130,7 +130,7 @@ def test_duplicate_feed_item_ids_are_ingested_once():
     engine.dispose()
 
 
-def test_backfill_window_keeps_old_canonical_episode_manual_only():
+def test_an_undated_release_does_not_fill_an_old_episode():
     engine, session = _database()
     settings = Settings(
         id=1,
@@ -173,7 +173,8 @@ def test_backfill_window_keeps_old_canonical_episode_manual_only():
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 7)
     ).first()
-    assert episode.status == EpisodeStatus.MISSED
+    # Not taken, and not written off: it stays wanted for a dated release.
+    assert episode.status == EpisodeStatus.WANTED
     qbit.add_torrent.assert_not_called()
     session.close()
     engine.dispose()
@@ -1243,7 +1244,7 @@ def test_unknown_air_date_only_takes_the_freshest_wanted_episode():
     engine.dispose()
 
 
-def test_backfilled_episode_outside_window_is_skipped():
+def test_an_undated_release_does_not_fill_an_episode_from_two_months_ago():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct", backfill_window_days=14)
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -1801,7 +1802,7 @@ def test_article_date_maps_to_nearest_scheduled_episode():
     engine.dispose()
 
 
-def test_article_date_far_from_any_schedule_is_ignored():
+def test_a_new_item_is_not_pinned_to_the_end_of_a_season_that_ended_long_ago():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
     feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
@@ -2369,12 +2370,61 @@ def test_a_release_before_the_season_premiere_is_not_grabbed():
     engine.dispose()
 
 
-def test_the_backfill_window_still_rejects_a_genuinely_stale_release():
+def _article_qbit(feed, title, published):
+    qbit, _ = _qbit()
+    article = {"id": "item", "title": title, "torrentURL": "magnet:item"}
+    if published is not None:
+        article["date"] = format_datetime(published)
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": [article]}}
+    return qbit
+
+
+def _grab_with_published(published, stale=False, title=EP9_TITLE):
     engine, session = _database()
     settings = Settings(
         id=1, default_category="Anime", base_dir="/tmp/Anime",
-        download_mode="direct", backfill_window_days=14,
-        early_air_tolerance_hours=6,
+        download_mode="direct", early_air_tolerance_hours=6,
+    )
+    session.add(settings)
+    show, feed, episode9 = _early_airing_show(session)
+    if stale:
+        show.schedule_stale = True
+        session.add(show)
+        session.commit()
+    qbit = _article_qbit(feed, title, published)
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    grabbed = qbit.add_torrent.called
+    session.close()
+    engine.dispose()
+    return grabbed
+
+
+def test_a_release_of_an_earlier_season_is_not_grabbed_even_when_its_number_fits():
+    # Published two years before episode 9 aired, but "09" fits the show.
+    assert not _grab_with_published(REAL_AIR - timedelta(days=730))
+    # Months early is still an earlier season, not drift.
+    assert not _grab_with_published(REAL_AIR - timedelta(days=60))
+
+
+def test_a_release_within_a_days_drift_of_the_air_time_is_grabbed():
+    assert _grab_with_published(REAL_AIR - timedelta(hours=20))
+    assert _grab_with_published(REAL_AIR + timedelta(hours=3))
+
+
+def test_an_undated_release_is_not_judged_by_date():
+    assert _grab_with_published(None)
+
+
+def test_a_pending_schedule_sync_does_not_switch_the_date_check_off():
+    assert not _grab_with_published(REAL_AIR - timedelta(days=730), stale=True)
+
+
+def test_an_old_episode_of_the_season_is_still_taken_when_a_dated_release_turns_up():
+    """There is no day limit: the whole season is eligible, as long as the release's date fits it."""
+    engine, session = _database()
+    settings = Settings(
+        id=1, default_category="Anime", base_dir="/tmp/Anime",
+        download_mode="direct", early_air_tolerance_hours=6,
     )
     session.add(settings)
     show, feed, episode9 = _early_airing_show(session, anilist_offset_hours=1.0)
@@ -2385,8 +2435,7 @@ def test_the_backfill_window_still_rejects_a_genuinely_stale_release():
 
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
-    qbit.add_torrent.assert_not_called()
-    assert episode9.status == EpisodeStatus.MISSED
+    assert qbit.add_torrent.called
     session.close()
     engine.dispose()
 
@@ -2865,3 +2914,5 @@ def test_removing_a_feed_clears_it_from_the_episodes_it_supplied():
     assert episodes[2].feed_id == kept.id
     session.close()
     engine.dispose()
+
+
