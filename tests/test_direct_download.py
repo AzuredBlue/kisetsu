@@ -2916,6 +2916,75 @@ def test_removing_a_feed_clears_it_from_the_episodes_it_supplied():
     engine.dispose()
 
 
+def _grab_op(episode, feed_id, status=TorrentOperationStatus.RETRY_WAIT, tag="kisetsu-op-x"):
+    return TorrentOperation(
+        episode_id=episode.id, kind="grab", status=status, operation_tag=tag, release_title="x",
+        new_torrent_url="magnet:x", version=1, feed_id=feed_id, old_episode_status="wanted",
+    )
+
+
+def _locked_show_with_one_grab():
+    """A show locked to feed 1 with a learned numbering offset, resting on one grab."""
+    engine, session = _database()
+    feed = Feed(id=1, qbit_feed_name="VARYG", qbit_feed_url="https://nyaa.si/?page=rss&u=varyg1001", priority=1)
+    session.add(feed)
+    show = _show(session, current_feed_id=1, learned_feed_id=1, status=MonitoredStatus.FIXED)
+    episodes = sync_show_episodes(session, show)
+    first = next(e for e in episodes if e.episode_number == 1)
+    first.status = EpisodeStatus.QUEUED
+    first.feed_id = 1
+    session.add(first)
+    session.add(EpisodeNumberMapping(monitored_id=show.id, feed_id=1, offset=24, source="CONFIRMED", evidence_count=2))
+    session.flush()
+    session.add(_grab_op(first, 1))
+    session.commit()
+    return engine, session, show, episodes, first
+
+
+def test_canceling_the_only_grab_from_a_feed_releases_the_lock_and_its_numbering():
+    engine, session, show, episodes, first = _locked_show_with_one_grab()
+
+    assert cancel_episode_operations(session, MagicMock(), show, first, "Canceled.") == 1
+
+    session.refresh(show)
+    assert show.learned_feed_id is None
+    assert show.current_feed_id is None
+    assert session.exec(select(EpisodeNumberMapping)).all() == []
+    session.close()
+    engine.dispose()
+
+
+def test_canceling_one_grab_keeps_the_lock_while_another_release_from_the_feed_remains():
+    engine, session, show, episodes, first = _locked_show_with_one_grab()
+    second = next(e for e in episodes if e.episode_number == 2)
+    second.status = EpisodeStatus.COMPLETED
+    second.feed_id = 1
+    session.add(second)
+    session.commit()
+
+    cancel_episode_operations(session, MagicMock(), show, first, "Canceled.")
+
+    session.refresh(show)
+    assert show.learned_feed_id == 1
+    assert len(session.exec(select(EpisodeNumberMapping)).all()) == 1
+    session.close()
+    engine.dispose()
+
+
+def test_a_mapping_the_user_set_survives_a_canceled_grab():
+    engine, session, show, episodes, first = _locked_show_with_one_grab()
+    mapping = session.exec(select(EpisodeNumberMapping)).one()
+    mapping.source = "MANUAL"
+    session.add(mapping)
+    session.commit()
+
+    cancel_episode_operations(session, MagicMock(), show, first, "Canceled.")
+
+    assert len(session.exec(select(EpisodeNumberMapping)).all()) == 1
+    session.close()
+    engine.dispose()
+
+
 STAGE_ALIASES = [
     "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd & 3rd STAGE",
     "STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE",

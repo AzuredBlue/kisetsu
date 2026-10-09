@@ -1494,6 +1494,45 @@ def _start_operation(
     return operation
 
 
+def _unwind_unproven_feed(session: Session, show: Monitored, feed_id: Optional[int]) -> None:
+    """Forget what a grab taught about a feed once nothing of that grab is left.
+
+    Grabbing from a feed locks the show to it and records how the feed numbers
+    episodes. If every such grab was canceled or removed, neither was ever proven,
+    so they are released instead of steering the next releases.
+    """
+    if feed_id is None or show.id is None:
+        return
+    holders = session.exec(
+        select(Episode.id).where(
+            Episode.monitored_id == show.id,
+            Episode.feed_id == feed_id,
+            (Episode.status.in_(list(_RELEASE_HOLDING))) | Episode.torrent_hash.is_not(None),
+        ).limit(1)
+    ).first()
+    if holders is not None:
+        return
+    if show.learned_feed_id == feed_id:
+        show.learned_feed_id = None
+        if not show.feed_pinned and show.current_feed_id == feed_id:
+            show.current_feed_id = None
+        show.candidate_feed_id = None
+        show.candidate_feed_since = None
+        session.add(show)
+    for mapping in session.exec(
+        select(EpisodeNumberMapping).where(
+            EpisodeNumberMapping.monitored_id == show.id,
+            EpisodeNumberMapping.feed_id == feed_id,
+        )
+    ).all():
+        # Only what a grab taught: a mapping the user set stays.
+        if normalize_mapping_source(mapping.source) in (
+            EpisodeMappingSource.INFERRED.name, EpisodeMappingSource.CONFIRMED.name,
+        ):
+            session.delete(mapping)
+    session.commit()
+
+
 def cancel_episode_operations(
     session: Session,
     qbit: QBitClient,
@@ -1557,6 +1596,7 @@ def cancel_episode_operations(
         session.add(operation)
         session.add(episode)
         session.commit()
+        _unwind_unproven_feed(session, show, operation.feed_id)
         canceled += 1
     return canceled
 
