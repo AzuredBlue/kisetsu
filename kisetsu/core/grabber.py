@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 from uuid import uuid4
 
 from sqlmodel import Session, select
@@ -1674,7 +1674,8 @@ def _mark_missed_episodes(
     """Mark aired WANTED episodes that the feeds can no longer deliver as MISSED.
 
     A WANTED episode that is older than the latest aired one, or followed by a
-    downloaded one, fell out of the RSS cache.
+    downloaded one, fell out of the RSS cache. It may come back through a search
+    of the feeds' sites, which is why MISSED stays grabbable.
     """
     logs: List[str] = []
     for episode in episodes:
@@ -1770,7 +1771,8 @@ def _resolve_feed_articles(
     """Which episode each of a feed's articles is for, and the newest usable version of each.
 
     The one place that decides whether an article is this show's release of one of
-    its episodes: the grab loop acts on the result. ``learn=False`` keeps it read-only.
+    its episodes: the grab loop acts on the result, and ``episodes_in_cache`` asks
+    the same question without acting. ``learn=False`` keeps it read-only.
     """
     resolved: List[Tuple[Any, ...]] = []
     best_version: Dict[int, int] = {}
@@ -1812,6 +1814,38 @@ def _resolve_feed_articles(
         if version not in failed_versions.get(episode.id, set()):
             best_version[episode_number] = max(best_version.get(episode_number, 0), version)
     return resolved, best_version
+
+
+def episodes_in_cache(
+    session: Session,
+    show: Monitored,
+    feeds: List[Feed],
+    articles_by_url: Dict[str, List[Dict[str, Any]]],
+    settings: Settings,
+    now: Optional[datetime] = None,
+) -> Set[int]:
+    """The show's episodes that the cached feed items can already supply.
+
+    Read-only. These are the episodes the next check would take from the cache, so
+    searching the feeds' sites for them would only find what is already here.
+    """
+    now = now or utc_now()
+    tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
+    episodes, episodes_by_number, failed_versions, target_count, latest_aired = _show_grab_context(
+        session, show, now, _air_horizon(show, now, tolerance_hours),
+    )
+    first_air = min((episode.air_at for episode in episodes if episode.air_at), default=None)
+    matcher = _show_matcher(show)
+    parsed_cache: Dict[str, Dict[str, Any]] = {}
+    covered: Set[int] = set()
+    for feed in _grab_feeds(session, show, feeds):
+        _, best_version = _resolve_feed_articles(
+            session, show, feed, articles_by_url.get(feed.qbit_feed_url, []), matcher, parsed_cache,
+            latest_aired, target_count, episodes_by_number, failed_versions,
+            first_air, tolerance_hours, learn=False,
+        )
+        covered.update(best_version)
+    return covered
 
 
 def evaluate_and_grab_releases(

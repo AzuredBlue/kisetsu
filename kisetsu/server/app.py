@@ -17,6 +17,7 @@ from kisetsu.db.models import QbitRuleWatermark
 from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from kisetsu.clients.anilist import AniListClient
+from kisetsu.core.backfill import run_backfill
 from kisetsu.core.confirmation import ingest_log_acceptances
 from kisetsu.core.feedcache import backfill_cache, ingest_rss, prune_cache
 from kisetsu.core.grabber import has_unsettled_work, update_episode_status
@@ -280,6 +281,24 @@ def _ingest_delay(qbit: QBitClient) -> int:
         return INGEST_INTERVAL_SECONDS
 
 
+async def _backfill_past_releases(engine) -> None:
+    """Search the feeds for episodes that scrolled out of their RSS while Kisetsu was away.
+
+    A failure here must not hold up the regular feed update, so it only logs.
+    """
+    try:
+        found = await asyncio.to_thread(run_backfill, engine)
+    except Exception as e:
+        logger.warning(f"Past-release search failed: {e}", exc_info=True)
+        return
+    if found:
+        names = ", ".join(f"'{name}'" for name in list(found)[:3])
+        if len(found) > 3:
+            names += f" and {len(found) - 3} more"
+        state.add_log(f"Found {sum(found.values())} past release(s) by searching the feeds for {names}.", "INFO")
+        state.trigger_immediate_cycle()
+
+
 async def ingest_task():
     """Keep the feed cache current between checks.
 
@@ -309,6 +328,7 @@ async def ingest_task():
                 direct = (settings.download_mode or "rules") == "direct"
             if direct:
                 await asyncio.to_thread(ingest_rss, engine, qbit, False)
+                await _backfill_past_releases(engine)
                 delay = await asyncio.to_thread(_ingest_delay, qbit)
                 if time.monotonic() - last_prune >= PRUNE_INTERVAL_SECONDS:
                     removed = await asyncio.to_thread(prune_cache, engine)

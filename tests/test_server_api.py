@@ -2306,3 +2306,32 @@ def test_pausing_a_direct_show_leaves_its_torrents_running(client, session, mock
 
     assert response.status_code == 200
     mock_qbit.resume_torrents.assert_not_called()
+
+
+def test_search_past_releases_reports_when_nothing_is_missing(client, db_engine, monkeypatch):
+    with Session(db_engine) as s:
+        s.add(Monitored(id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]'))
+        s.commit()
+    searched = []
+    monkeypatch.setattr(api_module, "run_backfill", lambda *a, **k: searched.append(1) or {})
+
+    response = client.post("/api/shows/1/search-releases")
+
+    assert response.status_code == 200
+    assert response.json() == {"added": 0, "searched": False, "missing": []}
+    assert searched == []
+    assert client.post("/api/shows/99/search-releases").status_code == 404
+
+
+def test_search_past_releases_names_the_missing_episodes_it_searches_for(client, db_engine, monkeypatch):
+    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id: [3, 4])
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force: {"Show": 2})
+    with Session(db_engine) as s:
+        s.add(Monitored(id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]'))
+        s.commit()
+
+    response = client.post("/api/shows/1/search-releases")
+
+    assert response.json() == {"added": 2, "searched": True, "missing": [3, 4]}
+
+

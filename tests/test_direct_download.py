@@ -173,7 +173,7 @@ def test_an_undated_release_does_not_fill_an_old_episode():
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 7)
     ).first()
-    # Not taken, and not written off: it stays wanted for a dated release.
+    # Not taken, and not written off: it stays wanted for a dated release or a search.
     assert episode.status == EpisodeStatus.WANTED
     qbit.add_torrent.assert_not_called()
     session.close()

@@ -25,7 +25,7 @@ from kisetsu.clients.qbit import QBitClient
 from kisetsu.core.discovery import RssSnapshot, parse_article_date
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.rules import show_match_patterns
-from kisetsu.db.models import Feed, MatchedFeedItem, Monitored, MonitoredStatus, SeenFeedItem, utc_now
+from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, SeenFeedItem, utc_now
 
 logger = logging.getLogger("kisetsu.core.feedcache")
 
@@ -37,6 +37,8 @@ COMPLETED_KEEP_DAYS = 60
 PER_SHOW_CAP = 300
 # Rules mode's shield rows aside, an unshielded "seen" row has no use beyond this.
 SEEN_KEEP_DAYS = 3
+# Releases published more than this before a show's first episode are not for it.
+PREMIERE_SLACK_DAYS = 3
 _CHUNK = 500
 
 # Feeds the last ingest could not read; their (stale) cache is not treated as current.
@@ -98,6 +100,11 @@ def _naive(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
+def premiere_cutoff(first_air: datetime) -> datetime:
+    """Naive UTC time before which a release cannot be this show's."""
+    return _naive(first_air) - timedelta(days=PREMIERE_SLACK_DAYS)
+
+
 class _FollowedShows:
     """Which followed show, if any, a release title belongs to."""
 
@@ -150,12 +157,17 @@ def store_matches(
     articles_by_url: Dict[str, List[Dict[str, Any]]],
     followed: Optional[_FollowedShows] = None,
     now: Optional[datetime] = None,
+    only_show_ids: Optional[set] = None,
 ) -> int:
     """Keep the articles that match a followed show; returns how many rows were added.
 
     A release that matches two shows is kept for both. Rows that exist already
     are left alone, so their first-seen time is the first one. An article that
     was matched before is not matched again until the followed shows change.
+
+    ``only_show_ids`` keeps rows for those shows alone, for a caller that vetted
+    the articles for one show (a search for it) and cannot vouch for the others.
+    Such articles are not marked as evaluated, so the regular copy still sees them.
     """
     followed = followed or _followed(session)
     now = _naive(now or utc_now())
@@ -175,8 +187,11 @@ def store_matches(
             item_id = item_id_of(article)
             if (feed_url, item_id) in seen or (feed_url, item_id) in known:
                 continue
-            seen.add((feed_url, item_id))
+            if only_show_ids is None:
+                seen.add((feed_url, item_id))
             show_ids = followed.matching_ids(title)
+            if only_show_ids is not None:
+                show_ids = [show_id for show_id in show_ids if show_id in only_show_ids]
             if not show_ids:
                 continue
             data = json.dumps(_slim(article), separators=(",", ":"))
@@ -264,6 +279,21 @@ def prune(session: Session, now: Optional[datetime] = None) -> int:
     if feed_urls:
         removed += session.execute(
             delete(MatchedFeedItem).where(MatchedFeedItem.feed_url.not_in(feed_urls))
+        ).rowcount or 0
+
+    # A release published well before its show's first episode aired belongs to an
+    # earlier season (or is a re-release); nothing can use it. Undated rows stay.
+    for monitored_id, first_air in session.exec(
+        select(Episode.monitored_id, func.min(Episode.air_at))
+        .where(Episode.air_at.is_not(None))
+        .group_by(Episode.monitored_id)
+    ).all():
+        removed += session.execute(
+            delete(MatchedFeedItem).where(
+                MatchedFeedItem.monitored_id == monitored_id,
+                MatchedFeedItem.published_at.is_not(None),
+                MatchedFeedItem.published_at < premiere_cutoff(first_air),
+            )
         ).rowcount or 0
 
     completed_ids = select(Monitored.id).where(Monitored.status == MonitoredStatus.COMPLETED)

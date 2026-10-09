@@ -28,6 +28,7 @@ from kisetsu.db.models import (
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss
 from kisetsu.core.grabber import cancel_episode_operations, direct_feed_matches, manual_grab, rebase_ledger, releases_in_other_feeds, restore_episode
@@ -394,6 +395,29 @@ def get_show_episodes(show_id: int, session: Session = Depends(get_db)):
         }
         for episode in episodes
     ]
+
+
+@router.post("/shows/{show_id}/search-releases")
+async def search_past_releases(show_id: int, session: Session = Depends(get_db)):
+    """Ask the feeds' sites for the aired episodes of this show that no feed item supplies.
+
+    Only episodes that are still wanted and are not in the cached feed items are
+    searched for; the usual pause between searches is ignored.
+    """
+    show = session.get(Monitored, show_id)
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+    name = show.display_name
+    engine = session.get_bind()
+    missing = await asyncio.to_thread(missing_episodes, engine, show_id)
+    if not missing:
+        return {"added": 0, "searched": False, "missing": []}
+    found = await asyncio.to_thread(run_backfill, engine, show_id=show_id, force=True)
+    added = sum(found.values())
+    if added:
+        state.add_log(f"Found {added} past release(s) for '{name}' by searching the feeds.", "INFO")
+        state.trigger_immediate_cycle()
+    return {"added": added, "searched": True, "missing": missing}
 
 
 @router.post("/shows/{show_id}/rediscover")

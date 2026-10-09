@@ -2193,9 +2193,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
           ${regexSections}
          </div>
-         <button type="button" onclick="showTriggerRediscover()" class="self-start text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
-          Reset to Auto-Detect
-         </button>
+         <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
+          <button type="button" onclick="showTriggerRediscover()" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
+           Reset to Auto-Detect
+          </button>
+          <button type="button" onclick="searchPastReleases(this)" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">
+           Search past releases
+          </button>
+         </div>
         </div>`;
 
       document.getElementById('show-col-feed').innerHTML = `
@@ -2406,6 +2411,29 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
       await rediscoverShow(showId, force);
       if (currentInspectedShowId === showId) loadShowPageBody(showId, false);
+    }
+
+    function searchPastReleases(btn) {
+      const showId = currentInspectedShowId;
+      if (!showId) return;
+      return once(`search-releases-${showId}`, async () => {
+        btn.disabled = true;
+        try {
+          const data = await apiFetch(`/api/shows/${showId}/search-releases`, { method: 'POST' });
+          const episodes = (data.missing || []).join(', ');
+          showToast(
+            !data.searched ? 'Every aired episode is already in the feeds or downloaded.'
+              : data.added ? `Found ${data.added} past release(s); checking for episodes to download.`
+              : `Searched the feeds for episode ${episodes}; nothing found.`,
+            data.added ? 'success' : 'info'
+          );
+          if (data.added && currentInspectedShowId === showId) loadShowPageBody(showId, false);
+        } catch (err) {
+          showToast(`Search failed: ${err.message || err}`, 'error');
+        } finally {
+          btn.disabled = false;
+        }
+      });
     }
 
     async function quickDownloadMatch(showId, btn) {
