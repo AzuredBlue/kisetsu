@@ -171,7 +171,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     #tab-show .divide-line-soft > :not([hidden]) ~ :not([hidden]) { border-color: rgb(var(--line-soft)); }
         #tab-show .btn:not(.btn-primary):not(.btn-danger):hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
     #tab-show .section-title { color: rgb(var(--ac-soft)); }
-    #tab-show #show-save-bar { border-color: rgb(var(--ac) / .5); background-color: rgb(var(--surface) / .95); }
+    #tab-show #show-save-bar, #settings-save-bar { border-color: rgb(var(--ac) / .5); background-color: rgb(var(--surface) / .95); }
     #show-backdrop-art, #show-banner-art { contain: paint; will-change: transform; }
     #show-backdrop-art { -webkit-mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); mask-image: linear-gradient(to bottom, #000 0, rgba(0, 0, 0, .5) 45%, transparent 90%); }
     #show-banner-art { -webkit-mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); mask-image: linear-gradient(to bottom, #000 60%, transparent 100%); }
@@ -431,7 +431,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
       <section id="tab-settings" class="hidden max-w-3xl space-y-5">
 
-        <form id="settings-form" onsubmit="saveSettings(event)" class="space-y-5">
+        <form id="settings-form" onsubmit="saveSettings(event)" oninput="updateSettingsSaveBar()" onchange="updateSettingsSaveBar()" class="space-y-5">
 
           <div>
             <h3 class="section-title mb-2 px-1 flex items-center gap-2"><svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>qBittorrent</h3>
@@ -537,10 +537,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             </div>
           </div>
 
-          <div class="flex justify-end">
-            <button type="submit" class="btn btn-primary px-6 py-2">
-              Save settings
-            </button>
+          <div class="sticky bottom-5 h-0 z-30">
+            <div id="settings-save-bar" inert aria-hidden="true" class="absolute bottom-0 left-1/2 -translate-x-1/2 card shadow-xl shadow-black/50 pl-4 pr-2.5 py-2.5 flex items-center gap-4 opacity-0 translate-y-3 pointer-events-none transition-[transform,opacity] duration-200 ease-out motion-reduce:transition-none">
+              <span class="text-sm text-zinc-300 whitespace-nowrap">Unsaved changes</span>
+              <div class="flex items-center gap-2">
+                <button type="button" onclick="discardSettingsChanges()" class="btn btn-sm">Discard</button>
+                <button type="submit" id="btn-save-settings" class="btn btn-sm btn-primary">Save changes</button>
+              </div>
+            </div>
           </div>
         </form>
 
@@ -673,6 +677,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         clearShowHash();
         leaveShowPage(tab);
         return;
+      }
+      if (activeTab === 'settings' && tab !== 'settings') {
+        if (!confirmDiscardSettingsChanges()) return;
+        settingsInitialState = null;
+        updateSettingsSaveBar();
       }
       const changed = tab !== activeTab;
       activeTab = tab;
@@ -2968,20 +2977,72 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       }
     }
 
+    // Only the fields that need the Save bar; the engine, names, theme and accent apply when clicked.
+    let settingsInitialState = null;
+
+    function readSettingsForm() {
+      const val = (id) => document.getElementById(id).value;
+      return {
+        qbit_host: val('set-qbit-host'),
+        qbit_username: val('set-qbit-user'),
+        qbit_password: val('set-qbit-pass'),
+        base_dir: val('set-base-dir'),
+        default_category: val('set-category'),
+        default_seed_ratio: val('set-ratio'),
+        stall_wait_hours: val('set-stall-window'),
+        anilist_username: val('set-anilist-user'),
+        refresh_interval_minutes: val('set-interval'),
+        early_air_tolerance_hours: val('set-early-air-tolerance'),
+      };
+    }
+
+    function fillSettingsForm() {
+      const s = currentSettings || {};
+      document.getElementById('set-qbit-host').value = s.qbit_host || '';
+      document.getElementById('set-qbit-user').value = s.qbit_username || '';
+      document.getElementById('set-qbit-pass').value = '';
+      document.getElementById('set-base-dir').value = s.base_dir || '';
+      document.getElementById('set-category').value = s.default_category || '';
+      document.getElementById('set-ratio').value = s.default_seed_ratio ?? 1.0;
+      document.getElementById('set-stall-window').value = s.stall_wait_hours ?? 24;
+      document.getElementById('set-anilist-user').value = s.anilist_username || '';
+      document.getElementById('set-interval').value = s.refresh_interval_minutes ?? 360;
+      document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
+      settingsInitialState = readSettingsForm();
+      updateSettingsSaveBar();
+    }
+
+    function isSettingsDirty() {
+      if (!settingsInitialState) return false;
+      const now = readSettingsForm();
+      return Object.keys(settingsInitialState).some(k => now[k] !== settingsInitialState[k]);
+    }
+
+    function updateSettingsSaveBar() {
+      const bar = document.getElementById('settings-save-bar');
+      if (!bar) return;
+      const dirty = isSettingsDirty();
+      bar.classList.toggle('opacity-0', !dirty);
+      bar.classList.toggle('translate-y-3', !dirty);
+      bar.classList.toggle('pointer-events-none', !dirty);
+      bar.inert = !dirty;
+      bar.setAttribute('aria-hidden', String(!dirty));
+    }
+
+    function confirmDiscardSettingsChanges() {
+      return !isSettingsDirty() || confirm('Discard unsaved changes?');
+    }
+
+    function discardSettingsChanges() {
+      fillSettingsForm();
+    }
+
     async function loadSettings() {
       try {
         const s = await apiFetch('/api/settings');
         currentSettings = s;
-        document.getElementById('set-qbit-host').value = s.qbit_host || '';
-        document.getElementById('set-qbit-user').value = s.qbit_username || '';
-        document.getElementById('set-qbit-pass').value = '';
-        document.getElementById('set-base-dir').value = s.base_dir || '';
-        document.getElementById('set-category').value = s.default_category || '';
-        document.getElementById('set-ratio').value = s.default_seed_ratio ?? 1.0;
-        document.getElementById('set-stall-window').value = s.stall_wait_hours ?? 24;
-        document.getElementById('set-anilist-user').value = s.anilist_username || '';
-        document.getElementById('set-interval').value = s.refresh_interval_minutes ?? 360;
-        document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
+        // The engine and name buttons reload settings too; edits in the text fields survive that.
+        if (!isSettingsDirty()) fillSettingsForm();
         updateTitleLanguageUi(s.title_language || 'english');
         updateDownloadModeUi(s.download_mode || 'rules');
         applyUserAccent(s.accent_color || DEFAULT_ACCENT, s.accent_tint || 'subtle');
@@ -3002,8 +3063,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         anilist_username: document.getElementById('set-anilist-user').value,
         refresh_interval_minutes: parseInt(document.getElementById('set-interval').value),
         early_air_tolerance_hours: parseInt(document.getElementById('set-early-air-tolerance').value),
-        title_language: document.getElementById('set-title-language').value,
-        download_mode: document.getElementById('set-download-mode').value,
       };
       const pwd = document.getElementById('set-qbit-pass').value;
       if (pwd) payload.qbit_password = pwd;
@@ -3016,6 +3075,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             body: JSON.stringify(payload)
           });
           showToast(data.message || 'Settings saved.', 'success');
+          settingsInitialState = null;
           await loadSettings();
           await loadShows();
         } catch (err) {
