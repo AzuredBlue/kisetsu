@@ -12,7 +12,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
-from kisetsu.core.matching import match_release_to_show, prepare_aliases, release_arc_qualifier
+from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
 from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, store_matches
 from kisetsu.core.rules import (
     effective_title,
@@ -1588,6 +1588,7 @@ def _decide(
     title: str,
     matcher: Optional[_ShowMatcher] = None,
     parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
+    unmarked_ok: bool = False,
 ) -> Tuple[bool, Dict[str, Any]]:
     if matcher is None:
         matcher = _show_matcher(show)
@@ -1605,8 +1606,41 @@ def _decide(
         test_pattern=matcher.test_pattern,
         prepared_aliases=matcher.prepared_aliases,
         parsed_cache=parsed_cache,
-        ignore_arc_marker=learned_without_marker,
+        ignore_arc_marker=learned_without_marker or (unmarked_ok and release_arc_qualifier(title) is None),
     )
+    return matched, parsed
+
+
+def _decide_article(
+    session: Session,
+    show: Monitored,
+    article: Dict[str, Any],
+    matcher: _ShowMatcher,
+    parsed_cache: Dict[str, Dict[str, Any]],
+    target_count: int,
+) -> Tuple[bool, Dict[str, Any]]:
+    """``_decide`` for a feed article, which also knows when it was published.
+
+    A show whose aliases name an arc ("2nd & 3rd STAGE") refuses releases that carry
+    no arc marker, but groups usually do not write one for a split entry. A release
+    published right after one of this show's own scheduled air times is on its
+    schedule, which the numbering cannot tell us but the date can; it is accepted
+    without the marker. A release that names a different arc, has no date or falls
+    outside the schedule (the previous stage's) stays refused.
+    """
+    title = article.get("title", "")
+    matched, parsed = _decide(show, title, matcher, parsed_cache)
+    if matched:
+        return matched, parsed
+    raw_episode = parsed.get("episode")
+    if (
+        raw_episode is not None
+        and raw_episode > 0
+        and _alias_arc_requirement(show.effective_aliases)
+        and release_arc_qualifier(title) is None
+        and _date_mapped_episode(session, show, int(raw_episode), target_count, article) is not None
+    ):
+        return _decide(show, title, matcher, parsed_cache, unmarked_ok=True)
     return matched, parsed
 
 
@@ -1745,7 +1779,7 @@ def _resolve_feed_articles(
         title = article.get("title", "")
         if not title:
             continue
-        matched, parsed = _decide(show, title, matcher, parsed_cache)
+        matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, target_count)
         if not matched:
             continue
         raw_episode = parsed.get("episode")
@@ -1989,7 +2023,7 @@ def _manual_candidates(
             title = article.get("title", "")
             if not title:
                 continue
-            matched, parsed = _decide(show, title, matcher, parsed_cache)
+            matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, context.target_count)
             if not matched:
                 continue
             raw_episode = parsed.get("episode")

@@ -2916,3 +2916,74 @@ def test_removing_a_feed_clears_it_from_the_episodes_it_supplied():
     engine.dispose()
 
 
+STAGE_ALIASES = [
+    "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd & 3rd STAGE",
+    "STEEL BALL RUN JoJo's Bizarre Adventure 2nd - 3rd STAGE",
+    "JoJo's Bizarre Adventure: Part 7–Steel Ball Run",
+]
+
+
+def _stage_show(session):
+    """A split entry whose aliases insist on an arc marker the release groups never write."""
+    feed = Feed(id=1, qbit_feed_name="Erai", qbit_feed_url="https://nyaa.si/?page=rss&u=Erai-raws", priority=1)
+    session.add(feed)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    show = _show(
+        session,
+        display_name="Steel Ball Run",
+        aliases_json=json.dumps(STAGE_ALIASES),
+        current_feed_id=1,
+        status=MonitoredStatus.UNCONFIRMED,
+        total_episodes=11,
+        next_airing_episode=4,
+        next_airing_at=now + timedelta(days=6),
+    )
+    episodes = sync_show_episodes(session, show)
+    air = {number: now - timedelta(days=7 * (4 - number), hours=1) for number in range(1, 12)}
+    for episode in episodes:
+        episode.air_at = air[episode.episode_number]
+        session.add(episode)
+    session.commit()
+    return feed, air
+
+
+def _stage_grab(articles):
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    session.add(settings)
+    feed, air = _stage_show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {"Erai": {"url": feed.qbit_feed_url, "articles": articles(air)}}
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    urls = [call.kwargs.get("urls") for call in qbit.add_torrent.call_args_list]
+    session.close()
+    engine.dispose()
+    return urls
+
+
+def _erai(title, published, item_id):
+    return {
+        "id": item_id, "title": f"[Erai-raws] {title} [1080p NF WEB-DL AVC AAC][MultiSub]",
+        "torrentURL": f"magnet:{item_id}", "date": format_datetime(published),
+    }
+
+
+def test_a_release_on_the_shows_schedule_needs_no_arc_marker():
+    urls = _stage_grab(lambda air: [
+        _erai("JoJo no Kimyou na Bouken: Steel Ball Run - 04", air[3] + timedelta(minutes=11), "on-schedule"),
+    ])
+    assert urls == ["magnet:on-schedule"]
+
+
+def test_a_release_off_the_schedule_or_naming_another_stage_still_needs_its_marker():
+    urls = _stage_grab(lambda air: [
+        # The previous stage's premiere: a week before this entry began.
+        _erai("JoJo no Kimyou na Bouken: Steel Ball Run - 01", air[1] - timedelta(days=7), "previous-stage"),
+        # On schedule, but it says it is another stage.
+        _erai("JoJo no Kimyou na Bouken: Steel Ball Run 1st Stage - 04", air[3] + timedelta(minutes=11), "other-stage"),
+        # On schedule but undated.
+        {"id": "undated", "title": "[Erai-raws] JoJo no Kimyou na Bouken: Steel Ball Run - 04 [1080p]", "torrentURL": "magnet:undated"},
+    ])
+    assert urls == []
+
+
