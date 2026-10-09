@@ -83,6 +83,9 @@ async def background_supervisor_task():
         connection_ready = False
         sleep_seconds = 60
         deferred_reason: Optional[str] = None
+        # Cleared before the work, not after: a trigger that arrives while a check
+        # runs (a past-release search finding something) must cut the next sleep short.
+        state.wake_event.clear()
         try:
             with Session(engine) as session:
                 settings = get_settings(session)
@@ -204,7 +207,6 @@ async def background_supervisor_task():
                 else:
                     state.daemon_active = False
 
-            state.wake_event.clear()
             try:
                 await asyncio.wait_for(state.wake_event.wait(), timeout=sleep_seconds)
                 if not connection_ready:

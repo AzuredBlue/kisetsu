@@ -569,15 +569,20 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             episode.last_error = None
             session.add(episode)
             break
-    episodes = session.exec(select(Episode).where(Episode.status.in_([
-        EpisodeStatus.QUEUED,
-        EpisodeStatus.DOWNLOADING,
-        EpisodeStatus.REPLACING,
-    ]))).all()
+    episodes = session.exec(select(Episode).where(
+        Episode.status.in_([
+            EpisodeStatus.QUEUED,
+            EpisodeStatus.DOWNLOADING,
+            EpisodeStatus.REPLACING,
+        ])
+        # A torrent in an error state (disk full, drive unmounted) can recover, so a
+        # failed episode that still has its torrent keeps being watched.
+        | ((Episode.status == EpisodeStatus.FAILED) & Episode.torrent_hash.is_not(None))
+    )).all()
     for episode in episodes:
         torrent = by_hash.get(episode.torrent_hash)
         if not torrent:
-            if episode.status == EpisodeStatus.REPLACING:
+            if episode.status in (EpisodeStatus.REPLACING, EpisodeStatus.FAILED):
                 continue
             if episode.torrent_hash:
                 reason = "Torrent is no longer present in qBittorrent; queued for a safe retry."
@@ -597,9 +602,16 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
                 _complete_episode(session, episode)
                 logs.append(f"Completed {show_name(episode, session)} Ep {episode.episode_number}")
         elif _torrent_state(torrent) in _FAILED_TORRENT_STATES:
-            episode.status = EpisodeStatus.FAILED
-            episode.last_error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
+            error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
+            if episode.status != EpisodeStatus.FAILED or episode.last_error != error:
+                episode.status = EpisodeStatus.FAILED
+                episode.last_error = error
+                session.add(episode)
+        elif episode.status == EpisodeStatus.FAILED and _is_healthy_torrent(torrent):
+            episode.status = EpisodeStatus.DOWNLOADING
+            episode.last_error = None
             session.add(episode)
+            logs.append(f"Resumed {show_name(episode, session)} Ep {episode.episode_number} after qBittorrent recovered")
     logs.extend(_release_stale_operation_tags(session, qbit))
     _sweep_operation_tags(session, qbit)
     session.commit()
@@ -776,7 +788,10 @@ def _grab_feeds(session: Session, show: Monitored, feeds: List[Feed]) -> List[Fe
     if not feeds:
         return []
     if show.feed_is_locked:
-        locked = next((feed for feed in feeds if feed.id == show.learned_feed_id or feed.id == show.current_feed_id), None)
+        # The learned feed is the evidence; the assignment is only a fallback for a
+        # feed the user pinned before anything was downloaded.
+        locked_id = show.learned_feed_id if show.learned_feed_id is not None else show.current_feed_id
+        locked = next((feed for feed in feeds if feed.id == locked_id), None)
         # A locked show reads one feed or none at all. Fanning out here would be
         # exactly the "grab from any feed" behaviour the lock exists to prevent.
         return [locked] if locked is not None else []

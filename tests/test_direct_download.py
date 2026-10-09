@@ -2117,6 +2117,46 @@ def test_a_failed_tag_removal_never_disturbs_the_download():
     engine.dispose()
 
 
+def test_an_episode_failed_by_a_torrent_error_recovers_when_the_torrent_does():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    qbit, torrent = _qbit()
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.DOWNLOADING,
+        feed_id=feed.id,
+        torrent_hash="hash-1",
+        release_title=str(torrent.name),
+    ))
+    session.commit()
+
+    torrent.state = "missingFiles"
+    torrent.progress = 0.4
+    update_episode_status(session, qbit, settings)
+    session.expire_all()
+    assert session.get(Episode, 1).status == EpisodeStatus.FAILED
+
+    torrent.state = "downloading"
+    update_episode_status(session, qbit, settings)
+    session.expire_all()
+    episode = session.get(Episode, 1)
+    assert episode.status == EpisodeStatus.DOWNLOADING
+    assert episode.last_error is None
+
+    torrent.state = "stalledUP"
+    torrent.progress = 1.0
+    update_episode_status(session, qbit, settings)
+    session.expire_all()
+    assert session.get(Episode, 1).status == EpisodeStatus.COMPLETED
+    session.close()
+    engine.dispose()
+
+
 def test_a_show_locked_to_a_delivering_feed_is_never_read_from_another():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
@@ -2143,6 +2183,25 @@ def test_a_show_locked_to_a_delivering_feed_is_never_read_from_another():
 
     # Even with no assignment at all, a learned feed narrows the read to itself.
     qbit.add_torrent.assert_not_called()
+    session.close()
+    engine.dispose()
+
+
+def test_the_learned_feed_wins_over_a_higher_ranked_guessed_assignment():
+    from kisetsu.core.grabber import _grab_feeds
+
+    engine, session = _database()
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    session.add(subs)
+    session.add(erai)
+    show = _show(session)
+    show.current_feed_id = subs.id
+    show.learned_feed_id = erai.id
+    session.add(show)
+    session.commit()
+
+    assert [feed.id for feed in _grab_feeds(session, show, [subs, erai])] == [erai.id]
     session.close()
     engine.dispose()
 

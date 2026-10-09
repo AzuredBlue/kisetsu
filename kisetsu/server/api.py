@@ -163,7 +163,8 @@ async def get_show_accent(show_id: int):
         task = asyncio.ensure_future(fetch_hues(banner, cover))
         _accent_tasks[show_id] = task
         task.add_done_callback(lambda _t: _accent_tasks.pop(show_id, None))
-    ok, hues = await task
+    # Shielded: the task is shared, so one request disconnecting must not cancel it for the others.
+    ok, hues = await asyncio.shield(task)
 
     with Session(engine) as session:
         show = session.get(Monitored, show_id)
@@ -1773,17 +1774,16 @@ async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_fe
             download_mode=s.download_mode,
             early_air_tolerance_hours=s.early_air_tolerance_hours,
         )
-        now_utc = datetime.now(timezone.utc)
-        state.next_check_seconds = sleep_sec
-        state.next_check_reason = reason
-        state.target_next_check_time = now_utc + timedelta(seconds=sleep_sec)
+        # The background loop keeps its own schedule, which is what the status
+        # endpoint reports; overwriting it here would show a countdown nothing follows.
+        target = datetime.now(timezone.utc) + timedelta(seconds=sleep_sec)
 
         return {
             "status": "success",
             "logs": logs,
             "next_check_reason": reason,
             "next_check_seconds": sleep_sec,
-            "target_next_check_time": state.target_next_check_time.isoformat(),
+            "target_next_check_time": target.isoformat(),
             "message": "Supervision cycle completed successfully."
         }
     except QbitAuthenticationError as e:
