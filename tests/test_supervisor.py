@@ -823,6 +823,53 @@ def test_direct_show_moves_to_the_feed_that_carries_its_release():
     engine.dispose()
 
 
+def test_bootstrap_reassigns_a_show_whose_feed_never_carries_it():
+    """A show with a feed already is not "unassigned", but must still be moved off a dead feed."""
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
+        subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+        erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+        session.add(settings)
+        session.add(subs)
+        session.add(erai)
+        show = Monitored(
+            id=1,
+            anilist_id=1,
+            display_name="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=subs.id,
+        )
+        session.add(show)
+        session.commit()
+
+        qbit = MagicMock()
+        qbit.get_rss_items.return_value = {
+            "SubsPlease": {"url": subs.qbit_feed_url, "articles": []},
+            "Erai": {"url": erai.qbit_feed_url, "articles": [{
+                "id": "erai-ep8",
+                "title": "[Erai-raws] Sousou no Frieren - 08 [1080p].mkv",
+                "torrentURL": "magnet:erai-ep8",
+            }]},
+        }
+        supervisor = _direct_supervisor(session, settings, qbit)
+
+        supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+        session.refresh(show)
+        assert show.candidate_feed_id == erai.id
+
+        show.candidate_feed_since = utc_now() - timedelta(seconds=FEED_SWITCH_GRACE_SECONDS + 30)
+        session.add(show)
+        session.commit()
+        supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+        session.refresh(show)
+        assert show.current_feed_id == erai.id
+        assert show.learned_feed_id is None
+    engine.dispose()
+
+
 def test_direct_show_stays_put_once_it_has_downloaded_from_its_feed():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)

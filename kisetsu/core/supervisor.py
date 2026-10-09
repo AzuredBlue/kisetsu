@@ -261,11 +261,16 @@ class Supervisor:
         unassigned_shows = self.session.exec(stmt).all()
         all_feeds = self.session.exec(select(Feed).order_by(Feed.priority)).all()
 
-        if not unassigned_shows or not all_feeds:
+        if not all_feeds:
             return logs
 
+        # Shows that already have a feed still need checking: one assigned by a
+        # guess (or in rules mode) to a feed that never carries it must move.
         if not create_qbit_rules:
             logs.extend(self._reassign_direct_feeds(all_feeds, rss_snapshot))
+
+        if not unassigned_shows:
+            return logs
 
         top_feed = all_feeds[0]
         if parsed_articles is None:
