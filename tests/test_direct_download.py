@@ -608,10 +608,15 @@ def test_v2_add_is_paused_and_old_torrent_is_removed_only_after_new_one_complete
     qbit.delete_torrents.assert_not_called()
     operation = session.exec(select(TorrentOperation)).first()
     assert operation.status == TorrentOperationStatus.SEEDING
+    # Waiting for the download is not an error on the episode.
+    assert episode.last_error is None
 
     # Only once the replacement has completed is the superseded one removed.
     new_torrent.progress = 1
     new_torrent.state = "stalledUP"
+    operation.next_retry_at = utc_now() - timedelta(seconds=1)
+    session.add(operation)
+    session.commit()
     evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
 
     assert events == ["add", "recheck", "resume", "delete"]
@@ -619,6 +624,62 @@ def test_v2_add_is_paused_and_old_torrent_is_removed_only_after_new_one_complete
     assert episode.torrent_hash == "new-hash"
     assert episode.status == EpisodeStatus.COMPLETED
     qbit.delete_torrents.assert_called_once_with(["old-hash"], delete_files=True)
+    session.close()
+    engine.dispose()
+
+
+def test_a_replacement_that_never_finishes_is_dropped_and_the_old_release_kept():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, total_episodes=2, next_airing_episode=2, last_confirmed_episode=1)
+    sync_show_episodes(session, show)
+    episode = session.exec(select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 1)).first()
+    episode.status = EpisodeStatus.COMPLETED
+    episode.version = 1
+    episode.release_title = "[SubsPlease] Sousou no Frieren - 01 (1080p) [OLD].mkv"
+    episode.torrent_hash = "old-hash"
+    session.add(episode)
+    session.commit()
+    title = "[SubsPlease] Sousou no Frieren - 01v2 (1080p) [NEW].mkv"
+    qbit, new_torrent = _qbit(title=title)
+    old_torrent = MagicMock(hash="old-hash", progress=1, state="stoppedUP", name=episode.release_title)
+    new_torrent.hash = "new-hash"
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [new_torrent]
+        if kwargs.get("tag", "").startswith("kisetsu-op-")
+        else [new_torrent]
+        if kwargs.get("hashes") == ["new-hash"]
+        else [old_torrent]
+        if kwargs.get("hashes") == ["old-hash"]
+        else [old_torrent, new_torrent]
+        if kwargs.get("tag") == "kisetsu-managed"
+        else []
+    )
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {"url": feed.qbit_feed_url, "articles": [{"id": "v2", "title": title, "torrentURL": "magnet:v2"}]}
+    }
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    operation = session.exec(select(TorrentOperation)).first()
+    assert operation.status == TorrentOperationStatus.SEEDING
+
+    operation.created_at = utc_now() - timedelta(hours=49)
+    operation.next_retry_at = utc_now() - timedelta(seconds=1)
+    session.add(operation)
+    session.commit()
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    session.expire_all()
+    episode = session.get(Episode, episode.id)
+    operation = session.exec(select(TorrentOperation)).first()
+    assert operation.status == TorrentOperationStatus.FAILED
+    assert episode.status == EpisodeStatus.COMPLETED
+    assert episode.version == 1
+    assert episode.torrent_hash == "old-hash"
+    qbit.delete_torrents.assert_called_once_with(["new-hash"], delete_files=True)
     session.close()
     engine.dispose()
 

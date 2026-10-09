@@ -46,6 +46,8 @@ AIR_DATE_TOLERANCE = timedelta(days=3)
 FEED_DISCOVERY_GRACE_SECONDS = 300
 _FAILED_TORRENT_STATES = {"error", "missingfiles", "unknown"}
 MAX_OPERATION_ATTEMPTS = 8
+# How long a replacement may take to finish before the previous release is kept instead.
+REPLACEMENT_GIVE_UP = timedelta(hours=48)
 _INACTIVE_SHOW_STATUSES = (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
 
 
@@ -263,12 +265,24 @@ def _is_healthy_torrent(torrent: Any) -> bool:
     return _torrent_progress(torrent) > 0
 
 
-def _operation_retry(session: Session, operation: TorrentOperation, episode: Episode, error: str, minutes: int = 5) -> None:
+def _operation_retry(
+    session: Session,
+    operation: TorrentOperation,
+    episode: Episode,
+    error: str,
+    minutes: int = 5,
+    progress: bool = False,
+) -> None:
+    """Check the operation again later; ``progress`` marks a wait that is not an error.
+
+    A plain wait (the replacement is downloading) stays on the operation only, so
+    the episode is not shown with an error while the previous release is intact.
+    """
     operation.last_error = error
     operation.next_retry_at = utc_now() + timedelta(minutes=minutes)
     operation.updated_at = utc_now()
-    episode.last_error = error
-    episode.retry_after = operation.next_retry_at
+    episode.last_error = None if progress else error
+    episode.retry_after = None if progress else operation.next_retry_at
     session.add(operation)
     session.add(episode)
     session.commit()
@@ -362,16 +376,36 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
                 # failing a replace restores the previous release.
                 _fail_operation(session, operation, episode, "Replacement torrent is no longer present in qBittorrent; the previous release was kept.")
                 return None
+            if not is_seeding_torrent(torrent) and utc_now() - as_utc(operation.created_at) > REPLACEMENT_GIVE_UP:
+                # A replacement that never finishes would hold the episode in
+                # "replacing" forever. Drop it and go back to the previous release.
+                try:
+                    _delete_torrent_by_hash(qbit, operation.new_torrent_hash, keep_files_of=operation.old_torrent_hash)
+                except Exception as e:
+                    logger.warning(f"Could not remove the abandoned replacement {operation.new_torrent_hash}: {e}")
+                _fail_operation(
+                    session, operation, episode,
+                    "Replacement did not finish in time and was removed; the previous release was kept.",
+                )
+                return None
             state = _torrent_state(torrent)
             if state in _FAILED_TORRENT_STATES:
                 _operation_retry(session, operation, episode, f"Replacement torrent state: {state}", minutes=15)
                 return None
             if not _is_healthy_torrent(torrent):
-                _operation_retry(session, operation, episode, "Replacement is rechecking; the previous torrent remains untouched.")
+                _operation_retry(
+                    session, operation, episode,
+                    "Replacement is rechecking; the previous torrent remains untouched.",
+                    minutes=1, progress=True,
+                )
                 return None
             if not is_seeding_torrent(torrent):
                 operation.status = TorrentOperationStatus.SEEDING
-                _operation_retry(session, operation, episode, "Replacement is downloading; the previous torrent is kept until it finishes.")
+                _operation_retry(
+                    session, operation, episode,
+                    "Replacement is downloading; the previous torrent is kept until it finishes.",
+                    minutes=1, progress=True,
+                )
                 return None
             try:
                 _remove_superseded_torrent(qbit, operation, torrent)
@@ -533,6 +567,10 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                     session.commit()
                 continue
         else:
+            retry_at = as_utc(operation.next_retry_at)
+            if operation.kind == "replace" and retry_at and retry_at > now:
+                # Already checked; the poll runs every few seconds, the wait is minutes.
+                continue
             previous_status = operation.status
             _normalize_hashed_operation(operation)
             if operation.status != previous_status:
