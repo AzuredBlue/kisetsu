@@ -164,6 +164,7 @@ def check_and_handle_stalls(
                                 category=settings.default_category,
                                 ratio_limit=settings.default_seed_ratio,
                                 release_group=obs_group,
+                                title_language=settings.title_language,
                                 known_categories=known_categories,
                             )
                             show.current_feed_id = fallback_feed.id
@@ -201,6 +202,7 @@ def check_and_handle_stalls(
                                     category=settings.default_category,
                                     ratio_limit=settings.default_seed_ratio,
                                     release_group=None,
+                                    title_language=settings.title_language,
                                     known_categories=known_categories,
                                 )
                                 show.current_feed_id = fallback_feed.id

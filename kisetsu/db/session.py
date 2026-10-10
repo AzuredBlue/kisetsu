@@ -337,6 +337,8 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     """Ensure SQLite enforces foreign key constraints."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
+    # Readers no longer block the writer (and vice versa) while several loops and the API share the file.
+    cursor.execute("PRAGMA journal_mode=WAL")
     cursor.close()
 
 
@@ -519,9 +521,16 @@ def init_db(engine=None):
                 session.commit()
 
         session.exec(text("UPDATE seen_feed_items SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL"))
-        session.exec(text("DELETE FROM episodes WHERE id NOT IN (SELECT MIN(id) FROM episodes GROUP BY monitored_id, episode_number)"))
-        session.exec(text("DELETE FROM seen_feed_items WHERE id NOT IN (SELECT MIN(id) FROM seen_feed_items GROUP BY feed_url, item_id)"))
-        session.exec(text("DELETE FROM episode_number_mappings WHERE id NOT IN (SELECT MIN(id) FROM episode_number_mappings GROUP BY monitored_id, feed_id)"))
+        # Duplicates are removed only so the unique indexes below can be built. Once an
+        # index exists the database refuses duplicates, so the scan is skipped on later boots.
+        existing_indexes = {row[0] for row in session.exec(text("SELECT name FROM sqlite_master WHERE type = 'index'"))}
+        for index_name, dedupe_sql in [
+            ("ux_episode_monitored_number", "DELETE FROM episodes WHERE id NOT IN (SELECT MIN(id) FROM episodes GROUP BY monitored_id, episode_number)"),
+            ("ux_seen_feed_item", "DELETE FROM seen_feed_items WHERE id NOT IN (SELECT MIN(id) FROM seen_feed_items GROUP BY feed_url, item_id)"),
+            ("ux_episode_mapping_show_feed", "DELETE FROM episode_number_mappings WHERE id NOT IN (SELECT MIN(id) FROM episode_number_mappings GROUP BY monitored_id, feed_id)"),
+        ]:
+            if index_name not in existing_indexes:
+                session.exec(text(dedupe_sql))
         # Retired status name; mapped before the duplicate check below so the
         # rows it revives are deduplicated too and the unique index can build.
         session.exec(text(

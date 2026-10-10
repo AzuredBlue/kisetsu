@@ -410,6 +410,7 @@ def _confirm_show_on_feed(
             category=settings.default_category,
             ratio_limit=settings.default_seed_ratio,
             release_group=show.matched_release_group,
+            title_language=settings.title_language,
             known_categories=known_categories,
         )
     except Exception as e:
@@ -547,6 +548,7 @@ def verify_and_confirm_rules_from_feeds(
                             category=settings.default_category,
                             ratio_limit=settings.default_seed_ratio,
                             release_group=detected_group,
+                            title_language=settings.title_language,
                             known_categories=known_categories,
                         )
                     except QbitClientError as e:

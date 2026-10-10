@@ -225,6 +225,30 @@ async def background_supervisor_task():
             await asyncio.sleep(60)
 
 
+_settle_qbit: Optional[QBitClient] = None
+_settle_qbit_key: Optional[tuple] = None
+
+
+def _settle_client(settings) -> QBitClient:
+    """The qBittorrent client for settle checks, kept between rounds so each one doesn't log in again.
+
+    Only the settle thread touches it, one round at a time. It is rebuilt when the
+    connection settings change; `_settle_once` drops it after a failed round.
+    """
+    global _settle_qbit, _settle_qbit_key
+    key = (settings.qbit_host, settings.qbit_username, settings.qbit_password)
+    if _settle_qbit is None or _settle_qbit_key != key:
+        _settle_qbit = QBitClient(host=key[0], username=key[1], password=key[2], timeout=10)
+        _settle_qbit_key = key
+    return _settle_qbit
+
+
+def _drop_settle_client() -> None:
+    global _settle_qbit, _settle_qbit_key
+    _settle_qbit = None
+    _settle_qbit_key = None
+
+
 def _settle_once(engine) -> Optional[List[str]]:
     """Check in-flight downloads against qBittorrent once; None when there was nothing to do.
 
@@ -238,13 +262,12 @@ def _settle_once(engine) -> Optional[List[str]]:
         if not has_unsettled_work(session) or not state.try_begin_cycle("settle"):
             return None
         try:
-            qbit = QBitClient(
-                host=settings.qbit_host,
-                username=settings.qbit_username,
-                password=settings.qbit_password,
-                timeout=10,
-            )
-            return update_episode_status(session, qbit, settings)
+            try:
+                return update_episode_status(session, _settle_client(settings), settings)
+            except Exception:
+                # A client that failed once may hold a dead session; start from a fresh login next round.
+                _drop_settle_client()
+                raise
         finally:
             state.end_cycle("settle")
 

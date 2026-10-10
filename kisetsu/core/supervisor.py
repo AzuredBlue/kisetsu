@@ -1,8 +1,8 @@
 import asyncio
 import inspect
 import logging
-from datetime import timezone, timedelta
-from typing import Any, Dict, List, Optional, Set
+from datetime import datetime, timezone, timedelta
+from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 from sqlmodel import Session, select
 from kisetsu.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
@@ -454,6 +454,34 @@ class Supervisor:
             return logs + [f"AniList schedule sync error: {e}"]
         self.anilist_sync_succeeded = True
 
+        # Writing the list into the database is blocking work, so it runs off the event loop.
+        apply_logs, rules_to_disable, new_shows_count = await asyncio.to_thread(
+            self._apply_seasonal_list, seasonal_list, existing_shows
+        )
+        logs.extend(apply_logs)
+        # qBittorrent calls block too.
+        for rule_name in rules_to_disable:
+            await asyncio.to_thread(disable_rule, self.qbit, rule_name)
+        logs.extend(await asyncio.to_thread(self._remove_shows_off_list, seasonal_list, existing_shows))
+        msg = f"Synced AniList schedule for {len(seasonal_list)} seasonal shows."
+        if new_shows_count > 0:
+            msg += f" (Discovered and added {new_shows_count} new seasonal shows to Monitored)"
+        logs.append(msg)
+        if direct_mode:
+            logs.extend(await self._sync_episode_airing_schedules())
+        return logs
+
+    def _apply_seasonal_list(
+        self,
+        seasonal_list: List[Dict[str, Any]],
+        existing_shows: Dict[int, Monitored],
+    ) -> Tuple[List[str], List[str], int]:
+        """Update monitored shows from the fetched list and add the new ones.
+
+        Returns the log lines, the names of the qBittorrent rules to disable and
+        the number of shows added.
+        """
+        logs: List[str] = []
         new_shows_count = 0
         rules_to_disable: List[str] = []
         pref_lang = getattr(self.settings, "title_language", "english")
@@ -593,17 +621,7 @@ class Supervisor:
                 new_shows_count += 1
 
         self.session.commit()
-        # qBittorrent calls block, so they run off the event loop.
-        for rule_name in rules_to_disable:
-            await asyncio.to_thread(disable_rule, self.qbit, rule_name)
-        logs.extend(await asyncio.to_thread(self._remove_shows_off_list, seasonal_list, existing_shows))
-        msg = f"Synced AniList schedule for {len(seasonal_list)} seasonal shows."
-        if new_shows_count > 0:
-            msg += f" (Discovered and added {new_shows_count} new seasonal shows to Monitored)"
-        logs.append(msg)
-        if direct_mode:
-            logs.extend(await self._sync_episode_airing_schedules())
-        return logs
+        return logs, rules_to_disable, new_shows_count
 
     def _remove_shows_off_list(
         self,
@@ -695,6 +713,23 @@ class Supervisor:
             logger.warning(f"Could not refresh episode airing schedules: {e}")
             return [f"Could not refresh episode airing schedules: {e}"]
 
+        updated_shows, missing = await asyncio.to_thread(self._apply_airing_schedules, due, schedules, now)
+        if updated_shows:
+            logs.append(f"Refreshed per-episode air dates for {updated_shows} show(s) from AniList.")
+        if missing:
+            logs.append(
+                f"Warning: no AniList airing schedule for {len(missing)} show(s); "
+                "their episodes stay unverified."
+            )
+        return logs
+
+    def _apply_airing_schedules(
+        self,
+        due: List[Monitored],
+        schedules: Dict[int, Any],
+        now: datetime,
+    ) -> Tuple[int, List[str]]:
+        """Write fetched air dates onto the shows' episodes; returns the shows updated and those with no schedule."""
         missing: List[str] = []
         updated_shows = 0
         for show in due:
@@ -725,14 +760,7 @@ class Supervisor:
             updated_shows += 1
 
         self.session.commit()
-        if updated_shows:
-            logs.append(f"Refreshed per-episode air dates for {updated_shows} show(s) from AniList.")
-        if missing:
-            logs.append(
-                f"Warning: no AniList airing schedule for {len(missing)} show(s); "
-                "their episodes stay unverified."
-            )
-        return logs
+        return updated_shows, missing
 
     def sync_active_rules(self) -> List[str]:
         """Ensure active rules in qBittorrent exist and have up-to-date definitions without redundant API calls."""
