@@ -1,6 +1,19 @@
+import hashlib
+from pathlib import Path
 from typing import Dict, Optional
 
 from fastapi.responses import HTMLResponse
+
+STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _css_version() -> str:
+    # The page is never cached but the stylesheet is, so its URL carries a hash of its content.
+    try:
+        return hashlib.sha1((STATIC_DIR / "app.css").read_bytes()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
 
 def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     html = """<!DOCTYPE html>
@@ -9,8 +22,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Kisetsu</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400.woff2" as="font" type="font/woff2" crossorigin>
   <script>
     // Resolve the theme before first paint. 'system' follows the OS.
     (function () {
@@ -19,36 +31,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       var light = mode === 'light' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
       document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
     })();
-  </script>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['IBM Plex Sans', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
-            mono: ['IBM Plex Mono', 'ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'],
-          },
-          colors: {
-            canvas: 'rgb(var(--bg) / <alpha-value>)',
-            sunken: 'rgb(var(--sunken) / <alpha-value>)',
-            chrome: 'rgb(var(--chrome) / <alpha-value>)',
-            surface: 'rgb(var(--surface) / <alpha-value>)',
-            raised: 'rgb(var(--raised) / <alpha-value>)',
-            raised2: 'rgb(var(--raised2) / <alpha-value>)',
-            'line-soft': 'rgb(var(--line-soft) / <alpha-value>)',
-            line: 'rgb(var(--line) / <alpha-value>)',
-            'line-hover': 'rgb(var(--line-hover) / <alpha-value>)',
-            'line-strong': 'rgb(var(--line-strong) / <alpha-value>)',
-            accent: { DEFAULT: 'rgb(var(--ac) / <alpha-value>)', strong: 'rgb(var(--ac-strong) / <alpha-value>)', soft: 'rgb(var(--ac-soft) / <alpha-value>)' },
-            accent2: 'rgb(var(--ac2) / <alpha-value>)',
-            zinc: Object.fromEntries([50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950].map(n => [n, `rgb(var(--z${n}) / <alpha-value>)`])),
-            ...Object.fromEntries(['emerald', 'amber', 'rose', 'sky', 'violet'].map(f => [f, Object.fromEntries([3, 4, 5].map(n => [n * 100, `rgb(var(--${f}-${n}) / <alpha-value>)`]))])),
-          },
-          borderRadius: { xl: '0.875rem', '2xl': '1.125rem' },
-        },
-      },
-    };
   </script>
   <style>
     * { scrollbar-width: thin; scrollbar-color: rgb(var(--line)) transparent; }
@@ -119,7 +101,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .field-label { display: block; font-size: 0.8125rem; font-weight: 500; color: rgb(var(--t-label)); margin-bottom: 0.375rem; }
     .field-hint { font-size: 0.75rem; line-height: 1.45; color: rgb(var(--t-hint)); margin-top: 0.375rem; }
     .field {
-      width: 100%; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.625rem;
+      width: 100%; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.375rem;
       padding: 0.55rem 0.8rem; font-size: 0.875rem; color: rgb(var(--t-field)); outline: none;
       transition: border-color .15s, box-shadow .15s;
     }
@@ -127,7 +109,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .field::placeholder { color: rgb(var(--t-ph)); }
     .btn {
       display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
-      font-size: 0.8125rem; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: 0.625rem;
+      font-size: 0.8125rem; font-weight: 500; padding: 0.5rem 0.9rem; border-radius: 0.375rem;
       background: rgb(var(--raised)); color: rgb(var(--t-btn)); border: 1px solid rgb(var(--line));
       transition: background-color .15s, border-color .15s, color .15s, transform .1s; cursor: pointer;
     }
@@ -141,23 +123,24 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .btn-danger { background: rgb(var(--danger-bg)); border-color: rgb(var(--danger-bd)); color: rgb(var(--danger-fg)); }
     .btn-danger:hover { background: rgb(var(--danger-bg-h)); border-color: rgb(var(--danger-bd-h)); }
     .btn-sm { padding: 0.35rem 0.7rem; font-size: 0.75rem; }
-    .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 0.875rem; }
+    .card { background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: 0.5rem; }
     .page-title { font-size: 1.125rem; font-weight: 600; color: rgb(var(--t-title)); letter-spacing: -0.01em; }
     .page-sub { font-size: 0.8125rem; color: rgb(var(--t-hint)); margin-top: 0.2rem; }
     .section-title { font-size: 0.8125rem; font-weight: 600; color: rgb(var(--t-label)); letter-spacing: 0.02em; }
-    .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.625rem; padding: 2px; }
-    .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.5rem; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
+    .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 0.375rem; padding: 2px; }
+    .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.25rem; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
 
     /* Show cards: the pause/delete buttons fade in on hover. */
-    .show-grid { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+    .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
-    /* The poster zoom is a transform, so the browser only scales an existing layer instead
-       of laying the image out and resampling it on every frame. The layer bleeds 1px past
-       the card so the clipped edge of the scaled layer never lands on a sub-pixel (card
-       heights are fractional) and shows as a seam. */
+    /* A card is a box, rounded like the show page's poster: the poster with its progress bar
+       flush underneath, and the text below. Hover zooms only the poster, a little. The zoom is
+       a transform, so the browser only scales an existing layer instead of laying the image out
+       and resampling it on every frame. The layer bleeds 1px past the card so its clipped edge
+       never lands on a sub-pixel (card heights are fractional) and shows as a seam. */
     .poster-zoom { inset: -1px !important; transition: transform .3s cubic-bezier(.2, .8, .2, 1); backface-visibility: hidden; }
-    .group:hover .poster-zoom { transform: scale(1.04); }
+    .group:hover .poster-zoom { transform: scale(1.03); }
     .card-actions { opacity: 0; pointer-events: none; transition: opacity .2s ease-out; }
     .group:hover .card-actions, .group:focus-within .card-actions { opacity: 1; pointer-events: auto; }
 
@@ -219,9 +202,10 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       .card-actions { opacity: 1 !important; pointer-events: auto !important; }
     }
   </style>
+  <link rel="stylesheet" href="/static/app.css?v=@@CSS_VERSION@@">
   <script>
     try {
-      var cachedAccent = localStorage.getItem('kisetsu_accent_css2');
+      var cachedAccent = localStorage.getItem('kisetsu_accent_css4');
       if (cachedAccent) {
         var accentStyle = document.createElement('style');
         accentStyle.id = 'user-accent';
@@ -235,7 +219,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
   <div id="sidebar-backdrop" onclick="toggleSidebar(false)" class="fixed inset-0 bg-black/60 z-30 hidden md:hidden"></div>
 
-  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome flex flex-col flex-shrink-0 select-none z-40">
+  <aside id="sidebar" class="fixed md:static inset-y-0 left-0 w-52 -translate-x-full md:translate-x-0 transition-transform duration-200 bg-chrome border-r border-line-soft flex flex-col flex-shrink-0 select-none z-40">
 
     <div class="px-4 pt-4 pb-2 flex items-center justify-between">
       <span class="text-sm font-semibold text-zinc-100">Kisetsu</span>
@@ -302,7 +286,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
   <main id="main-shell" class="flex-1 flex flex-col min-w-0 bg-canvas overflow-hidden">
 
-    <header class="h-14 px-4 md:px-8 flex items-center justify-between gap-3 flex-shrink-0 bg-chrome">
+    <header class="h-14 px-4 md:px-8 flex items-center justify-between gap-3 flex-shrink-0 bg-chrome border-b border-line-soft">
       <div class="flex items-center gap-3 min-w-0">
         <button onclick="toggleSidebar(true)" class="md:hidden p-1.5 -ml-1.5 rounded-lg text-zinc-300 hover:bg-raised" aria-label="Open menu">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
@@ -434,7 +418,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         <form id="settings-form" onsubmit="saveSettings(event)" oninput="updateSettingsSaveBar()" onchange="updateSettingsSaveBar()" class="space-y-5">
 
           <div>
-            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>qBittorrent</h3>
+            <h3 class="section-title mb-2 px-1">qBittorrent</h3>
             <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <div class="sm:col-span-2">
                 <label class="field-label" for="set-qbit-host">Host / URL</label>
@@ -456,7 +440,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
 
           <div>
-            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M8 12l4 4m0 0l4-4m-4 4V4"/></svg>Downloads</h3>
+            <h3 class="section-title mb-2 px-1">Downloads</h3>
             <div class="card p-4 grid grid-cols-1 sm:grid-cols-3 gap-x-4 gap-y-3">
               <div class="sm:col-span-3">
                 <label class="field-label" for="set-base-dir" title="{name} becomes the show name. Blank uses qBittorrent's default.">Base directory</label>
@@ -478,7 +462,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
 
           <div>
-            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>AniList &amp; schedule</h3>
+            <h3 class="section-title mb-2 px-1">AniList &amp; schedule</h3>
             <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <div>
                 <label class="field-label" for="set-anilist-user" title="Whose watching list to follow.">AniList username</label>
@@ -496,7 +480,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </div>
 
           <div>
-            <h3 class="section-title mb-2 px-1 flex items-center gap-2"><svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/></svg>Appearance &amp; behaviour</h3>
+            <h3 class="section-title mb-2 px-1">Appearance &amp; behaviour</h3>
             <div class="card p-4 grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-4">
               <div>
                 <div class="field-label" title="Saved in this browser only. System follows your OS setting.">Theme</div>
@@ -1029,7 +1013,8 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     function renderShowCard(show) {
       const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
 
-      // Overlay line: "Ep n" on the left, countdown or outcome on the right.
+      // As in Sonarr, the poster stays clean: the bar sits under it and the episode, the
+      // countdown and the count go in the lines below the title.
       const downloaded = show.downloaded_episodes_count || 0;
       const total = show.total_episodes || 0;
       const { epLabel, airInfo, airClass, countdownAttr } = showAirSummary(show, statusKey);
@@ -1039,9 +1024,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const showProgress = downloaded > 0 || total > 0;
       const showBar = total > 0 || downloaded > 0 || !!show.next_airing_episode;
       const pct = showBar ? Math.round(progressFraction(show) * 100) : 0;
-      const barClass = (isPaused || isCompleted) ? 'bg-zinc-300' : 'bg-[rgb(var(--ac-art))]';
       const progressText = `${downloaded}/${total || '?'}`;
-      const hasOverlay = epLabel || airInfo || showProgress || showBar;
 
       const name = escapeHtml(show.display_name);
       const isDimmed = isPaused || isCompleted;
@@ -1050,10 +1033,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const art = show.cover_image
         ? `${noArt}<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="absolute inset-0 w-full h-full object-cover ${dimClass}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
         : noArt;
-      // The shade lives inside the zooming layer, so the art and its shade scale as one
-      // unit and no unshaded strip of poster can show behind the episode text.
-      const shade = hasOverlay ? '<div class="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-t from-black/90 via-black/55 to-transparent"></div>' : '';
-      const posterImg = `<div class="absolute inset-0 overflow-hidden"><div class="poster-zoom absolute inset-0">${art}${shade}</div></div>`;
+      const posterImg = `<div class="absolute inset-0 overflow-hidden"><div class="poster-zoom absolute inset-0">${art}</div></div>`;
 
       // A tag only says what the section and the countdown don't already say, so Working
       // (the normal state) gets none, nor do Upcoming in Planned or Completed in Completed.
@@ -1066,15 +1046,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         ? `<span class="px-1.5 py-0.5 inline-flex items-center rounded text-[11px] font-medium border ${cfg.bg}" title="${tagTips[label]}">${label}</span>`
         : '';
 
-      const overlay = hasOverlay ? `
-            <div class="absolute inset-x-0 bottom-0 z-10 pointer-events-none px-2.5 pb-2.5">
-              <div class="flex items-baseline justify-between gap-2 text-[13px]">
-                <span class="font-semibold text-white">${epLabel}</span>
+      // The bar sits flush under the poster, in the user's accent (grey while paused or finished).
+      const barClass = isDimmed ? 'bg-zinc-500' : 'bg-accent';
+      const bar = `<div class="h-[5px] bg-line-soft" title="${progressText} downloaded"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>`;
+      const airLine = (epLabel || airInfo) ? `
+              <div class="flex items-baseline justify-center gap-1.5 text-[13px] min-w-0">
+                <span class="font-medium text-zinc-300">${epLabel}</span>
                 <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
-              </div>
-              ${showProgress ? `<div class="mt-0.5 text-right text-[10px] tabular-nums text-zinc-400">${progressText}</div>` : ''}
-            </div>
-            ${showBar ? `<div class="absolute inset-x-0 bottom-0 h-[5px] z-10 bg-white/25"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>` : ''}` : '';
+              </div>` : '';
 
       const pauseIcon = isPaused
         ? `<svg class="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
@@ -1086,11 +1065,11 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         : '';
 
       return `
-        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} hover:border-line-hover rounded-lg show-card flex flex-col overflow-hidden group cursor-pointer transition-colors duration-150 ease-out">
+        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} rounded-lg flex flex-col overflow-hidden group cursor-pointer">
 
+          <div>
           <div data-poster-id="${show.id}" class="on-art relative w-full aspect-[2/3] bg-zinc-900 overflow-hidden">
             ${posterImg}
-            ${overlay}
 
             <div class="absolute top-2 right-2 z-20">${statusChip}</div>
 
@@ -1106,12 +1085,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             </div>
           </div>
 
-          <div class="px-3 pt-2.5 pb-3 flex flex-col gap-1">
-            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] line-clamp-2 min-h-[2.55rem] overflow-hidden pb-[1px]" title="${name}">${name}</h3>
-            <div class="flex items-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
+          ${bar}
+          </div>
+
+          <div class="px-3 pt-2.5 pb-3 flex flex-col gap-0.5 text-center">
+            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}
+            <div class="flex items-center justify-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
               <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
               <span class="truncate">${feedName}</span>
               ${lockIcon}
+              ${showProgress ? `<span class="flex-shrink-0 tabular-nums text-zinc-400">${progressText}</span>` : ''}
             </div>
           </div>
 
@@ -1934,6 +1917,85 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
     }
 
+    // Light-mode accents are worked out in OKLCH. Darkening a colour in HSL drags its hue: a
+    // violet at 40% lightness comes out blue. In OKLCH a colour keeps its hue as it darkens.
+    function srgbToLinear(v) {
+      v /= 255;
+      return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    }
+
+    function rgbToOklch([r, g, b]) {
+      const [lr, lg, lb] = [r, g, b].map(srgbToLinear);
+      const l = Math.cbrt(0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb);
+      const m = Math.cbrt(0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb);
+      const s = Math.cbrt(0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb);
+      const L = 0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s;
+      const a = 1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s;
+      const bb = 0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s;
+      return [L, Math.hypot(a, bb), (Math.atan2(bb, a) * 180 / Math.PI + 360) % 360];
+    }
+
+    function oklchToLinear(L, C, h) {
+      const a = C * Math.cos(h * Math.PI / 180), b = C * Math.sin(h * Math.PI / 180);
+      const l = Math.pow(L + 0.3963377774 * a + 0.2158037573 * b, 3);
+      const m = Math.pow(L - 0.1055613458 * a - 0.0638541728 * b, 3);
+      const s = Math.pow(L - 0.0894841775 * a - 1.2914855480 * b, 3);
+      return [
+        4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+        -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+      ];
+    }
+
+    function oklchToRgb(L, C, h) {
+      return oklchToLinear(L, C, h).map(v => {
+        const c = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+        return Math.round(Math.min(1, Math.max(0, c)) * 255);
+      });
+    }
+
+    // The largest chroma up to C that stays inside sRGB. Pulling a colour towards grey keeps its
+    // hue; clipping a channel would shift it.
+    function fitChroma(L, C, h) {
+      const inGamut = (c) => oklchToLinear(L, c, h).every(v => v >= -0.0005 && v <= 1.0005);
+      if (inGamut(C)) return C;
+      let lo = 0, hi = C;
+      for (let i = 0; i < 12; i++) {
+        const mid = (lo + hi) / 2;
+        if (inGamut(mid)) lo = mid; else hi = mid;
+      }
+      return lo;
+    }
+
+    function hexToRgb(hex) {
+      const n = parseInt(hex.slice(1), 16);
+      return [n >> 16 & 255, n >> 8 & 255, n & 255];
+    }
+
+    // The accent roles on a light surface, for a colour with OKLCH hue `h` and chroma `C`, and
+    // a secondary hue `h2`. Material 3 puts the light-mode primary at tone 40 (L* 40) with
+    // white on it, which is about 0.47 in OKLCH; that also keeps accent text above 5:1 on
+    // white. `ac` is the main accent (progress bars, links), `soft` the accent used for text
+    // and `strong` the fill behind button text.
+    function lightAccentRoles(h, C, h2) {
+      const c = Math.min(0.2, C);
+      const at = (hue, L, k = 1) => oklchToRgb(L, fitChroma(L, c * k, hue), hue);
+      return {
+        ac: at(h, 0.47).join(' '),
+        soft: at(h, 0.42, 0.9).join(' '),
+        strong: at(h, 0.47).join(' '),
+        ink: '255 255 255',
+        ac2: at(h2, 0.47).join(' '),
+      };
+    }
+
+    // The same, from the HSL values the show palette carries (hue, saturation, secondary hue).
+    // The hue is read from a pastel of the colour, which is where OKLCH and HSL agree best.
+    function lightAccentRolesFromHsl(h1, s, h2) {
+      const [, C, h] = rgbToOklch(hslToRgb(h1, s, 0.68));
+      return lightAccentRoles(h, C, rgbToOklch(hslToRgb(h2, s, 0.68))[2]);
+    }
+
     // `hues` is [primary hue, saturation, secondary hue].
     // How strongly the page surfaces take the hue (0 keeps them grey).
     const THEME_TINT = 0.6;
@@ -1947,7 +2009,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const warm = th >= 10 && th <= 60 ? 0.7 : 1;
       const t = Math.min(0.5, ts) * THEME_TINT * warm * (light ? 0.5 : 1);
       const surface = (l, k = 1) => hslToRgb(th, t * k, l).join(' ');
-      const strong = hslToRgb(h1, s, light ? 0.36 : 0.56);
+      const strong = hslToRgb(h1, s, 0.56);
       const surfaces = light ? {
         bg: surface(0.947), sunken: surface(0.905), chrome: surface(0.922), surface: surface(0.982), field: surface(0.992),
         raised: surface(0.935), raised2: surface(0.895), line: surface(0.862, 0.9), lineSoft: surface(0.9, 0.9),
@@ -1957,13 +2019,14 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         raised: surface(0.155), raised2: surface(0.19), line: surface(0.21, 0.9), lineSoft: surface(0.16, 0.9),
         lineHover: surface(0.26, 0.9), lineStrong: surface(0.32, 0.9),
       };
+      if (light) return { ...surfaces, ...lightAccentRolesFromHsl(h1, s, h2) };
       return {
         ...surfaces,
-        ac: hslToRgb(h1, s, light ? 0.40 : 0.62).join(' '),
-        soft: hslToRgb(h1, s, light ? 0.31 : 0.76).join(' '),
+        ac: hslToRgb(h1, s, 0.62).join(' '),
+        soft: hslToRgb(h1, s, 0.76).join(' '),
         strong: strong.join(' '),
         ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
-        ac2: hslToRgb(h2, s, light ? 0.40 : 0.62).join(' '),
+        ac2: hslToRgb(h2, s, 0.62).join(' '),
       };
     }
 
@@ -2034,7 +2097,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       ['Rose', '#fb7185'], ['Orange', '#fb923c'], ['Amber', '#fbbf24'], ['Lime', '#a3e635'], ['Emerald', '#34d399'],
     ];
     const ACCENT_TINTS = { off: 0, subtle: 0.22, full: 0.5 };
-    const ACCENT_CSS_KEY = 'kisetsu_accent_css2';
+    const ACCENT_CSS_KEY = 'kisetsu_accent_css4';
     const STOCK_ACCENT = {
       dark: { ac: '45 212 191', soft: '94 234 212', strong: '20 184 166', ink: '4 32 30', ac2: '56 189 248' },
       light: { ac: '13 148 136', soft: '15 118 110', strong: '15 118 110', ink: '255 255 255', ac2: '2 132 199' },
@@ -2070,13 +2133,16 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         const light = mode === 'light';
         const pal = paletteFromHues([hue, sat, (hue + 40) % 360, hue, tintSat], mode);
         let accent = STOCK_ACCENT[mode];
-        if (color !== DEFAULT_ACCENT) {
+        if (color !== DEFAULT_ACCENT && light) {
+          const [, seedChroma, seedHue] = rgbToOklch(hexToRgb(color));
+          accent = lightAccentRoles(seedHue, seedChroma, (seedHue + 40) % 360);
+        } else if (color !== DEFAULT_ACCENT) {
           const s = Math.min(0.9, Math.max(0.4, sat));
-          const lightness = light ? 0.40 : Math.min(0.72, Math.max(0.55, l));
-          const strong = hslToRgb(h, s, light ? 0.36 : lightness - 0.08);
+          const lightness = Math.min(0.72, Math.max(0.55, l));
+          const strong = hslToRgb(h, s, lightness - 0.08);
           accent = {
             ac: hslToRgb(h, s, lightness).join(' '),
-            soft: hslToRgb(h, s, light ? 0.31 : Math.min(0.88, lightness + 0.13)).join(' '),
+            soft: hslToRgb(h, s, Math.min(0.88, lightness + 0.13)).join(' '),
             strong: strong.join(' '),
             ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
             ac2: pal.ac2,
@@ -3491,4 +3557,5 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 </body>
 </html>
 """
+    html = html.replace("@@CSS_VERSION@@", _css_version())
     return HTMLResponse(content=html, headers=headers)

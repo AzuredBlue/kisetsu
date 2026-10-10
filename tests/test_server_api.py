@@ -125,6 +125,21 @@ def test_index_returns_html(client):
     assert "calendar-weekly-grid" in response.text
 
 
+def test_the_page_loads_its_styles_and_fonts_from_the_server_not_a_cdn(client):
+    page = client.get("/").text
+
+    assert "cdn.tailwindcss.com" not in page and "fonts.googleapis.com" not in page
+    assert 'href="/static/app.css?v=' in page
+    stylesheet = client.get("/static/app.css")
+    assert stylesheet.status_code == 200
+    assert "text/css" in stylesheet.headers["content-type"]
+    # Every font file the stylesheet points at is served.
+    font_files = set(re.findall(r"url\(([^)]+\.woff2)\)", stylesheet.text))
+    assert font_files
+    for name in font_files:
+        assert client.get(f"/static/{name.lstrip('/')}").status_code == 200, name
+
+
 def test_get_shows(client, session):
     show1 = Monitored(
         anilist_id=1001,

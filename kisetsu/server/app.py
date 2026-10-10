@@ -10,6 +10,7 @@ from urllib.parse import urlsplit
 import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 
 from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS
@@ -25,7 +26,7 @@ from kisetsu.core.supervisor import Supervisor
 from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
 from kisetsu.server.api import router
 from kisetsu.server.state import state
-from kisetsu.server.web_ui import get_web_ui_html
+from kisetsu.server.web_ui import STATIC_DIR, get_web_ui_html
 
 logger = logging.getLogger("kisetsu.server")
 
@@ -491,6 +492,7 @@ def _host_allowed(host_header: str) -> bool:
 def create_app() -> FastAPI:
     app = FastAPI(title="Kisetsu", lifespan=lifespan)
     app.include_router(router)
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     @app.middleware("http")
     async def reject_foreign_hosts(request: Request, call_next):
