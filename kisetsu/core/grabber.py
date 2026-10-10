@@ -13,7 +13,7 @@ from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
-from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, store_matches
+from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -2349,7 +2349,18 @@ def direct_feed_matches(
     for feed in feeds:
         if feed.id not in own_ids:
             add(feed, "other", False, _manual_candidates(session, qbit, settings, show, articles_by_url, feeds=[feed]))
-    return list(groups.values())
+    # A feed qBittorrent could not read is dropped from the cache, so it would simply be
+    # missing here. Say so for the feeds the show uses instead of leaving a silent gap.
+    failed_names = set(last_failed_feed_names())
+    for feed in own:
+        if feed.qbit_feed_name in failed_names and feed.id not in groups:
+            groups[feed.id] = {
+                "feed_id": feed.id, "feed_name": feed.qbit_feed_name, "role": role_of(feed),
+                "usable": True, "unavailable": True, "matches": [],
+            }
+    return [g for g in groups.values() if g["feed_id"] in own_ids] + [
+        g for g in groups.values() if g["feed_id"] not in own_ids
+    ]
 
 
 def restore_episode(

@@ -22,6 +22,7 @@ from kisetsu.db.models import (
     RuleOutcome,
     MatchHistory,
     Settings,
+    as_utc,
     normalize_mapping_source,
     utc_now,
 )
@@ -30,7 +31,7 @@ from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.feedcache import cached_articles, ingest_rss
+from kisetsu.core.feedcache import cached_articles, ingest_rss, last_failed_feed_names
 from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, manual_grab, rebase_ledger, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
@@ -71,6 +72,11 @@ def _qbit_from_settings(s: Settings) -> QBitClient:
 
 def get_qbit(session: Session = Depends(get_db)) -> QBitClient:
     return _qbit_from_settings(get_settings(session))
+
+
+def _utc_iso(value: Optional[datetime]) -> Optional[str]:
+    """ISO string of a stored datetime with an explicit UTC offset, or None."""
+    return as_utc(value).isoformat() if value else None
 
 
 def normalized_download_mode(session: Session) -> str:
@@ -211,10 +217,13 @@ def get_shows(session: Session = Depends(get_db)):
         romaji_title = s.title_romaji or s.display_name
         effective_display_name = effective_title(s, settings.title_language)
 
-        base_template = settings.base_dir or "~/Anime/{name}"
+        base_template = (settings.base_dir or "").strip()
         is_custom_folder = bool(s.save_folder and s.save_folder != sanitize_folder_name(s.display_name) and s.save_folder != sanitize_folder_name(s.title_romaji or "") and s.save_folder != sanitize_folder_name(s.title_english or ""))
         if is_custom_folder and (s.save_folder.startswith("/") or s.save_folder.startswith("~")):
             resolved_save_path = s.save_folder
+        elif not base_template:
+            # Blank base directory: qBittorrent saves to its own default location.
+            resolved_save_path = ""
         else:
             folder_name = sanitize_folder_name(s.save_folder if is_custom_folder else effective_display_name)
             if "{name}" in base_template:
@@ -469,17 +478,18 @@ def get_show_episodes(show_id: int, session: Session = Depends(get_db)):
             "episode_number": episode.episode_number,
             "feed_name": feed_names.get(episode.feed_id),
             "source_episode": episode.source_episode,
-            "air_at": episode.air_at.isoformat() if episode.air_at else None,
+            # Timestamps go out as aware UTC: a naive ISO string is read as local time by the browser.
+            "air_at": _utc_iso(episode.air_at),
             "schedule_state": episode.schedule_state,
             "attempt_count": episode.attempt_count,
-            "last_attempt_at": episode.last_attempt_at.isoformat() if episode.last_attempt_at else None,
-            "retry_after": episode.retry_after.isoformat() if episode.retry_after else None,
+            "last_attempt_at": _utc_iso(episode.last_attempt_at),
+            "retry_after": _utc_iso(episode.retry_after),
             "status": episode.status.value,
             "version": episode.version,
             "release_title": episode.release_title,
             "release_group": episode.release_group,
             "torrent_hash": episode.torrent_hash,
-            "downloaded_at": episode.downloaded_at.isoformat() if episode.downloaded_at else None,
+            "downloaded_at": _utc_iso(episode.downloaded_at),
             "last_error": episode.last_error,
         }
         for episode in episodes
@@ -1500,7 +1510,15 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
     previous_mode = normalized_download_mode(session)
     preflight_logs: List[str] = []
     if req.qbit_host is not None:
-        s.qbit_host = req.qbit_host.strip()
+        new_host = req.qbit_host.strip()
+        # Same rule as test-qbit: the stored password may only go to the stored host.
+        if (
+            new_host.rstrip("/") != (s.qbit_host or "").rstrip("/")
+            and s.qbit_password
+            and not req.qbit_password
+        ):
+            raise HTTPException(status_code=400, detail="Enter the password to change the qBittorrent host.")
+        s.qbit_host = new_host
     if req.qbit_username is not None:
         s.qbit_username = req.qbit_username.strip()
     if req.qbit_password is not None and req.qbit_password != "":
@@ -1827,10 +1845,20 @@ def get_system_status(session: Session = Depends(get_db)):
         select(func.count(Episode.id)).where(Episode.status == EpisodeStatus.WANTED)
     ).one()
 
+    problem_counts = dict(session.exec(
+        select(Episode.status, func.count(Episode.id))
+        .where(Episode.status.in_([EpisodeStatus.FAILED, EpisodeStatus.MISSED]))
+        .group_by(Episode.status)
+    ).all())
+
     cycle_owner, cycle_started = state.cycle_owner, state.cycle_started
     running = state.is_running_cycle and cycle_started is not None
     return {
         "daemon_active": state.daemon_active,
+        # Feeds qBittorrent reported an error for on its last refresh (direct mode reads them).
+        "failing_feeds": last_failed_feed_names(),
+        "failed_episodes": problem_counts.get(EpisodeStatus.FAILED, 0),
+        "missed_episodes": problem_counts.get(EpisodeStatus.MISSED, 0),
         "download_mode": normalized_download_mode(session),
         "all_paused": bool(get_settings(session).all_paused),
         "wanted_episodes": wanted,
@@ -1857,7 +1885,8 @@ def get_system_status(session: Session = Depends(get_db)):
 @router.get("/logs")
 def get_recent_logs(limit: int = 100):
     all_logs = list(state.logs)
-    return all_logs[-limit:]
+    # A zero or negative limit would otherwise return everything (or slice from the start).
+    return all_logs[-max(1, limit):]
 
 
 @router.get("/history")

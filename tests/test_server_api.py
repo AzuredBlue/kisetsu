@@ -262,6 +262,7 @@ def test_settings_endpoints(client, session):
 
     update_res = client.post("/api/settings", json={
         "qbit_host": "http://192.168.1.50:8080",
+        "qbit_password": "adminadmin",
         "default_category": "anime-seasonal",
         "default_seed_ratio": 1.5,
     })
@@ -1932,6 +1933,93 @@ def test_get_direct_episode_records(client, session):
     assert [episode["status"] for episode in payload] == ["completed", "wanted"]
 
 
+def test_episode_timestamps_carry_a_utc_offset(client, session):
+    show = Monitored(
+        anilist_id=4201,
+        display_name="Timestamp Show",
+        aliases_json='["Timestamp Show"]',
+        status=MonitoredStatus.FIXED,
+        total_episodes=1,
+    )
+    session.add(show)
+    session.flush()
+    # SQLite hands datetimes back naive; the browser would read them as local time.
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=1,
+        status=EpisodeStatus.FAILED,
+        air_at=datetime(2026, 10, 9, 14, 0),
+        last_attempt_at=datetime(2026, 10, 9, 15, 0),
+        retry_after=datetime(2026, 10, 9, 16, 0),
+        downloaded_at=datetime(2026, 10, 9, 17, 0),
+    ))
+    session.commit()
+
+    episode = client.get(f"/api/shows/{show.id}/episodes").json()[0]
+
+    assert episode["air_at"] == "2026-10-09T14:00:00+00:00"
+    assert episode["last_attempt_at"] == "2026-10-09T15:00:00+00:00"
+    assert episode["retry_after"] == "2026-10-09T16:00:00+00:00"
+    assert episode["downloaded_at"] == "2026-10-09T17:00:00+00:00"
+
+
+def test_shows_report_no_save_path_when_the_base_directory_is_blank(client, session):
+    # A blank base directory means qBittorrent's own default location, not ~/Anime.
+    session.add(Monitored(
+        anilist_id=4202,
+        display_name="Blank Base Show",
+        aliases_json='["Blank Base Show"]',
+        status=MonitoredStatus.FIXED,
+    ))
+    session.commit()
+
+    entry = next(item for item in client.get("/api/shows").json() if item["anilist_id"] == 4202)
+    assert entry["save_path"] == ""
+
+    settings = session.get(Settings, 1)
+    settings.base_dir = "/data/Anime/{name}"
+    session.add(settings)
+    session.commit()
+
+    entry = next(item for item in client.get("/api/shows").json() if item["anilist_id"] == 4202)
+    assert entry["save_path"] == "/data/Anime/Blank Base Show"
+
+
+def test_status_reports_failing_feeds_and_problem_episodes(client, session, monkeypatch):
+    from kisetsu.core import feedcache
+
+    show = Monitored(
+        anilist_id=4203, display_name="Problem Show", aliases_json='["Problem Show"]',
+        status=MonitoredStatus.FIXED,
+    )
+    session.add(show)
+    session.flush()
+    session.add(Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.FAILED))
+    session.add(Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.MISSED))
+    session.add(Episode(monitored_id=show.id, episode_number=3, status=EpisodeStatus.MISSED))
+    session.commit()
+    monkeypatch.setattr(feedcache, "_failed_feed_names", ["Broken Feed"])
+
+    status = client.get("/api/status").json()
+
+    assert status["failing_feeds"] == ["Broken Feed"]
+    assert status["failed_episodes"] == 1
+    assert status["missed_episodes"] == 2
+
+
+def test_logs_endpoint_clamps_the_limit(client):
+    from kisetsu.server.state import state
+
+    state.logs.clear()
+    for number in range(5):
+        state.add_log(f"line {number}")
+
+    assert [entry["message"] for entry in client.get("/api/logs?limit=2").json()] == ["line 3", "line 4"]
+    assert [entry["message"] for entry in client.get("/api/logs?limit=0").json()] == ["line 4"]
+    assert [entry["message"] for entry in client.get("/api/logs?limit=-3").json()] == ["line 4"]
+    state.logs.clear()
+
+
 def test_shows_report_direct_engine_counters(client, session):
     feed = Feed(id=9, qbit_feed_name="Counter", qbit_feed_url="https://counter.example/rss", priority=1)
     show = Monitored(
@@ -2483,3 +2571,133 @@ def test_the_page_runs_one_view_transition_at_a_time_and_keeps_heavy_work_out_of
     # Only the content and the toasts are captured separately; the blur art is drawn small.
     assert "view-transition-name: sidebar" not in page and "view-transition-name: topbar" not in page
     assert ".blur-art { position: absolute;" in page
+
+
+def test_changing_the_qbit_host_requires_the_password_again(client, session):
+    stored = session.exec(select(Settings)).first()
+    stored.qbit_password = "secret"
+    session.add(stored)
+    session.commit()
+
+    res = client.post("/api/settings", json={"qbit_host": "http://evil.example:8080"})
+    assert res.status_code == 400
+
+    session.expire_all()
+    assert session.exec(select(Settings)).first().qbit_host == "http://localhost:8080"
+
+    # The same host (trailing slash aside) and a new host with a password are both fine.
+    assert client.post("/api/settings", json={"qbit_host": "http://localhost:8080/"}).status_code == 200
+    res = client.post("/api/settings", json={"qbit_host": "http://other:8080", "qbit_password": "new"})
+    assert res.status_code == 200
+    session.expire_all()
+    stored = session.exec(select(Settings)).first()
+    assert (stored.qbit_host, stored.qbit_password) == ("http://other:8080", "new")
+
+
+def test_test_qbit_refuses_to_send_the_stored_password_to_another_host(client, session):
+    stored = session.exec(select(Settings)).first()
+    stored.qbit_password = "secret"
+    session.add(stored)
+    session.commit()
+
+    res = client.post("/api/settings/test-qbit", json={"qbit_host": "http://elsewhere:8080"})
+    assert res.status_code == 400
+    assert "password" in res.json()["detail"].lower()
+
+
+def test_test_qbit_reports_success_and_failure(client, monkeypatch):
+    class Fake:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def test_connection(self):
+            return {"app_version": "v5", "api_version": "2.11"}
+
+    monkeypatch.setattr(api_module, "QBitClient", Fake)
+    res = client.post("/api/settings/test-qbit", json={})
+    assert res.status_code == 200
+    assert res.json()["app_version"] == "v5"
+
+    class Broken(Fake):
+        def test_connection(self):
+            raise RuntimeError("refused")
+
+    monkeypatch.setattr(api_module, "QBitClient", Broken)
+    res = client.post("/api/settings/test-qbit", json={})
+    assert res.status_code == 400
+    assert "refused" in res.json()["detail"]
+
+
+def test_clear_all_removes_every_show_and_its_rule(client, session, mock_qbit):
+    session.add(Monitored(id=1, anilist_id=1, display_name="One", qbit_rule_name="[Seasonal] One"))
+    session.add(Monitored(id=2, anilist_id=2, display_name="Two"))
+    session.commit()
+    mock_qbit.get_rss_rules.return_value = {"[Seasonal] One": {}, "someone else's rule": {}}
+
+    res = client.post("/api/settings/clear-all")
+    assert res.status_code == 200
+
+    session.expire_all()
+    assert session.exec(select(Monitored)).all() == []
+    removed = [call.args[0] if call.args else call.kwargs.get("rule_name") for call in mock_qbit.remove_rss_rule.call_args_list]
+    assert "[Seasonal] One" in removed
+    assert "someone else's rule" not in removed
+
+
+def test_clear_all_keeps_the_shows_when_the_rules_cannot_be_read(client, session, mock_qbit):
+    session.add(Monitored(id=1, anilist_id=1, display_name="One"))
+    session.commit()
+    mock_qbit.get_rss_rules.side_effect = RuntimeError("qBittorrent is down")
+
+    assert client.post("/api/settings/clear-all").status_code == 409
+    session.expire_all()
+    assert len(session.exec(select(Monitored)).all()) == 1
+
+
+def test_feeds_sync_reports_the_supervisor_logs(client, monkeypatch):
+    monkeypatch.setattr(api_module.Supervisor, "sync_feeds", lambda self: ["Added feed X"])
+    res = client.post("/api/feeds/sync")
+    assert res.status_code == 200
+    assert res.json()["message"] == "Added feed X"
+
+
+def test_feeds_sync_turns_a_failure_into_a_500(client, monkeypatch):
+    def boom(self):
+        raise RuntimeError("no qbit")
+
+    monkeypatch.setattr(api_module.Supervisor, "sync_feeds", boom)
+    res = client.post("/api/feeds/sync")
+    assert res.status_code == 500
+
+
+
+def test_accent_endpoint_stores_the_fetched_hues(client, session, db_engine, monkeypatch):
+    monkeypatch.setattr(api_module, "engine", db_engine)
+    session.add(Monitored(id=1, anilist_id=1, display_name="One", banner_image="https://s4.anilist.co/b.jpg"))
+    session.commit()
+
+    async def fake_fetch(*urls):
+        return True, (200, 0.5, 260, 210, 0.4)
+
+    monkeypatch.setattr(api_module, "fetch_hues", fake_fetch)
+    res = client.get("/api/shows/1/accent")
+    assert res.status_code == 200
+    assert res.json()["accent_ready"] is True
+    assert res.json()["accent_hues"] is not None
+
+    session.expire_all()
+    assert session.get(Monitored, 1).accent_hues.startswith("200,")
+
+
+def test_accent_endpoint_does_not_remember_a_failed_fetch(client, session, db_engine, monkeypatch):
+    monkeypatch.setattr(api_module, "engine", db_engine)
+    session.add(Monitored(id=1, anilist_id=1, display_name="One", banner_image="https://s4.anilist.co/b.jpg"))
+    session.commit()
+
+    async def failing_fetch(*urls):
+        return False, None
+
+    monkeypatch.setattr(api_module, "fetch_hues", failing_fetch)
+    assert client.get("/api/shows/1/accent").json()["accent_ready"] is False
+    assert client.get("/api/shows/999/accent").status_code == 404
+

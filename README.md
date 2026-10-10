@@ -67,8 +67,7 @@ Choose the mode under **Settings**. Switching to Direct disables the managed RSS
 - **Direct**: the app reads your RSS feeds and adds each new episode to qBittorrent itself.
   - **Replacements**: when a v2 appears, it is added paused, rechecked and resumed. The v1 is kept until the v2 has completed and is seeding, then deleted with its files (unless both share the same files). If the replacement fails, the episode goes back to its previous release.
   - **Feed lock**: once a release really arrives from a feed, the show downloads only from that feed so episodes stay consistent. You can pick another feed in the show's editor.
-  - **Missed episodes**: an aired episode that never showed up in the feeds is marked as missed and is not retried.
-  - **Automatic Backfill Window (Days)**: how old an episode may be and still be downloaded when it first turns up (default 14).
+  - **Missed episodes**: an aired episode that never showed up in the feeds is marked as missed. It stays eligible: if a release turns up later, or **Search older** on the show finds one, it is downloaded.
   - **Early Air Tolerance (Hours)**: how far ahead of AniList's air time a release may appear and still be taken (default 6).
 
 It is recommended to run this script at startup. On Windows, create a shortcut in the Startup folder; on Linux, use a systemd service.

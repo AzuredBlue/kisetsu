@@ -3012,6 +3012,35 @@ def test_releases_of_other_feeds_are_listed_apart_and_never_offered():
     engine.dispose()
 
 
+def test_a_feed_qbittorrent_cannot_read_is_listed_as_unavailable(monkeypatch):
+    from kisetsu.core import feedcache
+    from kisetsu.core.grabber import direct_feed_matches
+
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    own = Feed(id=1, qbit_feed_name="Own", qbit_feed_url="https://own.example/rss", priority=1)
+    other = Feed(id=2, qbit_feed_name="Other", qbit_feed_url="https://other.example/rss", priority=2)
+    session.add(settings)
+    session.add(own)
+    session.add(other)
+    show = _show(session, total_episodes=2, next_airing_episode=2, current_feed_id=own.id, learned_feed_id=own.id)
+    sync_show_episodes(session, show)
+    qbit, _ = _qbit()
+    # The cache leaves a feed out when qBittorrent reported an error for it.
+    articles = {
+        other.qbit_feed_url: [{"id": "b", "title": "[Erai-raws] Sousou no Frieren - 01 [1080p].mkv", "torrentURL": "magnet:b"}],
+    }
+    monkeypatch.setattr(feedcache, "_failed_feed_names", ["Own"])
+
+    groups = direct_feed_matches(session, qbit, settings, show, articles_by_url=articles)
+
+    assert [(g["feed_id"], g["role"], g["usable"]) for g in groups] == [(1, "locked", True), (2, "other", False)]
+    assert groups[0]["unavailable"] is True and groups[0]["matches"] == []
+    assert "unavailable" not in groups[1]
+    session.close()
+    engine.dispose()
+
+
 def test_removing_a_feed_clears_it_from_the_episodes_it_supplied():
     engine, session = _database()
     # Installed databases added episodes.feed_id by migration, without the
