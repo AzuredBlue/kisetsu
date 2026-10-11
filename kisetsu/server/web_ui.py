@@ -131,7 +131,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
     .seg > button { padding: 0.3rem 0.8rem; font-size: 0.8125rem; border-radius: 0.25rem; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
 
-    /* Show cards: the pause/delete buttons fade in on hover. */
+    /* Show cards: poster-first with flush progress bar; text floats on canvas. */
     .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
     /* A card is a box, rounded like the show page's poster: the poster with its progress bar
@@ -146,7 +146,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
 
     #tab-show { background-color: rgb(var(--bg)); }
     body.show-open #sidebar .btn:hover { border-color: rgb(var(--ac) / .7); color: rgb(var(--ac-soft)); }
-    #tab-show .card { background-color: rgb(var(--surface) / .92); border-color: rgb(var(--line)); }
+    #tab-show .card { background-color: rgb(var(--surface) / .92); border-color: rgb(var(--line)); backdrop-filter: blur(8px); }
     #tab-show .field, #tab-show .seg { background-color: rgb(var(--field)); border-color: rgb(var(--line)); }
     #tab-show .field:focus { border-color: rgb(var(--ac)); box-shadow: 0 0 0 3px rgb(var(--ac) / .2); }
     #tab-show .bg-canvas { background-color: rgb(var(--field) / .85); }
@@ -1065,30 +1065,30 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         : '';
 
       return `
-        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card bg-surface border ${isDimmed ? 'border-line-soft' : 'border-line'} rounded-lg flex flex-col overflow-hidden group cursor-pointer">
+        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card flex flex-col group cursor-pointer">
 
-          <div>
-          <div data-poster-id="${show.id}" class="on-art relative w-full aspect-[2/3] bg-zinc-900 overflow-hidden">
-            ${posterImg}
+          <div class="relative rounded-lg overflow-hidden border ${isDimmed ? 'border-line-soft' : 'border-line'} bg-zinc-900 group-hover:border-line-hover transition-colors duration-150">
+            <div data-poster-id="${show.id}" class="on-art relative w-full aspect-[2/3] bg-zinc-900 overflow-hidden">
+              ${posterImg}
 
-            <div class="absolute top-2 right-2 z-20">${statusChip}</div>
+              <div class="absolute top-2 right-2 z-20">${statusChip}</div>
 
-            <div class="card-actions absolute top-2 left-2 flex items-center gap-1.5 z-20">
-              ${!isCompleted ? `
-              <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-black text-zinc-100 transition-colors active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
-                ${pauseIcon}
-              </button>
-              ` : ''}
-              <button onclick="event.stopPropagation(); deleteShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-rose-600 text-zinc-100 transition-colors active:scale-90" title="Remove show">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-              </button>
+              <div class="card-actions absolute top-2 left-2 flex items-center gap-1.5 z-20">
+                ${!isCompleted ? `
+                <button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-black text-zinc-100 transition-colors active:scale-90" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">
+                  ${pauseIcon}
+                </button>
+                ` : ''}
+                <button onclick="event.stopPropagation(); deleteShow(${show.id})" class="w-7 h-7 rounded-md flex items-center justify-center bg-black/70 hover:bg-rose-600 text-zinc-100 transition-colors active:scale-90" title="Remove show">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </button>
+              </div>
             </div>
+
+            ${bar}
           </div>
 
-          ${bar}
-          </div>
-
-          <div class="px-3 pt-2.5 pb-3 flex flex-col gap-0.5 text-center">
+          <div class="pt-2.5 px-0.5 flex flex-col gap-0.5 text-center">
             <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}
             <div class="flex items-center justify-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
               <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
