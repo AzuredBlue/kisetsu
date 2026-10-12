@@ -13,7 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 
-from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS
+from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS, SANDBOX
 from kisetsu.db.models import QbitRuleWatermark
 from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
@@ -80,6 +80,7 @@ async def background_supervisor_task():
     hunting_next = False
     needs_rss_refresh = True
     busy_logged = False
+    waiting_logged = False
     while True:
         connection_ready = False
         sleep_seconds = 60
@@ -88,6 +89,23 @@ async def background_supervisor_task():
         # runs (a past-release search finding something) must cut the next sleep short.
         state.wake_event.clear()
         try:
+            # Until the first-run wizard is done the stored login is still the default one,
+            # so nothing may contact qBittorrent yet.
+            with Session(engine) as session:
+                setup_done = bool(get_settings(session).setup_completed)
+            if not setup_done:
+                state.daemon_active = False
+                state.next_check_reason = "Waiting for first-time setup"
+                if not waiting_logged:
+                    state.add_log("Waiting for first-time setup before contacting qBittorrent.", "INFO")
+                    waiting_logged = True
+                try:
+                    await asyncio.wait_for(state.wake_event.wait(), timeout=sleep_seconds)
+                except asyncio.TimeoutError:
+                    pass
+                continue
+            waiting_logged = False
+
             with Session(engine) as session:
                 settings = get_settings(session)
                 qbit = QBitClient(host=settings.qbit_host, username=settings.qbit_username, password=settings.qbit_password, timeout=10)
@@ -258,7 +276,7 @@ def _settle_once(engine) -> Optional[List[str]]:
     """
     with Session(engine) as session:
         settings = get_settings(session)
-        if (settings.download_mode or "rules") != "direct":
+        if not settings.setup_completed or (settings.download_mode or "rules") != "direct":
             return None
         if not has_unsettled_work(session) or not state.try_begin_cycle("settle"):
             return None
@@ -351,7 +369,7 @@ async def ingest_task():
                     password=settings.qbit_password,
                     timeout=10,
                 )
-                direct = (settings.download_mode or "rules") == "direct"
+                direct = bool(settings.setup_completed) and (settings.download_mode or "rules") == "direct"
             if direct:
                 await asyncio.to_thread(ingest_rss, engine, qbit, False)
                 await _backfill_past_releases(engine)
@@ -384,7 +402,7 @@ async def qbit_rule_observer_task():
         try:
             with Session(engine) as session:
                 settings = get_settings(session)
-                if (settings.download_mode or "rules") != "rules":
+                if not settings.setup_completed or (settings.download_mode or "rules") != "rules":
                     await _wait_for_log_wakeup()
                     continue
 
@@ -446,6 +464,11 @@ async def lifespan(app: FastAPI):
     init_db(engine)
     state.bind_loop(asyncio.get_running_loop())
 
+    if SANDBOX:
+        # A sandbox only serves the setup wizard; nothing may run against the real qBittorrent.
+        yield
+        return
+
     bg_task = asyncio.create_task(background_supervisor_task())
     observer_task = asyncio.create_task(qbit_rule_observer_task())
     settle = asyncio.create_task(settle_task())
@@ -461,6 +484,16 @@ async def lifespan(app: FastAPI):
 
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+# The only writes a sandbox allows: the wizard's own calls. Each one either touches the
+# throwaway database or only reads from qBittorrent (feed sync and the connection test).
+_SANDBOX_WRITES = {
+    "/api/setup/save",
+    "/api/setup/complete",
+    "/api/setup/reset",
+    "/api/settings/test-qbit",
+    "/api/feeds/sync",
+    "/api/feeds/reorder",
+}
 
 
 def _request_host(host_header: str) -> str:
@@ -504,6 +537,8 @@ def create_app() -> FastAPI:
         origin = request.headers.get("origin")
         if origin and request.method not in _SAFE_METHODS and urlsplit(origin).netloc != host_header:
             return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
+        if SANDBOX and request.method not in _SAFE_METHODS and request.url.path not in _SANDBOX_WRITES:
+            return JSONResponse({"detail": "Not available in the sandbox."}, status_code=403)
         return await call_next(request)
 
     @app.get("/", response_class=HTMLResponse)

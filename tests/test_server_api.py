@@ -49,7 +49,7 @@ def db_engine():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
-        settings = Settings(id=1, qbit_host="http://localhost:8080", default_category="Anime", download_mode="rules")
+        settings = Settings(id=1, qbit_host="http://localhost:8080", default_category="Anime", download_mode="rules", setup_completed=True)
         s.add(settings)
         s.commit()
     return engine
@@ -498,7 +498,7 @@ def supervisor_engine():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules", setup_completed=True))
         session.commit()
     return engine
 
@@ -564,6 +564,28 @@ async def test_background_supervisor_waits_for_qbit_before_running_a_cycle(super
     supervisor.run_full_cycle.assert_awaited_once()
     assert app_module.state.next_check_reason == "normal"
     assert app_module.state.next_check_seconds == 60
+
+
+async def test_background_supervisor_waits_for_the_first_run_wizard(supervisor_engine, monkeypatch):
+    """Before setup is finished the stored login is the default one, so qBittorrent must not be contacted."""
+    with Session(supervisor_engine) as session:
+        row = session.exec(select(Settings)).first()
+        row.setup_completed = False
+        session.add(row)
+        session.commit()
+    qbit = MagicMock()
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
+    recorder = _run_loop_until_cancelled(monkeypatch, stop_after=2)
+
+    await app_module.background_supervisor_task()
+
+    qbit.test_connection.assert_not_called()
+    supervisor.run_full_cycle.assert_not_awaited()
+    assert recorder["waits"] == 2
+    assert app_module.state.next_check_reason == "Waiting for first-time setup"
+    assert _log_messages().count("Waiting for first-time setup before contacting qBittorrent.") == 1
 
 
 async def test_background_supervisor_marks_the_second_pass_as_hunting(supervisor_engine, monkeypatch):
@@ -2233,7 +2255,7 @@ def test_pause_in_direct_mode_does_not_enable_rules():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, download_mode="direct", default_category="Anime", base_dir="/tmp/Anime"))
+        session.add(Settings(id=1, download_mode="direct", default_category="Anime", base_dir="/tmp/Anime", setup_completed=True))
         feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
         session.add(feed)
         show = Monitored(
@@ -2349,7 +2371,7 @@ async def test_background_supervisor_forces_rss_refresh_only_on_first_healthy_cy
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct", setup_completed=True))
         session.commit()
 
     qbit = MagicMock()
@@ -2390,7 +2412,7 @@ async def test_background_supervisor_retries_failed_startup_rss_refresh(monkeypa
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct", setup_completed=True))
         session.commit()
 
     qbit = MagicMock()
@@ -2427,7 +2449,7 @@ async def test_background_supervisor_reports_no_rules_without_warning(monkeypatc
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules", setup_completed=True))
         session.commit()
 
     qbit = MagicMock()
@@ -2459,7 +2481,7 @@ async def test_rule_observer_is_idle_outside_rules_mode(monkeypatch):
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="direct", setup_completed=True))
         session.commit()
 
     qbit = MagicMock()

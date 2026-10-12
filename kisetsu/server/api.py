@@ -28,8 +28,8 @@ from kisetsu.db.models import (
     utc_now,
 )
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConflictError
-from kisetsu.clients.anilist import AniListClient
-from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.clients.anilist import AniListClient, AniListError
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE, SANDBOX
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss, last_failed_feed_names
@@ -1656,30 +1656,46 @@ ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 VALID_ACCENT_TINTS = ("off", "subtle", "full")
 
 
-@router.post("/settings")
-def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_db)):
-    if req.download_mode is not None:
+def _validate_settings_request(req) -> None:
+    """The checks shared by the Settings page and the first-run wizard; the request may omit any field."""
+    if getattr(req, "download_mode", None) is not None:
         mode = req.download_mode.strip().lower()
         if mode not in VALID_DOWNLOAD_MODES:
             raise HTTPException(
                 status_code=400,
                 detail="download_mode must be rules or direct",
             )
-    if req.backfill_window_days is not None and not (0 <= req.backfill_window_days <= 365):
+    backfill = getattr(req, "backfill_window_days", None)
+    if backfill is not None and not (0 <= backfill <= 365):
         raise HTTPException(
             status_code=400,
             detail="backfill_window_days must be between 0 and 365",
         )
-    if req.early_air_tolerance_hours is not None and not (0 <= req.early_air_tolerance_hours <= 168):
+    early_air = getattr(req, "early_air_tolerance_hours", None)
+    if early_air is not None and not (0 <= early_air <= 168):
         raise HTTPException(
             status_code=400,
             detail="early_air_tolerance_hours must be between 0 and 168",
         )
 
-    if req.accent_color is not None and not ACCENT_COLOR_RE.match(req.accent_color.strip()):
+    if getattr(req, "accent_color", None) is not None and not ACCENT_COLOR_RE.match(req.accent_color.strip()):
         raise HTTPException(status_code=400, detail="accent_color must be a #rrggbb colour")
-    if req.accent_tint is not None and req.accent_tint.strip().lower() not in VALID_ACCENT_TINTS:
+    if getattr(req, "accent_tint", None) is not None and req.accent_tint.strip().lower() not in VALID_ACCENT_TINTS:
         raise HTTPException(status_code=400, detail="accent_tint must be off, subtle or full")
+
+
+def _normalize_base_dir(raw: str) -> str:
+    """The stored form of a base directory: always ends in the {name} placeholder unless blank."""
+    raw_base = raw.strip()
+    if raw_base and "{name}" not in raw_base:
+        trimmed = raw_base.rstrip("/\\")
+        raw_base = f"{trimmed}/{{name}}"
+    return raw_base
+
+
+@router.post("/settings")
+def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_db)):
+    _validate_settings_request(req)
 
     appearance_only = all(
         value is None
@@ -1724,11 +1740,7 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
     if req.qbit_password is not None and req.qbit_password != "":
         s.qbit_password = req.qbit_password
     if req.base_dir is not None:
-        raw_base = req.base_dir.strip()
-        if raw_base and "{name}" not in raw_base:
-            trimmed = raw_base.rstrip("/\\")
-            raw_base = f"{trimmed}/{{name}}"
-        s.base_dir = raw_base
+        s.base_dir = _normalize_base_dir(req.base_dir)
     if req.default_category is not None:
         s.default_category = req.default_category.strip()
     if req.default_seed_ratio is not None:
@@ -1824,6 +1836,118 @@ def test_qbit_connection(req: Optional[TestQbitConnectionRequest] = None, sessio
         return {"status": "success", "app_version": res.get("app_version"), "api_version": res.get("api_version")}
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Connection failed: {e}")
+
+
+@router.get("/setup/status")
+def get_setup_status(session: Session = Depends(get_db)):
+    status = {"setup_completed": bool(get_settings(session).setup_completed), "sandbox": SANDBOX}
+    if SANDBOX:
+        status["sandbox_label"] = "Sandbox · throwaway database"
+    return status
+
+
+class SetupSaveRequest(BaseModel):
+    qbit_host: Optional[str] = None
+    qbit_username: Optional[str] = None
+    qbit_password: Optional[str] = None
+    download_mode: Optional[str] = None
+    base_dir: Optional[str] = None
+    default_category: Optional[str] = None
+    default_seed_ratio: Optional[float] = None
+    title_language: Optional[str] = None
+    accent_color: Optional[str] = None
+    desktop_notifications: Optional[bool] = None
+
+
+@router.post("/setup/save")
+def save_setup_step(req: SetupSaveRequest, session: Session = Depends(get_db)):
+    """Store one wizard step. Only open until setup is finished; afterwards the Settings page owns this."""
+    s = get_settings(session)
+    if s.setup_completed:
+        raise HTTPException(status_code=409, detail="Setup is already finished.")
+    _validate_settings_request(req)
+    if req.title_language is not None and req.title_language.strip().lower() not in ("english", "romaji"):
+        raise HTTPException(status_code=400, detail="title_language must be english or romaji")
+    if req.default_seed_ratio is not None and req.default_seed_ratio < 0:
+        raise HTTPException(status_code=400, detail="default_seed_ratio can't be negative")
+
+    if req.qbit_host is not None:
+        new_host = req.qbit_host.strip()
+        if (
+            new_host.rstrip("/") != (s.qbit_host or "").rstrip("/")
+            and s.qbit_password
+            and not req.qbit_password
+        ):
+            raise HTTPException(status_code=400, detail="Enter the password to change the qBittorrent host.")
+        s.qbit_host = new_host
+    if req.qbit_username is not None:
+        s.qbit_username = req.qbit_username.strip()
+    if req.qbit_password:
+        s.qbit_password = req.qbit_password
+    if req.download_mode is not None:
+        # No mode preparation here: there are no shows yet, and the AniList sync that
+        # ends the wizard prepares the chosen mode itself.
+        s.download_mode = req.download_mode.strip().lower()
+    if req.base_dir is not None:
+        s.base_dir = _normalize_base_dir(req.base_dir)
+    if req.default_category is not None:
+        s.default_category = req.default_category.strip()
+    if req.default_seed_ratio is not None:
+        s.default_seed_ratio = req.default_seed_ratio
+    if req.title_language is not None:
+        s.title_language = req.title_language.strip().lower()
+    if req.accent_color is not None:
+        s.accent_color = req.accent_color.strip().lower()
+    if req.desktop_notifications is not None:
+        s.desktop_notifications = req.desktop_notifications
+    session.add(s)
+    session.commit()
+    return {"status": "success"}
+
+
+class SetupCompleteRequest(BaseModel):
+    anilist_username: str = ""
+
+
+@router.post("/setup/complete")
+async def complete_setup(req: SetupCompleteRequest, session: Session = Depends(get_db)):
+    s = get_settings(session)
+    if s.setup_completed:
+        raise HTTPException(status_code=409, detail="Setup is already finished.")
+    name = req.anilist_username.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Enter your AniList username.")
+    try:
+        exists = await anilist_client.user_exists(name)
+    except AniListError as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't reach AniList: {e}")
+    if not exists:
+        raise HTTPException(status_code=400, detail=f"AniList user '{name}' was not found.")
+
+    s.anilist_username = name
+    s.setup_completed = True
+    session.add(s)
+    session.commit()
+    if s.download_mode == "direct":
+        state.request_rss_refresh()
+    state.trigger_immediate_cycle()
+    state.trigger_immediate_rule_check()
+    state.add_log("First-time setup finished.", "INFO")
+    return {"status": "success", "sandbox": SANDBOX}
+
+
+@router.post("/setup/reset")
+def reset_setup(session: Session = Depends(get_db)):
+    """Sandbox only: forget the wizard's answers so it can be walked through again."""
+    if not SANDBOX:
+        raise HTTPException(status_code=404, detail="Not found.")
+    for feed in session.exec(select(Feed)).all():
+        forget_feed(session, feed)
+    for old in session.exec(select(Settings)).all():
+        session.delete(old)
+    session.add(Settings())
+    session.commit()
+    return {"status": "success"}
 
 
 @router.post("/settings/sync-anilist")

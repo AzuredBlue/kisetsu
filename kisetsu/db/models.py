@@ -154,6 +154,8 @@ class Settings(SQLModel, table=True):
     desktop_notifications: bool = Field(default=False)
     # "Pause all" is on: shows added from now on start paused too.
     all_paused: bool = Field(default=False)
+    # False until the first-run wizard is finished; background work waits for it.
+    setup_completed: bool = Field(default=False)
 
 
 class SupervisionLease(SQLModel, table=True):

@@ -1,8 +1,12 @@
+import os
 from pathlib import Path
 
 APP_NAME = "kisetsu"
 CONFIG_DIR = Path.home() / ".config" / APP_NAME
-DB_PATH = CONFIG_DIR / "anime.db"
+# `kisetsu --sandbox` points this at a throwaway database.
+DB_PATH = Path(os.environ["KISETSU_DB_PATH"]) if os.environ.get("KISETSU_DB_PATH") else CONFIG_DIR / "anime.db"
+# A sandbox instance runs no background work and refuses anything that could change the real qBittorrent.
+SANDBOX = os.environ.get("KISETSU_SANDBOX") == "1"
 
 DEFAULT_QBIT_HOST = "http://localhost:8080"
 DEFAULT_QBIT_USERNAME = "admin"

@@ -457,6 +457,10 @@ def init_db(engine=None):
         if "accent_tint" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN accent_tint VARCHAR DEFAULT 'subtle'"))
             session.commit()
+        if "setup_completed" not in settings_cols:
+            # Databases from before the setup wizard are already configured.
+            session.exec(text("ALTER TABLE settings ADD COLUMN setup_completed BOOLEAN DEFAULT 1"))
+            session.commit()
 
         history_cols = get_table_columns(session, "match_history")
         if "matched_regex" not in history_cols:

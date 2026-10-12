@@ -1654,16 +1654,21 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       if (render) renderAppearancePicker();
     }
 
+    // The colour swatches and the custom picker; the handlers are the names of the functions to call.
+    function accentSwatchesHtml(selected, { pick, preview, commit }) {
+      const isPreset = ACCENT_PRESETS.some(p => p[1] === selected);
+      const ring = (active) => active ? 'ring-2 ring-offset-2 ring-offset-surface ring-zinc-100' : 'hover:ring-2 hover:ring-zinc-100/30 hover:ring-offset-2 hover:ring-offset-surface';
+      return ACCENT_PRESETS.map(([name, hex]) => `
+        <button type="button" title="${name}" aria-label="${name}" onclick="${pick}('${hex}')" style="background:${hex}" class="w-6 h-6 rounded-full transition-transform ${ring(hex === selected)}"></button>`).join('') + `
+        <label title="Custom colour" class="relative w-6 h-6 rounded-full cursor-pointer overflow-hidden transition-transform ${ring(!isPreset)}" style="background:${isPreset ? 'conic-gradient(#fb7185, #fbbf24, #a3e635, #2dd4bf, #818cf8, #fb7185)' : selected}">
+          <input type="color" value="${selected}" oninput="${preview}(this)" onchange="${commit}(this.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+        </label>`;
+    }
+
     function renderAppearancePicker() {
       const box = document.getElementById('accent-swatches');
       if (!box) return;
-      const isPreset = ACCENT_PRESETS.some(p => p[1] === userAccent.color);
-      const ring = (active) => active ? 'ring-2 ring-offset-2 ring-offset-surface ring-zinc-100' : 'hover:ring-2 hover:ring-zinc-100/30 hover:ring-offset-2 hover:ring-offset-surface';
-      box.innerHTML = ACCENT_PRESETS.map(([name, hex]) => `
-        <button type="button" title="${name}" aria-label="${name}" onclick="setUserAccent('${hex}')" style="background:${hex}" class="w-6 h-6 rounded-full transition-transform ${ring(hex === userAccent.color)}"></button>`).join('') + `
-        <label title="Custom colour" class="relative w-6 h-6 rounded-full cursor-pointer overflow-hidden transition-transform ${ring(!isPreset)}" style="background:${isPreset ? 'conic-gradient(#fb7185, #fbbf24, #a3e635, #2dd4bf, #818cf8, #fb7185)' : userAccent.color}">
-          <input type="color" value="${userAccent.color}" oninput="previewUserAccent(this)" onchange="commitUserAccent(this.value)" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
-        </label>`;
+      box.innerHTML = accentSwatchesHtml(userAccent.color, { pick: 'setUserAccent', preview: 'previewUserAccent', commit: 'commitUserAccent' });
       Object.keys(ACCENT_TINTS).forEach(name => {
         const button = document.getElementById(`btn-tint-${name}`);
         if (button) button.className = name === userAccent.tint ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
@@ -2426,7 +2431,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
 
     function handleDragEnd(e) {
       e.currentTarget.classList.remove('opacity-40', 'bg-raised');
-      document.querySelectorAll('#feeds-table-body tr').forEach(r => {
+      document.querySelectorAll('[data-feed-row]').forEach(r => {
         r.classList.remove('border-t-2', 'border-sky-500', 'bg-surface');
       });
     }
@@ -2446,6 +2451,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
 
       allFeeds.forEach((f, idx) => { f.priority = idx + 1; });
       renderFeedsTable();
+      renderSetupFeeds();
 
       const reorderPayload = {
         feeds: allFeeds.map((f, idx) => ({ id: f.id, priority: idx + 1 }))
@@ -2459,7 +2465,8 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         });
       } catch (err) {
         showToast(`Failed updating priority: ${err}`, 'error');
-        loadFeeds();
+        if (setupOpen) await setupLoadFeeds(false);
+        else loadFeeds();
       } finally {
         dragSourceIndex = null;
       }
@@ -2477,7 +2484,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
     function renderFeedsTable() {
       const tbody = document.getElementById('feeds-table-body');
       tbody.innerHTML = allFeeds.map((f, idx) => `
-        <tr draggable="true"
+        <tr draggable="true" data-feed-row
             ondragstart="handleDragStart(event, ${idx})"
             ondragover="handleDragOver(event)"
             ondragleave="handleDragLeave(event)"
@@ -3216,19 +3223,497 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       }
     }
 
-    applyTheme();
+    // ---- First-run setup wizard ----
+    // Shown on a brand-new database only. Everything the user enters is saved step by step
+    // through /api/setup/*, which closes for good once the last step is done.
+    const SETUP_STEPS = ['welcome', 'qbit', 'mode', 'feeds', 'downloads', 'appearance', 'anilist', 'done'];
+    const SETUP_COUNTED = 6;
+    const JSON_HEADERS = { 'Content-Type': 'application/json' };
+    let setupOpen = false;
+    let setupIndex = 0;
+    let setupSandbox = false;
+    let setupDraft = {};
+    let setupQbitOk = false;
+    let setupQbitTestId = 0;
+    let setupBusy = false;
+    let setupTransitioning = false;
+    let setupFeedsState = 'loading';
+    let setupFeedsError = '';
+
+    const setupEl = (id) => document.getElementById(id);
+    const setupStepName = () => SETUP_STEPS[setupIndex];
+
+    // Resolves when the CSS animation `cls` on `el` has finished. The class is left on the
+    // element for the caller to remove, so the end state holds until the next step is ready.
+    function setupAnimate(el, cls) {
+      return new Promise(resolve => {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          resolve();
+          return;
+        }
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          el.removeEventListener('animationend', finish);
+          resolve();
+        };
+        el.addEventListener('animationend', finish);
+        setTimeout(finish, 300);
+        el.classList.add(cls);
+      });
+    }
+
+    async function openSetup(status) {
+      setupOpen = true;
+      setupSandbox = !!status.sandbox;
+      if (setupSandbox) {
+        // The label comes from the server, so a normal install never carries the text.
+        const pill = document.createElement('span');
+        pill.className = 'ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full st-warn';
+        pill.textContent = status.sandbox_label || 'Sandbox';
+        setupEl('setup-header-title').after(pill);
+      }
+      let s = {};
+      try {
+        s = await apiFetch('/api/settings');
+      } catch (err) {
+        showToast(`Failed loading settings: ${err.message || err}`, 'error');
+      }
+      currentSettings = s;
+      setupDraft = {
+        download_mode: s.download_mode === 'rules' ? 'rules' : 'direct',
+        accent_color: s.accent_color || DEFAULT_ACCENT,
+        title_language: s.title_language === 'romaji' ? 'romaji' : 'english',
+        desktop_notifications: !!s.desktop_notifications,
+      };
+      setupEl('setup-qbit-host').value = s.qbit_host || '';
+      setupEl('setup-qbit-user').value = s.qbit_username || '';
+      setupEl('setup-qbit-pass').value = '';
+      setupEl('setup-base-dir').value = '';
+      setupEl('setup-category').value = s.default_category || '';
+      setupEl('setup-ratio').value = s.default_seed_ratio ?? 1.0;
+      setupEl('setup-anilist-user').value = '';
+      applyUserAccent(setupDraft.accent_color, s.accent_tint || 'subtle', { persist: false, render: false });
+      setupEl('sidebar').setAttribute('inert', '');
+      setupEl('main-shell').setAttribute('inert', '');
+      const screen = setupEl('setup-screen');
+      screen.classList.remove('hidden');
+      setupShowStep(0);
+      await setupAnimate(screen, 'setup-fade-in');
+      screen.classList.remove('setup-fade-in');
+    }
+
+    // Swaps the visible step without animating; setupGoTo wraps this in the fade.
+    function setupShowStep(index) {
+      setupIndex = index;
+      const name = setupStepName();
+      document.querySelectorAll('#setup-stage [data-step]').forEach(el => {
+        el.classList.toggle('hidden', el.dataset.step !== name);
+      });
+      const counted = index >= 1 && index <= SETUP_COUNTED;
+      setupEl('setup-header-title').classList.toggle('hidden', name === 'welcome');
+      setupEl('setup-progress').classList.toggle('hidden', !counted);
+      setupEl('setup-footer').classList.toggle('hidden', !counted);
+      if (counted) {
+        setupEl('setup-dots').innerHTML = Array.from({ length: SETUP_COUNTED }, (_, i) => {
+          const n = i + 1;
+          return `<span class="setup-dot ${n <= index ? 'setup-dot-on' : ''} ${n === index ? 'setup-dot-now' : ''}"></span>`;
+        }).join('');
+        setupEl('setup-counter').textContent = `Step ${index} of ${SETUP_COUNTED}`;
+      }
+      setupEl('setup-next-label').textContent = name === 'anilist' ? 'Finish' : 'Next';
+      if (name === 'mode') renderSetupMode();
+      if (name === 'appearance') renderSetupAppearance();
+      if (name === 'feeds') setupLoadFeeds(true);
+      setupUpdateNext();
+      const focusId = {
+        qbit: 'setup-qbit-host', downloads: 'setup-base-dir', anilist: 'setup-anilist-user',
+        mode: `setup-mode-${setupDraft.download_mode}`,
+      }[name];
+      const target = focusId && setupEl(focusId);
+      if (target) target.focus({ preventScroll: true });
+    }
+
+    async function setupGoTo(index) {
+      if (setupTransitioning) return;
+      setupTransitioning = true;
+      const fader = setupEl('setup-fader');
+      try {
+        await setupAnimate(fader, 'setup-fade-out');
+        setupShowStep(index);
+        fader.classList.remove('setup-fade-out');
+        await setupAnimate(fader, 'setup-fade-in');
+        fader.classList.remove('setup-fade-in');
+      } finally {
+        fader.classList.remove('setup-fade-out', 'setup-fade-in');
+        setupTransitioning = false;
+      }
+    }
+
+    function setupUpdateNext() {
+      const name = setupStepName();
+      const blocked = setupBusy
+        || (name === 'qbit' && !setupQbitOk)
+        || (name === 'feeds' && setupFeedsState === 'loading');
+      setupEl('setup-next').disabled = blocked;
+      setupEl('setup-back').disabled = setupBusy;
+    }
+
+    function setupKeydown(e) {
+      if (e.key !== 'Enter' || e.isComposing) return;
+      const t = e.target;
+      if (t.tagName !== 'INPUT' || t.type === 'color') return;
+      e.preventDefault();
+      if (setupStepName() === 'qbit' && !setupQbitOk) setupTestQbit();
+      else setupNext();
+    }
+
+    function setupBack() {
+      if (setupBusy || setupIndex <= 0) return;
+      setupGoTo(setupIndex - 1);
+    }
+
+    async function setupNext() {
+      if (setupBusy || setupTransitioning) return;
+      const name = setupStepName();
+      if (name === 'qbit' && !setupQbitOk) return;
+      if (name === 'feeds' && setupFeedsState === 'loading') return;
+      await once('setup-next', async () => {
+        if (name === 'anilist') {
+          await setupFinish();
+          return;
+        }
+        setupBusy = true;
+        setupUpdateNext();
+        try {
+          if (await setupSaveStep(name)) await setupGoTo(setupIndex + 1);
+        } finally {
+          setupBusy = false;
+          setupUpdateNext();
+        }
+      });
+    }
+
+    async function setupPost(url, payload) {
+      return apiFetch(url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload), notice: false });
+    }
+
+    // Stores the step on the server; false keeps the user on the step.
+    async function setupSaveStep(name) {
+      let payload = null;
+      if (name === 'qbit') {
+        payload = { qbit_host: setupEl('setup-qbit-host').value, qbit_username: setupEl('setup-qbit-user').value };
+        const pwd = setupEl('setup-qbit-pass').value;
+        if (pwd) payload.qbit_password = pwd;
+      } else if (name === 'mode') {
+        payload = { download_mode: setupDraft.download_mode };
+      } else if (name === 'downloads') {
+        const ratio = parseFloat(setupEl('setup-ratio').value);
+        if (!Number.isFinite(ratio) || ratio < 0) {
+          showToast('Enter a seed ratio of 0 or more.', 'error');
+          setupEl('setup-ratio').focus();
+          return false;
+        }
+        payload = {
+          base_dir: setupEl('setup-base-dir').value,
+          default_category: setupEl('setup-category').value,
+          default_seed_ratio: ratio,
+        };
+      } else if (name === 'appearance') {
+        payload = {
+          accent_color: setupDraft.accent_color,
+          title_language: setupDraft.title_language,
+          desktop_notifications: setupDraft.desktop_notifications,
+        };
+      }
+      if (!payload) return true;
+      try {
+        await setupPost('/api/setup/save', payload);
+      } catch (err) {
+        showToast(`Could not save: ${err.message || err}`, 'error');
+        return false;
+      }
+      if (name === 'appearance') applyUserAccent(setupDraft.accent_color, userAccent.tint);
+      return true;
+    }
+
+    function setupQbitEdited() {
+      setupQbitOk = false;
+      setupQbitTestId++;
+      const status = setupEl('setup-qbit-status');
+      status.textContent = '';
+      status.className = 'text-xs font-mono';
+      setupUpdateNext();
+    }
+
+    // qBittorrent's own errors run to several lines of connection-library detail, which would
+    // stretch the card; the wizard shows a one-line reason instead.
+    function setupQbitErrorText(err) {
+      const text = String((err && err.message) || err);
+      if (err instanceof TypeError) return 'Could not reach Kisetsu.';
+      if (/login failed|authentic/i.test(text)) return 'Wrong username or password.';
+      if (/cannot connect|connection|timed out/i.test(text)) return "Can't reach qBittorrent at that address.";
+      return text.length > 80 ? `${text.slice(0, 77)}...` : text;
+    }
+
+    async function setupTestQbit() {
+      const testId = ++setupQbitTestId;
+      const status = setupEl('setup-qbit-status');
+      status.textContent = 'Testing...';
+      status.className = 'text-xs font-mono text-zinc-400';
+      const payload = { qbit_host: setupEl('setup-qbit-host').value, qbit_username: setupEl('setup-qbit-user').value };
+      const pwd = setupEl('setup-qbit-pass').value;
+      if (pwd) payload.qbit_password = pwd;
+      let ok = false;
+      try {
+        const data = await setupPost('/api/settings/test-qbit', payload);
+        status.textContent = `Connected (qBit ${data.app_version})`;
+        status.className = 'text-xs font-mono text-emerald-400 font-semibold';
+        ok = true;
+      } catch (err) {
+        status.textContent = setupQbitErrorText(err);
+        status.className = 'text-xs font-mono text-rose-400';
+      }
+      // The fields changed while the test ran: that answer is about older values.
+      if (testId !== setupQbitTestId) return;
+      setupQbitOk = ok;
+      setupUpdateNext();
+    }
+
+    function renderSetupMode() {
+      ['rules', 'direct'].forEach(name => {
+        setupEl(`setup-mode-${name}`).setAttribute('aria-checked', String(setupDraft.download_mode === name));
+      });
+    }
+
+    function setupPickMode(mode) {
+      setupDraft.download_mode = mode;
+      renderSetupMode();
+    }
+
+    async function setupLoadFeeds(sync) {
+      setupFeedsState = 'loading';
+      renderSetupFeeds();
+      setupUpdateNext();
+      try {
+        if (sync) {
+          const res = await setupPost('/api/feeds/sync', {});
+          const failed = (res.logs || []).find(line => line.startsWith('Feed sync error'));
+          if (failed) throw new Error(failed);
+        }
+        allFeeds = await apiFetch('/api/feeds');
+        setupFeedsState = 'ready';
+      } catch (err) {
+        setupFeedsState = 'error';
+        setupFeedsError = setupQbitErrorText(err);
+      }
+      renderSetupFeeds();
+      setupUpdateNext();
+    }
+
+    function renderSetupFeeds() {
+      const box = setupEl('setup-feeds-body');
+      if (!setupOpen || !box) return;
+      const note = (text, cls = 'text-zinc-400') => `
+        <div class="p-4 space-y-3">
+          <p class="text-sm ${cls}">${escapeHtml(text)}</p>
+          <button type="button" onclick="setupLoadFeeds(true)" class="btn btn-sm">Check again</button>
+        </div>`;
+      if (setupFeedsState === 'loading') {
+        box.innerHTML = '<div class="p-6 text-center text-sm text-zinc-500">Loading feeds from qBittorrent…</div>';
+        return;
+      }
+      if (setupFeedsState === 'error') {
+        box.innerHTML = note(`Could not read the feeds: ${setupFeedsError}`, 'text-rose-400');
+        return;
+      }
+      if (!allFeeds.length) {
+        box.innerHTML = `<div class="m-3 p-3 rounded-xl st-warn text-sm">qBittorrent has no RSS feeds yet. Nothing will download until you add one, in qBittorrent's RSS tab or later in Kisetsu's RSS Feeds tab.</div>
+          <div class="px-3 pb-3"><button type="button" onclick="setupLoadFeeds(true)" class="btn btn-sm">Check again</button></div>`;
+        return;
+      }
+      const arrow = (path) => `<svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="${path}"/></svg>`;
+      box.innerHTML = `<div class="divide-y divide-line-soft">` + allFeeds.map((f, idx) => `
+        <div draggable="true" data-feed-row
+             ondragstart="handleDragStart(event, ${idx})"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)"
+             ondragend="handleDragEnd(event)"
+             ondrop="handleDrop(event, ${idx})"
+             class="flex items-center gap-3 px-3 py-3 cursor-grab active:cursor-grabbing select-none hover:bg-raised/60 transition-colors">
+          <svg class="w-4 h-4 flex-shrink-0 text-zinc-500" fill="currentColor" viewBox="0 0 24 24"><path d="M9 5a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm10-14a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
+          <span class="w-7 flex-shrink-0 text-accent text-sm font-medium tabular-nums">#${f.priority}</span>
+          <div class="min-w-0 flex-1">
+            <div class="font-medium text-zinc-100 text-sm truncate">${escapeHtml(f.qbit_feed_name)}</div>
+            <div class="text-xs text-zinc-500 font-mono truncate mt-0.5">${escapeHtml(f.qbit_feed_url)}</div>
+          </div>
+          <span class="flex flex-col flex-shrink-0 text-zinc-500">
+            <button type="button" draggable="false" onclick="event.stopPropagation(); moveFeed(${idx}, ${idx - 1})" class="px-1 hover:text-zinc-50 disabled:opacity-20" aria-label="Move up" title="Move up" ${idx === 0 ? 'disabled' : ''}>${arrow('M5 15l7-7 7 7')}</button>
+            <button type="button" draggable="false" onclick="event.stopPropagation(); moveFeed(${idx}, ${idx + 1})" class="px-1 hover:text-zinc-50 disabled:opacity-20" aria-label="Move down" title="Move down" ${idx === allFeeds.length - 1 ? 'disabled' : ''}>${arrow('M19 9l-7 7-7-7')}</button>
+          </span>
+        </div>`).join('') + '</div>';
+    }
+
+    function renderSetupAppearance() {
+      const seg = (id, active) => { setupEl(id).className = active ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS; };
+      const mode = themeMode();
+      ['system', 'light', 'dark'].forEach(name => seg(`setup-theme-${name}`, name === mode));
+      ['english', 'romaji'].forEach(name => seg(`setup-lang-${name}`, name === setupDraft.title_language));
+      seg('setup-notify-on', setupDraft.desktop_notifications);
+      seg('setup-notify-off', !setupDraft.desktop_notifications);
+      setupEl('setup-accent-swatches').innerHTML = accentSwatchesHtml(
+        setupDraft.accent_color,
+        { pick: 'setupPickAccent', preview: 'setupPreviewAccent', commit: 'setupCommitAccent' },
+      );
+    }
+
+    function setupSetTheme(mode) {
+      setThemeMode(mode);
+      renderSetupAppearance();
+    }
+
+    function setupSetLanguage(lang) {
+      setupDraft.title_language = lang;
+      renderSetupAppearance();
+    }
+
+    function setupSetNotifications(on) {
+      setupDraft.desktop_notifications = on;
+      renderSetupAppearance();
+    }
+
+    // Nothing is sent to the server until Next: the colour is only previewed here.
+    function setupPickAccent(color) {
+      setupDraft.accent_color = color.toLowerCase();
+      applyUserAccent(setupDraft.accent_color, userAccent.tint, { persist: false, render: false });
+      renderSetupAppearance();
+    }
+
+    function setupPreviewAccent(input) {
+      accentPreviewing = true;
+      const swatch = input.closest('label');
+      if (swatch) swatch.style.background = input.value;
+      clearTimeout(accentPreviewTimer);
+      accentPreviewTimer = setTimeout(() => {
+        applyUserAccent(input.value.toLowerCase(), userAccent.tint, { persist: false, render: false });
+      }, 100);
+    }
+
+    function setupCommitAccent(color) {
+      clearTimeout(accentPreviewTimer);
+      accentPreviewing = false;
+      setupPickAccent(color);
+    }
+
+    function setupAnilistEdited() {
+      setupEl('setup-anilist-error').classList.add('hidden');
+    }
+
+    function setupFinishButton(working) {
+      setupEl('setup-next-spinner').classList.toggle('hidden', !working);
+      setupEl('setup-next-label').textContent = working ? 'Setting up your shows…' : 'Finish';
+    }
+
+    async function setupFinish() {
+      const name = setupEl('setup-anilist-user').value.trim();
+      const errEl = setupEl('setup-anilist-error');
+      const fail = (text) => {
+        errEl.textContent = text;
+        errEl.classList.remove('hidden');
+      };
+      errEl.classList.add('hidden');
+      if (!name) {
+        fail('Enter your AniList username.');
+        return;
+      }
+      setupBusy = true;
+      setupFinishButton(true);
+      setupUpdateNext();
+      try {
+        try {
+          await setupPost('/api/setup/complete', { anilist_username: name });
+        } catch (err) {
+          fail(err.message || String(err));
+          return;
+        }
+        if (setupSandbox) {
+          // The sandbox must never reach the real qBittorrent, so it stops before the sync.
+          setupFinishButton(false);
+          await setupGoTo(SETUP_STEPS.indexOf('done'));
+          return;
+        }
+        try {
+          await apiFetch('/api/settings/sync-anilist', { method: 'POST', notice: false });
+        } catch (err) {
+          // Setup itself is finished; the shows arrive with the next check.
+          showToast(`AniList sync failed: ${err.message || err}. Use Sync Now to retry.`, 'error');
+        }
+        await setupLeave();
+      } finally {
+        setupBusy = false;
+        if (setupOpen) {
+          setupFinishButton(false);
+          setupUpdateNext();
+        }
+      }
+    }
+
+    async function setupLeave() {
+      const screen = setupEl('setup-screen');
+      await setupAnimate(screen, 'setup-fade-out');
+      screen.classList.add('hidden');
+      screen.classList.remove('setup-fade-out');
+      setupOpen = false;
+      applyUserAccent(setupDraft.accent_color, userAccent.tint);
+      const shell = [setupEl('sidebar'), setupEl('main-shell')];
+      shell.forEach(el => el.removeAttribute('inert'));
+      startApp();
+      for (const el of shell) {
+        setupAnimate(el, 'setup-fade-in').then(() => el.classList.remove('setup-fade-in'));
+      }
+    }
+
+    async function setupStartOver() {
+      try {
+        await setupPost('/api/setup/reset', {});
+        location.reload();
+      } catch (err) {
+        showToast(`Could not start over: ${err.message || err}`, 'error');
+      }
+    }
+
+    async function boot() {
+      applyTheme();
+      let status = null;
+      try {
+        status = await apiFetch('/api/setup/status');
+      } catch (err) {
+        // Never lock the user out: without an answer the app opens as it always did.
+      }
+      if (status && !status.setup_completed) openSetup(status);
+      else startApp();
+    }
+
     new ResizeObserver(fitShowGrids).observe(document.getElementById('main-scroll-container'));
     window.addEventListener('resize', fitShowGrids);
-    loadShows();
-    loadHistory();
-    updateStatus();
-    if (showIdFromHash() !== null) openShowPage(showIdFromHash(), { push: false, instant: true });
-    setInterval(updateStatus, 15000);
-    setInterval(tickCountdown, 30000);
-    toggleLogsAutoRefresh(true);
+
+    // Starts the app proper: the first-run wizard calls this when it is done, otherwise it runs at once.
+    let appStarted = false;
+    function startApp() {
+      if (appStarted) return;
+      appStarted = true;
+      loadShows();
+      loadHistory();
+      updateStatus();
+      if (showIdFromHash() !== null) openShowPage(showIdFromHash(), { push: false, instant: true });
+      setInterval(updateStatus, 15000);
+      setInterval(tickCountdown, 30000);
+      toggleLogsAutoRefresh(true);
+    }
 
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden) updateStatus();
+      if (!document.hidden && appStarted) updateStatus();
     });
 
     document.addEventListener('keydown', (e) => {
@@ -3253,3 +3738,5 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         leaveShowPage();
       }
     });
+
+    boot();

@@ -10,6 +10,12 @@ ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 
 MAX_SCHEDULE_PAGES = 20
 
+USER_EXISTS_QUERY = """
+query ($name: String) {
+  User(name: $name) { id }
+}
+"""
+
 USER_SEASONAL_QUERY = """
 query ($userName: String) {
   MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING, COMPLETED]) {
@@ -181,6 +187,31 @@ class AniListClient:
                     backoff *= 2
 
         raise AniListError("Max retries exceeded querying AniList API")
+
+    async def user_exists(self, username: str) -> bool:
+        """Whether AniList knows this user name.
+
+        One attempt only: the retry backoff of `_post_query` would make a typo take
+        several seconds to report. A missing user comes back as HTTP 404.
+        """
+        try:
+            async with httpx2.AsyncClient(timeout=self.timeout) as client:
+                resp = await client.post(
+                    ANILIST_GRAPHQL_URL,
+                    json={"query": USER_EXISTS_QUERY, "variables": {"name": username.strip()}},
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                )
+        except httpx2.RequestError as e:
+            raise AniListError(f"AniList network connection failed: {e}") from e
+        if resp.status_code == 404:
+            return False
+        if resp.status_code != 200:
+            raise AniListError(f"AniList HTTP error: {resp.status_code}")
+        try:
+            data = resp.json()
+        except ValueError as e:
+            raise AniListError("AniList returned an unreadable answer.") from e
+        return bool((data.get("data") or {}).get("User"))
 
     async def fetch_user_seasonal_anime(
         self, username: str, monitored_anilist_ids: Optional[Set[int]] = None
