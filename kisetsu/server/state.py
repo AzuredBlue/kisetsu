@@ -19,6 +19,9 @@ class ServerState:
         self.next_check_reason: str = "Initializing supervisor..."
         self.next_check_seconds: int = 0
         self.target_next_check_time: Optional[datetime] = None
+        # True while the background loop waits on qBittorrent's feeds after a forced refresh.
+        self.feeds_refreshing: bool = False
+        self.last_feed_refresh_added: Optional[int] = None
         # One mutex guards the cycle ownership and the refresh request, so a
         # request can never be consumed by a cycle that did not start because
         # it already held the cycle.
@@ -75,6 +78,10 @@ class ServerState:
     def request_rss_refresh(self) -> None:
         with self._cycle_mutex:
             self._rss_refresh_requested = True
+
+    def rss_refresh_pending(self) -> bool:
+        with self._cycle_mutex:
+            return self._rss_refresh_requested
 
     def consume_rss_refresh_request(self) -> bool:
         with self._cycle_mutex:

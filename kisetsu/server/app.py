@@ -141,7 +141,13 @@ async def background_supervisor_task():
                             # check and touches none of our data, so it happens before the
                             # slot is taken; the check then reads the copy in the database.
                             feeds_started = time.monotonic()
-                            await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh)
+                            state.feeds_refreshing = needs_rss_refresh
+                            try:
+                                added = await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh)
+                            finally:
+                                state.feeds_refreshing = False
+                            if needs_rss_refresh:
+                                state.last_feed_refresh_added = added
                             feeds_seconds = int(time.monotonic() - feeds_started)
                             needs_rss_refresh = False
                         if not state.try_begin_cycle("background"):

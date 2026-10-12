@@ -453,6 +453,7 @@ def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
     }.items():
         monkeypatch.setattr(api_module.state, name, value)
 
+    monkeypatch.setattr(api_module, "normalized_download_mode", lambda session: "direct")
     scheduler = MagicMock(return_value=(321, "Next cycle"))
     monkeypatch.setattr(api_module, "calculate_next_poll_interval", scheduler)
     to_thread = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
@@ -465,11 +466,40 @@ def test_manual_cycle_offloads_scheduler_calculation(client, monkeypatch):
     assert response.status_code == 200
     assert response.json()["next_check_seconds"] == 321
     assert response.json()["next_check_reason"] == "Next cycle"
-    # A manual cycle always re-reads the RSS feeds first.
-    supervisor.run_full_cycle.assert_awaited_once_with(force_rss_refresh=True, force_anilist=True)
+    # The request itself runs against the feed cache; the slow feed refresh is
+    # left to the background loop.
+    supervisor.run_full_cycle.assert_awaited_once_with(
+        force_rss_refresh=False, force_anilist=True, feed_cache=True,
+    )
+    assert response.json()["feeds_refreshing"] is True
+    assert api_module.state.consume_rss_refresh_request() is True
     assert [c.args[0] for c in to_thread.await_args_list].count(scheduler) == 1
     scheduler.assert_called_once()
     assert api_module.state.is_running_cycle is False
+
+
+def test_manual_cycle_in_rules_mode_refreshes_feeds_itself(client, monkeypatch):
+    qbit = MagicMock()
+    monkeypatch.setattr(api_module, "QBitClient", MagicMock(return_value=qbit))
+    supervisor = MagicMock()
+    supervisor.run_full_cycle = AsyncMock(return_value=[])
+    monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
+    monkeypatch.setattr(api_module, "normalized_download_mode", lambda session: "rules")
+    monkeypatch.setattr(api_module, "calculate_next_poll_interval", MagicMock(return_value=(60, "x")))
+    monkeypatch.setattr(api_module.state, "is_running_cycle", False)
+    api_module.state.consume_rss_refresh_request()
+
+    response = client.post("/api/cycle/run")
+
+    assert response.status_code == 200
+    assert response.json()["feeds_refreshing"] is False
+    supervisor.run_full_cycle.assert_awaited_once_with(force_rss_refresh=True, force_anilist=True)
+    assert api_module.state.rss_refresh_pending() is False
+
+
+def test_status_reports_feed_refresh(client, monkeypatch):
+    monkeypatch.setattr(api_module.state, "feeds_refreshing", True)
+    assert client.get("/api/status").json()["feeds_refreshing"] is True
 
 
 def test_manual_cycle_reports_qbit_unavailable(client, monkeypatch):

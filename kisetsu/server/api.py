@@ -32,7 +32,7 @@ from kisetsu.clients.anilist import AniListClient, AniListError
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE, SANDBOX
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.feedcache import cached_articles, ingest_rss, last_failed_feed_names
+from kisetsu.core.feedcache import cached_articles, last_failed_feed_names
 from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
 from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
@@ -2077,23 +2077,23 @@ async def run_cycle_now(session: Session = Depends(get_db)):
         state.add_log(f"Manual cycle skipped: qBittorrent is unavailable: {e}", "ERROR")
         raise HTTPException(status_code=503, detail=f"qBittorrent is unavailable: {e}")
 
-    # Refreshing qBittorrent's feeds is the slow part and needs none of our data,
-    # so it is done before the slot is taken; the cycle then reads the cache.
+    # Refreshing qBittorrent's feeds takes tens of seconds, so the request only runs
+    # against the feed cache; the forced refresh is handed to the background loop.
     use_feed_cache = uses_direct_engine(normalized_download_mode(session))
-    if use_feed_cache:
-        try:
-            await asyncio.to_thread(ingest_rss, session.get_bind(), qbit, True)
-        except QbitClientError as e:
-            state.add_log(f"Manual cycle skipped: could not refresh the RSS feeds: {e}", "ERROR")
-            raise HTTPException(status_code=503, detail=f"Could not refresh the RSS feeds: {e}")
 
     if not state.try_begin_cycle("api-cycle"):
         raise HTTPException(status_code=409, detail=_CYCLE_BUSY)
 
     try:
-        return await _run_cycle_now(session, s, qbit, use_feed_cache)
+        result = await _run_cycle_now(session, s, qbit, use_feed_cache)
     finally:
         state.end_cycle("api-cycle")
+
+    if use_feed_cache:
+        state.request_rss_refresh()
+        state.trigger_immediate_cycle()
+    result["feeds_refreshing"] = use_feed_cache
+    return result
 
 
 async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_feed_cache: bool = False):
@@ -2102,8 +2102,10 @@ async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_fe
     state.add_log("Manual sync initiated from WebUI.", "INFO")
     state.trigger_immediate_rule_check()
     try:
-        cycle_options = {"feed_cache": True} if use_feed_cache else {}
-        logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True, **cycle_options)
+        if use_feed_cache:
+            logs = await sup.run_full_cycle(force_rss_refresh=False, force_anilist=True, feed_cache=True)
+        else:
+            logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True)
         state.last_cycle_time = datetime.now(timezone.utc)
         for l in logs:
             state.add_log(f"Supervisor: {l}", "INFO")
@@ -2192,6 +2194,8 @@ def get_system_status(session: Session = Depends(get_db)):
         "cycle_label": _CYCLE_LABELS.get(cycle_owner or "", "background check") if running else None,
         "cycle_seconds": int(time.monotonic() - cycle_started) if running else None,
         "last_cycle_time": state.last_cycle_time.isoformat() if state.last_cycle_time else None,
+        "feeds_refreshing": state.feeds_refreshing or state.rss_refresh_pending(),
+        "last_feed_refresh_added": state.last_feed_refresh_added,
         "next_check_reason": state.next_check_reason,
         "next_check_seconds": remaining_seconds,
         "target_next_check_time": state.target_next_check_time.isoformat() if state.target_next_check_time else None,

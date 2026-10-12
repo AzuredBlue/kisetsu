@@ -2900,11 +2900,16 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       btn.disabled = true;
       spinner.classList.remove('hidden');
       text.textContent = 'Syncing...';
+      let followUp = false;
 
       try {
         const data = await apiFetch('/api/cycle/run', { method: 'POST', notice: false });
         showToast(data.message || 'Sync completed.', 'success');
         loadShows();
+        if (data.feeds_refreshing) {
+          followUp = true;
+          watchFeedRefresh();
+        }
         updateStatus(true);
       } catch (err) {
         // A busy cycle is a conflict, not a failure: something is already
@@ -2916,9 +2921,48 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         }
       } finally {
         btn.disabled = false;
+        if (!followUp) {
+          spinner.classList.add('hidden');
+          text.textContent = 'Sync Now';
+        }
+      }
+    }
+
+    // After a manual sync the feeds are refreshed by the background loop; keep the
+    // button showing that until it reports done, or give up after a while.
+    let feedWatchTimer = null;
+    function watchFeedRefresh() {
+      clearTimeout(feedWatchTimer);
+      const spinner = document.getElementById('spinner-run-cycle');
+      const text = document.getElementById('text-run-cycle');
+      spinner.classList.remove('hidden');
+      text.textContent = 'Checking feeds...';
+      const startedAt = Date.now();
+      const finish = () => {
         spinner.classList.add('hidden');
         text.textContent = 'Sync Now';
-      }
+      };
+      const poll = async () => {
+        try {
+          const st = await apiFetch('/api/status', { notice: false });
+          if (!st.feeds_refreshing && !st.is_running_cycle) {
+            finish();
+            loadShows();
+            updateStatus(true);
+            const added = st.last_feed_refresh_added;
+            showToast(added ? `Feeds checked: ${added} new release(s).` : 'Feeds checked: no new releases.', 'success');
+            return;
+          }
+        } catch {
+          // A failed poll is retried until the deadline.
+        }
+        if (Date.now() - startedAt > 90000) {
+          finish();
+          return;
+        }
+        feedWatchTimer = setTimeout(poll, 2000);
+      };
+      feedWatchTimer = setTimeout(poll, 1500);
     }
 
     let cachedHistory = [];

@@ -70,7 +70,7 @@ def flatten_rss_articles(rss_tree: Dict[str, Any]) -> Dict[str, List[Dict[str, A
 
 
 # The longest pause between two polls while waiting for feeds to settle.
-_MAX_SETTLE_POLL_SECONDS = 3.0
+_MAX_SETTLE_POLL_SECONDS = 1.0
 
 
 def _rss_feed_states(rss_tree: Dict[str, Any]) -> List[Tuple[str, str, bool, bool]]:
