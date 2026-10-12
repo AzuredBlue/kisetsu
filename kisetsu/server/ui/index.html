@@ -129,8 +129,20 @@
     .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 999px; padding: 3px; }
     .seg > button { padding: 0.3rem 0.9rem; font-size: 0.8125rem; border-radius: 999px; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
+    /* Sliding indicator: app.js adds a .seg-pill to each .seg and moves it under the .seg-on button. */
+    .seg { position: relative; }
+    .seg > button { position: relative; z-index: 1; }
+    .seg > .seg-pill { position: absolute; left: 0; top: 0; width: 0; height: 0; border-radius: 999px; background: var(--tonal-h); pointer-events: none; opacity: 0; z-index: 0; }
+    .seg > .seg-pill.seg-pill-anim { transition: transform .35s cubic-bezier(.3, 0, 0, 1), width .35s cubic-bezier(.3, 0, 0, 1), height .35s cubic-bezier(.3, 0, 0, 1); }
+    .seg.seg-ready > .seg-pill { opacity: 1; }
+    .seg.seg-ready > button.seg-on { background: transparent; }
+    @media (prefers-reduced-motion: reduce) { .seg > .seg-pill.seg-pill-anim { transition: none; } }
+    .seg-sm > button { display: inline-flex; align-items: center; gap: 0.375rem; padding: 0.25rem 0.75rem; font-size: 0.75rem; }
+    .seg-icons > button { padding: 0.3rem 0.65rem; }
 
     /* Show cards: poster-first with flush progress bar; text floats on canvas. */
+    @keyframes show-swap-in { from { opacity: .35; } to { opacity: 1; } }
+    .show-swap > * { animation: show-swap-in .5s ease-out both; }
     .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
     /* List view: one dense row per show, same data as the card. */
@@ -347,26 +359,26 @@
             </div>
             <div class="flex items-center gap-2">
             <button type="button" onclick="autoDiscoverShows()" class="btn btn-sm" title="Reset every show to auto-discover. Hand-picked feeds are cleared; shows locked to a feed they downloaded from are kept.">Auto-discover</button>
-            <div class="flex items-center gap-0.5 bg-sunken p-0.5 rounded-lg border border-line-soft text-xs">
-              <button onclick="setSortMode('airing')" id="sort-btn-airing" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Soonest airing first">
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+            <div class="seg seg-sm">
+              <button onclick="setSortMode('airing')" id="sort-btn-airing" title="Soonest airing first">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                 <span>Airing</span>
               </button>
-              <button onclick="setSortMode('title')" id="sort-btn-title" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="A to Z">
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
+              <button onclick="setSortMode('title')" id="sort-btn-title" title="A to Z">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
                 <span>A-Z</span>
               </button>
-              <button onclick="setSortMode('default')" id="sort-btn-default" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Order added">
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+              <button onclick="setSortMode('default')" id="sort-btn-default" title="Order added">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                 <span>Default</span>
               </button>
             </div>
-            <div class="flex items-center gap-0.5 bg-sunken p-0.5 rounded-lg border border-line-soft text-xs">
-              <button onclick="setShowView('grid')" id="view-btn-grid" class="px-2 py-1 rounded-md flex items-center transition-colors text-zinc-400 hover:text-zinc-200" title="Poster grid" aria-label="Grid view">
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v6H4zM14 15h6v6h-6z"/></svg>
+            <div class="seg seg-sm seg-icons">
+              <button onclick="setShowView('grid')" id="view-btn-grid" title="Poster grid" aria-label="Grid view">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v6H4zM14 15h6v6h-6z"/></svg>
               </button>
-              <button onclick="setShowView('list')" id="view-btn-list" class="px-2 py-1 rounded-md flex items-center transition-colors text-zinc-400 hover:text-zinc-200" title="Compact list" aria-label="List view">
-                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+              <button onclick="setShowView('list')" id="view-btn-list" title="Compact list" aria-label="List view">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
               </button>
             </div>
             </div>

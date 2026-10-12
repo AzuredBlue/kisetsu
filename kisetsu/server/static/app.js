@@ -238,17 +238,14 @@
     function setShowView(mode) {
       currentShowView = mode === 'list' ? 'list' : 'grid';
       try { localStorage.setItem('show_view_mode', currentShowView); } catch (err) {}
-      renderShows();
+      renderShows(true);
     }
 
     function updateViewButtonStyles() {
       ['grid', 'list'].forEach(m => {
         const btn = document.getElementById(`view-btn-${m}`);
         if (!btn) return;
-        const svg = btn.querySelector('svg');
-        const on = m === currentShowView;
-        btn.className = `px-2 py-1 rounded-md flex items-center transition-colors ${on ? 'bg-accent/15 text-accent-soft font-medium' : 'text-zinc-400 hover:text-zinc-200'}`;
-        if (svg) svg.className = `w-3.5 h-3.5 ${on ? 'text-accent-soft' : 'text-zinc-400'}`;
+        btn.className = m === currentShowView ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
       });
     }
 
@@ -258,7 +255,7 @@
       currentSortMode = mode;
       localStorage.setItem('show_sort_mode', mode);
       updateSortButtonStyles();
-      renderShows();
+      renderShows(true);
     }
 
     function updateSortButtonStyles() {
@@ -266,14 +263,7 @@
       modes.forEach(m => {
         const btn = document.getElementById(`sort-btn-${m}`);
         if (!btn) return;
-        const svg = btn.querySelector('svg');
-        if (m === currentSortMode) {
-          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors bg-accent/15 text-accent-soft font-medium';
-          if (svg) svg.className = 'w-3.5 h-3.5 text-accent-soft';
-        } else {
-          btn.className = 'px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200';
-          if (svg) svg.className = 'w-3.5 h-3.5 text-zinc-400';
-        }
+        btn.className = m === currentSortMode ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
       });
     }
 
@@ -333,7 +323,8 @@
       });
     }
 
-    function renderShows() {
+    // `animate` is only set for user-triggered sort/view changes, not the periodic refresh.
+    function renderShows(animate = false) {
       updateSortButtonStyles();
       updateViewButtonStyles();
       const isList = currentShowView === 'list';
@@ -368,6 +359,15 @@
       document.getElementById('section-completed').classList.toggle('hidden', completedShows.length === 0);
       document.getElementById('section-planned').classList.toggle('hidden', plannedShows.length === 0);
       fitShowGrids();
+      if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        [gridReleasing, gridPlanned, gridCompleted].forEach(grid => {
+          grid.classList.remove('show-swap');
+          grid.getBoundingClientRect();
+          grid.classList.add('show-swap');
+          // Dropped again so a later background refresh doesn't replay it.
+          setTimeout(() => grid.classList.remove('show-swap'), 600);
+        });
+      }
     }
 
     function formatEpisodeCountdown(targetDateStr) {
@@ -3738,5 +3738,49 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         leaveShowPage();
       }
     });
+
+    // Sliding pill behind the active option of every .seg control.
+    const segResizeObserver = new ResizeObserver(entries => entries.forEach(e => syncSegPill(e.target)));
+    const segObserved = new WeakSet();
+
+    function syncSegPill(seg) {
+      let pill = seg.querySelector(':scope > .seg-pill');
+      if (!pill) {
+        pill = document.createElement('span');
+        pill.className = 'seg-pill';
+        seg.prepend(pill);
+      }
+      const active = seg.querySelector(':scope > button.seg-on');
+      if (!active || !active.offsetWidth) {
+        // Hidden or nothing selected: fall back to the button's own background and skip the
+        // slide the next time it is placed.
+        seg.classList.remove('seg-ready');
+        pill.classList.remove('seg-pill-anim');
+        return;
+      }
+      pill.style.width = `${active.offsetWidth}px`;
+      pill.style.height = `${active.offsetHeight}px`;
+      pill.style.transform = `translate(${active.offsetLeft}px, ${active.offsetTop}px)`;
+      if (!seg.classList.contains('seg-ready')) {
+        seg.classList.add('seg-ready');
+        pill.getBoundingClientRect();
+        pill.classList.add('seg-pill-anim');
+      }
+    }
+
+    function syncAllSegPills() {
+      document.querySelectorAll('.seg').forEach(seg => {
+        if (!segObserved.has(seg)) { segObserved.add(seg); segResizeObserver.observe(seg); }
+        syncSegPill(seg);
+      });
+    }
+
+    let segSyncQueued = false;
+    new MutationObserver(() => {
+      if (segSyncQueued) return;
+      segSyncQueued = true;
+      requestAnimationFrame(() => { segSyncQueued = false; syncAllSegPills(); });
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['class'] });
+    syncAllSegPills();
 
     boot();
