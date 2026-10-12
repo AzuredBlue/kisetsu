@@ -30,6 +30,7 @@ from sqlmodel import Session, select
 from kisetsu.core import feedcache
 from kisetsu.core.discovery import parse_article_date
 from kisetsu.core.grabber import episodes_in_cache
+from kisetsu.core.matching import parse_release_title
 from kisetsu.db.models import Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, utc_now
 from kisetsu.db.session import get_settings
 
@@ -410,8 +411,8 @@ def _search_site(
 
     Requests to a site are spaced apart, and a URL already fetched in this search
     is reused (every SubsPlease feed searches the same page). A feed's remaining
-    terms are skipped once one of its results is a release of this show, since
-    the first search already returned all of them.
+    terms are skipped once its results of this show cover every missing episode;
+    until then the next term may still reach releases the earlier ones did not.
     """
     found: Dict[str, List[Dict[str, Any]]] = {}
     fetched: Dict[str, str] = {}
@@ -424,6 +425,7 @@ def _search_site(
         return fetched[url]
 
     for feed in feeds:
+        covered: set = set()
         for term in item.terms:
             try:
                 articles = search_feed(feed, term, paced_fetch)
@@ -435,10 +437,11 @@ def _search_site(
             if not articles:
                 continue
             found.setdefault(feed.qbit_feed_url, []).extend(articles)
-            if any(
-                item.show.id in followed.matching_ids(article.get("title") or "")
-                for article in date_gate(articles, first_air, now)
-            ):
+            for article in date_gate(articles, first_air, now):
+                title = article.get("title") or ""
+                if item.show.id in followed.matching_ids(title):
+                    covered.add(parse_release_title(title).get("episode"))
+            if covered.issuperset(item.missing):
                 break
     return found, None
 
