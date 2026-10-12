@@ -23,6 +23,11 @@ class QbitAuthenticationError(QbitClientError):
     pass
 
 
+class QbitConflictError(QbitClientError):
+    """qBittorrent answered 409: the feed name or URL is taken, or the path is not there."""
+    pass
+
+
 class QbitRSSRefreshError(QbitClientError):
     """A forced RSS feed refresh did not produce usable articles."""
     pass
@@ -355,6 +360,64 @@ class QBitClient:
             except QbitClientError as unreachable:
                 raise unreachable from e
             raise QbitClientError(f"Failed to add torrent '{urls}': {e}") from e
+
+    def _rss_feed_call(self, action: str, call) -> None:
+        """Run one RSS feed WebAPI call, turning failures into QbitClientError."""
+        try:
+            call(self.get_client())
+        except QbitClientError:
+            self._client = None
+            raise
+        except qbittorrentapi.Conflict409Error as e:
+            raise QbitConflictError(f"Could not {action}: qBittorrent says that name or URL is already in use ({e})") from e
+        except Exception as e:
+            self._client = None
+            try:
+                self.get_client()
+            except QbitClientError as unreachable:
+                raise unreachable from e
+            raise QbitClientError(f"Could not {action}: {e}") from e
+
+    def add_rss_feed(self, url: str, item_path: str) -> None:
+        """Add an RSS feed under ``item_path`` (its name, with ``\\`` for folders)."""
+        self._rss_feed_call(f"add RSS feed '{item_path}'", lambda c: c.rss_add_feed(url=url, item_path=item_path))
+        logger.info(f"Added RSS feed '{item_path}'")
+
+    def remove_rss_item(self, item_path: str) -> None:
+        """Remove an RSS feed or folder."""
+        self._rss_feed_call(f"remove RSS feed '{item_path}'", lambda c: c.rss_remove_item(item_path=item_path))
+        logger.info(f"Removed RSS feed '{item_path}'")
+
+    def move_rss_item(self, orig_path: str, new_path: str) -> None:
+        """Rename or move an RSS feed. A feed's name is its path."""
+        self._rss_feed_call(
+            f"rename RSS feed '{orig_path}' to '{new_path}'",
+            lambda c: c.rss_move_item(orig_item_path=orig_path, new_item_path=new_path),
+        )
+        logger.info(f"Moved RSS feed '{orig_path}' to '{new_path}'")
+
+    def set_rss_feed_url(self, item_path: str, url: str) -> None:
+        """Point an existing feed at a new URL, keeping its name and place."""
+        try:
+            self._rss_feed_call(f"change the URL of RSS feed '{item_path}'", lambda c: c.rss_set_feed_url(url=url, item_path=item_path))
+        except QbitConflictError:
+            raise
+        except QbitClientError as e:
+            # Older qBittorrent has no setFeedURL endpoint: recreate the feed instead.
+            if not isinstance(e.__cause__, (qbittorrentapi.NotFound404Error, qbittorrentapi.HTTP4XXError)):
+                raise
+            logger.info(f"qBittorrent cannot set a feed URL in place; recreating '{item_path}'")
+            self.remove_rss_item(item_path)
+            self.add_rss_feed(url, item_path)
+            return
+        logger.info(f"Changed the URL of RSS feed '{item_path}'")
+
+    def refresh_rss_item(self, item_path: str) -> None:
+        """Ask qBittorrent to fetch a feed now. Best effort."""
+        try:
+            self.get_client().rss_refresh_item(item_path=item_path)
+        except Exception as e:
+            logger.debug(f"Could not refresh RSS feed '{item_path}': {e}")
 
     def remove_rss_rule(self, rule_name: str) -> None:
         """Delete an RSS auto-downloading rule."""

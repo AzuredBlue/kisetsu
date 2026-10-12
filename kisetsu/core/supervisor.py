@@ -12,6 +12,7 @@ from kisetsu.core.backfill import prime_new_shows
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import CachedRssSnapshot
+from kisetsu.core.feeds import compact_priorities, forget_feed
 from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
@@ -159,34 +160,10 @@ class Supervisor:
         added = 0
         removed = 0
         renamed = 0
-        priorities_changed = False
 
         for url, f in list(existing_feeds_by_url.items()):
             if url not in qbit_urls:
-                shows_on_feed = self.session.exec(
-                    select(Monitored).where(Monitored.current_feed_id == f.id)
-                ).all()
-                for show in shows_on_feed:
-                    show.current_feed_id = None
-                    show.feed_pinned = False
-                    show.candidate_feed_id = None
-                    show.candidate_feed_since = None
-                    if show.status == MonitoredStatus.FIXED:
-                        show.status = MonitoredStatus.UNCONFIRMED
-                    self.session.add(show)
-
-                for episode in self.session.exec(select(Episode).where(Episode.feed_id == f.id)).all():
-                    episode.feed_id = None
-                    self.session.add(episode)
-
-                hist_on_feed = self.session.exec(
-                    select(RuleHistory).where(RuleHistory.feed_id == f.id)
-                ).all()
-                for h in hist_on_feed:
-                    h.feed_id = None
-                    self.session.add(h)
-
-                self.session.delete(f)
+                forget_feed(self.session, f)
                 del existing_feeds_by_url[url]
                 removed += 1
                 logs.append(f"Removed deleted qBit RSS feed: '{f.qbit_feed_name}'")
@@ -211,13 +188,7 @@ class Supervisor:
 
         self.session.flush()
 
-        remaining_feeds = list(existing_feeds_by_url.values())
-        remaining_feeds.sort(key=lambda x: x.priority)
-        for idx, feed_item in enumerate(remaining_feeds, start=1):
-            if feed_item.priority != idx:
-                feed_item.priority = idx
-                self.session.add(feed_item)
-                priorities_changed = True
+        priorities_changed = compact_priorities(self.session)
 
         if had_pending_changes or added or removed or renamed or priorities_changed:
             self.session.commit()

@@ -11,6 +11,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 from kisetsu.clients.qbit import (
     QbitAuthenticationError,
     QbitClientError,
+    QbitConflictError,
     QbitConnectionError,
     QbitRSSRefreshError,
 )
@@ -22,12 +23,14 @@ from kisetsu.db.models import (
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
+    MatchedFeedItem,
     MatchHistory,
     Monitored,
     Feed,
     MonitoredStatus,
     RuleHistory,
     RuleOutcome,
+    SeenFeedItem,
     Settings,
     TorrentOperation,
     normalize_mapping_source,
@@ -268,6 +271,120 @@ def test_feeds_and_reorder(client, session):
     updated_f2 = session.get(Feed, f2.id)
     assert updated_f1.priority == 2
     assert updated_f2.priority == 1
+
+
+def _add_feeds(session, count=3):
+    feeds = [Feed(qbit_feed_name=f"Feed {i}", qbit_feed_url=f"https://feed.{i}/rss", priority=i) for i in range(1, count + 1)]
+    session.add_all(feeds)
+    session.commit()
+    for f in feeds:
+        session.refresh(f)
+    return feeds
+
+
+def test_add_feed_writes_to_qbit_and_goes_last(client, session, mock_qbit):
+    _add_feeds(session, 2)
+    res = client.post("/api/feeds", json={"name": " New ", "url": " https://new.example/rss "})
+    assert res.status_code == 200
+    mock_qbit.add_rss_feed.assert_called_once_with("https://new.example/rss", "New")
+    assert res.json()["feed"]["priority"] == 3
+    session.expire_all()
+    assert session.exec(select(Feed).where(Feed.qbit_feed_name == "New")).one().qbit_feed_url == "https://new.example/rss"
+
+
+def test_add_feed_rejects_bad_input_and_qbit_conflicts(client, session, mock_qbit):
+    _add_feeds(session, 1)
+    assert client.post("/api/feeds", json={"name": "A", "url": "https://feed.1/rss"}).status_code == 409
+    assert client.post("/api/feeds", json={"name": "A\\B", "url": "https://x/rss"}).status_code == 422
+    assert client.post("/api/feeds", json={"name": "A", "url": "ftp://x/rss"}).status_code == 422
+    mock_qbit.add_rss_feed.assert_not_called()
+
+    mock_qbit.add_rss_feed.side_effect = QbitConflictError("name taken")
+    res = client.post("/api/feeds", json={"name": "Feed 1", "url": "https://other/rss"})
+    assert res.status_code == 409
+    session.expire_all()
+    assert len(session.exec(select(Feed)).all()) == 1
+
+
+def test_editing_a_feed_url_keeps_its_row_locks_and_cache(client, session, mock_qbit):
+    f1, f2, _ = _add_feeds(session)
+    show = Monitored(id=1, anilist_id=1, display_name="One", current_feed_id=f2.id, learned_feed_id=f2.id)
+    session.add(show)
+    session.commit()
+    session.add(SeenFeedItem(feed_url=f2.qbit_feed_url, item_id="a"))
+    session.add(MatchedFeedItem(monitored_id=1, feed_url=f2.qbit_feed_url, item_id="a"))
+    session.commit()
+    mock_qbit.get_rss_feed_paths.return_value = {f2.qbit_feed_url: "Feed 2"}
+    mock_qbit.get_rss_rules.return_value = {
+        "rule": {"affectedFeeds": [f2.qbit_feed_url], "enabled": True},
+        "other": {"affectedFeeds": [f1.qbit_feed_url]},
+    }
+
+    res = client.patch(f"/api/feeds/{f2.id}", json={"url": "https://moved.example/rss"})
+    assert res.status_code == 200
+    mock_qbit.set_rss_feed_url.assert_called_once_with("Feed 2", "https://moved.example/rss")
+    mock_qbit.move_rss_item.assert_not_called()
+    mock_qbit.set_rss_rule.assert_called_once()
+    rule_name, rule_def = mock_qbit.set_rss_rule.call_args.args
+    assert rule_name == "rule" and rule_def["affectedFeeds"] == ["https://moved.example/rss"]
+
+    session.expire_all()
+    feed = session.get(Feed, f2.id)
+    assert feed.qbit_feed_url == "https://moved.example/rss" and feed.priority == 2
+    show = session.get(Monitored, 1)
+    assert show.current_feed_id == f2.id and show.learned_feed_id == f2.id
+    assert session.exec(select(SeenFeedItem)).one().feed_url == "https://moved.example/rss"
+    assert session.exec(select(MatchedFeedItem)).one().feed_url == "https://moved.example/rss"
+
+
+def test_renaming_a_feed_keeps_it_in_its_qbit_folder(client, session, mock_qbit):
+    f1, _, _ = _add_feeds(session)
+    mock_qbit.get_rss_feed_paths.return_value = {f1.qbit_feed_url: "Anime\\Old"}
+    res = client.patch(f"/api/feeds/{f1.id}", json={"name": "New"})
+    assert res.status_code == 200
+    mock_qbit.move_rss_item.assert_called_once_with("Anime\\Old", "Anime\\New")
+    mock_qbit.set_rss_feed_url.assert_not_called()
+    session.expire_all()
+    assert session.get(Feed, f1.id).qbit_feed_name == "New"
+
+
+def test_editing_a_feed_that_left_qbit_changes_nothing(client, session, mock_qbit):
+    f1, _, _ = _add_feeds(session)
+    mock_qbit.get_rss_feed_paths.return_value = {}
+    res = client.patch(f"/api/feeds/{f1.id}", json={"name": "New"})
+    assert res.status_code == 409
+    session.expire_all()
+    assert session.get(Feed, f1.id).qbit_feed_name == "Feed 1"
+    assert client.patch(f"/api/feeds/{f1.id}", json={"name": "Feed 1"}).json()["message"] == "Nothing to change."
+    assert client.patch("/api/feeds/999", json={"name": "x"}).status_code == 404
+
+
+def test_deleting_a_feed_releases_its_shows_and_renumbers(client, session, mock_qbit):
+    f1, f2, f3 = _add_feeds(session)
+    session.add(Monitored(
+        id=1, anilist_id=1, display_name="One", current_feed_id=f2.id, learned_feed_id=f2.id,
+        candidate_feed_id=f2.id, status=MonitoredStatus.FIXED,
+    ))
+    session.commit()
+    mock_qbit.get_rss_feed_paths.return_value = {f2.qbit_feed_url: "Feed 2"}
+
+    res = client.delete(f"/api/feeds/{f2.id}")
+    assert res.status_code == 200
+    mock_qbit.remove_rss_item.assert_called_once_with("Feed 2")
+    session.expire_all()
+    assert [(f.id, f.priority) for f in session.exec(select(Feed).order_by(Feed.priority)).all()] == [(f1.id, 1), (f3.id, 2)]
+    show = session.get(Monitored, 1)
+    assert show.current_feed_id is None and show.learned_feed_id is None and show.candidate_feed_id is None
+    assert show.status == MonitoredStatus.UNCONFIRMED
+
+
+def test_feeds_list_reports_usage(client, session):
+    f1, f2, _ = _add_feeds(session)
+    session.add(Monitored(id=1, anilist_id=1, display_name="One", current_feed_id=f2.id, learned_feed_id=f2.id))
+    session.commit()
+    by_id = {f["id"]: f for f in client.get("/api/feeds").json()}
+    assert (by_id[f2.id]["shows"], by_id[f2.id]["locked"]) == (1, 1)
+    assert (by_id[f1.id]["shows"], by_id[f1.id]["locked"]) == (0, 0)
 
 
 def test_settings_endpoints(client, session):

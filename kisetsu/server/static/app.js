@@ -2407,9 +2407,146 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
           <td class="py-4 px-4">
             <div class="font-medium text-zinc-100 text-sm">${escapeHtml(f.qbit_feed_name)}</div>
             <div class="text-xs text-zinc-500 font-mono truncate max-w-2xl mt-0.5">${escapeHtml(f.qbit_feed_url)}</div>
+            ${f.shows > 0 ? `<div class="text-xs text-zinc-500 mt-0.5">${f.shows} show${f.shows === 1 ? '' : 's'}${f.locked > 0 ? ` · ${f.locked} locked` : ''}</div>` : ''}
+          </td>
+          <td class="py-4 px-3">
+            <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+              <button draggable="false" onclick="event.stopPropagation(); openFeedDialog(${f.id})" class="w-7 h-7 rounded-md flex items-center justify-center text-zinc-500 hover:text-zinc-50 hover:bg-raised transition-colors active:scale-90" title="Edit feed" aria-label="Edit feed">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/></svg>
+              </button>
+              <button draggable="false" onclick="event.stopPropagation(); deleteFeed(${f.id})" class="w-7 h-7 rounded-md flex items-center justify-center text-zinc-500 hover:text-rose-400 hover:bg-raised transition-colors active:scale-90" title="Delete feed" aria-label="Delete feed">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="3" class="text-center py-10 text-zinc-500 text-sm">No feeds registered.</td></tr>';
+      `).join('') || '<tr><td colspan="4" class="text-center py-10 text-zinc-500 text-sm">No feeds registered.</td></tr>';
+    }
+
+    // Add (no argument) or edit (feed id) a feed. qBittorrent is changed first; the
+    // server keeps the feed's row, so its priority and locked shows survive an edit.
+    function openFeedDialog(feedId = null) {
+      const feed = feedId === null ? null : allFeeds.find(f => f.id === feedId);
+      if (feedId !== null && !feed) return;
+      const overlay = document.createElement('div');
+      overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+      overlay.innerHTML = `
+        <form class="card w-full shadow-lg shadow-black/40" style="max-width: 28rem; padding: 1.5rem" role="dialog" aria-modal="true">
+          <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">${feed ? `Edit '${escapeHtml(feed.qbit_feed_name)}'` : 'Add RSS feed'}</h3>
+          <div style="margin-top: 1.25rem">
+            <label class="field-label" for="feed-dlg-name">Name</label>
+            <input id="feed-dlg-name" type="text" required autocomplete="off" class="field">
+          </div>
+          <div style="margin-top: 1rem">
+            <label class="field-label" for="feed-dlg-url">RSS URL</label>
+            <input id="feed-dlg-url" type="url" required autocomplete="off" placeholder="https://…" class="field font-mono">
+            <p class="field-hint">${feed ? "Changing the URL keeps this feed's priority, locked shows and cached releases." : 'Added to qBittorrent at the bottom of the list.'}</p>
+          </div>
+          <p id="feed-dlg-error" class="field-hint hidden" style="color: rgb(var(--danger-fg))" role="alert"></p>
+          <div class="flex justify-end gap-3" style="margin-top: 1.5rem">
+            <button type="button" data-act="cancel" class="btn">Cancel</button>
+            <button type="submit" data-act="save" class="btn btn-primary">${feed ? 'Save' : 'Add'}</button>
+          </div>
+        </form>`;
+      const nameInput = overlay.querySelector('#feed-dlg-name');
+      const urlInput = overlay.querySelector('#feed-dlg-url');
+      const errorLine = overlay.querySelector('#feed-dlg-error');
+      const saveBtn = overlay.querySelector('[data-act="save"]');
+      nameInput.value = feed ? feed.qbit_feed_name : '';
+      urlInput.value = feed ? feed.qbit_feed_url : '';
+      const close = () => {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+      };
+      const onKey = e => { if (e.key === 'Escape') close(); };
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay || e.target.dataset.act === 'cancel') close();
+      });
+      overlay.querySelector('form').addEventListener('submit', async e => {
+        e.preventDefault();
+        const name = nameInput.value.trim();
+        const url = urlInput.value.trim();
+        let request;
+        if (feed) {
+          const body = {};
+          if (name !== feed.qbit_feed_name) body.name = name;
+          if (url !== feed.qbit_feed_url) body.url = url;
+          if (!Object.keys(body).length) { close(); return; }
+          request = { url: `/api/feeds/${feed.id}`, options: { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } };
+        } else {
+          request = { url: '/api/feeds', options: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) } };
+        }
+        await once('feed-save', async () => {
+          saveBtn.disabled = true;
+          errorLine.classList.add('hidden');
+          try {
+            const data = await apiFetch(request.url, request.options);
+            close();
+            showToast(data.message, 'success');
+            loadFeeds();
+            loadShows();
+          } catch (err) {
+            errorLine.textContent = err.message || String(err);
+            errorLine.classList.remove('hidden');
+            saveBtn.disabled = false;
+          }
+        });
+      });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      nameInput.focus();
+    }
+
+    // Resolves to true when confirmed.
+    function confirmDeleteFeed(feed) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+        const usage = feed.shows > 0
+          ? ` ${feed.shows} show${feed.shows === 1 ? ' uses' : 's use'} it and will go back to Auto-Discover.`
+          : '';
+        const lockWarning = feed.locked > 0
+          ? `<p class="field-hint" style="color: rgb(var(--danger-fg))">${feed.locked} show${feed.locked === 1 ? ' is' : 's are'} locked to this feed; ${feed.locked === 1 ? 'its' : 'their'} lock is released.</p>`
+          : '';
+        overlay.innerHTML = `
+          <div class="card w-full shadow-lg shadow-black/40" style="max-width: 26rem; padding: 1.5rem" role="dialog" aria-modal="true">
+            <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">Delete '${escapeHtml(feed.qbit_feed_name)}'?</h3>
+            <p class="field-hint" style="margin-top: 0.5rem">Removes the feed from qBittorrent and Kisetsu.${usage}</p>
+            ${lockWarning}
+            <div class="flex justify-end gap-3" style="margin-top: 1.5rem">
+              <button type="button" data-act="cancel" class="btn">Cancel</button>
+              <button type="button" data-act="ok" class="btn btn-danger">Delete</button>
+            </div>
+          </div>`;
+        const finish = result => {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(result);
+        };
+        const onKey = e => { if (e.key === 'Escape') finish(false); };
+        overlay.addEventListener('click', e => {
+          if (e.target === overlay || e.target.dataset.act === 'cancel') finish(false);
+          else if (e.target.dataset.act === 'ok') finish(true);
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-act="cancel"]').focus();
+      });
+    }
+
+    async function deleteFeed(id) {
+      const feed = allFeeds.find(f => f.id === id);
+      if (!feed || !(await confirmDeleteFeed(feed))) return;
+      await once(`delete-feed-${id}`, async () => {
+        try {
+          const data = await apiFetch(`/api/feeds/${id}`, { method: 'DELETE' });
+          showToast(data.message, 'success');
+          loadFeeds();
+          loadShows();
+        } catch (err) {
+          showToast(`Delete failed: ${err.message || err}`, 'error');
+        }
+      });
     }
 
     async function syncFeeds() {

@@ -389,10 +389,13 @@
 
       <section id="tab-feeds" class="hidden max-w-4xl space-y-5">
         <div class="flex items-center justify-between gap-3">
-          <p class="page-sub !mt-0">Checked in this order. Drag to reorder.</p>
-          <button onclick="syncFeeds()" class="btn btn-sm flex-shrink-0">
-            Sync from qBittorrent
-          </button>
+          <p class="page-sub !mt-0">Checked in this order. Drag to reorder. Changes here are saved to qBittorrent.</p>
+          <div class="flex gap-2 flex-shrink-0">
+            <button onclick="openFeedDialog()" class="btn btn-sm btn-primary">Add feed</button>
+            <button onclick="syncFeeds()" class="btn btn-sm">
+              Sync from qBittorrent
+            </button>
+          </div>
         </div>
 
         <div class="card overflow-hidden">
@@ -403,6 +406,7 @@
                   <th class="py-3 px-3 w-10 text-center"></th>
                   <th class="py-3 px-2 w-20 text-center">Priority</th>
                   <th class="py-3 px-4">Feed name &amp; RSS URL</th>
+                  <th class="py-3 px-3 w-24"></th>
                 </tr>
               </thead>
               <tbody id="feeds-table-body" class="divide-y divide-line-soft">

@@ -27,12 +27,13 @@ from kisetsu.db.models import (
     normalize_mapping_source,
     utc_now,
 )
-from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError
+from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConflictError
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss, last_failed_feed_names
+from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
 from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
@@ -1368,10 +1369,191 @@ def _delete_show(show_id: int, session: Session, qbit: QBitClient, delete_torren
     return {"status": "success", "message": f"Deleted '{name}' from monitoring{removed}."}
 
 
+def _feed_json(feed: Feed, usage: Optional[Dict[str, int]] = None) -> Dict[str, Any]:
+    usage = usage or {}
+    return {
+        "id": feed.id,
+        "qbit_feed_name": feed.qbit_feed_name,
+        "qbit_feed_url": feed.qbit_feed_url,
+        "priority": feed.priority,
+        "shows": usage.get("shows", 0),
+        "locked": usage.get("locked", 0),
+    }
+
+
 @router.get("/feeds")
 def get_feeds(session: Session = Depends(get_db)):
     feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
-    return [{"id": f.id, "qbit_feed_name": f.qbit_feed_name, "qbit_feed_url": f.qbit_feed_url, "priority": f.priority} for f in feeds]
+    usage = feeds_usage(session)
+    return [_feed_json(f, usage.get(f.id)) for f in feeds]
+
+
+class FeedCreateRequest(BaseModel):
+    name: str
+    url: str
+
+
+class FeedUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    url: Optional[str] = None
+
+
+def _clean_feed_name(name: str) -> str:
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="The feed needs a name.")
+    if "\\" in name:
+        raise HTTPException(status_code=422, detail="Feed names can't contain a backslash.")
+    return name
+
+
+def _clean_feed_url(url: str, session: Session, own_id: Optional[int] = None) -> str:
+    url = (url or "").strip()
+    if not re.match(r"^https?://\S+$", url, re.IGNORECASE):
+        raise HTTPException(status_code=422, detail="The RSS URL must start with http:// or https://.")
+    other = session.exec(select(Feed).where(Feed.qbit_feed_url == url)).first()
+    if other and other.id != own_id:
+        raise HTTPException(status_code=409, detail=f"'{other.qbit_feed_name}' already uses that URL.")
+    return url
+
+
+def _qbit_feed_failure(e: QbitClientError) -> HTTPException:
+    state.add_log(f"RSS feed change refused: {e}", "WARNING")
+    return HTTPException(status_code=409 if isinstance(e, QbitConflictError) else 502, detail=str(e))
+
+
+@router.post("/feeds")
+def create_feed(req: FeedCreateRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _create_feed(req, session, qbit)
+    finally:
+        release_cycle()
+
+
+def _create_feed(req: FeedCreateRequest, session: Session, qbit: QBitClient):
+    name = _clean_feed_name(req.name)
+    url = _clean_feed_url(req.url, session)
+    try:
+        qbit.add_rss_feed(url, name)
+    except QbitClientError as e:
+        raise _qbit_feed_failure(e)
+    top = session.exec(select(func.max(Feed.priority))).one() or 0
+    feed = Feed(qbit_feed_name=name, qbit_feed_url=url, priority=top + 1)
+    session.add(feed)
+    session.commit()
+    session.refresh(feed)
+    qbit.refresh_rss_item(name)
+    message = f"Added RSS feed '{name}' (Priority {feed.priority})."
+    state.add_log(message, "INFO")
+    return {"status": "success", "message": message, "feed": _feed_json(feed)}
+
+
+@router.patch("/feeds/{feed_id}")
+def update_feed(feed_id: int, req: FeedUpdateRequest, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _update_feed(feed_id, req, session, qbit)
+    finally:
+        release_cycle()
+
+
+def _feed_path_in_qbit(feed: Feed, qbit: QBitClient) -> Optional[str]:
+    try:
+        return qbit.get_rss_feed_paths().get(feed.qbit_feed_url)
+    except QbitClientError as e:
+        raise _qbit_feed_failure(e)
+
+
+def _update_feed(feed_id: int, req: FeedUpdateRequest, session: Session, qbit: QBitClient):
+    feed = session.get(Feed, feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found.")
+    new_name = _clean_feed_name(req.name) if req.name is not None else feed.qbit_feed_name
+    new_url = _clean_feed_url(req.url, session, own_id=feed.id) if req.url is not None else feed.qbit_feed_url
+    name_changed = new_name != feed.qbit_feed_name
+    url_changed = new_url != feed.qbit_feed_url
+    if not (name_changed or url_changed):
+        return {"status": "success", "message": "Nothing to change.", "feed": _feed_json(feed)}
+
+    old_name, old_url = feed.qbit_feed_name, feed.qbit_feed_url
+    path = _feed_path_in_qbit(feed, qbit)
+    if not path:
+        raise HTTPException(status_code=409, detail="This feed is no longer in qBittorrent. Sync from qBittorrent first.")
+    final_path = path
+    try:
+        if url_changed:
+            qbit.set_rss_feed_url(path, new_url)
+        if name_changed:
+            folder = path.rsplit("\\", 1)[0] + "\\" if "\\" in path else ""
+            final_path = folder + new_name
+            qbit.move_rss_item(path, final_path)
+    except QbitClientError as e:
+        raise _qbit_feed_failure(e)
+
+    # Same row, same id: the priority, the locks and the mappings stay with the feed.
+    feed.qbit_feed_name = new_name
+    feed.qbit_feed_url = new_url
+    session.add(feed)
+    if url_changed:
+        repoint_feed_url(session, old_url, new_url)
+    session.commit()
+
+    if url_changed:
+        try:
+            rules = qbit.get_rss_rules()
+        except QbitClientError as e:
+            rules = {}
+            state.add_log(f"Could not re-point rules to the new URL of '{new_name}': {e}", "WARNING")
+        for rule_name, rule_def in rules.items():
+            affected = list(rule_def.get("affectedFeeds") or [])
+            if old_url not in affected:
+                continue
+            updated = dict(rule_def)
+            updated["affectedFeeds"] = [new_url if u == old_url else u for u in affected]
+            try:
+                qbit.set_rss_rule(rule_name, updated)
+            except QbitClientError as e:
+                state.add_log(f"Could not re-point rule '{rule_name}' to the new URL: {e}", "WARNING")
+    qbit.refresh_rss_item(final_path)
+
+    changes = []
+    if name_changed:
+        changes.append(f"renamed to '{new_name}'")
+    if url_changed:
+        changes.append("URL changed")
+    message = f"Edited RSS feed '{old_name}': {', '.join(changes)}."
+    state.add_log(message, "INFO")
+    return {"status": "success", "message": message, "feed": _feed_json(feed, feeds_usage(session).get(feed.id))}
+
+
+@router.delete("/feeds/{feed_id}")
+def delete_feed(feed_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    require_exclusive_cycle()
+    try:
+        return _delete_feed(feed_id, session, qbit)
+    finally:
+        release_cycle()
+
+
+def _delete_feed(feed_id: int, session: Session, qbit: QBitClient):
+    feed = session.get(Feed, feed_id)
+    if not feed:
+        raise HTTPException(status_code=404, detail="Feed not found.")
+    name = feed.qbit_feed_name
+    path = _feed_path_in_qbit(feed, qbit)
+    if path:
+        try:
+            qbit.remove_rss_item(path)
+        except QbitClientError as e:
+            raise _qbit_feed_failure(e)
+    shows = feeds_usage(session).get(feed.id, {}).get("shows", 0)
+    forget_feed(session, feed)
+    compact_priorities(session)
+    session.commit()
+    message = f"Deleted RSS feed '{name}'; {shows} show(s) moved back to Auto-Discover."
+    state.add_log(message, "INFO")
+    return {"status": "success", "message": message}
 
 
 class ReorderItem(BaseModel):
