@@ -922,8 +922,9 @@
         const missed = String(ep.status).toLowerCase() === 'missed';
         // A wanted episode whose air time has passed is being searched for, unlike one still to come.
         const aired = String(ep.status).toLowerCase() === 'wanted' && ep.air_at && new Date(ep.air_at) <= Date.now();
-        const statusLabel = aired ? 'aired · searching' : ep.status;
-        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : aired ? 'text-sky-400' : 'text-zinc-500';
+        const showPaused = data.status === 'paused';
+        const statusLabel = aired ? (showPaused ? 'aired · paused' : 'aired · searching') : ep.status;
+        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : aired && !showPaused ? 'text-sky-400' : 'text-zinc-500';
         const unmanaged = isDirect && done && !ep.torrent_hash;
         const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
         const swap = isDirect && done && ep.torrent_hash ? replacements.get(ep.episode_number) : null;
@@ -977,7 +978,9 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
               </div>
               <span class="flex items-center gap-3">
                 <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} release${matches.length === 1 ? '' : 's'}` : 'checking feed…'}</span>
-                <button type="button" onclick="searchPastReleases(this)" class="text-xs text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>
+                ${actionsInFlight.has(`search-releases-${showId}`)
+                  ? `<span class="inline-flex items-center gap-1.5 text-xs text-zinc-400">${SPINNER_ICON}Searching…</span>`
+                  : `<button type="button" onclick="searchPastReleases()" class="text-xs text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
               </span>
             </div>
             <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${showListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
@@ -2229,11 +2232,11 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
       return saveShowPage();
     }
 
-    function searchPastReleases(btn) {
+    function searchPastReleases() {
       const showId = currentInspectedShowId;
       if (!showId) return;
       return once(`search-releases-${showId}`, async () => {
-        btn.disabled = true;
+        rerenderShowLists();
         try {
           const data = await apiFetch(`/api/shows/${showId}/search-releases`, { method: 'POST' });
           const episodes = (data.missing || []).join(', ');
@@ -2253,7 +2256,8 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
         } catch (err) {
           showToast(`Search failed: ${err.message || err}`, 'error');
         } finally {
-          btn.disabled = false;
+          actionsInFlight.delete(`search-releases-${showId}`);
+          if (currentInspectedShowId === showId) rerenderShowLists();
         }
       });
     }
