@@ -232,6 +232,26 @@
       }
     }
 
+    let currentShowView = 'grid';
+    try { currentShowView = localStorage.getItem('show_view_mode') === 'list' ? 'list' : 'grid'; } catch (err) {}
+
+    function setShowView(mode) {
+      currentShowView = mode === 'list' ? 'list' : 'grid';
+      try { localStorage.setItem('show_view_mode', currentShowView); } catch (err) {}
+      renderShows();
+    }
+
+    function updateViewButtonStyles() {
+      ['grid', 'list'].forEach(m => {
+        const btn = document.getElementById(`view-btn-${m}`);
+        if (!btn) return;
+        const svg = btn.querySelector('svg');
+        const on = m === currentShowView;
+        btn.className = `px-2 py-1 rounded-md flex items-center transition-colors ${on ? 'bg-accent/15 text-accent-soft font-medium' : 'text-zinc-400 hover:text-zinc-200'}`;
+        if (svg) svg.className = `w-3.5 h-3.5 ${on ? 'text-accent-soft' : 'text-zinc-400'}`;
+      });
+    }
+
     let currentSortMode = localStorage.getItem('show_sort_mode') || 'airing';
 
     function setSortMode(mode) {
@@ -315,6 +335,9 @@
 
     function renderShows() {
       updateSortButtonStyles();
+      updateViewButtonStyles();
+      const isList = currentShowView === 'list';
+      const renderItem = isList ? renderShowRow : renderShowCard;
       // Completed shows sit in their own section, so they are pulled out first
       // rather than relying on them to be filtered out of Releasing/Planned.
       const completedShows = sortShowsList(allShows.filter(s => isShowCompleted(s)));
@@ -331,9 +354,14 @@
       const gridPlanned = document.getElementById('grid-planned');
       const gridCompleted = document.getElementById('grid-completed');
 
-      setGridHtml(gridReleasing, releasingShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No currently releasing anime.</div>');
-      setGridHtml(gridPlanned, plannedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No planned upcoming anime.</div>');
-      setGridHtml(gridCompleted, completedShows.map(renderShowCard).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No completed anime.</div>');
+      [gridReleasing, gridPlanned, gridCompleted].forEach(grid => {
+        grid.classList.toggle('show-list', isList);
+        grid.classList.toggle('show-grid', !isList);
+      });
+
+      setGridHtml(gridReleasing, releasingShows.map(renderItem).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No currently releasing anime.</div>');
+      setGridHtml(gridPlanned, plannedShows.map(renderItem).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No planned upcoming anime.</div>');
+      setGridHtml(gridCompleted, completedShows.map(renderItem).join('') || '<div class="col-span-full py-6 text-center text-zinc-500 text-sm">No completed anime.</div>');
 
       // Releasing is always shown so the page is never blank; the trailing
       // sections are noise when they have nothing in them.
@@ -390,6 +418,81 @@
       return Math.min(1, downloaded / (Math.max(aired, downloaded) + 1));
     }
 
+    // A tag only says what the section and the countdown don't already say, so Working
+    // (the normal state) gets none, nor do Upcoming in Planned or Completed in Completed.
+    function showStatusChip(label, cfg) {
+      const tagTips = {
+        Testing: 'No release seen yet. Trying the feeds by priority.',
+        Stalled: 'The download has stopped making progress.',
+        Paused: 'Monitoring is paused for this show.',
+      };
+      return tagTips[label]
+        ? `<span class="px-1.5 py-0.5 inline-flex items-center rounded text-[11px] font-medium border ${cfg.bg}" title="${tagTips[label]}">${label}</span>`
+        : '';
+    }
+
+    function pauseIconSvg(isPaused) {
+      return isPaused
+        ? `<svg class="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
+        : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+    }
+
+    // One compact row for the list view: the same facts as the card, on a single line.
+    function renderShowRow(show) {
+      const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
+      const downloaded = show.downloaded_episodes_count || 0;
+      const total = show.total_episodes || 0;
+      const { epLabel, airInfo, airClass, countdownAttr } = showAirSummary(show, statusKey);
+      const showBar = total > 0 || downloaded > 0 || !!show.next_airing_episode;
+      const pct = showBar ? Math.round(progressFraction(show) * 100) : 0;
+      const progressText = `${downloaded}/${total || '?'}`;
+      const isDimmed = isPaused || isCompleted;
+      const dimClass = isDimmed ? 'opacity-80 grayscale-[35%]' : '';
+      const name = escapeHtml(show.display_name);
+      const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
+      const barClass = isDimmed ? 'bg-zinc-500' : 'bg-accent';
+      const art = show.cover_image
+        ? `<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="absolute inset-0 w-full h-full object-cover ${dimClass}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
+        : '';
+      const nextDate = localDateTime(show.next_airing_at);
+      const btn = 'w-7 h-7 rounded-md flex items-center justify-center text-zinc-400 transition-colors active:scale-90';
+
+      return `
+        <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-row cursor-pointer">
+          <div data-poster-id="${show.id}" class="sr-poster on-art relative aspect-[2/3] rounded bg-zinc-900 overflow-hidden">${art}</div>
+
+          <div class="sr-title">
+            <h3 class="text-sm font-medium text-zinc-200 truncate" title="${name}">${name}</h3>
+            <div class="sr-feed-sub text-xs text-zinc-500 truncate" title="${feedName}">${feedName}</div>
+          </div>
+
+          <div class="sr-air text-[13px]">
+            <span class="font-medium text-zinc-300">${epLabel}</span>
+            <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${nextDate}">${airInfo}</span>
+          </div>
+
+          <div class="sr-feed text-xs text-zinc-500" title="${feedName}">
+            <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
+            <span class="truncate">${feedName}</span>
+          </div>
+
+          <div class="sr-progress" title="${progressText} downloaded">
+            <div class="h-[5px] flex-1 rounded-full bg-line-soft overflow-hidden"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>
+            <span class="text-xs tabular-nums text-zinc-400 text-right">${progressText}</span>
+          </div>
+
+          <div class="sr-chip">${showStatusChip(label, cfg)}</div>
+
+          <div class="sr-actions">
+            ${!isCompleted ? `<button onclick="event.stopPropagation(); togglePauseShow(${show.id})" class="${btn} hover:bg-raised hover:text-zinc-100" title="${isPaused ? 'Resume monitoring' : 'Pause monitoring'}">${pauseIconSvg(isPaused)}</button>` : ''}
+            <button onclick="event.stopPropagation(); deleteShow(${show.id})" class="${btn} hover:bg-rose-600 hover:text-white" title="Remove show">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
     function renderShowCard(show) {
       const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
 
@@ -415,16 +518,7 @@
         : noArt;
       const posterImg = `<div class="absolute inset-0 overflow-hidden"><div class="poster-zoom absolute inset-0">${art}</div></div>`;
 
-      // A tag only says what the section and the countdown don't already say, so Working
-      // (the normal state) gets none, nor do Upcoming in Planned or Completed in Completed.
-      const tagTips = {
-        Testing: 'No release seen yet. Trying the feeds by priority.',
-        Stalled: 'The download has stopped making progress.',
-        Paused: 'Monitoring is paused for this show.',
-      };
-      const statusChip = tagTips[label]
-        ? `<span class="px-1.5 py-0.5 inline-flex items-center rounded text-[11px] font-medium border ${cfg.bg}" title="${tagTips[label]}">${label}</span>`
-        : '';
+      const statusChip = showStatusChip(label, cfg);
 
       // The bar sits flush under the poster, in the user's accent (grey while paused or finished).
       const barClass = isDimmed ? 'bg-zinc-500' : 'bg-accent';
@@ -435,9 +529,7 @@
                 <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
               </div>` : '';
 
-      const pauseIcon = isPaused
-        ? `<svg class="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
-        : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
+      const pauseIcon = pauseIconSvg(isPaused);
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
       return `

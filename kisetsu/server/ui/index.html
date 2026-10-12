@@ -133,6 +133,23 @@
     /* Show cards: poster-first with flush progress bar; text floats on canvas. */
     .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
     @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
+    /* List view: one dense row per show, same data as the card. */
+    .show-list { display: flex; flex-direction: column; gap: .375rem; container-type: inline-size; }
+    .show-row { display: flex; align-items: center; gap: 1rem; padding: .5rem 1rem .5rem .5rem; min-width: 0; border: 1px solid rgb(var(--line-soft)); border-radius: .5rem; transition: background-color .15s, border-color .15s; }
+    .show-row > * { min-width: 0; }
+    .sr-poster { width: 2.5rem; flex: none; }
+    .sr-title { flex: 1 1 0; }
+    .sr-air { flex: none; width: 10rem; display: flex; align-items: baseline; gap: .375rem; white-space: nowrap; }
+    .sr-actions { flex: none; display: flex; align-items: center; gap: .125rem; }
+    /* Extra columns appear as the list gets wide enough (the sidebar eats viewport width,
+       so these key off the list itself rather than the window). */
+    .sr-feed, .sr-progress, .sr-chip { display: none; flex: none; white-space: nowrap; }
+    .sr-feed, .sr-progress { align-items: center; gap: .375rem; }
+    .sr-progress > span { width: 2.5rem; }
+    @container (min-width: 520px) { .sr-progress { display: flex; width: 7rem; } }
+    @container (min-width: 680px) { .sr-chip { display: block; width: 4.5rem; text-align: right; } .sr-feed-sub { display: none; } .sr-feed { display: flex; width: 9rem; } }
+    @container (min-width: 1020px) { .sr-feed { width: 14rem; } }
+    .show-row:hover { background-color: rgb(var(--surface) / .6); border-color: rgb(var(--line-hover)); }
     /* A card is a box, rounded like the show page's poster: the poster with its progress bar
        flush underneath, and the text below. Hover zooms only the poster, a little. The zoom is
        a transform, so the browser only scales an existing layer instead of laying the image out
@@ -326,6 +343,14 @@
               <button onclick="setSortMode('default')" id="sort-btn-default" class="px-2.5 py-1 rounded-md flex items-center gap-1.5 transition-colors text-zinc-400 hover:text-zinc-200" title="Order added">
                 <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
                 <span>Default</span>
+              </button>
+            </div>
+            <div class="flex items-center gap-0.5 bg-sunken p-0.5 rounded-lg border border-line-soft text-xs">
+              <button onclick="setShowView('grid')" id="view-btn-grid" class="px-2 py-1 rounded-md flex items-center transition-colors text-zinc-400 hover:text-zinc-200" title="Poster grid" aria-label="Grid view">
+                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h6v6H4zM14 5h6v6h-6zM4 15h6v6H4zM14 15h6v6h-6z"/></svg>
+              </button>
+              <button onclick="setShowView('list')" id="view-btn-list" class="px-2 py-1 rounded-md flex items-center transition-colors text-zinc-400 hover:text-zinc-200" title="Compact list" aria-label="List view">
+                <svg class="w-3.5 h-3.5 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
               </button>
             </div>
             </div>
