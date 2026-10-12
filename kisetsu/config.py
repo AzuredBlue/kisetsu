@@ -13,7 +13,7 @@ DEFAULT_SEED_RATIO = 1.0
 DEFAULT_REFRESH_INTERVAL_MINUTES = 360
 DEFAULT_STALL_WAIT_HOURS = 24
 
-DEFAULT_DOWNLOAD_MODE = "rules"
+DEFAULT_DOWNLOAD_MODE = "direct"
 # Stored for old settings files; nothing reads it any more (the whole season is eligible).
 DEFAULT_BACKFILL_WINDOW_DAYS = 14
 # How long after an air time the scheduler keeps polling at the fast hunting interval.

@@ -11,7 +11,13 @@ from kisetsu.db.models import (
     TorrentOperationStatus,
     utc_now,
 )
-from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
+from functools import partial
+
+from kisetsu.workers import scheduler
+
+# These tests predate direct being the default; they cover rules mode unless a call passes download_mode.
+calculate_next_poll_interval = partial(scheduler.calculate_next_poll_interval, download_mode="rules")
+is_hunting = partial(scheduler.is_hunting, download_mode="rules")
 
 
 class TestScheduler(unittest.TestCase):

@@ -67,7 +67,7 @@ def test_continuous_numbering_rolls_to_next_seasonal_episode(session):
 
     mock_qbit = MagicMock()
     mock_anilist = MagicMock()
-    settings = Settings(id=1, base_dir="/tmp")
+    settings = Settings(id=1, base_dir="/tmp", download_mode="rules")
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
     logs = supervisor.reconcile_schedule_rollover()
@@ -237,7 +237,7 @@ def test_stale_fixed_show_overdue_advance(session):
 
     mock_qbit = MagicMock()
     mock_anilist = MagicMock()
-    settings = Settings(id=1, base_dir="/tmp")
+    settings = Settings(id=1, base_dir="/tmp", download_mode="rules")
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=mock_anilist, settings=settings)
 
     logs = supervisor.reconcile_schedule_rollover()

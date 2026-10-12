@@ -49,7 +49,7 @@ def db_engine():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
-        settings = Settings(id=1, qbit_host="http://localhost:8080", default_category="Anime")
+        settings = Settings(id=1, qbit_host="http://localhost:8080", default_category="Anime", download_mode="rules")
         s.add(settings)
         s.commit()
     return engine
@@ -498,7 +498,7 @@ def supervisor_engine():
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules"))
         session.commit()
     return engine
 
@@ -2427,7 +2427,7 @@ async def test_background_supervisor_reports_no_rules_without_warning(monkeypatc
     )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
-        session.add(Settings(id=1, qbit_host="http://qbit:8080"))
+        session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules"))
         session.commit()
 
     qbit = MagicMock()

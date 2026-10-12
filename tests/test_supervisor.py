@@ -460,7 +460,9 @@ async def test_hunting_cycle_defers_anilist_but_still_verifies_and_syncs_rules()
     SQLModel.metadata.create_all(engine)
     session = Session(engine)
 
-    settings = Settings(id=1, anilist_username="TestUser", default_category="Anime", base_dir="/tmp/Anime")
+    settings = Settings(
+        id=1, anilist_username="TestUser", default_category="Anime", base_dir="/tmp/Anime", download_mode="rules"
+    )
     session.add(settings)
     show = Monitored(
         anilist_id=154587,

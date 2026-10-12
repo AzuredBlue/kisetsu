@@ -634,7 +634,7 @@ class TestConfirmation(unittest.TestCase):
             ))
         self.session.commit()
 
-        self.assertFalse(has_downloaded_final_episode(self.session, show))
+        self.assertFalse(has_downloaded_final_episode(self.session, show, "rules"))
 
         for episode_number in range(1, 11):
             self.session.add(Episode(

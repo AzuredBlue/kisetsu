@@ -212,7 +212,7 @@ class TestRuleObserver(unittest.IsolatedAsyncioTestCase):
         self.engine = create_engine("sqlite:///:memory:")
         SQLModel.metadata.create_all(self.engine)
         with Session(self.engine) as session:
-            session.add(Settings(id=1, qbit_host="http://qbit:8080"))
+            session.add(Settings(id=1, qbit_host="http://qbit:8080", download_mode="rules"))
             session.commit()
 
     def _watermarks(self):

@@ -20,8 +20,8 @@ The WebUI is available at `http://localhost:8085`.
 ## Features
 - **AniList Sync**: Automatically imports your seasonal anime watchlist.
 - **RSS Feeds Ranking**: Give priority to certain RSS feeds for downloading your seasonal anime. Falls back automatically to other feeds if needed.
-- **qBittorrent RSS Automation**: Automatically manages your qBittorrent auto-downloader rules for your seasonal anime.
-- **Direct Downloads**: Optionally adds each new episode to qBittorrent itself and replaces a release when a v2 appears (see [Download modes](#download-modes)).
+- **qBittorrent RSS Automation**: Optionally manages your qBittorrent auto-downloader rules for your seasonal anime (Rules mode).
+- **Direct Downloads**: Adds each new episode to qBittorrent itself and replaces a release when a v2 appears (see [Download modes](#download-modes)).
 - **Calendar**: Creates a calendar for your seasonal anime.
 
 ---
@@ -57,14 +57,14 @@ After running it, you can open **`http://localhost:8085`** in your browser, wher
 
 The UI only listens on `127.0.0.1` by default. Run `kisetsu --host 0.0.0.0` to expose it to your LAN (there is no authentication), and `--port` to change the port.
 
-After syncing with your AniList and making sure it can connect to qBit's WebUI, it will automatically create RSS Download Rules for each seasonal show. Once a show airs, it will automatically check for the best release (based on your RSS feed ranking) and adjust the RSS Download Rule so it matches it.
+After syncing with your AniList and making sure it can connect to qBit's WebUI, it will automatically download each new episode of your seasonal shows, picking the best release based on your RSS feed ranking. In Rules mode it does this by managing qBittorrent RSS Download Rules instead (see [Download modes](#download-modes)).
 
 ## Download modes
 
 Choose the mode under **Settings**. Switching to Direct disables the managed RSS rules first.
 
-- **Rules** (default): the app writes a qBittorrent RSS auto-download rule for each show and keeps it matched to the best release.
-- **Direct**: the app reads your RSS feeds and adds each new episode to qBittorrent itself.
+- **Rules**: the app writes a qBittorrent RSS auto-download rule for each show and keeps it matched to the best release.
+- **Direct** (default): the app reads your RSS feeds and adds each new episode to qBittorrent itself.
   - **Replacements**: when a v2 appears, it is added paused, rechecked and resumed. The v1 is kept until the v2 has completed and is seeding, then deleted with its files (unless both share the same files). If the replacement fails, the episode goes back to its previous release.
   - **Feed lock**: once a release really arrives from a feed, the show downloads only from that feed so episodes stay consistent. You can pick another feed in the show's editor.
   - **Missed episodes**: an aired episode that never showed up in the feeds is marked as missed. It stays eligible: if a release turns up later, or **Search older** on the show finds one, it is downloaded.
