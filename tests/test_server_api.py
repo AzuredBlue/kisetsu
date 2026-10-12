@@ -2614,8 +2614,22 @@ def test_the_show_list_counts_unfinished_downloads_per_feed(client, session, moc
     assert entry["unfinished_downloads_by_feed"] == {"1": 1}
 
 
-def test_the_page_draws_a_bar_for_unknown_totals_and_warns_before_dropping_downloads(client):
+def test_the_page_links_its_script_and_the_server_serves_it(client):
     page = client.get("/").text
+
+    assert 'src="/static/app.js?v=' in page
+    assert "@@" not in page
+    script = client.get("/static/app.js")
+    assert script.status_code == 200
+    assert "function switchTab(" in script.text
+
+
+def _page_with_script(client) -> str:
+    return client.get("/").text + client.get("/static/app.js").text
+
+
+def test_the_page_draws_a_bar_for_unknown_totals_and_warns_before_dropping_downloads(client):
+    page = _page_with_script(client)
 
     assert "function progressFraction(show)" in page
     assert page.count("progressFraction(show)") >= 3  # defined once, used by the card and the header
@@ -2625,7 +2639,7 @@ def test_the_page_draws_a_bar_for_unknown_totals_and_warns_before_dropping_downl
 
 
 def test_the_page_runs_one_view_transition_at_a_time_and_keeps_heavy_work_out_of_it(client):
-    page = client.get("/").text
+    page = _page_with_script(client)
 
     # A second transition (Escape while opening) waits for the first one's clean-up.
     assert "async function runPageTransition(" in page

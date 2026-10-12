@@ -34,7 +34,7 @@ kisetsu = "kisetsu.main:main"
 include = ["kisetsu*"]
 
 [tool.setuptools.package-data]
-"kisetsu.server" = ["static/*.css", "static/fonts/*"]
+"kisetsu.server" = ["static/*.css", "static/*.js", "static/fonts/*", "ui/*.html"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
