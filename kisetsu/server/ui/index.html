@@ -506,6 +506,13 @@
                 <input type="hidden" id="set-download-mode" value="rules">
               </div>
               <div>
+                <div class="field-label" title="Desktop popup when an episode finishes downloading (Direct) or is accepted by qBittorrent (Rules). Needs notify-send.">Notifications</div>
+                <div class="seg">
+                  <button type="button" onclick="setDesktopNotifications(true)" id="btn-notify-on">On</button>
+                  <button type="button" onclick="setDesktopNotifications(false)" id="btn-notify-off">Off</button>
+                </div>
+              </div>
+              <div>
                 <div class="field-label">Accent colour</div>
                 <div id="accent-swatches" class="flex flex-wrap items-center gap-2 py-1"></div>
               </div>

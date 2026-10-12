@@ -451,6 +451,9 @@ def init_db(engine=None):
         if "accent_color" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN accent_color VARCHAR DEFAULT '#2dd4bf'"))
             session.commit()
+        if "desktop_notifications" not in settings_cols:
+            session.exec(text("ALTER TABLE settings ADD COLUMN desktop_notifications BOOLEAN DEFAULT 0"))
+            session.commit()
         if "accent_tint" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN accent_tint VARCHAR DEFAULT 'subtle'"))
             session.commit()

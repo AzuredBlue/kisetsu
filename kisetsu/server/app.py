@@ -408,7 +408,9 @@ async def qbit_rule_observer_task():
                 if any(stored.get(name) != value for name, value in markers.items()):
                     entries = await asyncio.to_thread(qbit.fetch_log_entries)
                     patterns = await asyncio.to_thread(qbit.get_rule_patterns)
-                    for message in ingest_log_acceptances(session, entries, patterns):
+                    for message in ingest_log_acceptances(
+                        session, entries, patterns, notify=bool(settings.desktop_notifications),
+                    ):
                         state.add_log(message, "INFO")
 
                     for name, value in markers.items():

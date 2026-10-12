@@ -151,6 +151,7 @@ class Settings(SQLModel, table=True):
     early_air_tolerance_hours: int = Field(default=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
     accent_color: str = Field(default="#2dd4bf")
     accent_tint: str = Field(default="subtle")  # "off", "subtle" or "full"
+    desktop_notifications: bool = Field(default=False)
     # "Pause all" is on: shows added from now on start paused too.
     all_paused: bool = Field(default=False)
 

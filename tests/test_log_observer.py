@@ -97,6 +97,18 @@ class TestIngestLogAcceptances(unittest.TestCase):
         self.assertEqual(history[0].feed_name, "SubsPlease")
         self.assertEqual(history[0].created_at, datetime(2026, 9, 27, 8, 33, 58))
 
+    def test_notifies_once_only_when_asked(self):
+        with patch("kisetsu.core.confirmation.notify_episode") as notify:
+            ingest_log_acceptances(self.session, [_entry(POLAR_EP24)])
+            notify.assert_not_called()
+            self.session.refresh(self.show)
+            self.show.last_confirmed_episode = 12
+            self.session.add(self.show)
+            self.session.commit()
+            ingest_log_acceptances(self.session, [_entry(POLAR_EP24)], notify=True)
+            notify.assert_called_once()
+            self.assertEqual(notify.call_args.args[:2], (self.show.display_name, 13))
+
     def test_reingesting_same_buffer_is_a_no_op(self):
         ingest_log_acceptances(self.session, [_entry(POLAR_EP24)])
         ingest_log_acceptances(self.session, [_entry(POLAR_EP24)])

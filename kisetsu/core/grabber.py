@@ -12,6 +12,7 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.config import HUNTING_RECENT_DAYS, MISSED_AFTER_HOURS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
+from kisetsu.core.notify import notify_episode
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
 from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
 from kisetsu.core.rules import (
@@ -467,6 +468,11 @@ def show_name(episode: Episode, session: Session) -> str:
     return show.display_name if show else str(episode.monitored_id)
 
 
+def show_cover(episode: Episode, session: Session) -> Optional[str]:
+    show = session.get(Monitored, episode.monitored_id)
+    return show.cover_image if show else None
+
+
 def _normalize_hashed_operation(operation: TorrentOperation) -> None:
     """Treat a pre-add status that already has a torrent hash as ADDED.
 
@@ -641,6 +647,7 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
         # failed episode that still has its torrent keeps being watched.
         | ((Episode.status == EpisodeStatus.FAILED) & Episode.torrent_hash.is_not(None))
     )).all()
+    finished: List[Tuple[str, int, Optional[str]]] = []
     for episode in episodes:
         torrent = by_hash.get(episode.torrent_hash)
         if not torrent:
@@ -662,7 +669,9 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
         if is_seeding_torrent(torrent):
             if episode.status != EpisodeStatus.COMPLETED:
                 _complete_episode(session, episode)
-                logs.append(f"Completed {show_name(episode, session)} Ep {episode.episode_number}")
+                name = show_name(episode, session)
+                logs.append(f"Completed {name} Ep {episode.episode_number}")
+                finished.append((name, episode.episode_number, show_cover(episode, session)))
         elif _torrent_state(torrent) in _FAILED_TORRENT_STATES:
             error = f"qBittorrent torrent state: {_torrent_state(torrent)}"
             if episode.status != EpisodeStatus.FAILED or episode.last_error != error:
@@ -677,6 +686,9 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
     logs.extend(_release_stale_operation_tags(session, qbit))
     _sweep_operation_tags(session, qbit)
     session.commit()
+    if settings.desktop_notifications:
+        for name, number, cover in finished:
+            notify_episode(name, number, cover_url=cover)
     return logs
 
 

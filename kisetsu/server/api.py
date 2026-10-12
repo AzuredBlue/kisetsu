@@ -1447,6 +1447,7 @@ def get_current_settings(session: Session = Depends(get_db)):
         "early_air_tolerance_hours": s.early_air_tolerance_hours,
         "accent_color": s.accent_color or "#2dd4bf",
         "accent_tint": s.accent_tint or "subtle",
+        "desktop_notifications": bool(s.desktop_notifications),
     }
 
 
@@ -1466,6 +1467,7 @@ class UpdateSettingsRequest(BaseModel):
     early_air_tolerance_hours: Optional[int] = None
     accent_color: Optional[str] = None
     accent_tint: Optional[str] = None
+    desktop_notifications: Optional[bool] = None
 
 
 ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -1500,7 +1502,7 @@ def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_d
     appearance_only = all(
         value is None
         for name, value in req.model_dump().items()
-        if name not in ("accent_color", "accent_tint")
+        if name not in ("accent_color", "accent_tint", "desktop_notifications")
     )
     if appearance_only:
         s = get_settings(session)
@@ -1508,6 +1510,8 @@ def update_settings(req: UpdateSettingsRequest, session: Session = Depends(get_d
             s.accent_color = req.accent_color.strip().lower()
         if req.accent_tint is not None:
             s.accent_tint = req.accent_tint.strip().lower()
+        if req.desktop_notifications is not None:
+            s.desktop_notifications = req.desktop_notifications
         session.add(s)
         session.commit()
         return {"message": "Appearance saved."}

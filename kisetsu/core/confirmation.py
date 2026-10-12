@@ -13,6 +13,7 @@ from kisetsu.core.matching import (
     prepare_aliases,
 )
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles
+from kisetsu.core.notify import notify_episode
 from kisetsu.core.rules import create_or_update_rule, build_regex_pattern
 from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, Feed, MatchHistory, utc_now
 
@@ -20,6 +21,7 @@ logger = logging.getLogger("kisetsu.core.confirmation")
 
 
 LIVE_TORRENT_MIN_SCORE = 95.0
+ACCEPTED_NOTIFICATION_BODY = "Accepted by qBittorrent, downloading"
 
 
 def _torrent_corresponds_to_article(torrent_name: str, article: Dict[str, Any]) -> bool:
@@ -245,9 +247,11 @@ def ingest_log_acceptances(
     session: Session,
     entries: List[Tuple[int, str, datetime]],
     rule_patterns: Optional[Dict[str, str]] = None,
+    notify: bool = False,
 ) -> List[str]:
     """Record releases qBittorrent's log reports it accepted for our rules."""
     logs: List[str] = []
+    accepted: List[Tuple[str, int, Optional[str]]] = []
 
     shows_by_rule: Dict[str, Monitored] = {}
     for show in session.exec(select(Monitored)).all():
@@ -320,9 +324,13 @@ def ingest_log_acceptances(
         )
         logger.info(msg)
         logs.append(msg)
+        accepted.append((show.display_name, canonical, show.cover_image))
 
     if logs:
         session.commit()
+    if notify:
+        for name, number, cover in accepted:
+            notify_episode(name, number, ACCEPTED_NOTIFICATION_BODY, cover)
     return logs
 
 
@@ -587,6 +595,7 @@ def verify_and_confirm_rules_from_feeds(
             })
 
     pending_events = []
+    newly_accepted: List[Tuple[str, int, Optional[str]]] = []
     for candidate in candidates:
         show = candidate["show"]
         feed = candidate["feed"]
@@ -694,6 +703,7 @@ def verify_and_confirm_rules_from_feeds(
         if canonical_episode > current_episode:
             show.last_confirmed_episode = canonical_episode
             session.add(show)
+            newly_accepted.append((event["show_name"], canonical_episode, show.cover_image))
 
         canonical_row = session.exec(
             select(Episode).where(
@@ -734,6 +744,9 @@ def verify_and_confirm_rules_from_feeds(
 
     if pending_events:
         session.commit()
+    if settings.desktop_notifications:
+        for name, number, cover in newly_accepted:
+            notify_episode(name, number, ACCEPTED_NOTIFICATION_BODY, cover)
 
     return logs
 

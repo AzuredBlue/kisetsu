@@ -3480,3 +3480,53 @@ def test_switching_feed_restores_the_previous_release_of_an_episode_being_replac
     assert [call.args[0] for call in qbit.delete_torrents.call_args_list] == [["h-v2"]]
     session.close()
     engine.dispose()
+
+
+def _finished_episode_setup():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session, current_feed_id=feed.id)
+    qbit, torrent = _qbit()
+    torrent.state = "stalledUP"
+    torrent.progress = 1.0
+    session.add(Episode(
+        monitored_id=show.id,
+        episode_number=8,
+        status=EpisodeStatus.DOWNLOADING,
+        feed_id=feed.id,
+        torrent_hash="hash-1",
+        release_title=str(torrent.name),
+    ))
+    session.commit()
+    return engine, session, settings, qbit
+
+
+def test_finished_download_sends_one_desktop_notification(monkeypatch):
+    sent = []
+    monkeypatch.setattr("kisetsu.core.grabber.notify_episode", lambda name, number, **kw: sent.append((name, number)))
+    engine, session, settings, qbit = _finished_episode_setup()
+
+    settings.desktop_notifications = True
+
+    update_episode_status(session, qbit, settings)
+    update_episode_status(session, qbit, settings)
+
+    assert len(sent) == 1 and sent[0][1] == 8
+    session.close()
+    engine.dispose()
+
+
+def test_no_desktop_notification_by_default(monkeypatch):
+    sent = []
+    monkeypatch.setattr("kisetsu.core.grabber.notify_episode", lambda name, number, **kw: sent.append((name, number)))
+    engine, session, settings, qbit = _finished_episode_setup()
+    assert settings.desktop_notifications is False
+
+    update_episode_status(session, qbit, settings)
+
+    assert sent == []
+    session.close()
+    engine.dispose()

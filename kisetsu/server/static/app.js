@@ -2471,6 +2471,29 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       }
     }
 
+    function updateNotificationsUi(on) {
+      const btnOn = document.getElementById('btn-notify-on');
+      const btnOff = document.getElementById('btn-notify-off');
+      if (btnOn) btnOn.className = on ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
+      if (btnOff) btnOff.className = on ? SEG_INACTIVE_CLASS : SEG_ACTIVE_CLASS;
+    }
+
+    async function setDesktopNotifications(on) {
+      const previous = !!(currentSettings && currentSettings.desktop_notifications);
+      updateNotificationsUi(on);
+      try {
+        await apiFetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ desktop_notifications: on })
+        });
+        if (currentSettings) currentSettings.desktop_notifications = on;
+      } catch (err) {
+        updateNotificationsUi(previous);
+        showToast(`Failed to update notifications: ${err.message || err}`, 'error');
+      }
+    }
+
     async function setTitleLanguage(lang) {
       const previous = currentSettings && currentSettings.title_language;
       updateTitleLanguageUi(lang);
@@ -2556,6 +2579,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         if (!isSettingsDirty()) fillSettingsForm();
         updateTitleLanguageUi(s.title_language || 'english');
         updateDownloadModeUi(s.download_mode || 'rules');
+        updateNotificationsUi(!!s.desktop_notifications);
         applyUserAccent(s.accent_color || DEFAULT_ACCENT, s.accent_tint || 'subtle');
       } catch (err) {
         showToast(`Failed loading settings: ${err.message || err}`, 'error');
