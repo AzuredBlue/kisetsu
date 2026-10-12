@@ -16,6 +16,7 @@ import re
 import threading
 import time
 import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
@@ -396,6 +397,52 @@ def prime_new_shows(engine, qbit, show_ids: List[int]) -> int:
     return found
 
 
+def _search_site(
+    feeds: List[Feed],
+    item: _Due,
+    fetch: Fetch,
+    pause: Callable[[float], None],
+    followed,
+    first_air: Optional[datetime],
+    now: datetime,
+) -> Tuple[Dict[str, List[Dict[str, Any]]], Optional[str]]:
+    """Search one site's feeds for the show; returns the articles by feed URL and why it stopped early, if it did.
+
+    Requests to a site are spaced apart, and a URL already fetched in this search
+    is reused (every SubsPlease feed searches the same page). A feed's remaining
+    terms are skipped once one of its results is a release of this show, since
+    the first search already returned all of them.
+    """
+    found: Dict[str, List[Dict[str, Any]]] = {}
+    fetched: Dict[str, str] = {}
+
+    def paced_fetch(url: str) -> str:
+        if url not in fetched:
+            if fetched:
+                pause(REQUEST_GAP_SECONDS)
+            fetched[url] = fetch(url)
+        return fetched[url]
+
+    for feed in feeds:
+        for term in item.terms:
+            try:
+                articles = search_feed(feed, term, paced_fetch)
+            except BackfillAbort as e:
+                return found, str(e)
+            except Exception as e:
+                logger.warning(f"Searching '{feed.qbit_feed_name}' for '{term}' failed: {e}")
+                continue
+            if not articles:
+                continue
+            found.setdefault(feed.qbit_feed_url, []).extend(articles)
+            if any(
+                item.show.id in followed.matching_ids(article.get("title") or "")
+                for article in date_gate(articles, first_air, now)
+            ):
+                break
+    return found, None
+
+
 def run_backfill(
     engine,
     *,
@@ -415,33 +462,31 @@ def run_backfill(
             return found
         followed = feedcache._followed(session)
         naive_now = _naive_utc(now or utc_now())
-        requests_made = 0
-        for item in due:
+        for position, item in enumerate(due):
+            if position:
+                pause(REQUEST_GAP_SECONDS)
             name = item.show.display_name
             logger.info(
                 f"Searching the feeds for '{name}' episode(s) "
                 f"{', '.join(str(n) for n in item.missing)}: not in any feed's current items."
             )
-            articles_by_url: Dict[str, List[Dict[str, Any]]] = {}
-            try:
-                for feed in item.feeds:
-                    for term in item.terms:
-                        if requests_made:
-                            pause(REQUEST_GAP_SECONDS)
-                        requests_made += 1
-                        try:
-                            articles = search_feed(feed, term, fetch)
-                        except BackfillAbort:
-                            raise
-                        except Exception as e:
-                            logger.warning(f"Searching '{feed.qbit_feed_name}' for '{term}' failed: {e}")
-                            continue
-                        if articles:
-                            articles_by_url.setdefault(feed.qbit_feed_url, []).extend(articles)
-            except BackfillAbort as e:
-                logger.warning(f"Past-release search stopped: {e}")
-                break
             first_air = _first_air(session, item.show)
+            by_site: Dict[Optional[str], List[Feed]] = {}
+            for feed in item.feeds:
+                by_site.setdefault(_site_of(feed.qbit_feed_url), []).append(feed)
+            with ThreadPoolExecutor(max_workers=len(by_site)) as pool:
+                results = list(pool.map(
+                    lambda feeds: _search_site(feeds, item, fetch, pause, followed, first_air, naive_now),
+                    by_site.values(),
+                ))
+            articles_by_url: Dict[str, List[Dict[str, Any]]] = {}
+            aborted = False
+            for site_articles, abort in results:
+                for url, articles in site_articles.items():
+                    articles_by_url.setdefault(url, []).extend(articles)
+                if abort:
+                    aborted = True
+                    logger.warning(f"Past-release search stopped: {abort}")
             kept_by_url = {url: date_gate(arts, first_air, naive_now) for url, arts in articles_by_url.items()}
             dropped = sum(len(arts) for arts in articles_by_url.values()) - sum(len(arts) for arts in kept_by_url.values())
             if dropped:
@@ -449,8 +494,10 @@ def run_backfill(
             added = feedcache.store_matches(
                 session, kept_by_url, followed=followed, only_show_ids={item.show.id},
             ) if any(kept_by_url.values()) else 0
-            with _searched_lock:
-                _searched[item.show.id] = (item.signature, time.monotonic())
             if added:
                 found[name] = added
+            if aborted:
+                break
+            with _searched_lock:
+                _searched[item.show.id] = (item.signature, time.monotonic())
     return found
