@@ -9,7 +9,7 @@ from uuid import uuid4
 from sqlmodel import Session, select
 
 from kisetsu.clients.qbit import QBitClient, QbitClientError
-from kisetsu.config import HUNTING_RECENT_DAYS, MISSED_AFTER_HOURS
+from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS, HUNTING_RECENT_DAYS, MISSED_AFTER_HOURS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.notify import notify_episode
@@ -935,6 +935,7 @@ def _date_mapped_episode(
     raw_episode: int,
     target_count: int,
     article: Dict[str, Any],
+    tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> Optional[int]:
     article_at = parse_article_date(article)
     if article_at.year <= 2000:
@@ -955,8 +956,8 @@ def _date_mapped_episode(
         return None
 
     # A release published at article_at can only be an episode that has already aired
-    # (allowing a small early air tolerance of 2 hours for timezone/stream variations).
-    early_air_tolerance = timedelta(hours=2)
+    # (allowing the early air tolerance setting for feeds that post before AniList's air time).
+    early_air_tolerance = timedelta(hours=max(0, tolerance_hours))
     valid_candidates = [
         (episode, air_at)
         for episode, air_at in dated
@@ -1160,6 +1161,7 @@ def _mapped_episode(
     article: Dict[str, Any],
     learn: bool = True,
     newest_raw: Optional[int] = None,
+    tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> Optional[int]:
     """Map a feed's raw episode number to the show's local one.
 
@@ -1202,7 +1204,7 @@ def _mapped_episode(
         elif published.year <= 2000 or raw_air_at - published <= timedelta(hours=PUBLISHED_BEFORE_AIR_SLACK_HOURS):
             return raw_episode
 
-    by_date = _date_mapped_episode(session, show, raw_episode, target_count, article)
+    by_date = _date_mapped_episode(session, show, raw_episode, target_count, article, tolerance_hours)
     if by_date is not None:
         if learn:
             _infer_offset_from_conflict(session, show, feed, raw_episode, by_date, latest_aired, target_count)
@@ -1855,6 +1857,7 @@ def _decide_article(
     matcher: _ShowMatcher,
     parsed_cache: Dict[str, Dict[str, Any]],
     target_count: int,
+    tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 ) -> Tuple[bool, Dict[str, Any]]:
     """``_decide`` for a feed article, which also knows when it was published.
 
@@ -1875,7 +1878,7 @@ def _decide_article(
         and raw_episode > 0
         and _alias_arc_requirement(show.effective_aliases)
         and release_arc_qualifier(title) is None
-        and _date_mapped_episode(session, show, int(raw_episode), target_count, article) is not None
+        and _date_mapped_episode(session, show, int(raw_episode), target_count, article, tolerance_hours) is not None
     ):
         return _decide(show, title, matcher, parsed_cache, unmarked_ok=True)
     return matched, parsed
@@ -2029,7 +2032,7 @@ def _resolve_feed_articles(
         title = article.get("title", "")
         if not title:
             continue
-        matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, target_count)
+        matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, target_count, tolerance_hours)
         if not matched:
             continue
         raw_episode = parsed.get("episode")
@@ -2045,6 +2048,7 @@ def _resolve_feed_articles(
             article,
             learn=learn,
             newest_raw=newest_raw,
+            tolerance_hours=tolerance_hours,
         )
         if episode_number is None:
             continue
@@ -2336,7 +2340,7 @@ def _manual_candidates(
             title = article.get("title", "")
             if not title:
                 continue
-            matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, context.target_count)
+            matched, parsed = _decide_article(session, show, article, matcher, parsed_cache, context.target_count, tolerance_hours)
             if not matched:
                 continue
             raw_episode = parsed.get("episode")
@@ -2344,7 +2348,7 @@ def _manual_candidates(
                 continue
             episode_number = _mapped_episode(
                 session, show, feed, int(raw_episode), context.latest_aired, context.target_count, article,
-                learn=False, newest_raw=newest_raw,
+                learn=False, newest_raw=newest_raw, tolerance_hours=tolerance_hours,
             )
             episode = context.episodes_by_number.get(episode_number) if episode_number is not None else None
             if episode is None:
