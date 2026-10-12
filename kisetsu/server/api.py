@@ -511,14 +511,29 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
     name = show.display_name
     engine = session.get_bind()
     missing = await asyncio.to_thread(missing_episodes, engine, show_id)
+    paused = show.status == MonitoredStatus.PAUSED
     if not missing:
-        return {"added": 0, "searched": False, "missing": []}
+        undated = session.exec(
+            select(func.count()).select_from(Episode).where(
+                Episode.monitored_id == show_id,
+                Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
+                Episode.air_at.is_(None),
+            )
+        ).one()
+        dated = session.exec(
+            select(func.count()).select_from(Episode).where(
+                Episode.monitored_id == show_id, Episode.air_at.is_not(None),
+            )
+        ).one()
+        reason = "no_schedule" if undated and not dated else "covered"
+        return {"added": 0, "searched": False, "missing": [], "reason": reason, "paused": paused}
     found = await asyncio.to_thread(run_backfill, engine, show_id=show_id, force=True)
     added = sum(found.values())
     if added:
         state.add_log(f"Found {added} past release(s) for '{name}' by searching the feeds.", "INFO")
-        state.trigger_immediate_cycle()
-    return {"added": added, "searched": True, "missing": missing}
+        if not paused:
+            state.trigger_immediate_cycle()
+    return {"added": added, "searched": True, "missing": missing, "paused": paused}
 
 
 @router.post("/shows/{show_id}/rediscover")

@@ -689,6 +689,7 @@ class Supervisor:
                         MonitoredStatus.UNCONFIRMED,
                         MonitoredStatus.FIXED,
                         MonitoredStatus.STALLED,
+                        MonitoredStatus.PAUSED,
                     ])
                 )
             ).all()

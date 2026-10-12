@@ -2238,7 +2238,10 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
           const data = await apiFetch(`/api/shows/${showId}/search-releases`, { method: 'POST' });
           const episodes = (data.missing || []).join(', ');
           showToast(
-            !data.searched ? 'Every aired episode is already in the feeds or downloaded.'
+            !data.searched ? (data.reason === 'no_schedule'
+                ? "Air dates for this show aren't known yet; try again after the next sync."
+                : 'Every aired episode is already in the feeds or downloaded.')
+              : data.added && data.paused ? `Found ${data.added} past release(s); resume the show to download them.`
               : data.added ? `Found ${data.added} past release(s); checking for episodes to download.`
               : `Searched the feeds for episode ${episodes}; nothing found.`,
             data.added ? 'success' : 'info'

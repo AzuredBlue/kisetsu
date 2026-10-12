@@ -293,10 +293,11 @@ def backfill_due(
     if not outstanding:
         return []
 
-    query = select(Monitored).where(
-        Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED]),
-        Monitored.id.in_(list(outstanding)),
-    )
+    statuses = [MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED]
+    if show_id is not None:
+        # Searching one show by hand also covers a paused one; the background pass leaves it alone.
+        statuses.append(MonitoredStatus.PAUSED)
+    query = select(Monitored).where(Monitored.status.in_(statuses), Monitored.id.in_(list(outstanding)))
     if show_id is not None:
         query = query.where(Monitored.id == show_id)
     shows = session.exec(query).all()

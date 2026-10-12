@@ -2698,7 +2698,7 @@ def test_search_past_releases_reports_when_nothing_is_missing(client, db_engine,
     response = client.post("/api/shows/1/search-releases")
 
     assert response.status_code == 200
-    assert response.json() == {"added": 0, "searched": False, "missing": []}
+    assert response.json() == {"added": 0, "searched": False, "missing": [], "reason": "covered", "paused": False}
     assert searched == []
     assert client.post("/api/shows/99/search-releases").status_code == 404
 
@@ -2712,7 +2712,7 @@ def test_search_past_releases_names_the_missing_episodes_it_searches_for(client,
 
     response = client.post("/api/shows/1/search-releases")
 
-    assert response.json() == {"added": 2, "searched": True, "missing": [3, 4]}
+    assert response.json() == {"added": 2, "searched": True, "missing": [3, 4], "paused": False}
 
 
 def _show_downloading_from_old_feed(session, mock_qbit, progress=0.3):
