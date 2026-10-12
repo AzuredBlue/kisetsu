@@ -3,13 +3,13 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Collection, Dict, List, NamedTuple, Optional, Set, Tuple
 from uuid import uuid4
 
 from sqlmodel import Session, select
 
 from kisetsu.clients.qbit import QBitClient, QbitClientError
-from kisetsu.config import HUNTING_RECENT_DAYS
+from kisetsu.config import HUNTING_RECENT_DAYS, MISSED_AFTER_HOURS
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
@@ -495,6 +495,30 @@ def show_torrent_hashes(session: Session, show: Monitored) -> List[str]:
         .where(Episode.monitored_id == show.id, TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)))
     ).all():
         hashes.update(value for value in (new_hash, old_hash) if value)
+    return sorted(hashes)
+
+
+def find_show_torrents(session: Session, qbit: QBitClient, settings: Settings, show: Monitored) -> List[str]:
+    """The hashes of every torrent a deleted show leaves in qBittorrent.
+
+    The ledger knows the torrents Kisetsu added. Torrents the ledger lost track of
+    (a rule added them, or the row was reset) are found in Kisetsu's category under
+    the show's own save folder, unless another show saves to the same folder.
+    """
+    hashes = set(show_torrent_hashes(session, show))
+    save_path = resolve_save_path(settings.base_dir, effective_title(show, settings.title_language), show.save_folder)
+    if save_path and settings.default_category:
+        shared = any(
+            resolve_save_path(settings.base_dir, effective_title(other, settings.title_language), other.save_folder) == save_path
+            for other in session.exec(select(Monitored).where(Monitored.id != show.id)).all()
+        )
+        if not shared:
+            wanted = save_path.rstrip("/\\")
+            hashes.update(
+                torrent.hash
+                for torrent in qbit.get_torrents(category=settings.default_category)
+                if str(getattr(torrent, "save_path", "") or "").rstrip("/\\") == wanted
+            )
     return sorted(hashes)
 
 
@@ -1149,6 +1173,22 @@ def _mapped_episode(
             )
             return None
         return local_episode
+
+    if 1 <= raw_episode <= target_count and latest_aired is not None and raw_episode <= latest_aired + 1:
+        # A number that fits the aired part of the season is taken as it is unless the
+        # release is dated well before that episode aired (a feed numbering one higher
+        # than AniList). Guessing from the date alone would shift releases a feed puts
+        # out hours before AniList's air time ("03" posted before ep 3 airs is not ep 2).
+        raw_row = session.exec(select(Episode).where(
+            Episode.monitored_id == show.id, Episode.episode_number == raw_episode,
+        )).first()
+        raw_air_at = as_utc(raw_row.air_at) if raw_row is not None and raw_row.air_at else None
+        published = parse_article_date(article)
+        if raw_air_at is None:
+            if raw_episode <= latest_aired:
+                return raw_episode
+        elif published.year <= 2000 or raw_air_at - published <= timedelta(hours=PUBLISHED_BEFORE_AIR_SLACK_HOURS):
+            return raw_episode
 
     by_date = _date_mapped_episode(session, show, raw_episode, target_count, article)
     if by_date is not None:
@@ -1855,16 +1895,21 @@ def _mark_missed_episodes(
     now: datetime,
     air_horizon: datetime,
     latest_aired: Optional[int],
+    covered: Collection[int] = (),
 ) -> List[str]:
     """Mark aired WANTED episodes that the feeds can no longer deliver as MISSED.
 
     A WANTED episode that is older than the latest aired one, or followed by a
-    downloaded one, fell out of the RSS cache. It may come back through a search
+    downloaded one, fell out of the RSS cache. The latest aired one is given
+    MISSED_AFTER_HOURS to show up first. An episode a cached item can still
+    supply (``covered``) is never missed. It may come back through a search
     of the feeds' sites, which is why MISSED stays grabbable.
     """
     logs: List[str] = []
     for episode in episodes:
         if episode.status != EpisodeStatus.WANTED:
+            continue
+        if episode.episode_number in covered:
             continue
         if episode.retry_after and as_utc(episode.retry_after) > now:
             # Requeued moments ago (e.g. its torrent was removed); give
@@ -1888,7 +1933,13 @@ def _mark_missed_episodes(
             e.episode_number > episode.episode_number and e.status in _RELEASE_HOLDING
             for e in episodes
         )
-        if is_older_than_latest or has_newer_downloaded:
+        is_latest_and_overdue = (
+            episode_air_at is not None
+            and latest_aired is not None
+            and episode.episode_number == latest_aired
+            and now - episode_air_at > timedelta(hours=MISSED_AFTER_HOURS)
+        )
+        if is_older_than_latest or has_newer_downloaded or is_latest_and_overdue:
             episode.status = EpisodeStatus.MISSED
             session.add(episode)
             msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
@@ -2168,8 +2219,18 @@ def evaluate_and_grab_releases(
                     else:
                         logs.append(f"Queued {show.display_name} Ep {episode_number} v{version}: {title}")
         if mode == "direct" and has_feed_articles:
+            # Only needed when a wanted episode could be marked; skip the extra feed pass otherwise.
+            covered = (
+                episodes_in_cache(session, show, feeds, articles_by_url, settings, now=now)
+                if any(
+                    episode.status == EpisodeStatus.WANTED
+                    and (episode.air_at is None or as_utc(episode.air_at) <= air_horizon)
+                    for episode in episodes
+                )
+                else ()
+            )
             logs.extend(_mark_missed_episodes(
-                session, show, episodes, now, air_horizon, latest_aired,
+                session, show, episodes, now, air_horizon, latest_aired, covered,
             ))
         if grabbed_from is not None and show.current_feed_id != grabbed_from:
             # The feed that produced the release becomes the assignment, and the

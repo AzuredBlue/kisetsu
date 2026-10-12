@@ -645,6 +645,51 @@ async def test_sync_anilist_skips_episode_schedules_outside_direct_mode():
     engine.dispose()
 
 
+def _listed_show(anilist_id):
+    return {
+        "anilist_id": anilist_id,
+        "display_name": f"Show {anilist_id}",
+        "aliases": [f"Show {anilist_id}"],
+        "list_status": "CURRENT",
+        "status": "RELEASING",
+        "total_episodes": 12,
+        "next_airing_episode": 2,
+        "next_airing_at": datetime.now(timezone.utc) + timedelta(days=7),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_show_deleted_in_kisetsu_is_not_added_back_while_it_stays_on_the_list():
+    from kisetsu.db.models import DismissedShow
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        settings = Settings(id=1, anilist_username="TestUser")
+        session.add(settings)
+        session.add(DismissedShow(anilist_id=42))
+        session.commit()
+        anilist = MagicMock()
+        anilist.fetch_user_seasonal_anime = AsyncMock(return_value=[_listed_show(42), _listed_show(43)])
+        anilist.fetch_media_airing_schedules = AsyncMock(return_value={})
+        supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
+
+        await supervisor.sync_anilist_schedule(force=True, direct_mode=False)
+
+        assert [s.anilist_id for s in session.exec(select(Monitored)).all()] == [43]
+        assert session.get(DismissedShow, 42) is not None
+
+        # Once it leaves the list, the dismissal is forgotten, so listing it again adds it.
+        anilist.fetch_user_seasonal_anime.return_value = [_listed_show(43)]
+        await supervisor.sync_anilist_schedule(force=True, direct_mode=False)
+        assert session.get(DismissedShow, 42) is None
+
+        anilist.fetch_user_seasonal_anime.return_value = [_listed_show(42), _listed_show(43)]
+        await supervisor.sync_anilist_schedule(force=True, direct_mode=False)
+        assert {s.anilist_id for s in session.exec(select(Monitored)).all()} == {42, 43}
+    engine.dispose()
+
+
 @pytest.mark.asyncio
 async def test_user_completed_show_is_never_reopened_by_a_still_airing_schedule():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)

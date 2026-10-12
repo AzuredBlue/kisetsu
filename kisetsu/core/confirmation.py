@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 from sqlmodel import Session, select, or_
 from rapidfuzz import fuzz
-from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE, HUNTING_RECENT_DAYS
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.matching import (
     match_release_to_show,
@@ -785,8 +785,24 @@ def has_downloaded_final_episode(
     ).all()
     if episodes:
         if (download_mode or DEFAULT_DOWNLOAD_MODE) == "direct":
+            def accounted(episode: Episode) -> bool:
+                if episode.status == EpisodeStatus.COMPLETED:
+                    return True
+                if episode.status != EpisodeStatus.MISSED:
+                    return False
+                # A finale that was only just given up on may still turn up, so it keeps
+                # the season open for as long as the grabber keeps looking for it.
+                air_at = episode.air_at
+                if air_at and air_at.tzinfo is None:
+                    air_at = air_at.replace(tzinfo=timezone.utc)
+                return not (
+                    episode.episode_number == show.total_episodes
+                    and air_at is not None
+                    and now - air_at <= timedelta(days=HUNTING_RECENT_DAYS)
+                )
+
             return (
-                all(episode.status in (EpisodeStatus.COMPLETED, EpisodeStatus.MISSED) for episode in episodes)
+                all(accounted(episode) for episode in episodes)
                 and any(episode.status == EpisodeStatus.COMPLETED for episode in episodes)
             )
         completed = {

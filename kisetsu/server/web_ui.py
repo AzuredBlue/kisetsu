@@ -1060,10 +1060,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
         : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
-      const lockIcon = show.feed_learned
-        ? `<svg class="w-3 h-3 flex-shrink-0 text-zinc-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><title>Feed locked</title><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`
-        : '';
-
       return `
         <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card flex flex-col group cursor-pointer">
 
@@ -1093,7 +1089,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
             <div class="flex items-center justify-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
               <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
               <span class="truncate">${feedName}</span>
-              ${lockIcon}
               ${showProgress ? `<span class="flex-shrink-0 tabular-nums text-zinc-400">${progressText}</span>` : ''}
             </div>
           </div>
@@ -1453,17 +1448,20 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const episodeRows = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
-        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : 'text-zinc-500';
+        // A wanted episode whose air time has passed is being searched for, unlike one still to come.
+        const aired = String(ep.status).toLowerCase() === 'wanted' && ep.air_at && new Date(ep.air_at) <= Date.now();
+        const statusLabel = aired ? 'aired · searching' : ep.status;
+        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : aired ? 'text-sky-400' : 'text-zinc-500';
         const unmanaged = isDirect && done && !ep.torrent_hash;
         const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
         const swap = isDirect && done && ep.torrent_hash ? replacements.get(ep.episode_number) : null;
         const swapPending = swap && pendingDownloads.has(pendingKey(showId, swap.title));
         return `
-          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, ep.status, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, statusLabel, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
-              <span class="${statusCls}">${escapeHtml(ep.status)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
+              <span class="${statusCls}">${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
               ${unmanaged ? restoreButton(showId, ep) : ''}
               ${swap ? downloadButton(showId, swap.title, replaceTip(ep.episode_number, ep.feed_name), SWAP_ICON) : ''}
             </span>
@@ -1831,10 +1829,6 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
-      const lockIcon = show.feed_learned
-        ? `<svg class="w-3 h-3 flex-shrink-0 text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><title>Feed locked</title><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>`
-        : '';
-
       const pauseIcon = isPaused
         ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
         : '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
@@ -1866,7 +1860,7 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
           </span>` : ''}
           <span class="inline-flex items-center gap-1.5 text-zinc-500 min-w-0" title="${feedName}">
             <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
-            <span class="truncate">${feedName}</span>${lockIcon}
+            <span class="truncate">${feedName}</span>
           </span>
         </div>
         ${showProgress ? `
@@ -2853,13 +2847,50 @@ def get_web_ui_html(headers: Optional[Dict[str, str]] = None) -> HTMLResponse:
       });
     }
 
+    // Resolves to { deleteFiles } when confirmed, or null when cancelled.
+    function confirmDeleteShow(name) {
+      return new Promise(resolve => {
+        const overlay = document.createElement('div');
+        // Spacing is inline: app.css only holds the utility classes the page already uses.
+        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+        overlay.innerHTML = `
+          <div class="card w-full shadow-lg shadow-black/40" style="max-width: 26rem; padding: 1.5rem" role="dialog" aria-modal="true">
+            <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">Delete '${escapeHtml(name)}'?</h3>
+            <p class="field-hint" style="margin-top: 0.5rem">Removes the show, its qBittorrent rule and all of its torrents, whether they are downloading or seeding.</p>
+            <label class="flex items-center gap-3 rounded-md border border-line cursor-pointer" style="margin-top: 1.25rem; padding: 0.625rem 0.75rem; font-size: 0.8125rem; color: rgb(var(--t-label)); background: rgb(var(--field))">
+              <input type="checkbox" id="delete-files-check" class="rounded bg-canvas border-line text-zinc-300 focus:ring-0">
+              Also delete the downloaded files
+            </label>
+            <div class="flex justify-end gap-3" style="margin-top: 1.5rem">
+              <button type="button" data-act="cancel" class="btn">Cancel</button>
+              <button type="button" data-act="ok" class="btn btn-danger">Delete</button>
+            </div>
+          </div>`;
+        const finish = result => {
+          document.removeEventListener('keydown', onKey);
+          overlay.remove();
+          resolve(result);
+        };
+        const onKey = e => { if (e.key === 'Escape') finish(null); };
+        overlay.addEventListener('click', e => {
+          if (e.target === overlay || e.target.dataset.act === 'cancel') finish(null);
+          else if (e.target.dataset.act === 'ok') finish({ deleteFiles: overlay.querySelector('#delete-files-check').checked });
+        });
+        document.addEventListener('keydown', onKey);
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-act="cancel"]').focus();
+      });
+    }
+
     async function deleteShow(id) {
       const target = allShows.find(s => s.id === id);
       const name = target ? target.display_name : `#${id}`;
-      if (!confirm(`Delete '${name}' from monitoring and remove its qBittorrent rule?`)) return;
+      const choice = await confirmDeleteShow(name);
+      if (!choice) return;
       await once(`delete-${id}`, async () => {
         try {
-          const data = await apiFetch(`/api/shows/${id}`, { method: 'DELETE' });
+          const query = `delete_torrents=true&delete_files=${choice.deleteFiles}`;
+          const data = await apiFetch(`/api/shows/${id}?${query}`, { method: 'DELETE' });
           showToast(data.message, 'success');
           loadShows();
         } catch (err) {

@@ -2707,6 +2707,30 @@ def test_date_mapped_episode_picks_past_aired_episode_not_future():
     engine.dispose()
 
 
+def test_mapped_episode_keeps_the_raw_number_when_a_feed_publishes_before_air_time():
+    from kisetsu.core.grabber import _mapped_episode
+
+    engine, session = _database()
+    show = _show(session, display_name="Magical Explorer", total_episodes=13)
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss/?t&r=1080", priority=1)
+    session.add(feed)
+    for number, air in ((1, datetime(2026, 9, 26, 15, 0)), (2, datetime(2026, 10, 3, 15, 0)), (3, datetime(2026, 10, 10, 15, 0))):
+        session.add(Episode(monitored_id=show.id, episode_number=number, status=EpisodeStatus.WANTED, air_at=air.replace(tzinfo=timezone.utc)))
+    session.commit()
+
+    def article(published):
+        return {"title": "x", "date": published}
+
+    # Posted 5.5 hours before AniList's air time, and a week after ep 1's: both keep their own number.
+    assert _mapped_episode(session, show, feed, 3, 3, 13, article("Sat, 10 Oct 2026 09:31:55 +0000")) == 3
+    assert _mapped_episode(session, show, feed, 1, 3, 13, article("Sat, 03 Oct 2026 16:31:12 +0000")) == 1
+    assert _mapped_episode(session, show, feed, 2, 3, 13, article("Sat, 03 Oct 2026 16:32:55 +0000")) == 2
+    assert session.exec(select(EpisodeNumberMapping)).all() == []
+
+    session.close()
+    engine.dispose()
+
+
 def test_mapped_episode_rejects_when_offset_maps_beyond_latest_aired():
     from kisetsu.core.grabber import _mapped_episode
 
@@ -2807,6 +2831,83 @@ def test_older_wanted_episode_not_in_feed_transitions_to_missed():
     assert "Direct backlog" not in reason
     assert "direct ownership" in reason
 
+    session.close()
+    engine.dispose()
+
+
+def _missed_scenario(session, hours_since_air, articles):
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add_all([settings, feed])
+    now = datetime.now(timezone.utc)
+    show = _show(
+        session, display_name="Steel Ball Run", aliases_json='["Steel Ball Run"]', total_episodes=12,
+        next_airing_episode=4, next_airing_at=now + timedelta(days=7) - timedelta(hours=hours_since_air),
+        status=MonitoredStatus.FIXED, current_feed_id=1,
+    )
+    airs = {1: now - timedelta(days=14), 2: now - timedelta(days=7), 3: now - timedelta(hours=hours_since_air)}
+    episodes = {
+        number: Episode(monitored_id=show.id, episode_number=number, status=EpisodeStatus.WANTED, air_at=air)
+        for number, air in airs.items()
+    }
+    session.add_all(episodes.values())
+    session.commit()
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {"SubsPlease": {"url": feed.qbit_feed_url, "articles": articles}}
+    # Only the one that is checked is not grabbed: the feed holds nothing the grab accepts.
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+    for episode in episodes.values():
+        session.refresh(episode)
+    return episodes
+
+
+def test_newest_aired_episode_unfound_after_a_day_becomes_missed():
+    engine, session = _database()
+    articles = [{"id": "other", "title": "[SubsPlease] Other Show - 01 (1080p).mkv", "torrentURL": "magnet:other"}]
+    episodes = _missed_scenario(session, 25, articles)
+    assert episodes[3].status == EpisodeStatus.MISSED
+    session.close()
+    engine.dispose()
+
+
+def test_a_recently_missed_finale_keeps_the_season_open_until_the_grabber_stops_looking():
+    from kisetsu.core.confirmation import has_downloaded_final_episode
+
+    engine, session = _database()
+    now = datetime.now(timezone.utc)
+    show = _show(session, total_episodes=2, next_airing_episode=None, next_airing_at=None)
+    first = Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.COMPLETED, air_at=now - timedelta(days=9))
+    finale = Episode(monitored_id=show.id, episode_number=2, status=EpisodeStatus.MISSED, air_at=now - timedelta(days=2))
+    session.add_all([first, finale])
+    session.commit()
+
+    assert has_downloaded_final_episode(session, show, "direct") is False
+
+    finale.air_at = now - timedelta(days=20)
+    session.add(finale)
+    session.commit()
+
+    assert has_downloaded_final_episode(session, show, "direct") is True
+
+    session.close()
+    engine.dispose()
+
+
+def test_newest_aired_episode_unfound_within_a_day_stays_wanted():
+    engine, session = _database()
+    articles = [{"id": "other", "title": "[SubsPlease] Other Show - 01 (1080p).mkv", "torrentURL": "magnet:other"}]
+    episodes = _missed_scenario(session, 5, articles)
+    assert episodes[3].status == EpisodeStatus.WANTED
+    session.close()
+    engine.dispose()
+
+
+def test_an_episode_the_cache_can_supply_is_not_missed():
+    engine, session = _database()
+    published = format_datetime(datetime.now(timezone.utc) - timedelta(hours=3))
+    articles = [{"id": "sbr2", "title": "[SubsPlease] Steel Ball Run - 02 (1080p).mkv", "torrentURL": "magnet:sbr2", "date": published}]
+    episodes = _missed_scenario(session, 30, articles)
+    assert episodes[2].status != EpisodeStatus.MISSED
     session.close()
     engine.dispose()
 

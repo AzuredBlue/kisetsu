@@ -372,6 +372,29 @@ def missing_episodes(engine, show_id: int) -> List[int]:
 
 # --- running -------------------------------------------------------------------
 
+def prime_new_shows(engine, qbit, show_ids: List[int]) -> int:
+    """Fill the feed cache for shows that were only just added; returns the releases found by searching.
+
+    The cache holds only items already matched to a followed show, so a new show
+    starts empty until the next regular copy. This copies the feeds' current items
+    now, then searches the feeds' sites for the aired episodes they no longer hold,
+    so the same check can discover the feed and take what has already aired.
+    """
+    if not show_ids:
+        return 0
+    try:
+        feedcache.ingest_rss(engine, qbit, force=False)
+    except Exception as e:
+        logger.warning(f"Could not copy the feeds for new shows: {e}", exc_info=True)
+    found = 0
+    for show_id in show_ids:
+        try:
+            found += sum(run_backfill(engine, show_id=show_id, force=True).values())
+        except Exception as e:
+            logger.warning(f"Searching the feeds for new show {show_id} failed: {e}", exc_info=True)
+    return found
+
+
 def run_backfill(
     engine,
     *,

@@ -18,6 +18,7 @@ app_module = importlib.import_module("kisetsu.server.app")
 from kisetsu.server import api as api_module
 from kisetsu.server.app import create_app
 from kisetsu.db.models import (
+    DismissedShow,
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -2074,6 +2075,7 @@ def test_sync_anilist_stands_rules_down_before_grabbing(client, session, monkeyp
     supervisor.sync_feeds.return_value = []
     supervisor.anilist_sync_succeeded = True
     supervisor.sync_anilist_schedule = AsyncMock(return_value=[])
+    supervisor.prime_new_shows = AsyncMock(return_value=[])
     supervisor.bootstrap_unassigned_shows.return_value = []
     supervisor.reconcile_schedule_rollover.return_value = []
     monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))
@@ -2166,6 +2168,58 @@ def test_delete_show_reports_a_rule_that_cannot_be_deleted(client, session, mock
     assert response.status_code == 409
     session.expire_all()
     # The show must survive, or its rule would be left downloading it.
+    assert session.get(Monitored, show.id) is not None
+
+
+def _show_with_torrents(session, mock_qbit):
+    settings = session.exec(select(Settings)).first()
+    settings.default_category = "Anime"
+    settings.base_dir = "/downloads"
+    session.add(settings)
+    show = Monitored(anilist_id=4500, display_name="Doomed Show", status=MonitoredStatus.FIXED, save_folder="Doomed Show")
+    session.add(show)
+    session.commit()
+    session.add(Episode(monitored_id=show.id, episode_number=1, status=EpisodeStatus.COMPLETED, torrent_hash="aaa"))
+    session.commit()
+    # "bbb" was added by a rule and sits in the show's folder; "ccc" belongs to something else.
+    mock_qbit.get_torrents.return_value = [
+        MagicMock(hash="aaa", save_path="/downloads/Doomed Show"),
+        MagicMock(hash="bbb", save_path="/downloads/Doomed Show/"),
+        MagicMock(hash="ccc", save_path="/downloads/Other Show"),
+    ]
+    return show
+
+
+def test_delete_show_removes_its_torrents_when_asked(client, session, mock_qbit):
+    show_id = _show_with_torrents(session, mock_qbit).id
+
+    response = client.delete(f"/api/shows/{show_id}?delete_torrents=true&delete_files=true")
+
+    assert response.status_code == 200
+    mock_qbit.delete_torrents.assert_called_once_with(["aaa", "bbb"], delete_files=True)
+    session.expire_all()
+    assert session.get(Monitored, show_id) is None
+    # Still on the user's AniList list, so the next sync must not add it back.
+    assert session.get(DismissedShow, 4500) is not None
+
+
+def test_delete_show_keeps_the_torrents_by_default(client, session, mock_qbit):
+    show = _show_with_torrents(session, mock_qbit)
+
+    response = client.delete(f"/api/shows/{show.id}")
+
+    assert response.status_code == 200
+    mock_qbit.delete_torrents.assert_not_called()
+
+
+def test_delete_show_keeps_the_show_when_its_torrents_cannot_be_removed(client, session, mock_qbit):
+    show = _show_with_torrents(session, mock_qbit)
+    mock_qbit.delete_torrents.side_effect = QbitClientError("qBittorrent said no")
+
+    response = client.delete(f"/api/shows/{show.id}?delete_torrents=true")
+
+    assert response.status_code == 409
+    session.expire_all()
     assert session.get(Monitored, show.id) is not None
 
 

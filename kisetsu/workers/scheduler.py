@@ -137,7 +137,7 @@ def classify_shows(
                 newest_wanted = session.exec(
                     select(Episode.id).where(
                         Episode.monitored_id == s.id,
-                        Episode.status == EpisodeStatus.WANTED,
+                        Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
                         Episode.episode_number == latest_aired_episode,
                     ).limit(1)
                 ).first()

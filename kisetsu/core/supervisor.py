@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
+from kisetsu.core.backfill import prime_new_shows
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import CachedRssSnapshot
@@ -15,7 +16,7 @@ from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seed
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
-from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
+from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 
 logger = logging.getLogger("kisetsu.core.supervisor")
@@ -120,6 +121,16 @@ class Supervisor:
         self.settings = settings
         self._known_categories: Set[str] = set()
         self.anilist_sync_succeeded: Optional[bool] = None
+        # Shows the last AniList sync added; prime_new_shows fills the feed cache for them.
+        self.new_show_ids: List[int] = []
+
+    async def prime_new_shows(self) -> List[str]:
+        """Copy the feeds and search for the aired episodes of the shows just added (direct mode)."""
+        ids, self.new_show_ids = self.new_show_ids, []
+        if not ids:
+            return []
+        found = await asyncio.to_thread(prime_new_shows, self.session.get_bind(), self.qbit, ids)
+        return [f"Searched the feeds for {len(ids)} new show(s); found {found} past release(s)."]
 
     def download_mode(self) -> str:
         """The configured download engine, normalised to a known value.
@@ -416,6 +427,7 @@ class Supervisor:
         ``air_at`` per episode before it will backfill a stale release.
         """
         logs = []
+        self.new_show_ids = []
         if not self.settings.anilist_username.strip():
             return logs
 
@@ -483,14 +495,26 @@ class Supervisor:
         """
         logs: List[str] = []
         new_shows_count = 0
+        added_shows: List[Monitored] = []
         rules_to_disable: List[str] = []
         pref_lang = getattr(self.settings, "title_language", "english")
+
+        # Shows the user deleted stay out until they leave the AniList list, so
+        # putting one back on AniList later adds it again.
+        dismissed = {row.anilist_id for row in self.session.exec(select(DismissedShow)).all()}
+        listed = {data.get("anilist_id") or data.get("id") for data in seasonal_list}
+        if listed:
+            for gone in dismissed - listed:
+                self.session.delete(self.session.get(DismissedShow, gone))
+            dismissed &= listed
 
         for data in seasonal_list:
             aid = data.get("anilist_id") or data.get("id")
             if not aid:
                 continue
-            
+            if aid in dismissed and aid not in existing_shows:
+                continue
+
             en_t = data.get("title_english")
             ro_t = data.get("title_romaji")
             chosen_name = en_t if (pref_lang == "english" and en_t) else (ro_t or data["display_name"])
@@ -618,9 +642,11 @@ class Supervisor:
                     new_show.paused_by_all = True
                 self.session.add(new_show)
                 existing_shows[aid] = new_show
+                added_shows.append(new_show)
                 new_shows_count += 1
 
         self.session.commit()
+        self.new_show_ids.extend(show.id for show in added_shows)
         return logs, rules_to_disable, new_shows_count
 
     def _remove_shows_off_list(
@@ -1642,6 +1668,7 @@ class Supervisor:
                         "Warning: RSS feeds missing from the refreshed response: "
                         + str(len(unexplained_missing))
                     )
+            all_logs.extend(await self.prime_new_shows())
             all_logs.extend(await asyncio.to_thread(
                 self.bootstrap_unassigned_shows,
                 rss_snapshot,

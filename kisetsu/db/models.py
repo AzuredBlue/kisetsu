@@ -405,6 +405,17 @@ class RuleHistory(SQLModel, table=True):
     note: Optional[str] = Field(default=None, nullable=True)
 
 
+class DismissedShow(SQLModel, table=True):
+    """A show the user deleted in Kisetsu while it is still on their AniList list.
+
+    The AniList sync does not add it back. The row goes once the show leaves the list.
+    """
+    __tablename__ = "dismissed_shows"
+
+    anilist_id: int = Field(primary_key=True)
+    created_at: NaiveDatetime = Field(default_factory=utc_now)
+
+
 class QbitRuleWatermark(SQLModel, table=True):
     __tablename__ = "qbit_rule_watermarks"
 

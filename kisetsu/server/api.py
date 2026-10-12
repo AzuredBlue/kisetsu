@@ -12,6 +12,7 @@ import qbittorrentapi
 
 from kisetsu.db.session import get_engine, get_settings
 from kisetsu.db.models import (
+    DismissedShow,
     Episode,
     EpisodeNumberMapping,
     EpisodeStatus,
@@ -32,7 +33,7 @@ from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, ingest_rss, last_failed_feed_names
-from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, manual_grab, rebase_ledger, restore_episode
+from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -1325,33 +1326,46 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
 
 
 @router.delete("/shows/{show_id}")
-def delete_show(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+def delete_show(
+    show_id: int,
+    delete_torrents: bool = False,
+    delete_files: bool = False,
+    session: Session = Depends(get_db),
+    qbit: QBitClient = Depends(get_qbit),
+):
     require_exclusive_cycle()
     try:
-        return _delete_show(show_id, session, qbit)
+        return _delete_show(show_id, session, qbit, delete_torrents, delete_files)
     finally:
         release_cycle()
 
 
-def _delete_show(show_id: int, session: Session, qbit: QBitClient):
+def _delete_show(show_id: int, session: Session, qbit: QBitClient, delete_torrents: bool = False, delete_files: bool = False):
     show = session.get(Monitored, show_id)
     if not show:
         raise HTTPException(status_code=404, detail="Show not found")
 
     name = show.display_name
     try:
+        # Found before the ledger rows go with the show.
+        hashes = find_show_torrents(session, qbit, get_settings(session), show) if delete_torrents else []
+        # Still on the user's AniList list, it would be added straight back by the next sync.
+        session.merge(DismissedShow(anilist_id=show.anilist_id))
         delete_monitored_show(session, qbit, show, "Show deleted by user.")
+        if hashes:
+            qbit.delete_torrents(hashes, delete_files=delete_files)
     except QbitClientError as e:
         session.rollback()
-        state.add_log(f"Could not delete rule for '{name}': {e}", "WARNING")
+        state.add_log(f"Could not delete '{name}': {e}", "WARNING")
         raise HTTPException(
             status_code=409,
-            detail=f"Could not delete existing rule: {e}",
+            detail=f"Could not delete '{name}': {e}",
         )
     session.commit()
 
-    state.add_log(f"Deleted show '{name}' from monitoring.", "INFO")
-    return {"status": "success", "message": f"Deleted '{name}' from monitoring."}
+    removed = f" and removed {len(hashes)} torrent(s)" + (" with their files" if delete_files else "") if hashes else ""
+    state.add_log(f"Deleted show '{name}' from monitoring{removed}.", "INFO")
+    return {"status": "success", "message": f"Deleted '{name}' from monitoring{removed}."}
 
 
 @router.get("/feeds")
@@ -1661,6 +1675,8 @@ async def _sync_anilist_now(session: Session):
                 ) from e
         sync_logs = await sup.sync_anilist_schedule(force=True, direct_mode=direct)
         logs.extend(sync_logs)
+        if direct:
+            logs.extend(await sup.prime_new_shows())
         bootstrap_logs = await asyncio.to_thread(
             sup.bootstrap_unassigned_shows,
             create_qbit_rules=not direct,

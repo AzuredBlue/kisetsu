@@ -18,6 +18,8 @@ DEFAULT_DOWNLOAD_MODE = "rules"
 DEFAULT_BACKFILL_WINDOW_DAYS = 14
 # How long after an air time the scheduler keeps polling at the fast hunting interval.
 HUNTING_RECENT_DAYS = 14
+# How long the newest aired episode may stay unfound before it counts as missed.
+MISSED_AFTER_HOURS = 24
 DEFAULT_EARLY_AIR_TOLERANCE_HOURS = 6
 
 RULE_OBSERVER_INTERVAL_SECONDS = 300
