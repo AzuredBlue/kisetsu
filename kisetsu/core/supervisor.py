@@ -27,6 +27,7 @@ logger = logging.getLogger("kisetsu.core.supervisor")
 EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 # A refresh that only looks ahead still reaches this far back, in case an episode was rescheduled as it aired.
 SCHEDULE_REFRESH_LOOKBACK_DAYS = 3
+SCHEDULE_FULL_LOOKBACK_DAYS = 180
 
 
 # How long another feed has to keep carrying a release before a show moves to it.
@@ -717,7 +718,8 @@ class Supervisor:
 
         # Shows whose past episodes are already dated only need what is still to come.
         refresh = getattr(self.anilist, "fetch_upcoming_airing_schedules", None)
-        windowed = [show for show in due if self._schedule_is_dated(show)] if inspect.iscoroutinefunction(refresh) else []
+        batched = inspect.iscoroutinefunction(refresh)
+        windowed = [show for show in due if self._schedule_is_dated(show)] if batched else []
         full = [show for show in due if show not in windowed]
 
         deferral: Optional[AniListDeferred] = None
@@ -727,6 +729,13 @@ class Supervisor:
                 schedules.update(await refresh(
                     [show.anilist_id for show in windowed], now - timedelta(days=SCHEDULE_REFRESH_LOOKBACK_DAYS),
                 ))
+            if full and batched:
+                # A first fetch reaches back far enough to date every episode of a current-season show.
+                covering = await refresh(
+                    [show.anilist_id for show in full], now - timedelta(days=SCHEDULE_FULL_LOOKBACK_DAYS),
+                )
+                schedules.update(covering)
+                full = [show for show in full if not self._covers_undated(show, covering.get(show.anilist_id))]
             if full:
                 schedules.update(await fetch([show.anilist_id for show in full]))
         except AniListDeferred as e:
@@ -759,21 +768,30 @@ class Supervisor:
             logs.append(f"AniList deferred the schedule refresh for {waiting} show(s): {deferral}")
         return logs
 
-    def _schedule_is_dated(self, show: Monitored) -> bool:
-        """Whether every episode that should have aired already has an air time, so a refresh need only look ahead."""
-        if show.schedule_synced_at is None:
-            return False
+    def _undated_aired_numbers(self, show: Monitored) -> set:
+        """Episode numbers that should already have aired but have no air time yet."""
         aired = (show.next_airing_episode - 1) if show.next_airing_episode else (show.total_episodes or 0)
         if aired <= 0:
-            return True
-        dated = self.session.exec(
-            select(Episode.id).where(
+            return set()
+        dated = set(self.session.exec(
+            select(Episode.episode_number).where(
                 Episode.monitored_id == show.id,
                 Episode.episode_number <= aired,
                 Episode.air_at.is_not(None),
             )
-        ).all()
-        return len(dated) >= aired
+        ).all())
+        return set(range(1, aired + 1)) - dated
+
+    def _schedule_is_dated(self, show: Monitored) -> bool:
+        """Whether every episode that should have aired already has an air time, so a refresh need only look ahead."""
+        return show.schedule_synced_at is not None and not self._undated_aired_numbers(show)
+
+    def _covers_undated(self, show: Monitored, entries: Optional[List[Dict[str, Any]]]) -> bool:
+        """Whether a windowed fetch returned an air time for every aired episode that still lacked one."""
+        if entries is None:
+            return False
+        returned = {int(entry["episode"]) for entry in entries if entry.get("airing_at")}
+        return self._undated_aired_numbers(show) <= returned
 
     def _defer_anilist(self, deferral: AniListDeferred) -> None:
         """Remember when AniList may be asked again, so the next check is not left to a long sleep."""
