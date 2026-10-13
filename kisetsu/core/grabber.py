@@ -14,7 +14,7 @@ from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.notify import notify_episode
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
-from kisetsu.core.feedcache import cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
+from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
 from kisetsu.core.rules import (
     effective_title,
     resolve_save_path,
@@ -2234,7 +2234,9 @@ def evaluate_and_grab_releases(
     except QbitClientError as e:
         logger.warning(f"Could not fetch RSS items for direct grab: {e}")
         raise
-    _sync_seen_items(session, feeds, articles_by_url)
+    if not isinstance(rss_snapshot, CachedRssSnapshot):
+        # A cached snapshot is made of rows that are already stored; only a live read has articles to add.
+        _sync_seen_items(session, feeds, articles_by_url)
     shows = session.exec(select(Monitored).where(Monitored.status.in_([
         MonitoredStatus.UNCONFIRMED,
         MonitoredStatus.FIXED,
