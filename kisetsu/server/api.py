@@ -219,19 +219,8 @@ def get_shows(session: Session = Depends(get_db)):
         romaji_title = s.title_romaji or s.display_name
         effective_display_name = effective_title(s, settings.title_language)
 
-        base_template = (settings.base_dir or "").strip()
-        is_custom_folder = bool(s.save_folder and s.save_folder != sanitize_folder_name(s.display_name) and s.save_folder != sanitize_folder_name(s.title_romaji or "") and s.save_folder != sanitize_folder_name(s.title_english or ""))
-        if is_custom_folder and (s.save_folder.startswith("/") or s.save_folder.startswith("~")):
-            resolved_save_path = s.save_folder
-        elif not base_template:
-            # Blank base directory: qBittorrent saves to its own default location.
-            resolved_save_path = ""
-        else:
-            folder_name = sanitize_folder_name(s.save_folder if is_custom_folder else effective_display_name)
-            if "{name}" in base_template:
-                resolved_save_path = base_template.replace("{name}", folder_name)
-            else:
-                resolved_save_path = f"{base_template.rstrip('/')}/{folder_name}"
+        # The folder downloads really go to, so the preview cannot drift from it.
+        resolved_save_path = resolve_save_path(settings.base_dir, effective_display_name, s.save_folder)
 
         resolved_save_path = compress_home_path(resolved_save_path)
 
