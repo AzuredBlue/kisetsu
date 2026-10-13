@@ -1066,6 +1066,59 @@ def _published_before_air(
     return published < as_utc(reference) - slack
 
 
+# Torrents already reported as refused for adoption, so one that stays refused is mentioned once.
+_refused_adoptions: Set[str] = set()
+
+
+def adoption_refusal(
+    session: Session,
+    show: Monitored,
+    episode: Episode,
+    torrent: Any,
+    now: datetime,
+    tolerance_hours: int,
+    contexts: Dict[int, "_GrabContext"],
+) -> Optional[str]:
+    """Why an existing torrent cannot be taken as ``episode``'s release, or None when it can.
+
+    A release name does not tell one season of a show from the next, so adoption goes
+    by dates: an episode that has not aired has no release yet, and a torrent that
+    qBittorrent added well before the episode could have aired is from an earlier run.
+    ``contexts`` keeps each show's schedule between torrents.
+    """
+    context = contexts.get(show.id)
+    if context is None:
+        context = contexts[show.id] = _show_grab_context(
+            session, show, now, _air_horizon(show, now, tolerance_hours),
+        )
+    reason: Optional[str] = None
+    if context.latest_aired is None or episode.episode_number > context.latest_aired:
+        reason = "the episode has not aired yet"
+    else:
+        added_on = getattr(torrent, "added_on", None)
+        first_air = min((as_utc(item.air_at) for item in context.episodes if item.air_at), default=None)
+        reference = as_utc(episode.air_at) or first_air
+        if isinstance(added_on, (int, float)) and reference is not None:
+            try:
+                added = datetime.fromtimestamp(added_on, tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                added = None
+            slack = timedelta(hours=max(PUBLISHED_BEFORE_AIR_SLACK_HOURS, tolerance_hours))
+            if added is not None and added < reference - slack:
+                reason = "it was added before the episode aired"
+    if reason:
+        torrent_hash = str(getattr(torrent, "hash", "") or "")
+        if torrent_hash not in _refused_adoptions:
+            if len(_refused_adoptions) > 5000:
+                _refused_adoptions.clear()
+            _refused_adoptions.add(torrent_hash)
+            logger.debug(
+                f"Not adopting '{getattr(torrent, 'name', '')}' as Ep {episode.episode_number} of "
+                f"'{show.display_name}': {reason}."
+            )
+    return reason
+
+
 _RELEASE_HOLDING = {
     EpisodeStatus.COMPLETED,
     EpisodeStatus.DOWNLOADING,

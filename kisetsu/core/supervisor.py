@@ -14,7 +14,7 @@ from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import CachedRssSnapshot
 from kisetsu.core.feeds import compact_priorities, forget_feed
-from kisetsu.core.grabber import MANAGED_TAG, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
+from kisetsu.core.grabber import MANAGED_TAG, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
@@ -29,6 +29,9 @@ EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 
 # How long another feed has to keep carrying a release before a show moves to it.
 FEED_SWITCH_GRACE_SECONDS = 300
+
+# How many existing torrents the last import left alone, so the cycle log reports a change and not every pass.
+_reported_refusals = 0
 
 
 def _format_age(seconds: float) -> str:
@@ -1373,10 +1376,14 @@ class Supervisor:
             for show in shows
         ]
         parsed_cache: Dict[str, Dict[str, Any]] = {}
+        now = utc_now()
+        tolerance_hours = max(0, int(self.settings.early_air_tolerance_hours or 0))
+        schedules: Dict[int, Any] = {}
         # Built on first use: this runs every direct cycle, and most cycles
         # adopt nothing, so the RSS read is skipped unless it is needed.
         feed_ids_by_title: Optional[Dict[str, Set[int]]] = None
         imported = 0
+        refused = 0
         for torrent in torrents:
             torrent_hash = str(getattr(torrent, "hash", "") or "")
             name = str(getattr(torrent, "name", "") or "")
@@ -1412,6 +1419,9 @@ class Supervisor:
             }:
                 # Only fill gaps; never overwrite a release that is tracked.
                 continue
+            if adoption_refusal(self.session, matched_show, episode, torrent, now, tolerance_hours, schedules):
+                refused += 1
+                continue
             episode.release_title = name
             episode.release_group = parsed.get("release_group")
             episode.torrent_hash = torrent_hash
@@ -1443,6 +1453,14 @@ class Supervisor:
         if imported:
             self.session.commit()
             logs.append(f"Imported {imported} existing torrent(s) into the episode library.")
+        global _reported_refusals
+        if refused != _reported_refusals:
+            _reported_refusals = refused
+            if refused:
+                logs.append(
+                    f"Left {refused} existing torrent(s) alone: they belong to episodes that have "
+                    "not aired or were added before the episode, so they are from an earlier season."
+                )
         return logs
 
     def _recheck_working_from_cache(self, rss_snapshot: RssSnapshot) -> List[str]:
