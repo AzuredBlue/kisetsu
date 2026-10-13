@@ -2365,19 +2365,37 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       });
     }
 
+    // The torrents the dialog lists: what the server says deleting removes, or why it could not say.
+    function deleteTorrentList(preview) {
+      const hint = text => `<p class="field-hint" style="margin-top: 0.75rem">${escapeHtml(text)}</p>`;
+      if (!preview || !Array.isArray(preview.torrents)) {
+        return hint(preview && preview.error ? preview.error : 'The list of torrents is not available.');
+      }
+      if (preview.torrents.length === 0) return hint('No torrents in qBittorrent belong to this show.');
+      const rows = preview.torrents.map(t => `
+        <li class="flex items-baseline gap-2" style="padding: 0.375rem 0.75rem; font-size: 0.75rem">
+          <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono" title="${escapeHtml(t.name || t.hash)}">${escapeHtml(t.name || t.hash)}</span>
+          ${t.tracked ? '' : '<span class="shrink-0 text-zinc-500">found in its folder</span>'}
+        </li>`).join('');
+      return `<ul class="rounded-md border border-line divide-y divide-line-soft" style="margin-top: 0.75rem; max-height: 10rem; overflow-y: auto; background: rgb(var(--field))">${rows}</ul>`;
+    }
+
     // Resolves to { deleteFiles } when confirmed, or null when cancelled.
-    function confirmDeleteShow(name) {
+    function confirmDeleteShow(name, preview) {
       return new Promise(resolve => {
         const overlay = document.createElement('div');
         // Spacing is inline: app.css only holds the utility classes the page already uses.
         overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+        const count = preview && Array.isArray(preview.torrents) ? preview.torrents.length : null;
+        const filesLabel = count ? `Also delete the downloaded files of ${count === 1 ? 'this torrent' : `these ${count} torrents`}` : 'Also delete the downloaded files';
         overlay.innerHTML = `
           <div class="card w-full shadow-lg shadow-black/40" style="max-width: 26rem; padding: 1.5rem" role="dialog" aria-modal="true">
             <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">Delete '${escapeHtml(name)}'?</h3>
-            <p class="field-hint" style="margin-top: 0.5rem">Removes the show, its qBittorrent rule and all of its torrents, whether they are downloading or seeding.</p>
+            <p class="field-hint" style="margin-top: 0.5rem">Removes the show, its qBittorrent rule and the torrents listed below, whether they are downloading or seeding.</p>
+            ${deleteTorrentList(preview)}
             <label class="flex items-center gap-3 rounded-md border border-line cursor-pointer" style="margin-top: 1.25rem; padding: 0.625rem 0.75rem; font-size: 0.8125rem; color: rgb(var(--t-label)); background: rgb(var(--field))">
               <input type="checkbox" id="delete-files-check" class="rounded bg-canvas border-line text-zinc-300 focus:ring-0">
-              Also delete the downloaded files
+              ${escapeHtml(filesLabel)}
             </label>
             <div class="flex justify-end gap-3" style="margin-top: 1.5rem">
               <button type="button" data-act="cancel" class="btn">Cancel</button>
@@ -2403,7 +2421,13 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
     async function deleteShow(id) {
       const target = allShows.find(s => s.id === id);
       const name = target ? target.display_name : `#${id}`;
-      const choice = await confirmDeleteShow(name);
+      let preview;
+      try {
+        preview = await apiFetch(`/api/shows/${id}/delete-preview`);
+      } catch (err) {
+        preview = { error: `Could not list the torrents: ${err.message || err}` };
+      }
+      const choice = await confirmDeleteShow(name, preview);
       if (!choice) return;
       await once(`delete-${id}`, async () => {
         try {

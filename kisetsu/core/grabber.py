@@ -559,14 +559,55 @@ def show_torrent_hashes(session: Session, show: Monitored) -> List[str]:
     return sorted(hashes)
 
 
-def find_show_torrents(session: Session, qbit: QBitClient, settings: Settings, show: Monitored) -> List[str]:
-    """The hashes of every torrent a deleted show leaves in qBittorrent.
+def _added_before_air(torrent: Any, reference: Optional[datetime], tolerance_hours: int) -> bool:
+    """Whether qBittorrent added the torrent well before ``reference``, so it cannot be a release of what aired then.
+
+    A torrent with no usable ``added_on``, or no reference time, cannot be judged and is not held back.
+    """
+    added_on = getattr(torrent, "added_on", None)
+    if reference is None or not isinstance(added_on, (int, float)):
+        return False
+    try:
+        added = datetime.fromtimestamp(added_on, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return False
+    return added < reference - timedelta(hours=max(PUBLISHED_BEFORE_AIR_SLACK_HOURS, tolerance_hours))
+
+
+def _named_like_show(torrent: Any, show: Monitored) -> bool:
+    """Whether the torrent's name is one of this show's releases; a name that is not text cannot be judged."""
+    name = getattr(torrent, "name", None)
+    if not isinstance(name, str):
+        return True
+    return match_release_to_show(name, show.effective_aliases, ignore_arc_marker=False)[0]
+
+
+def show_torrent_preview(session: Session, qbit: QBitClient, settings: Settings, show: Monitored) -> List[Dict[str, Any]]:
+    """The torrents deleting a show removes: ``hash``, ``name``, ``size`` and whether the ledger ``tracked`` it.
 
     The ledger knows the torrents Kisetsu added. Torrents the ledger lost track of
     (a rule added them, or the row was reset) are found in Kisetsu's category under
-    the show's own save folder, unless another show saves to the same folder.
+    the show's own save folder, unless another show saves to the same folder. A
+    series folder can also hold the torrents of its earlier seasons, so one that
+    qBittorrent added before this show's first episode aired, or whose name is not
+    this show's, is left alone.
     """
-    hashes = set(show_torrent_hashes(session, show))
+    tracked = show_torrent_hashes(session, show)
+    entries: Dict[str, Dict[str, Any]] = {
+        value: {"hash": value, "name": None, "size": None, "tracked": True} for value in tracked
+    }
+
+    def describe(torrent: Any, entry: Dict[str, Any]) -> None:
+        name, size = getattr(torrent, "name", None), getattr(torrent, "size", None)
+        entry["name"] = name if isinstance(name, str) else None
+        entry["size"] = int(size) if isinstance(size, (int, float)) else None
+
+    for start in range(0, len(tracked), 100):
+        for torrent in qbit.get_torrents(hashes=tracked[start:start + 100]):
+            entry = entries.get(_torrent_hash(torrent) or "")
+            if entry is not None:
+                describe(torrent, entry)
+
     save_path = resolve_save_path(settings.base_dir, effective_title(show, settings.title_language), show.save_folder)
     if save_path and settings.default_category:
         shared = any(
@@ -575,12 +616,28 @@ def find_show_torrents(session: Session, qbit: QBitClient, settings: Settings, s
         )
         if not shared:
             wanted = save_path.rstrip("/\\")
-            hashes.update(
-                torrent.hash
-                for torrent in qbit.get_torrents(category=settings.default_category)
-                if str(getattr(torrent, "save_path", "") or "").rstrip("/\\") == wanted
-            )
-    return sorted(hashes)
+            air_times = session.exec(
+                select(Episode.air_at).where(Episode.monitored_id == show.id, Episode.air_at.is_not(None))
+            ).all()
+            first_air = min((as_utc(value) for value in air_times), default=None)
+            tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
+            for torrent in qbit.get_torrents(category=settings.default_category):
+                torrent_hash = _torrent_hash(torrent)
+                if not torrent_hash or torrent_hash in entries:
+                    continue
+                if str(getattr(torrent, "save_path", "") or "").rstrip("/\\") != wanted:
+                    continue
+                if _added_before_air(torrent, first_air, tolerance_hours) or not _named_like_show(torrent, show):
+                    continue
+                entry = {"hash": torrent_hash, "name": None, "size": None, "tracked": False}
+                describe(torrent, entry)
+                entries[torrent_hash] = entry
+    return sorted(entries.values(), key=lambda entry: (not entry["tracked"], entry["name"] or entry["hash"]))
+
+
+def find_show_torrents(session: Session, qbit: QBitClient, settings: Settings, show: Monitored) -> List[str]:
+    """The hashes of every torrent a deleted show leaves in qBittorrent (see ``show_torrent_preview``)."""
+    return sorted(entry["hash"] for entry in show_torrent_preview(session, qbit, settings, show))
 
 
 def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) -> List[str]:
@@ -1095,17 +1152,9 @@ def adoption_refusal(
     if context.latest_aired is None or episode.episode_number > context.latest_aired:
         reason = "the episode has not aired yet"
     else:
-        added_on = getattr(torrent, "added_on", None)
         first_air = min((as_utc(item.air_at) for item in context.episodes if item.air_at), default=None)
-        reference = as_utc(episode.air_at) or first_air
-        if isinstance(added_on, (int, float)) and reference is not None:
-            try:
-                added = datetime.fromtimestamp(added_on, tz=timezone.utc)
-            except (OverflowError, OSError, ValueError):
-                added = None
-            slack = timedelta(hours=max(PUBLISHED_BEFORE_AIR_SLACK_HOURS, tolerance_hours))
-            if added is not None and added < reference - slack:
-                reason = "it was added before the episode aired"
+        if _added_before_air(torrent, as_utc(episode.air_at) or first_air, tolerance_hours):
+            reason = "it was added before the episode aired"
     if reason:
         torrent_hash = str(getattr(torrent, "hash", "") or "")
         if torrent_hash not in _refused_adoptions:

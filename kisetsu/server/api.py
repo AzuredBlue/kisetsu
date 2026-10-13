@@ -34,7 +34,7 @@ from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, last_failed_feed_names
 from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
-from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode
+from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode, show_torrent_preview
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -1339,6 +1339,19 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
     session.commit()
     state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
     return {"status": "success", "message": msg}
+
+
+@router.get("/shows/{show_id}/delete-preview")
+def preview_show_deletion(show_id: int, session: Session = Depends(get_db), qbit: QBitClient = Depends(get_qbit)):
+    """The torrents deleting this show removes, so the dialog can list them before the user decides."""
+    show = session.get(Monitored, show_id)
+    if not show:
+        raise HTTPException(status_code=404, detail="Show not found")
+    try:
+        torrents = show_torrent_preview(session, qbit, get_settings(session), show)
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=f"Could not list the torrents: {e}")
+    return {"torrents": torrents}
 
 
 @router.delete("/shows/{show_id}")
