@@ -390,9 +390,15 @@ def _confirm_show_on_feed(
     best_ep: int,
     known_categories: Optional[Set[str]],
     logs: List[str],
+    lock_feed: bool = True,
 ) -> None:
-    """Lock the show to a feed that qBittorrent really acted on and mark it Working."""
-    show.learned_feed_id = feed.id
+    """Mark the show Working, and lock it to the feed when qBittorrent's own log accepted the release.
+
+    A torrent of that name that merely exists in qBittorrent proves the release was
+    downloaded, not which feed it came from, so it confirms the episode without locking.
+    """
+    if lock_feed:
+        show.learned_feed_id = feed.id
     if show.status != MonitoredStatus.UNCONFIRMED:
         session.add(show)
         return
@@ -677,11 +683,13 @@ def verify_and_confirm_rules_from_feeds(
             )
             continue
 
-        # qBittorrent's own log (or a torrent it added) is what proves the feed
-        # carries this show; a cached article matching locally proves nothing.
+        # qBittorrent's own log is what proves the feed carries this show; a torrent
+        # of that name proves a download but not its source, and a cached article
+        # matching locally proves nothing.
         _confirm_show_on_feed(
             session, qbit_client, settings, show, event["feed"], matched_title, event["episode"],
             known_categories, logs,
+            lock_feed=isinstance(log_acceptances.get((rule_name, matched_title)), datetime),
         )
 
         canonical_episode = _canonical_episode(
