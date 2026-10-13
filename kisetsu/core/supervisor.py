@@ -25,6 +25,8 @@ logger = logging.getLogger("kisetsu.core.supervisor")
 
 # How stale a show's per-episode air dates may get before they are refetched.
 EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
+# A refresh that only looks ahead still reaches this far back, in case an episode was rescheduled as it aired.
+SCHEDULE_REFRESH_LOOKBACK_DAYS = 3
 
 
 # How long another feed has to keep carrying a release before a show moves to it.
@@ -713,13 +715,24 @@ class Supervisor:
         oldest = datetime.min.replace(tzinfo=timezone.utc)
         due.sort(key=lambda show: as_utc(show.schedule_synced_at) or oldest)
 
+        # Shows whose past episodes are already dated only need what is still to come.
+        refresh = getattr(self.anilist, "fetch_upcoming_airing_schedules", None)
+        windowed = [show for show in due if self._schedule_is_dated(show)] if inspect.iscoroutinefunction(refresh) else []
+        full = [show for show in due if show not in windowed]
+
         deferral: Optional[AniListDeferred] = None
+        schedules: Dict[int, Any] = {}
         try:
-            schedules = await fetch([show.anilist_id for show in due])
+            if windowed:
+                schedules.update(await refresh(
+                    [show.anilist_id for show in windowed], now - timedelta(days=SCHEDULE_REFRESH_LOOKBACK_DAYS),
+                ))
+            if full:
+                schedules.update(await fetch([show.anilist_id for show in full]))
         except AniListDeferred as e:
             logger.warning(f"AniList deferred the episode schedule refresh: {e}")
             deferral = e
-            schedules = dict(e.partial)
+            schedules.update(e.partial)
         except AniListError as e:
             logger.warning(f"Could not refresh episode airing schedules: {e}")
             return [f"Could not refresh episode airing schedules: {e}"]
@@ -745,6 +758,22 @@ class Supervisor:
         if deferral is not None:
             logs.append(f"AniList deferred the schedule refresh for {waiting} show(s): {deferral}")
         return logs
+
+    def _schedule_is_dated(self, show: Monitored) -> bool:
+        """Whether every episode that should have aired already has an air time, so a refresh need only look ahead."""
+        if show.schedule_synced_at is None:
+            return False
+        aired = (show.next_airing_episode - 1) if show.next_airing_episode else (show.total_episodes or 0)
+        if aired <= 0:
+            return True
+        dated = self.session.exec(
+            select(Episode.id).where(
+                Episode.monitored_id == show.id,
+                Episode.episode_number <= aired,
+                Episode.air_at.is_not(None),
+            )
+        ).all()
+        return len(dated) >= aired
 
     def _defer_anilist(self, deferral: AniListDeferred) -> None:
         """Remember when AniList may be asked again, so the next check is not left to a long sleep."""
