@@ -24,14 +24,17 @@ from kisetsu.db.models import (
 NYAA_FEED = "https://nyaa.si/?page=rss&q=1080p+-HEVC&c=1_2&f=0&u=Erai-raws"
 SUBS_FEED = "https://subsplease.org/rss/?t&r=1080"
 
-NYAA_BODY = """<?xml version="1.0" encoding="utf-8"?>
+# A day old, so it stays inside the season of the episode set up two days back whenever the tests run.
+NYAA_PUBDATE = format_datetime(utc_now().replace(microsecond=0) - timedelta(days=1))
+
+NYAA_BODY = f"""<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:nyaa="https://nyaa.si/xmlns/nyaa">
 <channel><title>search</title>
 <item>
   <title>[Erai-raws] Sousou no Frieren - 07 [1080p][CE60799F]</title>
   <link>https://nyaa.si/download/2171496.torrent</link>
   <guid isPermaLink="true">https://nyaa.si/view/2171496</guid>
-  <pubDate>Fri, 09 Oct 2026 08:11:34 -0000</pubDate>
+  <pubDate>{NYAA_PUBDATE}</pubDate>
   <nyaa:infoHash>f83da926a56300ef7925f3b1f716f374aa0692d0</nyaa:infoHash>
   <nyaa:size>892.2 MiB</nyaa:size>
 </item>
@@ -103,7 +106,7 @@ def test_parse_nyaa_rss_matches_qbittorrent_article_shape():
         "title": "[Erai-raws] Sousou no Frieren - 07 [1080p][CE60799F]",
         "link": "https://nyaa.si/download/2171496.torrent",
         "torrentURL": "https://nyaa.si/download/2171496.torrent",
-        "date": "Fri, 09 Oct 2026 08:11:34 -0000",
+        "date": NYAA_PUBDATE,
         "infoHash": "f83da926a56300ef7925f3b1f716f374aa0692d0",
         "size": "892.2 MiB",
     }
