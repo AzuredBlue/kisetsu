@@ -14,6 +14,10 @@ from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, Episode, EpisodeMapping
 
 _engine = None
 SCHEMA_VERSION = 2
+# The two repairs that re-derive episode offsets and each show's learned feed from the ledger run
+# only on databases older than this version. Newer ones hold what the user set, such as a feed
+# released or pinned by hand, and a later version bump must not rebuild it from the episodes.
+LEGACY_REPAIRS_BELOW_VERSION = 2
 
 # A stored naming pattern is only a filename if it still carries the markers a
 # release title has and a series name does not. Used to tell "this show learned
@@ -372,6 +376,7 @@ def init_db(engine=None):
         engine = get_engine()
     database_path = _database_path(engine)
     needs_migration = False
+    schema_version = SCHEMA_VERSION
     if database_path and database_path.exists():
         with engine.connect() as connection:
             schema_version = int(connection.exec_driver_sql("PRAGMA user_version").scalar() or 0)
@@ -578,7 +583,7 @@ def init_db(engine=None):
         ))
         session.commit()
 
-        if needs_migration:
+        if needs_migration and schema_version < LEGACY_REPAIRS_BELOW_VERSION:
             _repair_legacy_episode_state(session)
             _repair_learned_feed_state(session)
         current_version = int(session.exec(text("PRAGMA user_version")).one()[0] or 0)
