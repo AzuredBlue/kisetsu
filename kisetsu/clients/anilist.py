@@ -1,7 +1,8 @@
 import asyncio
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Optional, Set
+import time
+from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 import httpx2
 
 logger = logging.getLogger("kisetsu.clients.anilist")
@@ -9,6 +10,22 @@ logger = logging.getLogger("kisetsu.clients.anilist")
 ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 
 MAX_SCHEDULE_PAGES = 20
+
+# Requests per minute until AniList reports its own figure in x-ratelimit-limit.
+DEFAULT_RATE_LIMIT = 30
+# Requests per minute left unused, for actions the user starts by hand.
+RATE_LIMIT_RESERVE = 5
+# The longest one request waits for its turn; a longer wait is reported to the caller.
+MAX_PACING_WAIT_SECONDS = 5.0
+# How long to stop asking after a 429 that names no wait, and the most a 429 may impose.
+BLOCK_FALLBACK_SECONDS = 60.0
+BLOCK_MAX_SECONDS = 120.0
+# Requests pause after a call that failed on every retry: this long, doubling up to the maximum.
+BREAKER_START_SECONDS = 60.0
+BREAKER_MAX_SECONDS = 900.0
+# How long one multi-request pass may spend asking AniList before it hands the rest to the next pass.
+PASS_BUDGET_SECONDS = 30.0
+PASS_RESUME_SECONDS = 30.0
 
 USER_EXISTS_QUERY = """
 query ($name: String) {
@@ -71,8 +88,126 @@ class AniListError(Exception):
     pass
 
 
-class AniListRateLimited(AniListError):
-    """Raised when AniList keeps rate limiting this client."""
+class AniListDeferred(AniListError):
+    """AniList should not be asked again yet, so a request was not sent or a pass stopped early.
+
+    ``retry_in`` is the number of seconds to wait. ``partial`` holds what a call that
+    makes several requests had already fetched when it stopped.
+    """
+
+    def __init__(self, message: str, retry_in: float = 0.0, partial: Optional[Dict[Any, Any]] = None):
+        super().__init__(message)
+        self.retry_in = max(0.0, float(retry_in))
+        self.partial: Dict[Any, Any] = partial if partial is not None else {}
+
+
+class AniListRateLimited(AniListDeferred):
+    """AniList is rate limiting this client, or the request budget for now is used up."""
+
+
+class AniListUnavailable(AniListDeferred):
+    """AniList failed on every retry; requests are paused for a while."""
+
+
+def _header_number(headers: Mapping[str, str], name: str) -> Optional[float]:
+    try:
+        return float(headers.get(name))
+    except (TypeError, ValueError):
+        return None
+
+
+class RateGovernor:
+    """Spaces AniList requests so the limit is never exceeded, and remembers when to stop asking.
+
+    One instance serves every AniListClient, so the background loop and the API draw
+    on the same allowance. Every method runs on the event loop and none awaits between
+    reading and updating its state, so they are never interleaved.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time):
+        self._clock = clock
+        self._wall = wall
+        self.reset()
+
+    def reset(self) -> None:
+        self.limit = DEFAULT_RATE_LIMIT
+        self._next_slot = 0.0
+        self._blocked_until = 0.0
+        self._blocked_by = ""
+        self._failures = 0
+
+    @property
+    def interval(self) -> float:
+        """Seconds between two requests: the limit minus the reserve, spread over a minute."""
+        return 60.0 / max(1, self.limit - RATE_LIMIT_RESERVE)
+
+    def retry_in(self) -> float:
+        return max(0.0, self._blocked_until - self._clock())
+
+    def blocked_until_epoch(self) -> Optional[float]:
+        wait = self.retry_in()
+        return self._wall() + wait if wait > 0 else None
+
+    def _block(self, seconds: float, reason: str) -> None:
+        until = self._clock() + seconds
+        if until > self._blocked_until:
+            self._blocked_until = until
+            self._blocked_by = reason
+
+    def _deferral(self, wait: float) -> AniListDeferred:
+        if self._blocked_by == "failure":
+            return AniListUnavailable(f"AniList is not answering; retry in {wait:.0f}s.", retry_in=wait)
+        return AniListRateLimited(f"AniList is rate limiting this client; retry in {wait:.0f}s.", retry_in=wait)
+
+    async def acquire(self) -> None:
+        """Wait for this request's turn; raise AniListDeferred when AniList is blocked or the wait is too long."""
+        now = self._clock()
+        if now < self._blocked_until:
+            raise self._deferral(self._blocked_until - now)
+        slot = max(now, self._next_slot)
+        wait = slot - now
+        if wait > MAX_PACING_WAIT_SECONDS:
+            raise AniListRateLimited(f"AniList request budget used up; retry in {wait:.0f}s.", retry_in=wait)
+        self._next_slot = slot + self.interval
+        if wait > 0:
+            await asyncio.sleep(wait)
+
+    def note_response(self, headers: Mapping[str, str]) -> None:
+        """Take the limit AniList reports, and stop asking once it says none is left."""
+        limit = _header_number(headers, "x-ratelimit-limit")
+        if limit and limit > 0:
+            self.limit = int(limit)
+        remaining = _header_number(headers, "x-ratelimit-remaining")
+        if remaining is not None and remaining <= 0:
+            self._block(BLOCK_FALLBACK_SECONDS, "rate")
+
+    def note_rate_limited(self, headers: Mapping[str, str]) -> float:
+        """Record a 429 and return the seconds AniList asked to wait."""
+        wait = _header_number(headers, "retry-after")
+        if wait is None:
+            reset = _header_number(headers, "x-ratelimit-reset")
+            wait = reset - self._wall() if reset is not None else BLOCK_FALLBACK_SECONDS
+        wait = min(max(wait, 1.0), BLOCK_MAX_SECONDS)
+        self._block(wait, "rate")
+        return wait
+
+    def note_success(self) -> None:
+        self._failures = 0
+
+    def note_failure(self) -> float:
+        """Record a call that failed on every retry; requests pause for a growing while."""
+        self._failures += 1
+        wait = min(BREAKER_START_SECONDS * 2 ** (self._failures - 1), BREAKER_MAX_SECONDS)
+        self._block(wait, "failure")
+        return wait
+
+
+rate_governor = RateGovernor()
+
+
+def rate_limit_status() -> Dict[str, Optional[float]]:
+    """When AniList may be asked again, for the status endpoint (None when it is not blocked)."""
+    return {"blocked_until": rate_governor.blocked_until_epoch(), "retry_in": rate_governor.retry_in() or None}
 
 
 def get_current_and_next_season(dt: Optional[datetime] = None):
@@ -136,38 +271,50 @@ class AniListClient:
         max_retries: int = 3,
         allow_partial: bool = False,
     ) -> Dict[str, Any]:
-        """Execute GraphQL query with exponential backoff on rate limits (HTTP 429).
+        """Execute a GraphQL query, spaced by the shared rate governor.
+
+        A 429 is never waited out here: the governor remembers when AniList may be
+        asked again and the caller gets AniListRateLimited at once. A server error, a
+        lost connection or an unreadable answer is retried with backoff; when every
+        retry fails, requests pause for a growing while (AniListUnavailable). Any other
+        HTTP error is the request's own fault and raises AniListError without a retry.
 
         With ``allow_partial`` a GraphQL response that carries both ``data`` and
         ``errors`` returns the usable part instead of raising, so one bad alias
         cannot discard the whole batch.
         """
         backoff = 2.0
+        problem = "AniList did not answer."
         async with httpx2.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(max_retries):
+                await rate_governor.acquire()
                 try:
                     resp = await client.post(
                         ANILIST_GRAPHQL_URL,
                         json={"query": query, "variables": variables},
                         headers={"Content-Type": "application/json", "Accept": "application/json"},
                     )
+                    rate_governor.note_response(resp.headers)
                     if resp.status_code == 429:
-                        raw_retry = resp.headers.get("Retry-After")
-                        try:
-                            retry_after = float(raw_retry) if raw_retry else backoff
-                        except (ValueError, TypeError):
-                            retry_after = backoff
-                        logger.warning(f"AniList rate limited (429). Waiting {retry_after} seconds...")
-                        if attempt == max_retries - 1:
-                            raise AniListRateLimited(
-                                "AniList is rate limiting this client; schedule sync is deferred."
-                            )
-                        await asyncio.sleep(retry_after)
-                        backoff *= 2
-                        continue
-
+                        wait = rate_governor.note_rate_limited(resp.headers)
+                        logger.warning(f"AniList rate limited (429). Not asking again for {wait:.0f}s.")
+                        raise AniListRateLimited(
+                            f"AniList is rate limiting this client; retry in {wait:.0f}s.", retry_in=wait
+                        )
+                    if 400 <= resp.status_code < 500:
+                        raise AniListError(f"AniList HTTP error: {resp.status_code} - {resp.text[:200]}")
                     resp.raise_for_status()
                     data = resp.json()
+                    if not isinstance(data, dict):
+                        raise ValueError("AniList answered with something other than an object")
+                except httpx2.HTTPStatusError as e:
+                    problem = f"AniList HTTP error: {e.response.status_code} - {e.response.text[:200]}"
+                except httpx2.RequestError as e:
+                    problem = f"AniList network connection failed: {e}"
+                except ValueError:
+                    problem = "AniList returned an unreadable answer."
+                else:
+                    rate_governor.note_success()
                     if "errors" in data:
                         if allow_partial:
                             payload = data.get("data") or {}
@@ -175,18 +322,12 @@ class AniListClient:
                             return payload
                         raise AniListError(f"AniList GraphQL error: {data['errors']}")
                     return data.get("data") or {}
-                except httpx2.HTTPStatusError as e:
-                    if attempt == max_retries - 1:
-                        raise AniListError(f"AniList HTTP error: {e.response.status_code} - {e.response.text}") from e
-                    await asyncio.sleep(backoff)
-                    backoff *= 2
-                except httpx2.RequestError as e:
-                    if attempt == max_retries - 1:
-                        raise AniListError(f"AniList network connection failed: {e}") from e
+                if attempt < max_retries - 1:
                     await asyncio.sleep(backoff)
                     backoff *= 2
 
-        raise AniListError("Max retries exceeded querying AniList API")
+        wait = rate_governor.note_failure()
+        raise AniListUnavailable(f"{problem} Pausing AniList requests for {wait:.0f}s.", retry_in=wait)
 
     async def user_exists(self, username: str) -> bool:
         """Whether AniList knows this user name.
@@ -330,15 +471,24 @@ class AniListClient:
     ) -> Dict[int, List[Dict[str, Any]]]:
         """Fetch complete airing schedules, isolating per-show failures.
 
-        A single unusable media ID, or an AniList-wide rate limit, must not cost
-        the schedules of every other show, so failures are logged and skipped
-        and only a rate limit aborts the whole pass.
+        A single unusable media ID must not cost the schedules of every other show,
+        so its failure is logged and skipped. When AniList defers the rest (a rate
+        limit, a pause after repeated failures, or this pass's time budget), the shows
+        already fetched are not lost: they travel on the AniListDeferred as ``partial``
+        and the remaining ids are fetched on a later pass.
         """
         unique_ids = list(dict.fromkeys(int(media_id) for media_id in media_ids))
         if not unique_ids:
             return {}
         schedules: Dict[int, List[Dict[str, Any]]] = {}
+        deadline = time.monotonic() + PASS_BUDGET_SECONDS
         for media_id in unique_ids:
+            if time.monotonic() >= deadline:
+                raise AniListRateLimited(
+                    "AniList request budget for this pass is used up.",
+                    retry_in=PASS_RESUME_SECONDS,
+                    partial=schedules,
+                )
             schedule: List[Dict[str, Any]] = []
             page = 1
             seen_episodes = set()
@@ -368,7 +518,8 @@ class AniListClient:
                     if not page_info.get("hasNextPage") or page >= MAX_SCHEDULE_PAGES:
                         break
                     page += 1
-            except AniListRateLimited:
+            except AniListDeferred as e:
+                e.partial = schedules
                 raise
             except AniListError as e:
                 logger.warning(f"Could not fetch airing schedule for media {media_id}: {e}")

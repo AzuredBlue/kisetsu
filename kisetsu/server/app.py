@@ -222,6 +222,11 @@ async def background_supervisor_task():
                             sleep_seconds, retry_index = _backoff(retry_index)
                             _set_next_check(sleep_seconds, f"qBittorrent became unavailable while scheduling the next check: {e}")
                         else:
+                            retry_in = getattr(supervisor, "next_schedule_retry_seconds", None)
+                            if isinstance(retry_in, (int, float)) and retry_in < sleep_seconds:
+                                # A deferred AniList refresh must not wait out a long routine sleep.
+                                sleep_seconds = max(60, retry_in)
+                                reason = f"{reason} AniList schedule refresh resumes in {_format_sleep(sleep_seconds)}."
                             hunting_next = await asyncio.to_thread(
                                 is_hunting,
                                 session,

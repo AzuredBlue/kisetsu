@@ -1,11 +1,12 @@
 import asyncio
 import inspect
 import logging
+import math
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 from uuid import uuid4
 from sqlmodel import Session, select
-from kisetsu.clients.anilist import AniListClient, AniListError, AniListRateLimited, get_current_and_next_season
+from kisetsu.clients.anilist import AniListClient, AniListDeferred, AniListError, get_current_and_next_season
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core.backfill import prime_new_shows
@@ -124,6 +125,8 @@ class Supervisor:
         self.anilist_sync_succeeded: Optional[bool] = None
         # Shows the last AniList sync added; prime_new_shows fills the feed cache for them.
         self.new_show_ids: List[int] = []
+        # Seconds until AniList may be asked again, set when a sync or schedule refresh was deferred.
+        self.next_schedule_retry_seconds: Optional[int] = None
 
     async def prime_new_shows(self) -> List[str]:
         """Copy the feeds and search for the aired episodes of the shows just added (direct mode)."""
@@ -427,10 +430,11 @@ class Supervisor:
                 self.settings.anilist_username,
                 monitored_anilist_ids=set(existing_shows.keys()),
             )
-        except AniListRateLimited as e:
-            logger.warning(f"AniList rate limited; schedule sync deferred: {e}")
+        except AniListDeferred as e:
+            logger.warning(f"AniList schedule sync deferred: {e}")
+            self._defer_anilist(e)
             self.session.commit()
-            return logs + [f"AniList rate limited; schedule sync deferred: {e}"]
+            return logs + [f"AniList schedule sync deferred: {e}"]
         except AniListError as e:
             logger.warning(f"Could not refresh AniList schedule: {e}")
             self.session.commit()
@@ -702,16 +706,32 @@ class Supervisor:
         if not inspect.iscoroutinefunction(fetch):
             return logs
 
+        # The shows refreshed longest ago go first, so a pass that is cut short never starves the same ones.
+        oldest = datetime.min.replace(tzinfo=timezone.utc)
+        due.sort(key=lambda show: as_utc(show.schedule_synced_at) or oldest)
+
+        deferral: Optional[AniListDeferred] = None
         try:
             schedules = await fetch([show.anilist_id for show in due])
-        except AniListRateLimited as e:
-            logger.warning(f"AniList rate limited; episode schedule deferred: {e}")
-            return [f"AniList rate limited; episode schedule deferred: {e}"]
+        except AniListDeferred as e:
+            logger.warning(f"AniList deferred the episode schedule refresh: {e}")
+            deferral = e
+            schedules = dict(e.partial)
         except AniListError as e:
             logger.warning(f"Could not refresh episode airing schedules: {e}")
             return [f"Could not refresh episode airing schedules: {e}"]
 
-        updated_shows, missing = await asyncio.to_thread(self._apply_airing_schedules, due, schedules, now)
+        waiting = 0
+        if deferral is not None:
+            self._defer_anilist(deferral)
+            # What was fetched is applied; the rest stays due for the next pass.
+            fetched = [show for show in due if show.anilist_id in schedules]
+            waiting = len(due) - len(fetched)
+            due = fetched
+
+        updated_shows, missing = (
+            await asyncio.to_thread(self._apply_airing_schedules, due, schedules, now) if due else (0, [])
+        )
         if updated_shows:
             logs.append(f"Refreshed per-episode air dates for {updated_shows} show(s) from AniList.")
         if missing:
@@ -719,7 +739,13 @@ class Supervisor:
                 f"Warning: no AniList airing schedule for {len(missing)} show(s); "
                 "their episodes stay unverified."
             )
+        if deferral is not None:
+            logs.append(f"AniList deferred the schedule refresh for {waiting} show(s): {deferral}")
         return logs
+
+    def _defer_anilist(self, deferral: AniListDeferred) -> None:
+        """Remember when AniList may be asked again, so the next check is not left to a long sleep."""
+        self.next_schedule_retry_seconds = max(30, math.ceil(deferral.retry_in))
 
     def _apply_airing_schedules(
         self,
@@ -1600,11 +1626,19 @@ class Supervisor:
         all_logs.extend(await asyncio.to_thread(self.sync_feeds))
 
         beat()
-        all_logs.extend(await self.sync_anilist_schedule(
-            force=force_anilist,
-            hunting=hunting,
-            direct_mode=mode == "direct",
-        ))
+        try:
+            all_logs.extend(await self.sync_anilist_schedule(
+                force=force_anilist,
+                hunting=hunting,
+                direct_mode=mode == "direct",
+            ))
+        except QbitClientError:
+            raise
+        except Exception as e:
+            # Whatever AniList sends back, the downloads that follow must still run.
+            logger.warning(f"AniList step failed; continuing with the cycle: {e}", exc_info=True)
+            self.session.rollback()
+            all_logs.append(f"AniList sync error: {e}")
 
         beat()
         if mode == "direct":
