@@ -1682,6 +1682,15 @@ def _validate_settings_request(req) -> None:
                 status_code=400,
                 detail="download_mode must be rules or direct",
             )
+    interval = getattr(req, "refresh_interval_minutes", None)
+    if interval is not None and not (1 <= interval <= 10080):
+        raise HTTPException(status_code=400, detail="refresh_interval_minutes must be between 1 and 10080")
+    stall = getattr(req, "stall_wait_hours", None)
+    if stall is not None and stall < 0:
+        raise HTTPException(status_code=400, detail="stall_wait_hours can't be negative")
+    ratio = getattr(req, "default_seed_ratio", None)
+    if ratio is not None and ratio < 0:
+        raise HTTPException(status_code=400, detail="default_seed_ratio can't be negative")
     backfill = getattr(req, "backfill_window_days", None)
     if backfill is not None and not (0 <= backfill <= 365):
         raise HTTPException(
