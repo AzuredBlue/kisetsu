@@ -47,6 +47,10 @@ AIR_DATE_TOLERANCE = timedelta(days=3)
 FEED_DISCOVERY_GRACE_SECONDS = 300
 _FAILED_TORRENT_STATES = {"error", "missingfiles", "unknown"}
 MAX_OPERATION_ATTEMPTS = 8
+# A grab whose torrent never appeared (the site or the network was down) is tried again later
+# instead of failing for good: the hours to wait after its 1st, 2nd and 3rd give-up. The next one fails it.
+GIVE_UP_RETRY_HOURS = (2, 6, 12)
+GAVE_UP_PREFIX = "Gave up after"
 # How long a replacement may take to finish before the previous release is kept instead.
 REPLACEMENT_GIVE_UP = timedelta(hours=48)
 _INACTIVE_SHOW_STATUSES = (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
@@ -204,6 +208,57 @@ def _fail_operation(session: Session, operation: TorrentOperation, episode: Epis
     session.add(operation)
     session.add(episode)
     session.commit()
+
+
+def _is_plain_grab(operation: TorrentOperation) -> bool:
+    """A grab of an episode that had no release yet (neither a replacement nor a restore)."""
+    return operation.kind != "replace" and not _is_restore_operation(operation)
+
+
+def _give_up_retry_hours(session: Session, operation: TorrentOperation) -> Optional[int]:
+    """Hours to wait before the episode of a grab that gave up is tried again, or None when it should fail.
+
+    Only a plain grab qualifies: a replacement or restore keeps the release it started
+    from, so failing it costs nothing and is what it did before.
+    """
+    if not _is_plain_grab(operation):
+        return None
+    earlier = session.exec(
+        select(TorrentOperation.id).where(
+            TorrentOperation.episode_id == operation.episode_id,
+            TorrentOperation.status == TorrentOperationStatus.CANCELED,
+            TorrentOperation.last_error.like(f"{GAVE_UP_PREFIX}%"),
+        )
+    ).all()
+    return GIVE_UP_RETRY_HOURS[len(earlier)] if len(earlier) < len(GIVE_UP_RETRY_HOURS) else None
+
+
+def _expire_operation(
+    session: Session,
+    operation: TorrentOperation,
+    episode: Episode,
+    show: Optional[Monitored],
+    error: str,
+    hours: int,
+) -> datetime:
+    """Stand a grab down and let the grabber try the episode again after ``hours``.
+
+    The operation ends CANCELED, which does not mark its version as failed, and the
+    feed it taught is released when nothing it delivered is left; both are what a
+    failed operation would have blocked.
+    """
+    retry_at = utc_now() + timedelta(hours=hours)
+    operation.status = TorrentOperationStatus.CANCELED
+    operation.last_error = error
+    operation.next_retry_at = None
+    operation.updated_at = utc_now()
+    _restore_episode_before_operation(session, operation, episode, error, retry_at)
+    session.add(operation)
+    session.add(episode)
+    session.commit()
+    if show is not None:
+        _unwind_unproven_feed(session, show, operation.feed_id)
+    return retry_at
 
 
 def _sync_seen_items(
@@ -568,17 +623,23 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                     and retry_at and retry_at <= now
                 ):
                     if operation.attempt_count >= MAX_OPERATION_ATTEMPTS:
-                        _fail_operation(
-                            session,
-                            operation,
-                            episode,
-                            f"Gave up after {operation.attempt_count} attempts: "
-                            f"{operation.last_error or 'qBittorrent never exposed the tagged torrent.'}",
+                        error = (
+                            f"{GAVE_UP_PREFIX} {operation.attempt_count} attempts: "
+                            f"{operation.last_error or 'qBittorrent never exposed the tagged torrent.'}"
                         )
-                        logs.append(
-                            f"Give up on '{show.display_name if show else 'show'}' Ep "
-                            f"{episode.episode_number}: {operation.last_error}"
-                        )
+                        name = show.display_name if show else "show"
+                        hours = _give_up_retry_hours(session, operation)
+                        if hours is None:
+                            _fail_operation(session, operation, episode, error)
+                            if show is not None and _is_plain_grab(operation):
+                                _unwind_unproven_feed(session, show, operation.feed_id)
+                            logs.append(f"Give up on '{name}' Ep {episode.episode_number}: {operation.last_error}")
+                        else:
+                            _expire_operation(session, operation, episode, show, error, hours)
+                            logs.append(
+                                f"Could not add '{name}' Ep {episode.episode_number}; "
+                                f"trying again in {hours}h: {error}"
+                            )
                         continue
                     _attempt_operation_add(session, qbit, settings, operation, episode)
                     continue
