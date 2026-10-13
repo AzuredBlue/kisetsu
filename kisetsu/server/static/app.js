@@ -464,7 +464,7 @@
 
           <div class="sr-title">
             <h3 class="text-sm font-medium text-zinc-200 truncate" title="${name}">${name}</h3>
-            <div class="sr-feed-sub text-xs text-zinc-500 truncate" title="${feedName}">${feedName}</div>
+            <div class="sr-feed-sub text-xs text-zinc-500 truncate" title="${feedName}">${feedName}${showProblemParts(show).map(part => ` · ${part}`).join('')}</div>
           </div>
 
           <div class="sr-air text-[13px]">
@@ -492,6 +492,16 @@
           </div>
         </div>
       `;
+    }
+
+    // "2 failed" / "1 missed" parts for a show whose episodes need attention.
+    function showProblemParts(show) {
+      const failed = show.failed_episodes_count || 0;
+      const missed = show.missed_episodes_count || 0;
+      const parts = [];
+      if (failed) parts.push(`<span class="text-rose-400" title="${failed} episode(s) could not be downloaded. Open the show to see why.">${failed} failed</span>`);
+      if (missed) parts.push(`<span class="text-amber-400" title="${missed} aired episode(s) were not found in any feed.">${missed} missed</span>`);
+      return parts;
     }
 
     function renderShowCard(show) {
@@ -532,6 +542,9 @@
 
       const pauseIcon = pauseIconSvg(isPaused);
 
+      const problems = showProblemParts(show);
+      const problemLine = problems.length ? `<div class="flex items-center justify-center gap-1.5 text-[11px]">${problems.join('<span class="text-zinc-600">·</span>')}</div>` : '';
+
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
       return `
         <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card flex flex-col group cursor-pointer">
@@ -558,7 +571,7 @@
           </div>
 
           <div class="pt-2.5 px-0.5 flex flex-col gap-0.5 text-center">
-            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}
+            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}${problemLine}
             <div class="flex items-center justify-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
               <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
               <span class="truncate">${feedName}</span>
@@ -922,20 +935,31 @@
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
         // A wanted episode whose air time has passed is being searched for, unlike one still to come.
+        const failed = String(ep.status).toLowerCase() === 'failed';
         const aired = String(ep.status).toLowerCase() === 'wanted' && ep.air_at && new Date(ep.air_at) <= Date.now();
+        // A grab that could not be added is tried again later; the row says when.
+        const retryAt = ep.retry_after ? new Date(ep.retry_after) : null;
+        const retrying = aired && retryAt && retryAt > Date.now() && ep.last_error;
         const showPaused = data.status === 'paused';
-        const statusLabel = aired ? (showPaused ? 'aired · paused' : 'aired · searching') : ep.status;
-        const statusCls = done ? 'text-emerald-400' : missed ? 'text-amber-400' : aired && !showPaused ? 'text-sky-400' : 'text-zinc-500';
+        const statusLabel = retrying
+          ? `retry ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+          : aired ? (showPaused ? 'aired · paused' : 'aired · searching') : ep.status;
+        const statusCls = done ? 'text-emerald-400' : failed ? 'text-rose-400' : missed || retrying ? 'text-amber-400' : aired && !showPaused ? 'text-sky-400' : 'text-zinc-500';
+        const reason = ep.last_error ? ` title="${escapeHtml(ep.last_error)}"` : '';
+        const retryMatch = failed && isDirect
+          ? groups.filter(g => g.usable).flatMap(g => g.matches).find(m => m.episode === ep.episode_number && m.downloadable)
+          : null;
         const unmanaged = isDirect && done && !ep.torrent_hash;
         const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
         const swap = isDirect && done && ep.torrent_hash ? replacements.get(ep.episode_number) : null;
         const swapPending = swap && pendingDownloads.has(pendingKey(showId, swap.title));
         return `
-          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, statusLabel, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
+          <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, statusLabel, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0, ep.last_error || '', retryMatch ? retryMatch.title : ''].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
-              <span class="${statusCls}">${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
+              <span class="${statusCls}"${reason}>${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
+              ${retryMatch ? downloadButton(showId, retryMatch.title, 'Try this release again', DOWNLOAD_ICON) : ''}
               ${unmanaged ? restoreButton(showId, ep) : ''}
               ${swap ? downloadButton(showId, swap.title, replaceTip(ep.episode_number, ep.feed_name), SWAP_ICON) : ''}
             </span>
@@ -3307,6 +3331,9 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         const stalledEl = document.getElementById('stat-stalled');
         stalledEl.textContent = `${st.counts.stalled} Stalled`;
         stalledEl.classList.toggle('hidden', !st.counts.stalled);
+        const failedEl = document.getElementById('stat-failed');
+        failedEl.textContent = `${st.failed_episodes} Failed`;
+        failedEl.classList.toggle('hidden', !st.failed_episodes);
 
         // The lists on screen are read once; reload them quietly when the ledger moved on the server.
         const fingerprint = [
