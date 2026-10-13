@@ -28,7 +28,7 @@ from kisetsu.db.models import (
     utc_now,
 )
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConflictError
-from kisetsu.clients.anilist import AniListClient, AniListError
+from kisetsu.clients.anilist import AniListClient, AniListError, rate_limit_status
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE, SANDBOX
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
@@ -2197,15 +2197,15 @@ def get_system_status(session: Session = Depends(get_db)):
     elif state.next_check_seconds:
         remaining_seconds = state.next_check_seconds
 
-    wanted = session.exec(
-        select(func.count(Episode.id)).where(Episode.status == EpisodeStatus.WANTED)
-    ).one()
-
-    problem_counts = dict(session.exec(
-        select(Episode.status, func.count(Episode.id))
-        .where(Episode.status.in_([EpisodeStatus.FAILED, EpisodeStatus.MISSED]))
-        .group_by(Episode.status)
+    ledger = dict(session.exec(
+        select(Episode.status, func.count(Episode.id)).group_by(Episode.status)
     ).all())
+    wanted = ledger.get(EpisodeStatus.WANTED, 0)
+    in_flight = sum(
+        ledger.get(status, 0)
+        for status in (EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING)
+    )
+    anilist_blocked_until = rate_limit_status()["blocked_until"]
 
     cycle_owner, cycle_started = state.cycle_owner, state.cycle_started
     running = state.is_running_cycle and cycle_started is not None
@@ -2213,8 +2213,15 @@ def get_system_status(session: Session = Depends(get_db)):
         "daemon_active": state.daemon_active,
         # Feeds qBittorrent reported an error for on its last refresh (direct mode reads them).
         "failing_feeds": last_failed_feed_names(),
-        "failed_episodes": problem_counts.get(EpisodeStatus.FAILED, 0),
-        "missed_episodes": problem_counts.get(EpisodeStatus.MISSED, 0),
+        "failed_episodes": ledger.get(EpisodeStatus.FAILED, 0),
+        "missed_episodes": ledger.get(EpisodeStatus.MISSED, 0),
+        # With the counts above, these change whenever an episode starts, finishes or fails, so the page knows to reload.
+        "completed_episodes": ledger.get(EpisodeStatus.COMPLETED, 0),
+        "in_flight_episodes": in_flight,
+        # When AniList may be asked again after a rate limit or outage (None when it is not paused).
+        "anilist_blocked_until": (
+            datetime.fromtimestamp(anilist_blocked_until, tz=timezone.utc).isoformat() if anilist_blocked_until else None
+        ),
         "download_mode": normalized_download_mode(session),
         "all_paused": bool(get_settings(session).all_paused),
         "wanted_episodes": wanted,

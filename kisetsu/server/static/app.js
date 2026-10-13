@@ -206,7 +206,8 @@
       }
     }
 
-    async function loadShows() {
+    // `quiet` is for the reload that follows a change on the server: a failure there is not worth a toast.
+    async function loadShows({ quiet = false } = {}) {
       try {
         const [showsData, feedsData, settingsData] = await Promise.all([
           apiFetch('/api/shows'),
@@ -228,7 +229,7 @@
         syncShowPageHeader();
         warmAccents();
       } catch (err) {
-        showToast(`Failed loading data: ${err}`, 'error');
+        if (!quiet) showToast(`Failed loading data: ${err.message || err}`, 'error');
       }
     }
 
@@ -3210,8 +3211,24 @@ ${h.matched_regex}` : ''}`
     // Set from /api/status while a check holds the cycle slot.
     let runningCheck = null;
     let statusRepoll = null;
+    // What /api/status said about the ledger last time; a change means the lists on screen are out of date.
+    let ledgerFingerprint = null;
+    let anilistBlockedUntil = null;
+    let serverReachable = true;
+
+    function renderServerPills() {
+      const offline = document.getElementById('stat-offline');
+      if (offline) offline.classList.toggle('hidden', serverReachable);
+      const anilist = document.getElementById('stat-anilist');
+      if (anilist) {
+        const paused = serverReachable && anilistBlockedUntil !== null && anilistBlockedUntil > Date.now();
+        anilist.classList.toggle('hidden', !paused);
+        if (paused) anilist.title = `AniList is limiting requests or not answering. Kisetsu asks again at ${new Date(anilistBlockedUntil).toLocaleTimeString()}; downloads carry on meanwhile.`;
+      }
+    }
 
     function tickCountdown() {
+      renderServerPills();
       const nextEl = document.getElementById('sidebar-next-check');
       if (nextEl && runningCheck) {
         const seconds = runningCheck.seconds + Math.round((Date.now() - runningCheck.seenAt) / 1000);
@@ -3249,8 +3266,12 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       }
       if (!force && document.hidden) return;
       statusUpdateInFlight = true;
+      let answered = false;
       try {
         const st = await apiFetch('/api/status');
+        answered = true;
+        serverReachable = true;
+        anilistBlockedUntil = st.anilist_blocked_until ? new Date(st.anilist_blocked_until).getTime() : null;
         nextCheckReason = st.next_check_reason || '';
         if (st.target_next_check_time) {
           targetNextCheckTime = new Date(st.target_next_check_time).getTime();
@@ -3287,8 +3308,26 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         stalledEl.textContent = `${st.counts.stalled} Stalled`;
         stalledEl.classList.toggle('hidden', !st.counts.stalled);
 
+        // The lists on screen are read once; reload them quietly when the ledger moved on the server.
+        const fingerprint = [
+          st.last_cycle_time, st.counts.works, st.counts.testing, st.counts.upcoming, st.counts.stalled,
+          st.counts.paused, st.counts.completed, st.wanted_episodes, st.completed_episodes,
+          st.in_flight_episodes, st.failed_episodes, st.missed_episodes,
+        ].join('|');
+        const ledgerMoved = ledgerFingerprint !== null && fingerprint !== ledgerFingerprint;
+        ledgerFingerprint = fingerprint;
+        if (ledgerMoved) loadShows({ quiet: true });
+
         if (activeTab === 'history') loadHistory();
       } catch {
+        // No answer (the service is restarting, or stopped): say so, and stop counting a check that may be gone.
+        if (!answered) {
+          serverReachable = false;
+          runningCheck = null;
+          clearTimeout(statusRepoll);
+          statusRepoll = null;
+          tickCountdown();
+        }
       } finally {
         statusUpdateInFlight = false;
         if (statusUpdateQueued) {
