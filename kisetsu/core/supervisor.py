@@ -37,17 +37,6 @@ FEED_SWITCH_GRACE_SECONDS = 300
 _reported_refusals = 0
 
 
-def _format_age(seconds: float) -> str:
-    """Render a duration as '45s', '12m' or '3h 20m' for log lines."""
-    seconds = int(max(0, seconds))
-    if seconds < 60:
-        return f"{seconds}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    hours, minutes = divmod(seconds // 60, 60)
-    return f"{hours}h" if not minutes else f"{hours}h {minutes}m"
-
-
 def _rules_are_equivalent(current: Dict[str, Any], desired: Dict[str, Any]) -> bool:
     """Return True if an existing qBittorrent rule matches the desired definition.
 
@@ -133,6 +122,8 @@ class Supervisor:
         self.new_show_ids: List[int] = []
         # Seconds until AniList may be asked again, set when a sync or schedule refresh was deferred.
         self.next_schedule_retry_seconds: Optional[int] = None
+        # Show counts from the last full cycle, e.g. "8 Working, 3 Upcoming".
+        self.summary: str = ""
 
     async def prime_new_shows(self) -> List[str]:
         """Copy the feeds and search for the aired episodes of the shows just added (direct mode)."""
@@ -175,7 +166,7 @@ class Supervisor:
                 forget_feed(self.session, f)
                 del existing_feeds_by_url[url]
                 removed += 1
-                logs.append(f"Removed deleted qBit RSS feed: '{f.qbit_feed_name}'")
+                logs.append(f"Feed removed: '{f.qbit_feed_name}'")
 
         next_priority = len(existing_feeds_by_url) + 1
         for qf in qbit_feeds:
@@ -187,7 +178,7 @@ class Supervisor:
                 existing_feeds_by_url[url] = new_feed
                 next_priority += 1
                 added += 1
-                logs.append(f"Discovered new qBit RSS feed: '{name}' (Priority {new_feed.priority})")
+                logs.append(f"New feed: '{name}'")
             else:
                 existing_feed = existing_feeds_by_url[url]
                 if existing_feed.qbit_feed_name != name:
@@ -201,20 +192,6 @@ class Supervisor:
 
         if had_pending_changes or added or removed or renamed or priorities_changed:
             self.session.commit()
-
-        total = len(existing_feeds_by_url)
-        summary_parts = []
-        if added > 0:
-            summary_parts.append(f"added {added}")
-        if removed > 0:
-            summary_parts.append(f"removed {removed}")
-        if renamed > 0:
-            summary_parts.append(f"updated {renamed}")
-
-        if summary_parts:
-            logs.append(f"Synchronized RSS feeds: {', '.join(summary_parts)} (Total: {total}).")
-        else:
-            logs.append(f"Verified {total} RSS feeds configured in qBittorrent.")
 
         return logs
 
@@ -333,11 +310,11 @@ class Supervisor:
                     self.session.add(hist)
                     self.session.commit()
 
-                    msg = f"Created verified rule for '{show.display_name}' on feed '{chosen_feed.qbit_feed_name}' (Working)"
+                    msg = f"Created rule for '{show.display_name}' on '{chosen_feed.qbit_feed_name}'."
                     logger.info(msg)
                     logs.append(msg)
                 except QbitClientError as e:
-                    err_msg = f"Failed creating rule for '{show.display_name}': {e}"
+                    err_msg = f"Could not create rule for '{show.display_name}': {e}"
                     logger.error(err_msg)
             else:
                 if not create_qbit_rules:
@@ -380,13 +357,13 @@ class Supervisor:
                         self.session.add(hist)
                         self.session.commit()
 
-                        msg = f"Armed proactive rule for '{show.display_name}' on Priority #{target_feed.priority} feed '{target_feed.qbit_feed_name}' (Testing)"
+                        msg = f"Armed rule for '{show.display_name}' on '{target_feed.qbit_feed_name}'."
                         logger.info(msg)
                         logs.append(msg)
                     except QbitClientError as e:
-                        err_msg = f"Failed arming proactive rule for '{show.display_name}': {e}"
+                        err_msg = f"Could not arm rule for '{show.display_name}': {e}"
                         logger.error(err_msg)
-                        logs.append(f"Warning: {err_msg}")
+                        logs.append(err_msg)
 
         return logs
 
@@ -394,7 +371,6 @@ class Supervisor:
         self,
         *,
         force: bool = False,
-        hunting: bool = False,
         direct_mode: bool = False,
     ) -> List[str]:
         """Fetch updated episode numbers, air dates, and status from AniList. Also imports newly added shows.
@@ -413,14 +389,7 @@ class Supervisor:
 
         min_age_seconds = max(0, self.settings.refresh_interval_minutes) * 60
         if not force and not self.anilist.is_sync_due(min_age_seconds):
-            age_seconds = self.anilist.seconds_since_last_sync() or 0.0
-            remaining = min_age_seconds - age_seconds
-            reason = "hunting" if hunting else "routine"
             self.anilist_sync_succeeded = None
-            logs.append(
-                f"AniList schedule sync deferred ({reason} pass): last synced {_format_age(age_seconds)} ago, "
-                f"next due in {_format_age(remaining)} (refresh interval {self.settings.refresh_interval_minutes}m)."
-            )
             if direct_mode:
                 logs.extend(await self._sync_episode_airing_schedules())
             return logs
@@ -456,10 +425,8 @@ class Supervisor:
         for rule_name in rules_to_disable:
             await asyncio.to_thread(disable_rule, self.qbit, rule_name)
         logs.extend(await asyncio.to_thread(self._remove_shows_off_list, seasonal_list, existing_shows))
-        msg = f"Synced AniList schedule for {len(seasonal_list)} seasonal shows."
         if new_shows_count > 0:
-            msg += f" (Discovered and added {new_shows_count} new seasonal shows to Monitored)"
-        logs.append(msg)
+            logs.append(f"Added {new_shows_count} new show(s) from AniList.")
         if direct_mode:
             logs.extend(await self._sync_episode_airing_schedules())
         return logs
@@ -562,9 +529,9 @@ class Supervisor:
                                 rules_to_disable.append(show.qbit_rule_name)
                             updated = True
                             if anilist_marked_complete:
-                                msg = f"Show '{show.display_name}' marked COMPLETED on AniList. Status -> COMPLETED, rule disabled."
+                                msg = f"'{show.display_name}' finished on AniList."
                             else:
-                                msg = f"Show '{show.display_name}' completed all {show.total_episodes} episodes. Status -> COMPLETED, rule disabled."
+                                msg = f"'{show.display_name}' finished ({show.total_episodes}/{show.total_episodes} episodes)."
                             logger.info(msg)
                             logs.append(msg)
                     else:
@@ -654,12 +621,9 @@ class Supervisor:
         if not gone:
             return logs
         if not seasonal_list:
-            msg = (
-                f"AniList returned an empty list while {len(gone)} show(s) are monitored; "
-                "not removing anything."
-            )
+            msg = f"AniList returned an empty list; kept all {len(gone)} show(s)."
             logger.warning(msg)
-            return [f"Warning: {msg}"]
+            return [msg]
         for show in gone:
             name = show.display_name
             try:
@@ -672,10 +636,10 @@ class Supervisor:
             except QbitClientError as e:
                 self.session.rollback()
                 logger.warning(f"Could not delete rule for '{name}'; keeping the show until the next sync: {e}")
-                logs.append(f"Warning: could not remove '{name}' (rule delete failed): {e}")
+                logs.append(f"Could not remove '{name}': {e}")
                 continue
             self.session.commit()
-            msg = f"Removed '{name}': no longer on your AniList Watching/Planning list."
+            msg = f"Removed '{name}': no longer on your AniList list."
             logger.info(msg)
             logs.append(msg)
         return logs
@@ -754,18 +718,13 @@ class Supervisor:
             waiting = len(due) - len(fetched)
             due = fetched
 
-        updated_shows, missing = (
+        _, missing = (
             await asyncio.to_thread(self._apply_airing_schedules, due, schedules, now) if due else (0, [])
         )
-        if updated_shows:
-            logs.append(f"Refreshed per-episode air dates for {updated_shows} show(s) from AniList.")
         if missing:
-            logs.append(
-                f"Warning: no AniList airing schedule for {len(missing)} show(s); "
-                "their episodes stay unverified."
-            )
+            logs.append(f"No AniList airing schedule for {len(missing)} show(s).")
         if deferral is not None:
-            logs.append(f"AniList deferred the schedule refresh for {waiting} show(s): {deferral}")
+            logs.append(f"AniList deferred the air-date refresh for {waiting} show(s): {deferral}")
         return logs
 
     def _undated_aired_numbers(self, show: Monitored) -> set:
@@ -903,7 +862,7 @@ class Supervisor:
                     raise
                 except QbitClientError as e:
                     logger.warning(f"Could not refresh rule for '{show.display_name}': {e}")
-                    logs.append(f"Warning: Failed updating rule for '{show.display_name}': {e}")
+                    logs.append(f"Could not update rule for '{show.display_name}': {e}")
         finally:
             # Commit even when bailing out, so rules already written to
             # qBittorrent and any earlier pending changes are not lost.
@@ -911,7 +870,7 @@ class Supervisor:
                 self.session.commit()
 
         if refreshed > 0:
-            logs.append(f"Synchronized {refreshed} updated rules in qBittorrent.")
+            logs.append(f"Updated {refreshed} rule(s) in qBittorrent.")
         return logs
 
     def reconcile_schedule_rollover(self) -> List[str]:
@@ -956,7 +915,7 @@ class Supervisor:
                     if show.qbit_rule_name:
                         disable_rule(self.qbit, show.qbit_rule_name)
                     self.session.add(show)
-                    msg = f"Show '{show.display_name}' completed all {show.total_episodes} episodes. Status -> COMPLETED, rule disabled."
+                    msg = f"'{show.display_name}' finished ({show.total_episodes}/{show.total_episodes} episodes)."
                     logger.info(msg)
                     logs.append(msg)
                 continue
@@ -979,7 +938,7 @@ class Supervisor:
                     episode.schedule_state = EpisodeScheduleState.AIRED.name.lower()
                     self.session.add(episode)
                 if episode.status in {EpisodeStatus.WANTED, EpisodeStatus.FAILED, EpisodeStatus.MISSED}:
-                    msg = f"Show '{show.display_name}': Episode {current_ep} remains overdue at its authoritative air time."
+                    msg = f"'{show.display_name}' Ep {current_ep} is overdue."
                     logger.info(msg)
                     logs.append(msg)
                 continue
@@ -1002,7 +961,7 @@ class Supervisor:
                 self.session.add(show)
 
                 air_str = new_air.strftime("%d/%m %H:%M UTC")
-                msg = f"Show '{show.display_name}': Rolled schedule to Ep {new_ep} ({air_str})."
+                msg = f"'{show.display_name}' next episode: Ep {new_ep} ({air_str})."
                 logger.info(msg)
                 logs.append(msg)
 
@@ -1059,7 +1018,7 @@ class Supervisor:
             except QbitClientError as e:
                 logger.warning(f"Could not delete rule for '{show.display_name}' during seasonal prune; retrying next cycle: {e}")
                 continue
-            msg = f"Season transition ({cur_season} {cur_year}): Pruned completed show '{show.display_name}' from past season ({show.season_name} {show.season_year})."
+            msg = f"Removed finished show '{show.display_name}' ({show.season_name} {show.season_year})."
             logger.info(msg)
             logs.append(msg)
 
@@ -1177,7 +1136,7 @@ class Supervisor:
         if shielded_count:
             show_count = len(shielded_shows)
             logs.append(
-                f"Marked {shielded_count} previously downloaded RSS release(s) as read across {show_count} show(s)."
+                f"Marked {shielded_count} old RSS release(s) as read for {show_count} show(s)."
             )
         return logs
 
@@ -1223,15 +1182,12 @@ class Supervisor:
             )
         ).all()
         for show in drifted:
-            previous = show.current_feed_id
             show.current_feed_id = show.learned_feed_id
             show.candidate_feed_id = None
             show.candidate_feed_since = None
             self.session.add(show)
-            msg = (
-                f"Restored '{show.display_name}' to its learned feed "
-                f"{show.learned_feed_id} (was {previous}); that feed has delivered releases for it."
-            )
+            locked_feed = self.session.get(Feed, show.learned_feed_id)
+            msg = f"'{show.display_name}' moved back to its locked feed '{locked_feed.qbit_feed_name}'."
             logger.info(msg)
             logs.append(msg)
         if drifted:
@@ -1299,8 +1255,8 @@ class Supervisor:
             self.session.add(show)
             self.session.commit()
             msg = (
-                f"Assigned '{show.display_name}' to feed '{chosen_feed.qbit_feed_name}': "
-                f"'{all_feeds[0].qbit_feed_name}' never carried a release for it."
+                f"'{show.display_name}' moved to '{chosen_feed.qbit_feed_name}': "
+                f"'{all_feeds[0].qbit_feed_name}' never had a release."
             )
             logger.info(msg)
             logs.append(msg)
@@ -1499,15 +1455,12 @@ class Supervisor:
             imported += 1
         if imported:
             self.session.commit()
-            logs.append(f"Imported {imported} existing torrent(s) into the episode library.")
+            logs.append(f"Imported {imported} existing torrent(s).")
         global _reported_refusals
         if refused != _reported_refusals:
             _reported_refusals = refused
             if refused:
-                logs.append(
-                    f"Left {refused} existing torrent(s) alone: they belong to episodes that have "
-                    "not aired or were added before the episode, so they are from an earlier season."
-                )
+                logs.append(f"Skipped {refused} existing torrent(s) from an earlier season.")
         return logs
 
     def _recheck_working_from_cache(self, rss_snapshot: RssSnapshot) -> List[str]:
@@ -1569,9 +1522,9 @@ class Supervisor:
         if not checked:
             return logs
         self.session.commit()
-        msg = f"Re-checked {checked} Working show(s) against the RSS cache: {confirmed} confirmed"
+        msg = f"Re-checked {checked} Working show(s): {confirmed} confirmed"
         if demoted:
-            msg += f", {len(demoted)} set to Unconfirmed (no matching release on their feed: {', '.join(demoted)})"
+            msg += f", {len(demoted)} now Unconfirmed ({', '.join(demoted)})"
         logger.info(msg)
         logs.append(msg + ".")
         return logs
@@ -1597,7 +1550,7 @@ class Supervisor:
                 self.session, self.qbit, show, episode, "Download mode switched to rules.",
             )
         if canceled:
-            logs.append(f"Canceled {canceled} in-flight direct download operation(s) for the switch to rules mode.")
+            logs.append(f"Canceled {canceled} in-progress download(s) for the switch to rules mode.")
         return logs
 
     def prepare_download_mode(
@@ -1626,7 +1579,6 @@ class Supervisor:
     async def run_full_cycle(
         self,
         *,
-        hunting: bool = False,
         force_rss_refresh: bool = False,
         force_anilist: bool = False,
         feed_cache: bool = False,
@@ -1636,8 +1588,7 @@ class Supervisor:
         A cross-process lease keeps the daemon and a manually triggered cycle
         from running against the same state at once.
 
-        ``hunting`` marks a short release-polling pass for the AniList sync log
-        line. ``force_rss_refresh`` makes the direct engine re-read the feeds
+        ``force_rss_refresh`` makes the direct engine re-read the feeds
         before deciding, because a stale snapshot would otherwise be acted upon.
         ``force_anilist`` queries AniList even when the cached schedule is fresh,
         so a manual sync picks up shows the user just added.
@@ -1651,7 +1602,6 @@ class Supervisor:
             raise QbitClientError("Another supervision cycle holds the database lease")
         try:
             return await self._run_full_cycle(
-                hunting=hunting,
                 force_rss_refresh=force_rss_refresh,
                 force_anilist=force_anilist,
                 feed_cache=feed_cache,
@@ -1669,7 +1619,6 @@ class Supervisor:
     async def _run_full_cycle(
         self,
         *,
-        hunting: bool = False,
         force_rss_refresh: bool = False,
         force_anilist: bool = False,
         feed_cache: bool = False,
@@ -1694,7 +1643,6 @@ class Supervisor:
         try:
             all_logs.extend(await self.sync_anilist_schedule(
                 force=force_anilist,
-                hunting=hunting,
                 direct_mode=mode == "direct",
             ))
         except QbitClientError:
@@ -1720,7 +1668,6 @@ class Supervisor:
                     refreshed_articles = rss_snapshot.get()
                 else:
                     refreshed_articles = await asyncio.to_thread(rss_snapshot.refresh)
-                    all_logs.append("Refreshed qBittorrent RSS feeds before direct evaluation.")
                 all_feeds = self.session.exec(select(Feed)).all()
                 expected_urls = {feed.qbit_feed_url for feed in all_feeds}
                 failed_feed_urls = {
@@ -1731,12 +1678,12 @@ class Supervisor:
                 unexplained_missing = (expected_urls - set(refreshed_articles)) - failed_feed_urls
                 if rss_snapshot.failed_feed_names:
                     all_logs.append(
-                        "Warning: RSS feeds unavailable after refresh: "
+                        "RSS feeds unavailable after refresh: "
                         + ", ".join(rss_snapshot.failed_feed_names)
                     )
                 if unexplained_missing:
                     all_logs.append(
-                        "Warning: RSS feeds missing from the refreshed response: "
+                        "RSS feeds missing from the refreshed response: "
                         + str(len(unexplained_missing))
                     )
             all_logs.extend(await self.prime_new_shows())
@@ -1814,15 +1761,15 @@ class Supervisor:
                 else:
                     testing_cnt += 1
 
-        summary = f"Summary: {works_cnt} Working | {upcoming_cnt} Upcoming"
+        summary = f"{works_cnt} Working, {upcoming_cnt} Upcoming"
         if testing_cnt > 0:
-            summary += f" | {testing_cnt} Testing"
+            summary += f", {testing_cnt} Testing"
         if stalled_cnt > 0:
-            summary += f" | {stalled_cnt} Stalled"
+            summary += f", {stalled_cnt} Stalled"
         if completed_cnt > 0:
-            summary += f" | {completed_cnt} Completed"
+            summary += f", {completed_cnt} Completed"
         if paused_cnt > 0:
-            summary += f" | {paused_cnt} Paused"
-        all_logs.append(summary)
+            summary += f", {paused_cnt} Paused"
+        self.summary = summary
 
         return all_logs

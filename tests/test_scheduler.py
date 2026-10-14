@@ -49,7 +49,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 300)
-        self.assertIn("Hunting mode", reason)
+        self.assertIn("hunting", reason)
 
     def test_wake_on_air_time_when_upcoming_show_airs_soon(self):
         now = utc_now()
@@ -68,7 +68,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertAlmostEqual(dur, 2700, delta=10)
-        self.assertIn("Upcoming premiere", reason)
+        self.assertIn(" airs ", reason)
 
     def test_default_interval_when_all_shows_working(self):
         now = utc_now()
@@ -88,7 +88,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 21600)
-        self.assertIn("working rules", reason)
+        self.assertIn("nothing airing soon", reason)
 
     def test_fixed_show_does_not_query_rss_refresh_interval(self):
         from unittest.mock import MagicMock
@@ -114,7 +114,7 @@ class TestScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("working rules", reason)
+        self.assertIn("nothing airing soon", reason)
         mock_qbit.get_rss_refresh_interval_seconds.assert_not_called()
 
     def test_no_hunting_for_show_without_release_date(self):
@@ -133,8 +133,8 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600)
         self.assertEqual(dur, 21600)
-        self.assertNotIn("Hunting mode", reason)
-        self.assertIn("waiting for air dates", reason)
+        self.assertNotIn("hunting", reason)
+        self.assertIn("nothing airing soon", reason)
 
     def test_dynamic_qbit_rss_refresh_interval(self):
         from unittest.mock import MagicMock
@@ -175,7 +175,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 300)
-        self.assertIn("Hunting mode", reason)
+        self.assertIn("hunting", reason)
 
     def test_no_hunting_during_a_hiatus_longer_than_a_week(self):
         now = utc_now()
@@ -195,7 +195,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 21600)
-        self.assertNotIn("Hunting mode", reason)
+        self.assertNotIn("hunting", reason)
 
     def test_no_hunting_when_unconfirmed_show_next_episode_is_days_away_and_no_recent_air(self):
         now = utc_now()
@@ -215,7 +215,7 @@ class TestScheduler(unittest.TestCase):
 
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 21600)
-        self.assertNotIn("Hunting mode", reason)
+        self.assertNotIn("hunting", reason)
 
 
 class TestIsHunting(unittest.TestCase):
@@ -252,7 +252,7 @@ class TestIsHunting(unittest.TestCase):
         self.assertTrue(is_hunting(self.session))
         dur, reason = calculate_next_poll_interval(self.session, hunting_interval_seconds=300)
         self.assertEqual(dur, 300)
-        self.assertIn("Hunting mode", reason)
+        self.assertIn("hunting", reason)
 
     def test_working_rules_are_not_hunting(self):
         self._add(
@@ -265,7 +265,7 @@ class TestIsHunting(unittest.TestCase):
         self.assertFalse(is_hunting(self.session))
         dur, reason = calculate_next_poll_interval(self.session, default_interval_seconds=21600, hunting_interval_seconds=300)
         self.assertEqual(dur, 21600)
-        self.assertIn("working rules", reason)
+        self.assertIn("nothing airing soon", reason)
 
     def test_upcoming_premiere_is_not_hunting(self):
         self._add(
@@ -324,8 +324,8 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertAlmostEqual(duration, 1800, delta=10)
-        self.assertIn("Upcoming premiere", reason)
-        self.assertNotIn("working rules", reason)
+        self.assertIn(" airs ", reason)
+        self.assertNotIn("nothing airing soon", reason)
 
     def test_direct_fixed_show_hunts_for_post_rollover_wanted_episode(self):
         show = Monitored(
@@ -352,7 +352,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 300)
-        self.assertIn("Direct hunting", reason)
+        self.assertIn("hunting", reason)
         self.assertIn("Link Click Season 3", reason)
 
     def test_direct_fixed_show_uses_routine_cadence_outside_window(self):
@@ -385,7 +385,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("direct ownership", reason)
+        self.assertIn("nothing airing soon", reason)
 
     def test_direct_fixed_show_retains_old_canonical_episode_gap(self):
         show = Monitored(
@@ -413,7 +413,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("direct ownership", reason)
+        self.assertIn("nothing airing soon", reason)
 
     def test_direct_fixed_show_ignores_future_wanted_episode(self):
         from unittest.mock import MagicMock
@@ -444,7 +444,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("direct ownership", reason)
+        self.assertIn("nothing airing soon", reason)
         mock_qbit.get_rss_refresh_interval_seconds.assert_not_called()
 
     def test_rules_fixed_show_ignores_direct_episode_backlog(self):
@@ -475,7 +475,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 21600)
-        self.assertIn("working rules", reason)
+        self.assertIn("nothing airing soon", reason)
         mock_qbit.get_rss_refresh_interval_seconds.assert_not_called()
 
     def test_direct_pending_operation_forces_fast_recovery_poll(self):
@@ -517,7 +517,7 @@ class TestDirectScheduler(unittest.TestCase):
         )
 
         self.assertEqual(duration, 300)
-        self.assertIn("Direct hunting", reason)
+        self.assertIn("hunting", reason)
         self.assertIn("Pending Operation Anime", reason)
 
 

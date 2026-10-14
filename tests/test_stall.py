@@ -48,7 +48,7 @@ class TestStall(unittest.TestCase):
         self.session.refresh(show)
 
         self.assertEqual(show.status, MonitoredStatus.COMPLETED)
-        self.assertTrue(any("completed all 12 episodes" in log for log in logs))
+        self.assertTrue(any("12/12 episodes" in log for log in logs))
 
     def test_direct_mode_requires_every_episode_before_completing(self):
         """A wanted episode keeps the season open even with a match on the last one."""
@@ -108,7 +108,7 @@ class TestStall(unittest.TestCase):
         self.session.refresh(show)
 
         self.assertEqual(show.status, MonitoredStatus.COMPLETED)
-        self.assertTrue(any("completed all 2 episodes" in log for log in logs))
+        self.assertTrue(any("2/2 episodes" in log for log in logs))
 
     def test_stall_triggers_fallback_to_next_feed(self):
         show = Monitored(
@@ -153,7 +153,7 @@ class TestStall(unittest.TestCase):
         self.assertEqual(show.current_feed_id, 2)
         self.assertEqual(show.status, MonitoredStatus.UNCONFIRMED)
         self.assertEqual(hist.outcome, RuleOutcome.STALLED)
-        self.assertTrue(any("Moved to feed 'Erai-raws'" in log for log in logs))
+        self.assertTrue(any("moved to 'Erai-raws'" in log for log in logs))
 
     def test_stall_never_abandons_a_feed_that_has_already_delivered(self):
         """A feed proven by a real download is kept even when an episode goes late."""
@@ -201,7 +201,7 @@ class TestStall(unittest.TestCase):
         self.assertEqual(show.status, MonitoredStatus.UNCONFIRMED)
         self.assertEqual(hist.outcome, RuleOutcome.PENDING)
         mock_qbit.remove_rss_rule.assert_not_called()
-        self.assertTrue(any("already proven" in log for log in logs))
+        self.assertTrue(any("locked" in log for log in logs))
 
     def test_stall_never_abandons_a_user_pinned_feed(self):
         show = Monitored(
@@ -280,7 +280,7 @@ class TestStall(unittest.TestCase):
 
         self.assertEqual(show.status, MonitoredStatus.STALLED)
         self.assertIsNone(show.current_feed_id)
-        self.assertTrue(any("All feeds exhausted" in log for log in logs))
+        self.assertTrue(any("no feed has it" in log for log in logs))
 
 
 if __name__ == "__main__":

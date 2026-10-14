@@ -83,7 +83,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(self.show.status, MonitoredStatus.FIXED)
         self.assertEqual(self.show.last_confirmed_episode, 8)
         self.assertEqual(self.hist.outcome, RuleOutcome.CONFIRMED)
-        self.assertTrue(any("Confirmed rule" in log for log in logs))
+        self.assertTrue(any("confirmed:" in log for log in logs))
         mock_qbit.find_log_acceptances.assert_called_once()
         self.assertEqual(self.show.learned_feed_id, 1)
         self.assertEqual(call_order, ["lookup", "rule"])
@@ -350,7 +350,7 @@ class TestConfirmation(unittest.TestCase):
         second_logs = verify_and_confirm_torrents(self.session, mock_qbit, self.settings)
         self.session.refresh(show)
 
-        self.assertTrue(any("moved rule" in log for log in second_logs))
+        self.assertTrue(any("moved to" in log for log in second_logs))
         self.assertEqual(show.current_feed_id, erai.id)
         self.assertEqual(show.status, MonitoredStatus.FIXED)
         self.assertEqual(show.last_confirmed_episode, 2)
@@ -478,7 +478,7 @@ class TestConfirmation(unittest.TestCase):
         self.assertEqual(show.last_confirmed_episode, 2)
         self.assertEqual(show.matched_title, "JoJo no Kimyou na Bouken: Steel Ball Run")
         self.assertEqual(show.matched_release_group, "Erai-raws")
-        self.assertTrue(any("Confirmed rule" in log for log in logs))
+        self.assertTrue(any("confirmed:" in log for log in logs))
 
         mock_qbit.set_rss_rule.assert_called_once()
         must_contain = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"]

@@ -318,10 +318,7 @@ def ingest_log_acceptances(
             matched_regex=(rule_patterns or {}).get(rule_name),
         )
 
-        msg = (
-            f"'{show.display_name}': qBittorrent accepted '{release_title}' "
-            f"-> episode {canonical} recorded."
-        )
+        msg = f"'{show.display_name}' Ep {canonical} downloaded: '{release_title}'."
         logger.info(msg)
         logs.append(msg)
         accepted.append((show.display_name, canonical, show.cover_image))
@@ -430,7 +427,7 @@ def _confirm_show_on_feed(
     except Exception as e:
         logger.warning(f"Could not update cleaned rule in qBittorrent for '{show.display_name}': {e}")
 
-    msg = f"Confirmed rule for '{show.display_name}' (Ep {best_ep}) via RSS '{matched_title}'. Cleaned up rule -> Working"
+    msg = f"'{show.display_name}' Ep {best_ep} confirmed: '{matched_title}'."
     logger.info(msg)
     logs.append(msg)
     session.add(show)
@@ -542,8 +539,8 @@ def verify_and_confirm_rules_from_feeds(
                     session.commit()
                     waiting = FEED_SWITCH_GRACE_SECONDS // 60
                     msg = (
-                        f"'{show.display_name}': release seen on '{detected_feed.qbit_feed_name}' but not on "
-                        f"'{top_feed.qbit_feed_name}' yet — waiting {waiting}m before moving the rule."
+                        f"'{show.display_name}': seen on '{detected_feed.qbit_feed_name}' but not "
+                        f"'{top_feed.qbit_feed_name}' yet; waiting {waiting}m before switching."
                     )
                     logger.info(msg)
                     logs.append(msg)
@@ -575,10 +572,7 @@ def verify_and_confirm_rules_from_feeds(
                     ))
                     session.add(show)
                     session.commit()
-                    msg = (
-                        f"'{show.display_name}': release found on '{detected_feed.qbit_feed_name}', not on "
-                        f"'{feed.qbit_feed_name}' — moved rule and kept it armed for the rest of the series."
-                    )
+                    msg = f"'{show.display_name}': moved to '{detected_feed.qbit_feed_name}', where its release appeared."
                     logger.info(msg)
                     logs.append(msg)
                     feed = detected_feed

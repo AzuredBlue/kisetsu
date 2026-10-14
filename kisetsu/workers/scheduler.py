@@ -219,9 +219,6 @@ def calculate_next_poll_interval(
     - A queued retry always wins over the calculated sleep, because a pending operation must not wait for the next routine cycle.
     - Otherwise (all active shows have working rules or are waiting for air dates) -> Sleep default interval (e.g. 6 hours).
     """
-    mode = str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower()
-    uses_direct_engine = mode == "direct"
-
     classification = classify_shows(
         session,
         download_mode=download_mode,
@@ -232,7 +229,7 @@ def calculate_next_poll_interval(
     now = classification.now
 
     if not classification.has_shows:
-        return default_interval_seconds, "No monitored shows. Sleeping default interval."
+        return default_interval_seconds, "no monitored shows"
 
     effective_hunting_interval = hunting_interval_seconds
     sleep_duration = default_interval_seconds
@@ -251,10 +248,7 @@ def calculate_next_poll_interval(
         h_mins = effective_hunting_interval // 60
         h_secs = effective_hunting_interval % 60
         interval_str = f"{h_mins}m {h_secs}s" if h_secs else f"{h_mins}m"
-        if uses_direct_engine:
-            reason = f"Direct hunting: {len(hunting_shows)} show(s) waiting for a matching release ({names}). Checking every {interval_str}."
-        else:
-            reason = f"Hunting mode: {len(hunting_shows)} show(s) waiting for rule/release ({names}). Checking every {interval_str}."
+        reason = f"hunting {names} (every {interval_str})"
     else:
         upcoming = sorted(unresolved_upcoming, key=lambda x: x[0])
         if upcoming:
@@ -263,28 +257,12 @@ def calculate_next_poll_interval(
             if seconds_until_air < default_interval_seconds:
                 sleep_duration = max(60, seconds_until_air)
                 air_str = earliest_air.strftime("%d/%m %H:%M UTC")
-                verb = "evaluate direct grabs" if uses_direct_engine else "create rule"
-                reason = f"Upcoming premiere: '{earliest_show.display_name}' airs on {air_str} (in {sleep_duration // 60}m). Sleeping until air time to {verb}."
+                reason = f"'{earliest_show.display_name}' airs {air_str}"
         if reason is None:
-            reason = _idle_reason(
-                mode=mode,
-                default_interval_seconds=default_interval_seconds,
-            )
+            reason = "nothing airing soon"
 
     retry_in = earliest_scheduled_retry(session)
     if retry_in is not None and retry_in < sleep_duration:
         retry_sleep = max(MIN_RETRY_SLEEP_SECONDS, retry_in)
-        return retry_sleep, f"{reason} Retrying a pending operation in {retry_sleep}s."
+        return retry_sleep, f"{reason}, retrying a download in {retry_sleep}s"
     return sleep_duration, reason
-
-
-def _idle_reason(
-    *,
-    mode: str,
-    default_interval_seconds: int,
-) -> str:
-    """Explain a routine-length sleep: nothing is due before the next pass."""
-    minutes = default_interval_seconds // 60
-    if mode == "direct":
-        return f"All active shows have direct ownership or are waiting for air dates. Sleeping {minutes}m until next routine check."
-    return f"All active shows have working rules or are waiting for air dates. Sleeping {minutes}m until next routine check."

@@ -265,7 +265,7 @@ async def test_anilist_completed_list_status_completes_show_without_finale_confi
     assert show.next_airing_episode is None
     assert show.next_airing_at is None
     assert show.last_confirmed_episode == 13  # untouched: AniList does not prove the download
-    assert any("marked COMPLETED on AniList" in l for l in logs)
+    assert any("finished on AniList" in l for l in logs)
     mock_qbit.set_rss_rule.assert_called_with(rule_name=MUSHOKU_RULE, rule_def={"enabled": False})
 
 
@@ -364,8 +364,8 @@ def test_sync_active_rules_keeps_going_for_rule_specific_failures():
     logs = supervisor.sync_active_rules()
 
     assert qbit.set_rss_rule.call_count == 4
-    assert sum(1 for l in logs if "Failed updating rule" in l) == 1
-    assert any("Synchronized 3 updated rules" in l for l in logs)
+    assert sum(1 for l in logs if "Could not update rule" in l) == 1
+    assert any("Updated 3 rule(s)" in l for l in logs)
 
 
 def test_sync_active_rules_commits_rules_written_before_a_lost_connection():
@@ -420,9 +420,7 @@ async def test_anilist_sync_is_deferred_inside_the_refresh_window():
         logs = await supervisor.sync_anilist_schedule()
 
     mock_post.assert_not_called()
-    assert len(logs) == 1
-    assert "deferred" in logs[0]
-    assert "refresh interval 360m" in logs[0]
+    assert logs == []
 
 
 @pytest.mark.asyncio
@@ -485,12 +483,11 @@ async def test_hunting_cycle_defers_anilist_but_still_verifies_and_syncs_rules()
     supervisor = Supervisor(session=session, qbit=mock_qbit, anilist=anilist, settings=settings)
 
     with patch.object(anilist, "_post_query", new_callable=AsyncMock) as mock_post:
-        logs = await supervisor.run_full_cycle(hunting=True)
+        logs = await supervisor.run_full_cycle()
 
     mock_post.assert_not_called()
-    assert any("deferred (hunting pass)" in l for l in logs)
-    assert any("Created verified rule for 'Sousou no Frieren'" in l for l in logs)
-    assert any(l.startswith("Summary:") for l in logs)
+    assert any("Created rule for 'Sousou no Frieren'" in l for l in logs)
+    assert supervisor.summary.startswith("1 Working")
     session.refresh(show)
     assert show.status == MonitoredStatus.FIXED
 
@@ -802,9 +799,8 @@ async def test_sync_anilist_deferral_does_not_block_the_rollover():
         anilist.fetch_media_airing_schedules = AsyncMock(return_value={})
         supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=anilist, settings=settings)
 
-        logs = await supervisor.sync_anilist_schedule()
+        await supervisor.sync_anilist_schedule()
 
-        assert any("deferred" in line for line in logs)
         # A deferred pass says nothing about quality, so the rollover may still
         # act on the data we already have.
         assert supervisor.anilist_sync_succeeded is None
@@ -1123,7 +1119,7 @@ def test_a_learned_show_is_never_sent_back_to_auto_discovery():
 
         # Never re-guessed, and the proven feed is put back.
         assert show.current_feed_id == subs.id
-        assert any("Restored" in line for line in logs)
+        assert any("locked feed" in line for line in logs)
         assert supervisor._restore_learned_feeds() == []
     engine.dispose()
 
@@ -1293,7 +1289,7 @@ def test_prune_past_season_prunes_completed_show_and_cleans_up_records():
     logs = supervisor.prune_past_season_shows()
 
     assert len(logs) == 1
-    assert "Pruned completed show 'Truly Completed Past Season Show'" in logs[0]
+    assert "Removed finished show 'Truly Completed Past Season Show'" in logs[0]
     mock_qbit.remove_rss_rule.assert_called_once_with(rule_name="[Seasonal] Truly Completed Show")
 
     assert session.get(Monitored, 18) is None

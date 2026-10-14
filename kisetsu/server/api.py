@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import re
 import time
 from datetime import datetime, timezone, timedelta
@@ -56,6 +57,7 @@ from kisetsu.core.rules import (
 from kisetsu.workers.scheduler import calculate_next_poll_interval
 from kisetsu.server.state import state
 
+logger = logging.getLogger("kisetsu.server.api")
 router = APIRouter(prefix="/api")
 engine = get_engine()
 anilist_client = AniListClient()
@@ -344,7 +346,7 @@ def _resume_show(session: Session, qbit: QBitClient, show: Monitored) -> None:
                 rdef["enabled"] = True
                 qbit.set_rss_rule(show.qbit_rule_name, rdef)
         except Exception as e:
-            state.add_log(f"Warning enabling qBit rule for '{show.display_name}': {e}", "WARNING")
+            state.add_log(f"Could not enable rule for '{show.display_name}': {e}", "WARNING")
     session.add(show)
 
 
@@ -363,7 +365,7 @@ def _pause_show(session: Session, qbit: QBitClient, show: Monitored, by_all: boo
             try:
                 cancel_episode_operations(session, qbit, show, episode, "Show paused by user.", keep_added=True)
             except Exception as e:
-                state.add_log(f"Warning cancelling operations for '{show.display_name}': {e}", "WARNING")
+                state.add_log(f"Could not cancel downloads for '{show.display_name}': {e}", "WARNING")
     elif show.qbit_rule_name and mode == "rules":
         try:
             rules = qbit.get_rss_rules()
@@ -372,7 +374,7 @@ def _pause_show(session: Session, qbit: QBitClient, show: Monitored, by_all: boo
                 rdef["enabled"] = False
                 qbit.set_rss_rule(show.qbit_rule_name, rdef)
         except Exception as e:
-            state.add_log(f"Warning disabling qBit rule for '{show.display_name}': {e}", "WARNING")
+            state.add_log(f"Could not disable rule for '{show.display_name}': {e}", "WARNING")
     session.add(show)
 
 
@@ -564,7 +566,7 @@ def _rediscover_show(show_id: int, session: Session, qbit: QBitClient, force: bo
         try:
             delete_rule(qbit, show.qbit_rule_name)
         except Exception as e:
-            state.add_log(f"Warning: Could not delete rule '{show.qbit_rule_name}': {e}", "WARNING")
+            state.add_log(f"Could not delete rule '{show.qbit_rule_name}': {e}", "WARNING")
 
     direct = uses_direct_engine(normalized_download_mode(session))
     # In direct mode a reset says nothing about the feed, so it is not held against it.
@@ -627,7 +629,7 @@ def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> 
     try:
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
-        state.add_log(f"Warning resolving RSS article '{title}' for manual download: {e}", "DEBUG")
+        logger.debug(f"Could not resolve RSS article '{title}' for manual download: {e}")
         return None
 
     for feed_url in feed_urls:
@@ -644,7 +646,7 @@ def _show_rule_data(qbit: QBitClient, show: Monitored) -> Dict[str, Any]:
     try:
         return (qbit.get_rss_rules() or {}).get(show.qbit_rule_name, {})
     except Exception as e:
-        state.add_log(f"Warning fetching rule details from qBit: {e}", "WARNING")
+        state.add_log(f"Could not read rule details from qBittorrent: {e}", "WARNING")
         return {}
 
 
@@ -767,14 +769,14 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
     try:
         articles_by_url = cached_articles(session) if direct else flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
-        state.add_log(f"Warning fetching cached feed articles: {e}", "DEBUG")
+        logger.debug(f"Could not read cached feed articles: {e}")
         articles_by_url = {}
 
     if direct:
         try:
             groups = direct_feed_matches(session, qbit, settings, show, limit=300, articles_by_url=articles_by_url)
         except Exception as e:
-            state.add_log(f"Warning listing direct feed matches: {e}", "DEBUG")
+            logger.debug(f"Could not list feed matches: {e}")
             groups = []
         return {"matched_articles": [], "feed_groups": groups}
 
@@ -790,7 +792,7 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
             elif isinstance(articles_resp, list):
                 matched_articles = articles_resp
         except Exception as e:
-            state.add_log(f"Warning fetching rule details from qBit: {e}", "WARNING")
+            state.add_log(f"Could not read rule details from qBittorrent: {e}", "WARNING")
 
     feed_items = articles_by_url.get(feed.qbit_feed_url, []) if feed else []
     saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
@@ -807,7 +809,7 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
                     if title not in matched_articles:
                         matched_articles.append(title)
         except Exception as e:
-            state.add_log(f"Warning matching against cached articles: {e}", "DEBUG")
+            logger.debug(f"Could not match cached articles: {e}")
 
     return {"matched_articles": matched_articles[:15], "feed_matches": []}
 
@@ -1166,7 +1168,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
             try:
                 delete_rule(qbit, show.qbit_rule_name)
             except Exception as e:
-                state.add_log(f"Warning deleting old rule '{show.qbit_rule_name}': {e}", "WARNING")
+                state.add_log(f"Could not delete old rule '{show.qbit_rule_name}': {e}", "WARNING")
         show.qbit_rule_name = None
 
         if new_feed_id is None:
@@ -1231,7 +1233,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         try:
             delete_rule(qbit, show.qbit_rule_name)
         except Exception as e:
-            state.add_log(f"Warning deleting old rule '{show.qbit_rule_name}': {e}", "WARNING")
+            state.add_log(f"Could not delete old rule '{show.qbit_rule_name}': {e}", "WARNING")
         show.qbit_rule_name = None
 
     if new_feed_id is None:
@@ -1281,7 +1283,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
                 best_parsed = parsed_info
         matched_article = best_art
     except Exception as e:
-        state.add_log(f"Warning searching feed cache: {e}", "WARNING")
+        state.add_log(f"Could not search the feed cache: {e}", "WARNING")
 
     if matched_article and best_parsed:
         show.matched_title = best_parsed.get("title")
@@ -2125,7 +2127,6 @@ async def run_cycle_now(session: Session = Depends(get_db)):
 async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_feed_cache: bool = False):
     sup = Supervisor(session=session, qbit=qbit, anilist=anilist_client, settings=s)
 
-    state.add_log("Manual sync initiated from WebUI.", "INFO")
     state.trigger_immediate_rule_check()
     try:
         if use_feed_cache:
@@ -2134,7 +2135,8 @@ async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_fe
             logs = await sup.run_full_cycle(force_rss_refresh=True, force_anilist=True)
         state.last_cycle_time = datetime.now(timezone.utc)
         for l in logs:
-            state.add_log(f"Supervisor: {l}", "INFO")
+            state.add_log(l, "INFO")
+        state.add_log(f"Manual check done: {sup.summary}", "INFO")
 
         default_interval = max(60, s.refresh_interval_minutes * 60)
         sleep_sec, reason = await asyncio.to_thread(

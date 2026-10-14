@@ -900,7 +900,7 @@ def test_rules_transition_marks_owned_articles_read():
     logs = supervisor.shield_owned_articles()
     second_logs = supervisor.shield_owned_articles()
 
-    assert any("previously downloaded RSS" in log for log in logs)
+    assert any("old RSS" in log for log in logs)
     assert second_logs == []
     qbit.mark_rss_article_read.assert_called_once_with("SubsPlease", "ep1")
     session.close()
@@ -1151,7 +1151,7 @@ async def test_supervisor_forced_direct_cycle_refreshes_before_grabbing():
     qbit.add_torrent.side_effect = lambda **kwargs: events.append("add") or True
     supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
 
-    logs = await supervisor.run_full_cycle(force_rss_refresh=True)
+    await supervisor.run_full_cycle(force_rss_refresh=True)
 
     episode = session.exec(
         select(Episode).where(
@@ -1161,7 +1161,6 @@ async def test_supervisor_forced_direct_cycle_refreshes_before_grabbing():
     ).first()
     assert episode.status == EpisodeStatus.DOWNLOADING
     assert events == ["refresh", "add"]
-    assert "Refreshed qBittorrent RSS feeds before direct evaluation." in logs
     assert qbit.get_rss_items.call_count == 3
     qbit.set_rss_rule.assert_not_called()
     session.close()
@@ -2098,12 +2097,11 @@ def test_leftover_operation_tags_are_swept_from_existing_torrents():
     ))
     session.commit()
 
-    logs = update_episode_status(session, qbit, settings)
+    update_episode_status(session, qbit, settings)
 
     qbit.remove_torrent_tags.assert_called_once_with(
         ["hash-1"], ["kisetsu-op-834c6907af68485cabb2306495d634f9"]
     )
-    assert any("leftover operation tag" in line for line in logs)
     # Cleared, so the same episode is never swept again.
     session.expire_all()
     assert session.get(Episode, 1).operation_tag is None
@@ -2823,13 +2821,13 @@ def test_older_wanted_episode_not_in_feed_transitions_to_missed():
 
     session.refresh(ep1)
     assert ep1.status == EpisodeStatus.MISSED
-    assert any("marked as missed" in l for l in logs)
+    assert any("missed: not in the feed" in l for l in logs)
 
     # Verify scheduler does not log backlog
     duration, reason = calculate_next_poll_interval(session, default_interval_seconds=21600, download_mode="direct")
     assert duration == 21600
     assert "Direct backlog" not in reason
-    assert "direct ownership" in reason
+    assert "nothing airing soon" in reason
 
     session.close()
     engine.dispose()

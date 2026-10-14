@@ -73,7 +73,7 @@ def test_continuous_numbering_rolls_to_next_seasonal_episode(session):
     logs = supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
-    assert any("Rolled schedule to Ep 9" in log for log in logs)
+    assert any("next episode: Ep 9" in log for log in logs)
     assert show.status == MonitoredStatus.FIXED
     assert show.next_airing_episode == 9  # Incremented from 8 -> 9, NOT 83!
     assert show.next_airing_at is not None
@@ -216,7 +216,7 @@ def test_prune_past_season_shows(session):
     assert 10 not in all_ids
     assert 20 in all_ids
     assert 30 in all_ids
-    assert any("Pruned completed show 'Summer Completed Show'" in log for log in logs)
+    assert any("Removed finished show 'Summer Completed Show'" in log for log in logs)
 
 
 def test_stale_fixed_show_overdue_advance(session):
@@ -243,7 +243,7 @@ def test_stale_fixed_show_overdue_advance(session):
     logs = supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
-    assert any("Rolled schedule to Ep 4" in log for log in logs)
+    assert any("next episode: Ep 4" in log for log in logs)
     assert show.next_airing_episode == 4
     assert show.next_airing_at is not None
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
@@ -283,7 +283,7 @@ def test_direct_mode_never_rolls_the_schedule_forward(session):
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
     ).first()
-    assert any("Episode 8 remains overdue" in log for log in logs)
+    assert any("Ep 8 is overdue" in log for log in logs)
     assert show.status == MonitoredStatus.FIXED
     assert show.next_airing_episode == 8
     assert episode.schedule_state == "aired"
@@ -317,7 +317,7 @@ def test_direct_mode_keeps_an_overdue_episode_retryable_in_direct_mode(session):
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 3)
     ).first()
-    assert any("Episode 3 remains overdue" in log for log in logs)
+    assert any("Ep 3 is overdue" in log for log in logs)
     assert show.next_airing_episode == 3
     assert episode.schedule_state == "aired"
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)

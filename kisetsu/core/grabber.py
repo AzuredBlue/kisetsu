@@ -690,12 +690,12 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
                             _fail_operation(session, operation, episode, error)
                             if show is not None and _is_plain_grab(operation):
                                 _unwind_unproven_feed(session, show, operation.feed_id)
-                            logs.append(f"Give up on '{name}' Ep {episode.episode_number}: {operation.last_error}")
+                            logs.append(f"Gave up on '{name}' Ep {episode.episode_number}: {operation.last_error}")
                         else:
                             _expire_operation(session, operation, episode, show, error, hours)
                             logs.append(
                                 f"Could not add '{name}' Ep {episode.episode_number}; "
-                                f"trying again in {hours}h: {error}"
+                                f"retrying in {hours}h: {error}"
                             )
                         continue
                     _attempt_operation_add(session, qbit, settings, operation, episode)
@@ -874,8 +874,7 @@ def reconcile_removed_torrents(session: Session, qbit: QBitClient) -> List[str]:
             episode.last_error = None
             session.add(episode)
             logs.append(
-                f"{show_name(episode, session)} Ep {episode.episode_number}: its torrent was removed "
-                f"from qBittorrent, so the episode is now unmanaged."
+                f"{show_name(episode, session)} Ep {episode.episode_number}: torrent removed in qBittorrent, no longer managed."
             )
     if logs:
         session.commit()
@@ -907,10 +906,6 @@ def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[st
         _release_operation_tag(qbit, episode.torrent_hash, episode.operation_tag)
         episode.operation_tag = None
         session.add(episode)
-        logs.append(
-            f"Removed leftover operation tag from {show_name(episode, session)} "
-            f"Ep {episode.episode_number}"
-        )
     return logs
 
 
@@ -2120,7 +2115,7 @@ def _mark_missed_episodes(
         if is_older_than_latest or has_newer_downloaded or is_latest_and_overdue:
             episode.status = EpisodeStatus.MISSED
             session.add(episode)
-            msg = f"{show.display_name} Ep {episode.episode_number} was not found in RSS feed; marked as missed."
+            msg = f"{show.display_name} Ep {episode.episode_number} missed: not in the feed."
             logs.append(msg)
             logger.info(msg)
     return logs

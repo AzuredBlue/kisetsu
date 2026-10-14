@@ -55,7 +55,7 @@ def check_and_handle_stalls(
                 show.status = MonitoredStatus.COMPLETED
                 session.add(show)
                 session.commit()
-                msg = f"Show '{show.display_name}' completed all {show.total_episodes} episodes. Status -> COMPLETED, rule disabled."
+                msg = f"'{show.display_name}' finished ({show.total_episodes}/{show.total_episodes} episodes)."
                 logger.info(msg)
                 logs.append(msg)
             continue
@@ -88,8 +88,8 @@ def check_and_handle_stalls(
 
                 if last_ep < expected_ep:
                     msg = (
-                        f"STALL DETECTED: '{show.display_name}' Ep {expected_ep} overdue by "
-                        f"{(now - air_at).total_seconds() / 3600:.1f} hours (grace window: {settings.stall_wait_hours}h)."
+                        f"'{show.display_name}' Ep {expected_ep} is "
+                        f"{int((now - air_at).total_seconds() // 3600)}h late."
                     )
                     logger.warning(msg)
                     logs.append(msg)
@@ -104,11 +104,11 @@ def check_and_handle_stalls(
                         reason = (
                             "pinned by you"
                             if show.learned_feed_id is None
-                            else "already proven: it has delivered a release for this show"
+                            else "locked (it has delivered before)"
                         )
                         msg = (
-                            f"STALL: '{show.display_name}' Ep {expected_ep} is overdue, but its feed is "
-                            f"{reason} — keeping the rule armed on it instead of falling back."
+                            f"'{show.display_name}' Ep {expected_ep} is late, but its feed is "
+                            f"{reason}; staying on it."
                         )
                         logger.warning(msg)
                         logs.append(msg)
@@ -182,12 +182,12 @@ def check_and_handle_stalls(
                             session.add(new_hist)
                             session.commit()
 
-                            fallback_msg = f"Fallback successful for '{show.display_name}': Moved to feed '{fallback_feed.qbit_feed_name}'"
+                            fallback_msg = f"'{show.display_name}' moved to '{fallback_feed.qbit_feed_name}' after a stall."
                             logger.info(fallback_msg)
                             logs.append(fallback_msg)
                         except QbitClientError as e:
                             logger.error(f"Failed creating fallback rule for '{show.display_name}': {e}")
-                            logs.append(f"Error creating fallback rule: {e}")
+                            logs.append(f"Could not create fallback rule for '{show.display_name}': {e}")
                     else:
                         # Locked shows returned early above, so any feed may be used.
                         avail = [f for f in all_feeds if f.id not in failed_feed_ids]
@@ -219,7 +219,7 @@ def check_and_handle_stalls(
                                 session.add(new_hist)
                                 session.commit()
 
-                                fallback_msg = f"Fallback armed for '{show.display_name}': Moved to Priority #{fallback_feed.priority} feed '{fallback_feed.qbit_feed_name}'"
+                                fallback_msg = f"'{show.display_name}' moved to '{fallback_feed.qbit_feed_name}' after a stall."
                                 logger.info(fallback_msg)
                                 logs.append(fallback_msg)
                             except QbitClientError as e:
@@ -229,7 +229,7 @@ def check_and_handle_stalls(
                             show.current_feed_id = None
                             session.add(show)
                             session.commit()
-                            stall_msg = f"All feeds exhausted for '{show.display_name}'. Status -> STALLED (User attention needed)."
+                            stall_msg = f"'{show.display_name}' stalled: no feed has it."
                             logger.error(stall_msg)
                             logs.append(stall_msg)
 

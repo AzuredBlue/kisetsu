@@ -23,7 +23,7 @@ from kisetsu.core.confirmation import ingest_log_acceptances
 from kisetsu.core.feedcache import backfill_cache, ingest_rss, prune_cache
 from kisetsu.core.grabber import has_unsettled_work, update_episode_status
 from kisetsu.core.supervisor import Supervisor
-from kisetsu.workers.scheduler import calculate_next_poll_interval, is_hunting
+from kisetsu.workers.scheduler import calculate_next_poll_interval
 from kisetsu.server.api import router
 from kisetsu.server.state import state
 from kisetsu.server.web_ui import STATIC_DIR, get_web_ui_html
@@ -49,15 +49,19 @@ SETTLE_ERROR_SECONDS = 30
 def _format_sleep(seconds: int) -> str:
     if seconds < 60:
         return f"{seconds}s"
-    return f"{seconds // 60}m"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    hours, minutes = divmod(seconds // 60, 60)
+    return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
-def _set_next_check(seconds: int, reason: str) -> None:
+def _set_next_check(seconds: int, reason: str, log: bool = True) -> None:
     now_utc = datetime.now(timezone.utc)
     state.next_check_seconds = seconds
     state.next_check_reason = reason
     state.target_next_check_time = now_utc + timedelta(seconds=seconds)
-    state.add_log(f"Next check: {reason} (Sleeping {_format_sleep(seconds)}).", "INFO")
+    if log:
+        state.add_log(f"Next check in {_format_sleep(seconds)}: {reason}", "INFO")
 
 
 def _next_qbit_retry(retry_index: int) -> int:
@@ -73,13 +77,10 @@ async def background_supervisor_task():
     """Supervisor loop running concurrently with the WebUI server."""
     engine = get_engine()
     anilist = AniListClient()
-    state.add_log("Background supervisor service initialized.", "INFO")
     retry_index = 0
 
     await asyncio.sleep(STARTUP_GRACE_SECONDS)
-    hunting_next = False
     needs_rss_refresh = True
-    busy_logged = False
     waiting_logged = False
     while True:
         connection_ready = False
@@ -97,7 +98,7 @@ async def background_supervisor_task():
                 state.daemon_active = False
                 state.next_check_reason = "Waiting for first-time setup"
                 if not waiting_logged:
-                    state.add_log("Waiting for first-time setup before contacting qBittorrent.", "INFO")
+                    state.add_log("Waiting for first-time setup.", "INFO")
                     waiting_logged = True
                 try:
                     await asyncio.wait_for(state.wake_event.wait(), timeout=sleep_seconds)
@@ -120,11 +121,11 @@ async def background_supervisor_task():
                         retry_index = 0
                 except QbitAuthenticationError as e:
                     sleep_seconds = QBIT_AUTH_RETRY_SECONDS
-                    _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
-                    state.add_log("qBittorrent authentication failed; check the configured username and password.", "ERROR")
+                    _set_next_check(sleep_seconds, f"qBittorrent login failed: {e}")
+                    state.add_log("qBittorrent rejected the username or password.", "ERROR")
                 except QbitClientError as e:
                     sleep_seconds, retry_index = _backoff(retry_index)
-                    _set_next_check(sleep_seconds, f"qBittorrent is unavailable: {e}")
+                    _set_next_check(sleep_seconds, f"qBittorrent unavailable: {e}")
 
                 if connection_ready:
                     state.daemon_active = True
@@ -135,6 +136,7 @@ async def background_supervisor_task():
                     cycle_forced = needs_rss_refresh
                     feeds_seconds = 0
                     holding_slot = False
+                    cycle_done: Optional[str] = None
                     try:
                         if use_feed_cache:
                             # Waiting for qBittorrent's feeds to settle is the slow part of a
@@ -152,18 +154,12 @@ async def background_supervisor_task():
                             needs_rss_refresh = False
                         if not state.try_begin_cycle("background"):
                             # A manual cycle or show edit holds the slot. Wait for it
-                            # briefly instead of re-probing and logging every second.
-                            if not busy_logged and state.cycle_owner != "settle":
-                                state.add_log("Another supervision or show mutation is already in progress; waiting for it to finish.", "INFO")
-                                busy_logged = True
+                            # briefly instead of re-probing every second.
                             await asyncio.sleep(BUSY_RETRY_SECONDS)
                             continue
                         holding_slot = True
-                        busy_logged = False
-                        state.add_log("Executing background supervision check...", "INFO")
                         cycle_started = time.monotonic()
                         logs = await supervisor.run_full_cycle(
-                            hunting=hunting_next,
                             force_rss_refresh=cycle_forced,
                             feed_cache=use_feed_cache,
                         )
@@ -171,20 +167,16 @@ async def background_supervisor_task():
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
                         cycle_seconds = int(time.monotonic() - cycle_started)
-                        if cycle_seconds >= 10 or feeds_seconds >= 10:
-                            state.add_log(
-                                f"Supervision check took {cycle_seconds}s (feeds ready in {feeds_seconds}s, before it started).",
-                                "INFO",
-                            )
                         for l in logs:
-                            state.add_log(f"Supervisor: {l}", "INFO")
-                        if not logs:
-                            state.add_log("Supervisor: All shows and rules up to date.", "INFO")
+                            state.add_log(l, "INFO")
+                        cycle_done = f"Check done: {supervisor.summary}"
+                        if cycle_seconds + feeds_seconds >= 10:
+                            cycle_done = f"Check done in {cycle_seconds + feeds_seconds}s: {supervisor.summary}"
                     except QbitAuthenticationError as e:
                         connection_ready = False
                         needs_rss_refresh = True
                         sleep_seconds = QBIT_AUTH_RETRY_SECONDS
-                        _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
+                        _set_next_check(sleep_seconds, f"qBittorrent login failed: {e}")
                     except QbitRSSRefreshError as e:
                         needs_rss_refresh = True
                         deferred_reason = f"qBittorrent RSS refresh failed; direct evaluation deferred: {e}"
@@ -193,10 +185,10 @@ async def background_supervisor_task():
                         connection_ready = False
                         needs_rss_refresh = True
                         sleep_seconds, retry_index = _backoff(retry_index)
-                        _set_next_check(sleep_seconds, f"qBittorrent became unavailable during the cycle: {e}")
+                        _set_next_check(sleep_seconds, f"qBittorrent went away during the check: {e}")
                     except Exception as e:
                         needs_rss_refresh = True
-                        state.add_log(f"Supervisor cycle error: {e}", "ERROR")
+                        state.add_log(f"Check failed: {e}", "ERROR")
                         logger.error(f"Supervisor error: {e}", exc_info=True)
                     finally:
                         if holding_slot:
@@ -216,33 +208,30 @@ async def background_supervisor_task():
                         except QbitAuthenticationError as e:
                             connection_ready = False
                             sleep_seconds = QBIT_AUTH_RETRY_SECONDS
-                            _set_next_check(sleep_seconds, f"qBittorrent authentication failed: {e}")
+                            _set_next_check(sleep_seconds, f"qBittorrent login failed: {e}")
                         except QbitClientError as e:
                             connection_ready = False
                             sleep_seconds, retry_index = _backoff(retry_index)
-                            _set_next_check(sleep_seconds, f"qBittorrent became unavailable while scheduling the next check: {e}")
+                            _set_next_check(sleep_seconds, f"qBittorrent went away while scheduling: {e}")
                         else:
                             retry_in = getattr(supervisor, "next_schedule_retry_seconds", None)
                             if isinstance(retry_in, (int, float)) and retry_in < sleep_seconds:
                                 # A deferred AniList refresh must not wait out a long routine sleep.
                                 sleep_seconds = max(60, retry_in)
-                                reason = f"{reason} AniList schedule refresh resumes in {_format_sleep(sleep_seconds)}."
-                            hunting_next = await asyncio.to_thread(
-                                is_hunting,
-                                session,
-                                download_mode=settings.download_mode,
-                                early_air_tolerance_hours=settings.early_air_tolerance_hours,
-                            )
-                            _set_next_check(sleep_seconds, deferred_reason or reason)
+                                reason = f"{reason}, AniList refresh in {_format_sleep(sleep_seconds)}"
+                            next_reason = deferred_reason or reason
+                            if cycle_done:
+                                _set_next_check(sleep_seconds, next_reason, log=False)
+                                state.add_log(
+                                    f"{cycle_done}. Next in {_format_sleep(sleep_seconds)}: {next_reason}", "INFO"
+                                )
+                            else:
+                                _set_next_check(sleep_seconds, next_reason)
                 else:
                     state.daemon_active = False
 
             try:
                 await asyncio.wait_for(state.wake_event.wait(), timeout=sleep_seconds)
-                if not connection_ready:
-                    state.add_log("Reconnect wait interrupted by manual WebUI trigger; re-probing qBittorrent.", "INFO")
-                else:
-                    state.add_log("Supervisor woke up early from manual WebUI trigger.", "INFO")
             except asyncio.TimeoutError:
                 pass
 
@@ -250,7 +239,7 @@ async def background_supervisor_task():
             state.add_log("Background supervisor stopped.", "INFO")
             break
         except Exception as e:
-            state.add_log(f"Unexpected error in background task: {e}", "ERROR")
+            state.add_log(f"Background task error: {e}", "ERROR")
             logger.error(f"Scheduler loop error: {e}", exc_info=True)
             await asyncio.sleep(60)
 
@@ -316,7 +305,7 @@ async def settle_task():
         try:
             logs = await asyncio.to_thread(_settle_once, engine)
             for line in logs or []:
-                state.add_log(f"Supervisor: {line}", "INFO")
+                state.add_log(line, "INFO")
         except asyncio.CancelledError:
             raise
         except QbitClientError as e:
@@ -350,7 +339,7 @@ async def _backfill_past_releases(engine) -> None:
         names = ", ".join(f"'{name}'" for name in list(found)[:3])
         if len(found) > 3:
             names += f" and {len(found) - 3} more"
-        state.add_log(f"Found {sum(found.values())} past release(s) by searching the feeds for {names}.", "INFO")
+        state.add_log(f"Found {sum(found.values())} past release(s) for {names}.", "INFO")
         state.trigger_immediate_cycle()
 
 

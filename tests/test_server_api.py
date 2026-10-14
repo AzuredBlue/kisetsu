@@ -615,24 +615,7 @@ async def test_background_supervisor_waits_for_the_first_run_wizard(supervisor_e
     supervisor.run_full_cycle.assert_not_awaited()
     assert recorder["waits"] == 2
     assert app_module.state.next_check_reason == "Waiting for first-time setup"
-    assert _log_messages().count("Waiting for first-time setup before contacting qBittorrent.") == 1
-
-
-async def test_background_supervisor_marks_the_second_pass_as_hunting(supervisor_engine, monkeypatch):
-    """A hunt reported by the scheduler must label the following pass as hunting."""
-    qbit = MagicMock()
-    qbit.test_connection.return_value = {"app_version": "test", "api_version": "test"}
-    supervisor = MagicMock()
-    supervisor.run_full_cycle = AsyncMock(return_value=[])
-    _patch_supervisor_loop(monkeypatch, supervisor_engine, qbit, supervisor)
-    monkeypatch.setattr(app_module, "is_hunting", MagicMock(return_value=True))
-    _run_loop_until_cancelled(monkeypatch, stop_after=2)
-
-    await app_module.background_supervisor_task()
-
-    first_call, second_call = supervisor.run_full_cycle.await_args_list
-    assert first_call.kwargs["hunting"] is False
-    assert second_call.kwargs["hunting"] is True
+    assert _log_messages().count("Waiting for first-time setup.") == 1
 
 
 async def test_background_supervisor_escalates_and_then_caps_the_retry_delay(supervisor_engine, monkeypatch):
@@ -662,7 +645,7 @@ async def test_background_supervisor_backs_off_hard_on_authentication_failure(su
     await app_module.background_supervisor_task()
 
     assert recorder["delays"] == [app_module.QBIT_AUTH_RETRY_SECONDS] * 2
-    assert "authentication failed" in app_module.state.next_check_reason
+    assert "login failed" in app_module.state.next_check_reason
     supervisor_factory.assert_not_called()
 
 
@@ -712,7 +695,7 @@ async def test_background_supervisor_reenters_backoff_when_qbit_drops_mid_cycle(
 
     await app_module.background_supervisor_task()
 
-    assert "became unavailable during the cycle" in app_module.state.next_check_reason
+    assert "went away during the check" in app_module.state.next_check_reason
     assert recorder["delays"] == [1]
     assert app_module.state.last_cycle_time is None
     assert app_module.state.is_running_cycle is False
@@ -748,7 +731,8 @@ def test_format_sleep_switches_to_seconds_below_a_minute():
     assert app_module._format_sleep(30) == "30s"
     assert app_module._format_sleep(59) == "59s"
     assert app_module._format_sleep(60) == "1m"
-    assert app_module._format_sleep(21600) == "360m"
+    assert app_module._format_sleep(5400) == "1h 30m"
+    assert app_module._format_sleep(21600) == "6h"
 
 
 def test_delete_show(client, session):
