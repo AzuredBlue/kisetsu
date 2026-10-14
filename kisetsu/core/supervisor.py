@@ -888,6 +888,7 @@ class Supervisor:
         AniList.
         """
         logs = []
+        changed = False
         now = utc_now()
         active_stmt = select(Monitored).where(
             Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED])
@@ -934,13 +935,11 @@ class Supervisor:
                         air_at=air_at,
                     )
                     self.session.add(episode)
+                    changed = True
                 if episode.schedule_state != EpisodeScheduleState.AIRED.name.lower():
                     episode.schedule_state = EpisodeScheduleState.AIRED.name.lower()
                     self.session.add(episode)
-                if episode.status in {EpisodeStatus.WANTED, EpisodeStatus.FAILED, EpisodeStatus.MISSED}:
-                    msg = f"'{show.display_name}' Ep {current_ep} is overdue."
-                    logger.info(msg)
-                    logs.append(msg)
+                    changed = True
                 continue
 
             has_confirmed_release = bool(show.last_confirmed_episode and show.last_confirmed_episode > 0)
@@ -965,7 +964,7 @@ class Supervisor:
                 logger.info(msg)
                 logs.append(msg)
 
-        if logs:
+        if logs or changed:
             self.session.commit()
 
         return logs

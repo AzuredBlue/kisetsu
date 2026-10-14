@@ -1,5 +1,5 @@
 from datetime import timedelta, timezone
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 import pytest
 from sqlmodel import Session, SQLModel, create_engine, select
 
@@ -277,16 +277,18 @@ def test_direct_mode_never_rolls_the_schedule_forward(session):
     settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
     supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=settings)
 
-    logs = supervisor.reconcile_schedule_rollover()
+    with patch.object(session, "commit", wraps=session.commit) as commit:
+        logs = supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
     ).first()
-    assert any("Ep 8 is overdue" in log for log in logs)
+    assert logs == []
     assert show.status == MonitoredStatus.FIXED
     assert show.next_airing_episode == 8
     assert episode.schedule_state == "aired"
+    assert commit.called
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
     assert air_at <= now
 
@@ -311,15 +313,17 @@ def test_direct_mode_keeps_an_overdue_episode_retryable_in_direct_mode(session):
     settings = Settings(id=1, base_dir="/tmp", download_mode="direct")
     supervisor = Supervisor(session=session, qbit=MagicMock(), anilist=MagicMock(), settings=settings)
 
-    logs = supervisor.reconcile_schedule_rollover()
+    with patch.object(session, "commit", wraps=session.commit) as commit:
+        logs = supervisor.reconcile_schedule_rollover()
     session.refresh(show)
 
     episode = session.exec(
         select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 3)
     ).first()
-    assert any("Ep 3 is overdue" in log for log in logs)
+    assert logs == []
     assert show.next_airing_episode == 3
     assert episode.schedule_state == "aired"
+    assert commit.called
     air_at = show.next_airing_at if show.next_airing_at.tzinfo else show.next_airing_at.replace(tzinfo=timezone.utc)
     assert air_at <= now
 
