@@ -17,7 +17,10 @@ from kisetsu.workers import scheduler
 
 # These tests predate direct being the default; they cover rules mode unless a call passes download_mode.
 calculate_next_poll_interval = partial(scheduler.calculate_next_poll_interval, download_mode="rules")
-is_hunting = partial(scheduler.is_hunting, download_mode="rules")
+
+
+def is_hunting(session, *, download_mode="rules", **kwargs):
+    return bool(scheduler.classify_shows(session, download_mode=download_mode, **kwargs).hunting)
 
 
 class TestScheduler(unittest.TestCase):

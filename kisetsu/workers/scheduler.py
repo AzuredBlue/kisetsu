@@ -186,22 +186,6 @@ def classify_shows(
     )
 
 
-def is_hunting(
-    session: Session,
-    *,
-    download_mode: str = DEFAULT_DOWNLOAD_MODE,
-    early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
-) -> bool:
-    """True when at least one show is waiting on a release we have not confirmed."""
-    return bool(
-        classify_shows(
-            session,
-            download_mode=download_mode,
-            early_air_tolerance_hours=early_air_tolerance_hours,
-        ).hunting
-    )
-
-
 def calculate_next_poll_interval(
     session: Session,
     default_interval_seconds: int = 21600,
