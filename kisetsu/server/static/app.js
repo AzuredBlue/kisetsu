@@ -464,7 +464,7 @@
 
           <div class="sr-title">
             <h3 class="text-sm font-medium text-zinc-200 truncate" title="${name}">${name}</h3>
-            <div class="sr-feed-sub text-xs text-zinc-500 truncate" title="${feedName}">${feedName}${showProblemParts(show).map(part => ` · ${part}`).join('')}</div>
+            <div class="sr-feed-sub text-xs text-zinc-500 truncate" title="${feedName}">${feedName}${showProblemParts(show).map(part => `<span class="ml-1.5">${part}</span>`).join('')}</div>
           </div>
 
           <div class="sr-air text-[13px]">
@@ -504,6 +504,12 @@
       return parts;
     }
 
+    // Up to two initials, for a poster that has no art.
+    function showInitials(name) {
+      const words = String(name || '').split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}]/gu, '')).filter(Boolean);
+      return words.slice(0, 2).map(w => Array.from(w)[0].toUpperCase()).join('');
+    }
+
     function renderShowCard(show) {
       const { isPaused, isCompleted, statusKey, cfg, label } = resolveShowStatus(show);
 
@@ -523,7 +529,7 @@
       const name = escapeHtml(show.display_name);
       const isDimmed = isPaused || isCompleted;
       const dimClass = isDimmed ? 'opacity-80 grayscale-[35%]' : '';
-      const noArt = `<div class="absolute inset-0 flex items-center justify-center bg-zinc-900 text-zinc-600 text-xs ${dimClass}">No Art</div>`;
+      const noArt = `<div class="no-art ${dimClass}">${escapeHtml(showInitials(show.display_name))}</div>`;
       const art = show.cover_image
         ? `${noArt}<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="absolute inset-0 w-full h-full object-cover ${dimClass}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
         : noArt;
@@ -534,18 +540,26 @@
       // The bar sits flush under the poster, in the user's accent (grey while paused or finished).
       const barClass = isDimmed ? 'bg-zinc-500' : 'bg-accent';
       const bar = `<div class="h-[5px] bg-line-soft" title="${progressText} downloaded"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>`;
-      const airLine = (epLabel || airInfo) ? `
-              <div class="flex items-baseline justify-center gap-1.5 text-[13px] min-w-0">
-                <span class="font-medium text-zinc-300">${epLabel}</span>
-                <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
+      const airLine = (epLabel || airInfo || showProgress) ? `
+              <div class="card-meta">
+                <div class="card-meta-air">
+                  <span class="font-medium text-zinc-300">${epLabel}</span>
+                  <span class="show-countdown font-medium tabular-nums ${airClass}" ${countdownAttr} title="${localDateTime(show.next_airing_at)}">${airInfo}</span>
+                </div>
+                ${showProgress ? `<span class="flex-shrink-0 tabular-nums text-zinc-400" title="${progressText} downloaded">${progressText}</span>` : ''}
               </div>` : '';
 
       const pauseIcon = pauseIconSvg(isPaused);
 
       const problems = showProblemParts(show);
-      const problemLine = problems.length ? `<div class="flex items-center justify-center gap-1.5 text-[11px]">${problems.join('<span class="text-zinc-600">·</span>')}</div>` : '';
+      const problemLine = problems.length ? `<div class="card-problems">${problems.join('')}</div>` : '';
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
+      const feedLine = `
+            <div class="card-meta justify-start" title="${feedName}">
+              <svg class="w-3 h-3 flex-shrink-0 self-center" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
+              <span class="truncate">${feedName}</span>
+            </div>`;
       return `
         <div onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="show-card flex flex-col group cursor-pointer">
 
@@ -570,13 +584,8 @@
             ${bar}
           </div>
 
-          <div class="pt-2.5 px-0.5 flex flex-col gap-0.5 text-center">
-            <h3 class="text-sm font-medium text-zinc-200 group-hover:text-zinc-50 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}${problemLine}
-            <div class="flex items-center justify-center gap-1.5 text-xs text-zinc-500 min-w-0" title="${feedName}">
-              <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 5c7.18 0 13 5.82 13 13M6 11a7 7 0 017 7m-6 0a1 1 0 11-2 0 1 1 0 012 0z"/></svg>
-              <span class="truncate">${feedName}</span>
-              ${showProgress ? `<span class="flex-shrink-0 tabular-nums text-zinc-400">${progressText}</span>` : ''}
-            </div>
+          <div class="pt-2.5 px-0.5 flex flex-col gap-0.5">
+            <h3 class="text-sm font-medium text-zinc-200 leading-[1.4] truncate" title="${name}">${name}</h3>${airLine}${problemLine}${feedLine}
           </div>
 
         </div>

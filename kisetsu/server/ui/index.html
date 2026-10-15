@@ -149,6 +149,12 @@
     .show-title { font-size: 1.5rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: rgb(var(--z50)); }
     @media (min-width: 768px) { .show-title { font-size: 2rem; } }
     #tab-settings .danger-zone { margin-top: 2rem; }
+
+    /* Text lines under a show card. */
+    .card-meta { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; min-width: 0; font-size: .75rem; line-height: 1rem; color: rgb(var(--t-hint)); }
+    .card-meta-air { display: flex; align-items: baseline; gap: .375rem; min-width: 0; white-space: nowrap; font-size: .8125rem; }
+    .card-problems { display: flex; flex-wrap: wrap; gap: 0 .625rem; font-size: .75rem; line-height: 1rem; }
+    .no-art { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: .5rem; text-align: center; font-weight: 600; font-size: 1.5rem; letter-spacing: -0.02em; color: rgb(var(--ac-soft)); background: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--sunken))); }
     .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 999px; padding: 3px; }
     .seg > button { padding: 0.3rem 0.9rem; font-size: 0.8125rem; border-radius: 999px; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
