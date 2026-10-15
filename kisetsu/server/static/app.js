@@ -3877,6 +3877,12 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       else startApp();
     }
 
+    // A required field inside the closed Advanced block would block saving without anything showing why.
+    document.getElementById('settings-form').addEventListener('invalid', e => {
+      const block = e.target.closest('details');
+      if (block) block.open = true;
+    }, true);
+
     new ResizeObserver(fitShowGrids).observe(document.getElementById('main-scroll-container'));
     window.addEventListener('resize', fitShowGrids);
 
