@@ -428,7 +428,7 @@
         Paused: 'Monitoring is paused for this show.',
       };
       return tagTips[label]
-        ? `<span class="px-1.5 py-0.5 inline-flex items-center rounded text-[11px] font-medium border ${cfg.bg}" title="${tagTips[label]}">${label}</span>`
+        ? `<span class="px-1.5 py-0.5 inline-flex items-center rounded text-xs font-medium border ${cfg.bg}" title="${tagTips[label]}">${label}</span>`
         : '';
     }
 
@@ -1361,7 +1361,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
           <div class="min-w-0 flex-1 basis-64">
             <div class="flex items-center gap-2 min-w-0">
-              <h2 class="text-xl md:text-2xl font-semibold text-zinc-50 leading-tight tracking-tight truncate" title="${name}">${name}</h2>
+              <h2 class="show-title truncate" title="${name}">${name}</h2>
               <a href="https://anilist.co/anime/${show.anilist_id}" target="_blank" rel="noopener noreferrer" class="flex-shrink-0 text-accent-soft hover:text-zinc-50 transition-colors" title="Open on AniList" aria-label="Open on AniList">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
               </a>
@@ -3220,8 +3220,8 @@ ${h.matched_regex}` : ''}`
         const timeStr = localTime(l.timestamp) || l.time_str || '';
 
         return `<div class="flex items-start gap-3 py-0.5 hover:bg-chrome px-1.5 rounded transition-colors leading-relaxed">
-          <span class="text-accent/70 select-none text-[11px] font-mono shrink-0">${timeStr}</span>
-          <span class="text-zinc-200 break-all select-text font-mono text-[11px] flex-1">${mark}${escapeHtml(l.message || '')}</span>
+          <span class="text-zinc-500 select-none text-xs font-mono shrink-0">${timeStr}</span>
+          <span class="text-zinc-200 break-all select-text font-mono text-xs flex-1">${mark}${escapeHtml(l.message || '')}</span>
         </div>`;
       });
 
@@ -3453,7 +3453,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       if (setupSandbox) {
         // The label comes from the server, so a normal install never carries the text.
         const pill = document.createElement('span');
-        pill.className = 'ml-auto text-[11px] font-medium px-2 py-0.5 rounded-full st-warn';
+        pill.className = 'ml-auto text-xs font-medium px-2 py-0.5 rounded-full st-warn';
         pill.textContent = status.sandbox_label || 'Sandbox';
         setupEl('setup-header-title').after(pill);
       }

@@ -144,7 +144,11 @@
     .adv > summary::-webkit-details-marker { display: none; }
     .adv > summary::before { content: ""; width: 0.4rem; height: 0.4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
     .adv[open] > summary::before { transform: rotate(45deg); }
-    .section-title { font-size: 0.8125rem; font-weight: 600; color: rgb(var(--t-label)); letter-spacing: 0.02em; }
+    .section-title { font-size: 1rem; line-height: 1.5rem; font-weight: 600; color: rgb(var(--t-title)); }
+    .page-heading { font-size: 1rem; line-height: 1.5rem; font-weight: 600; color: rgb(var(--t-title)); }
+    .show-title { font-size: 1.5rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: rgb(var(--z50)); }
+    @media (min-width: 768px) { .show-title { font-size: 2rem; } }
+    #tab-settings .danger-zone { margin-top: 2rem; }
     .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 999px; padding: 3px; }
     .seg > button { padding: 0.3rem 0.9rem; font-size: 0.8125rem; border-radius: 999px; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
@@ -329,7 +333,7 @@
 
     <div class="p-3 space-y-2">
       <div class="flex items-baseline justify-between gap-2 px-0.5">
-        <span class="text-[11px] text-zinc-500">Next check</span>
+        <span class="text-xs text-zinc-500">Next check</span>
         <span id="sidebar-next-check" class="text-zinc-300 text-xs tabular-nums" title="">Calculating...</span>
       </div>
 
@@ -354,7 +358,7 @@
         <button onclick="toggleSidebar(true)" class="md:hidden p-1.5 -ml-1.5 rounded-lg text-zinc-300 hover:bg-raised" aria-label="Open menu">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
         </button>
-        <h1 id="page-title" class="text-sm font-semibold text-zinc-100 truncate">Shows</h1>
+        <h1 id="page-title" class="page-heading truncate">Shows</h1>
       </div>
 
       <div class="flex items-center gap-3 text-xs font-medium flex-shrink-0">
@@ -377,7 +381,7 @@
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-baseline gap-2">
               <h2 class="section-title">Releasing</h2>
-              <span id="header-count-releasing" class="text-[11px] font-medium tabular-nums px-1.5 py-px rounded-full bg-accent/15 text-accent-soft">0</span>
+              <span id="header-count-releasing" class="text-xs font-medium tabular-nums px-1.5 py-px rounded-full bg-accent/15 text-accent-soft">0</span>
             </div>
             <div class="flex items-center gap-2">
             <button type="button" onclick="autoDiscoverShows()" class="btn btn-sm" title="Reset every show to auto-discover. Hand-picked feeds are cleared; shows locked to a feed they downloaded from are kept.">Auto-discover</button>
@@ -413,7 +417,7 @@
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-baseline gap-2">
               <h2 class="section-title">Completed</h2>
-              <span id="header-count-completed" class="text-[11px] font-medium tabular-nums px-1.5 py-px rounded-full bg-violet-500/15 text-violet-400">0</span>
+              <span id="header-count-completed" class="text-xs font-medium tabular-nums px-1.5 py-px rounded-full bg-violet-500/15 text-violet-400">0</span>
             </div>
           </div>
           <div id="grid-completed" class="show-grid">
@@ -424,7 +428,7 @@
           <div class="flex items-center justify-between gap-3">
             <div class="flex items-baseline gap-2">
               <h2 class="section-title">Planned</h2>
-              <span id="header-count-planned" class="text-[11px] font-medium tabular-nums px-1.5 py-px rounded-full bg-sky-500/15 text-sky-400">0</span>
+              <span id="header-count-planned" class="text-xs font-medium tabular-nums px-1.5 py-px rounded-full bg-sky-500/15 text-sky-400">0</span>
             </div>
           </div>
           <div id="grid-planned" class="show-grid">
@@ -661,7 +665,7 @@
           </div>
         </form>
 
-        <div class="card px-4 py-3 flex items-center justify-between gap-4">
+        <div class="danger-zone card px-4 py-3 flex items-center justify-between gap-4">
           <div>
             <h3 class="section-title">Clear all shows</h3>
             <p class="field-hint !mt-0.5">Removes every show, the history and the app's RSS rules. Downloads are kept.</p>
@@ -694,7 +698,7 @@
 
         <div class="bg-sunken border border-line-soft rounded-xl overflow-hidden flex flex-col h-[calc(100dvh-13rem)] min-h-[320px]">
           <div class="h-10 bg-chrome border-b border-line-soft px-4 flex items-center justify-between flex-shrink-0 text-xs text-zinc-400">
-            <div id="logs-count-badge" class="text-zinc-500 text-[11px]">0 entries</div>
+            <div id="logs-count-badge" class="text-zinc-500 text-xs">0 entries</div>
           </div>
 
           <div id="logs-container" class="flex-1 p-4 font-mono text-xs overflow-y-auto space-y-1.5 bg-sunken select-text">
@@ -802,7 +806,7 @@
               <div class="flex items-center justify-between gap-3">
                 <span class="flex items-center gap-2">
                   <span class="text-sm font-semibold text-zinc-100">Direct</span>
-                  <span class="text-[11px] font-medium px-1.5 py-px rounded-full bg-accent/15 text-accent-soft">Default</span>
+                  <span class="text-xs font-medium px-1.5 py-px rounded-full bg-accent/15 text-accent-soft">Default</span>
                 </span>
                 <span class="setup-radio"></span>
               </div>
