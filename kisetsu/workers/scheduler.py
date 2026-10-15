@@ -7,6 +7,7 @@ from kisetsu.clients.qbit import QBitClient
 from kisetsu.config import (
     HUNTING_RECENT_DAYS,
     DEFAULT_DOWNLOAD_MODE,
+    MISSED_AFTER_HOURS,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
 from kisetsu.core.grabber import _grab_feeds
@@ -76,6 +77,9 @@ def classify_shows(
 
     mode = str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower()
     is_direct = mode == "direct"
+    # In direct mode an episode is hunted until it would be marked missed; after
+    # that it is still grabbed whenever qBittorrent's own refresh brings it in.
+    hunt_for = timedelta(hours=MISSED_AFTER_HOURS) if is_direct else None
 
     shows = session.exec(select(Monitored)).all()
     if not shows:
@@ -134,7 +138,7 @@ def classify_shows(
                 latest_air_at = air_times.get(latest_aired_episode)
                 latest_is_recent = (
                     latest_air_at is None
-                    or now - latest_air_at <= timedelta(days=HUNTING_RECENT_DAYS)
+                    or now - latest_air_at <= (hunt_for or timedelta(days=HUNTING_RECENT_DAYS))
                 )
                 newest_wanted = session.exec(
                     select(Episode.id).where(
@@ -156,14 +160,19 @@ def classify_shows(
         if airing_at is None:
             continue
 
+        has_aired = airing_at <= now
+        if has_aired and hunt_for is not None and now - airing_at > hunt_for:
+            has_aired = False
+            airing_at = None
+
         if s.current_feed_id is None or s.status == MonitoredStatus.STALLED:
-            if airing_at <= now:
+            if has_aired:
                 hunting_shows.append(s)
-            else:
+            elif airing_at is not None:
                 unresolved_upcoming.append((airing_at, s))
         elif s.status == MonitoredStatus.UNCONFIRMED:
-            is_near = (airing_at <= now)
-            if not is_near and (s.next_airing_episode or 1) > 1:
+            is_near = has_aired
+            if not is_near and airing_at is not None and (s.next_airing_episode or 1) > 1:
                 previous_air = airing_at - timedelta(days=7)
                 expected_ep = (s.next_airing_episode or 1) - 1
                 # previous_air lies in the future when the next airing is more
@@ -177,7 +186,7 @@ def classify_shows(
 
             if is_near:
                 hunting_shows.append(s)
-            else:
+            elif airing_at is not None:
                 unresolved_upcoming.append((airing_at, s))
 
     return PollClassification(
