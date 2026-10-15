@@ -592,15 +592,10 @@
       `;
     }
 
-    function formatTime12(date) {
+    // 17:00 or 5:00 PM, whichever the browser's locale uses.
+    function formatTime(date) {
       if (!date) return '';
-      let h = date.getHours();
-      const m = String(date.getMinutes()).padStart(2, '0');
-      const isPm = h >= 12;
-      h = h % 12;
-      if (h === 0) h = 12;
-      const period = isPm ? 'p. m.' : 'a. m.';
-      return `${h}:${m} ${period}`;
+      return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     }
 
     function renderCalendar() {
@@ -652,7 +647,7 @@
 
               const timeMinutes = baseAirDate.getHours() * 60 + baseAirDate.getMinutes();
               const hasPassed = isPastDay || (isToday && (timeMinutes <= nowMinutes));
-              const timeStr = formatTime12(showInstanceDate);
+              const timeStr = formatTime(showInstanceDate);
               const isPaused = (show.status || '').toUpperCase() === 'PAUSED';
 
               colShows.push({
@@ -668,7 +663,7 @@
             if (baseAirDate >= monday && baseAirDate <= sunday && baseAirDate.toDateString() === colDate.toDateString()) {
               const timeMinutes = baseAirDate.getHours() * 60 + baseAirDate.getMinutes();
               const hasPassed = isPastDay || (isToday && (timeMinutes <= nowMinutes));
-              const timeStr = formatTime12(baseAirDate);
+              const timeStr = formatTime(baseAirDate);
               const isPaused = (show.status || '').toUpperCase() === 'PAUSED';
 
               colShows.push({
@@ -690,30 +685,19 @@
         const headerHtml = `
           <div class="pb-2 mb-2 border-b ${isToday ? 'border-accent/60' : isPastDay ? 'border-line-soft' : 'border-line'}">
             <div class="flex items-baseline gap-1.5 ${isPastDay ? 'opacity-80' : 'opacity-100'}">
-              <span class="text-sm font-semibold ${isToday ? 'text-accent' : isPastDay ? 'text-zinc-400' : 'text-zinc-100'}">${dayName}</span>
+              <span class="section-title ${isToday ? 'text-accent' : isPastDay ? 'text-zinc-400' : 'text-zinc-100'}">${dayName}</span>
               <span class="text-xs ${isPastDay ? 'text-zinc-500' : 'text-zinc-400'} font-medium">${dateStr}</span>
             </div>
           </div>
         `;
 
+        const nowLine = '<div class="cal-now select-none">Now</div>';
         let itemsHtml = '';
 
         if (colShows.length === 0) {
-          if (isToday) {
-            itemsHtml = `
-              <div class="py-6 flex flex-col items-center justify-center space-y-2 select-none">
-                <div class="w-full relative py-1 my-1 -ml-3 flex items-center gap-1 z-20">
-                  <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
-                  <div class="h-px w-full bg-accent/50"></div>
-                </div>
-                <div class="text-zinc-600 text-xs">No releases</div>
-              </div>
-            `;
-          } else {
-            itemsHtml = `<div class="py-6 text-zinc-600 text-xs select-none">No releases</div>`;
-          }
+          if (isToday) itemsHtml = nowLine;
         } else {
-        const timeSlots = [];
+          const timeSlots = [];
           colShows.forEach(item => {
             const lastSlot = timeSlots[timeSlots.length - 1];
             if (lastSlot && lastSlot.timeMinutes === item.timeMinutes) {
@@ -732,34 +716,20 @@
 
           timeSlots.forEach((slot) => {
             if (isToday && !renderedLine && !slot.hasPassed) {
-              itemsHtml += `
-                <div class="relative py-1 my-1.5 -ml-3 flex items-center gap-1 z-20 select-none">
-                  <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
-                  <div class="h-px w-full bg-accent/50"></div>
-                </div>
-              `;
+              itemsHtml += nowLine;
               renderedLine = true;
             }
 
-            itemsHtml += createTimeSlotHtml(slot, isToday);
+            itemsHtml += createTimeSlotHtml(slot);
           });
 
-          if (isToday && !renderedLine) {
-            itemsHtml += `
-              <div class="relative py-1 my-1.5 -ml-3 flex items-center gap-1 z-20 select-none">
-                <span class="w-2 h-2 rounded-full bg-accent absolute -left-[4px]"></span>
-                <div class="h-px w-full bg-accent/50"></div>
-              </div>
-            `;
-          }
+          if (isToday && !renderedLine) itemsHtml += nowLine;
         }
 
         gridHtml += `
-          <div class="flex flex-col min-h-[380px] ${isPastDay ? 'opacity-85' : 'opacity-100'}">
+          <div class="cal-day ${isPastDay ? 'opacity-85' : 'opacity-100'}">
             ${headerHtml}
-            <div class="relative pl-3.5 space-y-4 flex-1 flex flex-col before:absolute before:left-[3px] before:top-2 before:bottom-2 before:w-[1.5px] before:bg-raised2">
-              ${itemsHtml}
-            </div>
+            <div class="cal-rail ${isToday ? 'cal-rail-today' : ''}">${itemsHtml}</div>
           </div>
         `;
       }
@@ -772,102 +742,36 @@
       }
     }
 
-    function createTimeSlotHtml(slot, isToday) {
-      const isMulti = slot.items.length > 1;
-
-      // The dot is the show's state; it fades once the slot has aired.
-      const stateOf = (i) => (i.show.status || '').toUpperCase();
-      const live = slot.items.filter(i => !i.isPaused);
-      const has = (key) => live.some(i => stateOf(i) === key);
-      let dotColor = 'bg-sky-400';
-      if (!live.length) dotColor = 'bg-zinc-600';
-      else if (has('STALLED')) dotColor = 'bg-rose-400';
-      else if (has('UNCONFIRMED') && live.some(i => i.show.is_released)) dotColor = 'bg-amber-400';
-      else if (has('FIXED')) dotColor = 'bg-emerald-400';
-      if (slot.hasPassed && live.length) dotColor += '/60';
-
-      if (!isMulti) {
-        const item = slot.items[0];
+    function createTimeSlotHtml(slot) {
+      const rows = slot.items.map(item => {
         const show = item.show;
-        const statusKey = (show.status || '').toUpperCase();
-        const isPaused = item.isPaused;
-        const hasPassed = item.hasPassed;
+        const { cfg, label } = resolveShowStatus(show);
+        const dimmed = item.isPaused || item.hasPassed;
+        const name = escapeHtml(show.display_name);
+        const titleColor = (dimmed ? 'text-zinc-400' : 'text-zinc-100') + ' group-hover:text-accent-soft transition-colors';
 
-        const titleColor = ((isPaused || hasPassed) ? 'text-zinc-400' : 'text-zinc-100') + ' group-hover:text-accent-soft transition-colors';
+        const poster = show.cover_image
+          ? `<img src="${escapeHtml(show.cover_image)}" alt="${name}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-canvas ${item.isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
+          : `<div class="relative w-16 aspect-[2/3] rounded-md overflow-hidden flex-shrink-0"><div class="no-art">${escapeHtml(showInitials(show.display_name))}</div></div>`;
 
-        const posterImg = show.cover_image
-          ? `<img src="${escapeHtml(show.cover_image)}" alt="${escapeHtml(show.display_name)}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-canvas ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
-          : `<div class="w-16 aspect-[2/3] bg-canvas border border-zinc-800 rounded-md flex items-center justify-center text-[10px] text-zinc-500 flex-shrink-0">No Art</div>`;
-
-        let epText = show.next_airing_episode ? `Ep ${show.next_airing_episode}` : (show.last_confirmed_episode ? `Ep ${show.last_confirmed_episode}` : 'Ep 1');
-        const anilistUrl = show.anilist_id ? `https://anilist.co/anime/${show.anilist_id}` : '#';
+        const epText = show.next_airing_episode ? `Ep ${show.next_airing_episode}` : (show.last_confirmed_episode ? `Ep ${show.last_confirmed_episode}` : 'Ep 1');
 
         return `
-          <div class="relative group select-none">
-            <div class="flex items-center justify-between gap-1.5 mb-1.5">
-              <div class="flex items-center gap-1.5">
-                <span class="w-2 h-2 rounded-full ${dotColor} absolute -left-[14px] top-[6px] z-10"></span>
-                <span class="text-[13px] tabular-nums ${isPaused ? 'text-zinc-400' : (hasPassed ? 'text-zinc-400' : 'text-zinc-100')} font-medium">${slot.timeStr}</span>
-              </div>
-              <span class="text-xs tabular-nums font-medium ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')}">${epText}</span>
-            </div>
-
-            <a href="${anilistUrl}" target="_blank" rel="noopener noreferrer" class="flex gap-3 items-start cursor-pointer transition-opacity ${isPaused ? 'grayscale opacity-50 hover:opacity-80' : (hasPassed ? 'opacity-80 hover:opacity-100' : 'opacity-100 hover:opacity-90')}">
-              ${posterImg}
-
-              <div class="flex-1 min-w-0 pt-0.5">
-                <h4 class="text-sm font-medium leading-snug line-clamp-3 ${titleColor}" title="${escapeHtml(show.display_name)}">
-                  ${escapeHtml(show.display_name)}
-                </h4>
-              </div>
-            </a>
-          </div>
-        `;
-      }
-
-      const showsHtml = slot.items.map(item => {
-        const show = item.show;
-        const statusKey = (show.status || '').toUpperCase();
-        const isPaused = item.isPaused;
-        const hasPassed = item.hasPassed;
-
-        const titleColor = ((isPaused || hasPassed) ? 'text-zinc-400' : 'text-zinc-100') + ' group-hover:text-accent-soft transition-colors';
-
-        const posterImg = show.cover_image
-          ? `<img src="${escapeHtml(show.cover_image)}" alt="${escapeHtml(show.display_name)}" class="w-16 aspect-[2/3] rounded-md object-cover flex-shrink-0 bg-canvas ${isPaused ? 'grayscale' : ''}" loading="lazy" onerror="this.onerror=null;this.style.display='none'">`
-          : `<div class="w-16 aspect-[2/3] bg-canvas border border-zinc-800 rounded-md flex items-center justify-center text-[10px] text-zinc-500 flex-shrink-0">No Art</div>`;
-
-        let epText = show.next_airing_episode ? `Ep ${show.next_airing_episode}` : (show.last_confirmed_episode ? `Ep ${show.last_confirmed_episode}` : 'Ep 1');
-        const anilistUrl = show.anilist_id ? `https://anilist.co/anime/${show.anilist_id}` : '#';
-
-        return `
-          <a href="${anilistUrl}" target="_blank" rel="noopener noreferrer" class="flex gap-3 items-start cursor-pointer transition-opacity ${isPaused ? 'grayscale opacity-50 hover:opacity-80' : (hasPassed ? 'opacity-80 hover:opacity-100' : 'opacity-100 hover:opacity-90')}">
-            ${posterImg}
-
+          <button type="button" onclick="openShowPage(${show.id})" onpointerenter="prefetchShowPage(${show.id})" class="group flex w-full gap-3 items-start text-left transition-opacity ${item.isPaused ? 'grayscale opacity-50 hover:opacity-80' : (item.hasPassed ? 'opacity-80 hover:opacity-100' : 'opacity-100 hover:opacity-90')}">
+            ${poster}
             <div class="flex-1 min-w-0 pt-0.5">
-              <div class="flex items-start justify-between gap-1">
-                <h4 class="text-sm font-medium leading-snug line-clamp-3 ${titleColor}" title="${escapeHtml(show.display_name)}">
-                  ${escapeHtml(show.display_name)}
-                </h4>
-                <span class="text-xs tabular-nums font-medium ${isPaused ? 'text-zinc-500' : (hasPassed ? 'text-zinc-500' : 'text-zinc-400')} shrink-0 ml-1">${epText}</span>
+              <h4 class="text-sm font-medium leading-snug line-clamp-3 ${titleColor}" title="${name}">${name}</h4>
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-1">
+                <span class="text-xs tabular-nums font-medium ${dimmed ? 'text-zinc-500' : 'text-zinc-400'}">${epText}</span>${showStatusChip(label, cfg)}
               </div>
             </div>
-          </a>
-        `;
+          </button>`;
       }).join('');
 
       return `
-        <div class="relative group select-none">
-          <div class="flex items-center justify-between gap-1.5 mb-2">
-            <div class="flex items-center gap-1.5">
-              <span class="w-2 h-2 rounded-full ${dotColor} absolute -left-[14px] top-[6px] z-10"></span>
-              <span class="text-[13px] tabular-nums ${slot.hasPassed ? 'text-zinc-400' : 'text-zinc-100'} font-medium">${slot.timeStr}</span>
-            </div>
-          </div>
-
-          <div class="space-y-3">
-            ${showsHtml}
-          </div>
+        <div class="cal-slot select-none">
+          <div class="cal-time ${slot.hasPassed ? 'text-zinc-400' : 'text-zinc-100'}">${slot.timeStr}</div>
+          <div class="space-y-3">${rows}</div>
         </div>
       `;
     }

@@ -155,6 +155,15 @@
     .card-meta-air { display: flex; align-items: baseline; gap: .375rem; min-width: 0; white-space: nowrap; font-size: .8125rem; }
     .card-problems { display: flex; flex-wrap: wrap; gap: 0 .625rem; font-size: .75rem; line-height: 1rem; }
     .no-art { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; padding: .5rem; text-align: center; font-weight: 600; font-size: 1.5rem; letter-spacing: -0.02em; color: rgb(var(--ac-soft)); background: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--sunken))); }
+
+    /* Calendar day columns. */
+    .cal-day { display: flex; flex-direction: column; min-height: 20rem; }
+    .cal-slot { padding: .5rem 0; }
+    .cal-time { font-size: .875rem; line-height: 1.25rem; font-weight: 500; font-variant-numeric: tabular-nums; margin-bottom: .375rem; }
+    .cal-rail { flex: 1; padding-left: .875rem; border-left: 1.5px solid rgb(var(--raised2)); }
+    .cal-rail-today { border-left-color: rgb(var(--ac) / .5); }
+    .cal-now { display: flex; align-items: center; gap: .5rem; margin: .5rem 0 .5rem -.875rem; padding-left: .875rem; font-size: .75rem; font-weight: 500; color: rgb(var(--ac-soft)); }
+    .cal-now::after { content: ""; flex: 1; height: 1px; background: rgb(var(--ac) / .5); }
     .seg { display: inline-flex; background: rgb(var(--field)); border: 1px solid rgb(var(--line)); border-radius: 999px; padding: 3px; }
     .seg > button { padding: 0.3rem 0.9rem; font-size: 0.8125rem; border-radius: 999px; color: rgb(var(--t-seg)); transition: background-color .15s, color .15s; }
     .seg > button:hover { color: rgb(var(--t-btn)); }
