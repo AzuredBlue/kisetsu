@@ -35,7 +35,7 @@ from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, failing_feed_since, last_failed_feed_names
 from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
-from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode, show_torrent_preview
+from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, plan_language_move, rebase_ledger, relocate_torrents, restore_episode, show_torrent_preview
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.palette import fetch_hues
@@ -1666,6 +1666,7 @@ class UpdateSettingsRequest(BaseModel):
     refresh_interval_minutes: Optional[int] = None
     stall_wait_hours: Optional[int] = None
     title_language: Optional[str] = None
+    move_existing: Optional[bool] = None
     download_mode: Optional[str] = None
     backfill_window_days: Optional[int] = None
     early_air_tolerance_hours: Optional[int] = None
@@ -1713,6 +1714,44 @@ def _validate_settings_request(req) -> None:
         raise HTTPException(status_code=400, detail="accent_color must be a #rrggbb colour")
     if getattr(req, "accent_tint", None) is not None and req.accent_tint.strip().lower() not in VALID_ACCENT_TINTS:
         raise HTTPException(status_code=400, detail="accent_tint must be off, subtle or full")
+
+
+def _language_move_plan(session: Session, qbit: QBitClient, settings, new_lang: str) -> List[dict]:
+    """The folder renames a language switch causes, refusing while qBittorrent is still moving some of them."""
+    try:
+        plan = plan_language_move(session, qbit, settings, new_lang)
+    except QbitClientError as e:
+        raise HTTPException(status_code=502, detail=f"Could not list the downloads: {e}")
+    moving = sum(item["moving"] for item in plan)
+    if moving:
+        raise HTTPException(
+            status_code=409,
+            detail=f"{moving} downloads are still moving to their folders. Try again in a moment.",
+        )
+    return plan
+
+
+@router.get("/settings/title-language-preview")
+def title_language_preview(lang: str, session: Session = Depends(get_db)):
+    """The folders that would be renamed, and how many downloads would move, if the title language switched to ``lang``."""
+    lang = lang.strip().lower()
+    if lang not in ("english", "romaji"):
+        raise HTTPException(status_code=400, detail="lang must be english or romaji")
+    s = get_settings(session)
+    if lang == s.title_language:
+        return {"shows": [], "torrents": 0}
+    plan = _language_move_plan(session, get_qbit(session), s, lang)
+    shows = [
+        {
+            "name": item["show"].display_name,
+            "old": compress_home_path(item["old"]),
+            "new": compress_home_path(item["new"]),
+            "torrents": len(item["hashes"]),
+        }
+        for item in plan
+        if item["hashes"]
+    ]
+    return {"shows": shows, "torrents": sum(entry["torrents"] for entry in shows)}
 
 
 def _normalize_base_dir(raw: str) -> str:
@@ -1786,9 +1825,18 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
         s.accent_color = req.accent_color.strip().lower()
     if req.accent_tint is not None:
         s.accent_tint = req.accent_tint.strip().lower()
+    move_plan: Optional[List[dict]] = None
+    move_qbit: Optional[QBitClient] = None
     if req.title_language is not None:
         new_lang = req.title_language.strip().lower()
+        if new_lang not in ("english", "romaji"):
+            raise HTTPException(status_code=400, detail="title_language must be english or romaji")
         if new_lang != s.title_language:
+            if req.move_existing:
+                # Planned before the language changes, since the plan reads where the
+                # downloads are now; the move waits until the settings are saved.
+                move_qbit = get_qbit(session)
+                move_plan = _language_move_plan(session, move_qbit, s, new_lang)
             s.title_language = new_lang
             for show in session.exec(select(Monitored)).all():
                 en_t = show.title_english
@@ -1825,6 +1873,16 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
 
     session.add(s)
     session.commit()
+
+    if move_plan is not None:
+        move_logs, failed = relocate_torrents(move_qbit, move_plan)
+        for line in move_logs:
+            state.add_log(line, "ERROR" if line.startswith("Could not") else "INFO")
+        if failed:
+            state.add_log(
+                "Some downloads stayed in their old folders: " + ", ".join(failed) + ".",
+                "WARNING",
+            )
 
     if new_mode != previous_mode:
         if new_mode == "direct":

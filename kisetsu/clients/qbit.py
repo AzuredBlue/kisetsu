@@ -514,6 +514,16 @@ class QBitClient:
         except Exception as e:
             raise QbitClientError(f"Failed to resume torrents: {e}") from e
 
+    def set_torrent_location(self, torrent_hashes: List[str], location: str) -> None:
+        """Move torrents (and their files) to a new save path; qBittorrent keeps them running."""
+        if not torrent_hashes or not location:
+            return
+        client = self.get_client()
+        try:
+            client.torrents_set_location(location=location, torrent_hashes=torrent_hashes)
+        except Exception as e:
+            raise QbitClientError(f"Failed to move torrents to {location}: {e}") from e
+
     def recheck_torrents(self, torrent_hashes: List[str]) -> None:
         if not torrent_hashes:
             return

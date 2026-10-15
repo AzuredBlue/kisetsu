@@ -2765,12 +2765,26 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
 
     async function setTitleLanguage(lang) {
       const previous = currentSettings && currentSettings.title_language;
-      updateTitleLanguageUi(lang);
+      if (previous === lang) return;
       try {
+        const plan = await apiFetch(`/api/settings/title-language-preview?lang=${encodeURIComponent(lang)}`);
+        let moveExisting = false;
+        if (plan.torrents > 0) {
+          const folders = plan.shows.map(s => `${s.old}  ->  ${s.new}`).join('\n');
+          const label = lang === 'romaji' ? 'Romaji' : 'English';
+          if (!confirm(
+            `Switching to ${label} renames the download folders of ${plan.shows.length} shows. ` +
+            `Their ${plan.torrents} downloads will move to the new folders.\n\n${folders}\n\nSwitch and move them?`
+          )) {
+            return;
+          }
+          moveExisting = true;
+        }
+        updateTitleLanguageUi(lang);
         await apiFetch('/api/settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title_language: lang })
+          body: JSON.stringify({ title_language: lang, move_existing: moveExisting })
         });
         if (currentSettings) currentSettings.title_language = lang;
         await loadShows();

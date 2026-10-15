@@ -635,6 +635,60 @@ def show_torrent_preview(session: Session, qbit: QBitClient, settings: Settings,
     return sorted(entries.values(), key=lambda entry: (not entry["tracked"], entry["name"] or entry["hash"]))
 
 
+def _same_dir(a: Any, b: str) -> bool:
+    return str(a or "").rstrip("/\\") == b.rstrip("/\\")
+
+
+def plan_language_move(session: Session, qbit: QBitClient, settings: Settings, new_language: str) -> List[Dict[str, Any]]:
+    """The folder renames switching to ``new_language`` causes, per show with torrents to move.
+
+    ``settings.title_language`` must still be the current language. Torrents are
+    judged by where qBittorrent has them now, so one that already moved (an
+    earlier switch, or one cut short and reversed) is left alone or moved back,
+    and one the user relocated by hand is never touched. Each entry has ``show``,
+    ``old``, ``new``, ``hashes`` and ``moving``, the torrents qBittorrent is
+    still moving.
+    """
+    plan: List[Dict[str, Any]] = []
+    for show in session.exec(select(Monitored)).all():
+        old = resolve_save_path(settings.base_dir, effective_title(show, settings.title_language), show.save_folder)
+        new = resolve_save_path(settings.base_dir, effective_title(show, new_language), show.save_folder)
+        if not old or not new or _same_dir(old, new):
+            continue
+        hashes = [entry["hash"] for entry in show_torrent_preview(session, qbit, settings, show)]
+        found: List[Any] = []
+        for start in range(0, len(hashes), 100):
+            found.extend(qbit.get_torrents(hashes=hashes[start:start + 100]))
+        here = [torrent for torrent in found if _same_dir(getattr(torrent, "save_path", ""), old)]
+        moving = [torrent for torrent in found if _torrent_state(torrent) == "moving"]
+        if here or moving:
+            plan.append({
+                "show": show,
+                "old": old,
+                "new": new,
+                "hashes": [h for h in (_torrent_hash(torrent) for torrent in here) if h],
+                "moving": len(moving),
+            })
+    return plan
+
+
+def relocate_torrents(qbit: QBitClient, plan: List[Dict[str, Any]]) -> Tuple[List[str], List[str]]:
+    """Move what ``plan_language_move`` found; returns the log lines and the names of shows that failed."""
+    logs: List[str] = []
+    failed: List[str] = []
+    for item in plan:
+        if not item["hashes"]:
+            continue
+        try:
+            qbit.set_torrent_location(item["hashes"], item["new"])
+        except QbitClientError as e:
+            failed.append(item["show"].display_name)
+            logs.append(f"Could not move the downloads of {item['show'].display_name}: {e}")
+            continue
+        logs.append(f"Moved {len(item['hashes'])} downloads of {item['show'].display_name} to {item['new']}")
+    return logs, failed
+
+
 def find_show_torrents(session: Session, qbit: QBitClient, settings: Settings, show: Monitored) -> List[str]:
     """The hashes of every torrent a deleted show leaves in qBittorrent (see ``show_torrent_preview``)."""
     return sorted(entry["hash"] for entry in show_torrent_preview(session, qbit, settings, show))
