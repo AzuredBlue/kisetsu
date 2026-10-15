@@ -248,5 +248,5 @@ def calculate_next_poll_interval(
     retry_in = earliest_scheduled_retry(session)
     if retry_in is not None and retry_in < sleep_duration:
         retry_sleep = max(MIN_RETRY_SLEEP_SECONDS, retry_in)
-        return retry_sleep, f"{reason}, retrying a download in {retry_sleep}s"
+        return retry_sleep, f"{reason}, retrying a download"
     return sleep_duration, reason

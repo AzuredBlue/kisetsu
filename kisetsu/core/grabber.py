@@ -515,7 +515,7 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             episode=episode.episode_number,
         )
         session.commit()
-    return f"Added '{show_name(episode, session)}' Ep {episode.episode_number} v{operation.version}"
+    return None
 
 
 def show_name(episode: Episode, session: Session) -> str:

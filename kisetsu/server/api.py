@@ -1832,7 +1832,7 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
     message = "Settings updated."
     if new_mode != previous_mode:
         message = f"Settings updated. Download engine is now '{new_mode}'."
-    state.add_log(message, "INFO")
+        state.add_log(message, "INFO")
     return {
         "status": "success",
         "message": message,

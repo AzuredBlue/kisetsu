@@ -22,6 +22,8 @@ class ServerState:
         # True while the background loop waits on qBittorrent's feeds after a forced refresh.
         self.feeds_refreshing: bool = False
         self.last_feed_refresh_added: Optional[int] = None
+        # What the last logged check reported, so an identical result is not logged again.
+        self.last_check_key: Optional[tuple] = None
         # One mutex guards the cycle ownership and the refresh request, so a
         # request can never be consumed by a cycle that did not start because
         # it already held the cycle.

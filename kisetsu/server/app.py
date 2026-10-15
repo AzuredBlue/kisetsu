@@ -55,13 +55,21 @@ def _format_sleep(seconds: int) -> str:
     return f"{hours}h {minutes}m" if minutes else f"{hours}h"
 
 
-def _set_next_check(seconds: int, reason: str, log: bool = True) -> None:
+def _set_next_check(seconds: int, reason: str, summary: Optional[str] = None) -> None:
+    """Record when the next check runs and log it, unless the last logged check said the same."""
     now_utc = datetime.now(timezone.utc)
     state.next_check_seconds = seconds
     state.next_check_reason = reason
     state.target_next_check_time = now_utc + timedelta(seconds=seconds)
-    if log:
-        state.add_log(f"Next check in {_format_sleep(seconds)}: {reason}", "INFO")
+    if summary is None:
+        key = ("next", reason)
+        line = f"Next check in {_format_sleep(seconds)}: {reason}"
+    else:
+        key = ("done", summary, reason)
+        line = f"Check done: {summary}. Next in {_format_sleep(seconds)}: {reason}"
+    if state.last_check_key != key:
+        state.last_check_key = key
+        state.add_log(line, "INFO")
 
 
 def _next_qbit_retry(retry_index: int) -> int:
@@ -134,15 +142,13 @@ async def background_supervisor_task():
                     supervisor = Supervisor(session=session, qbit=qbit, anilist=anilist, settings=settings)
                     use_feed_cache = (settings.download_mode or "rules") == "direct"
                     cycle_forced = needs_rss_refresh
-                    feeds_seconds = 0
                     holding_slot = False
-                    cycle_done: Optional[str] = None
+                    cycle_summary: Optional[str] = None
                     try:
                         if use_feed_cache:
                             # Waiting for qBittorrent's feeds to settle is the slow part of a
                             # check and touches none of our data, so it happens before the
                             # slot is taken; the check then reads the copy in the database.
-                            feeds_started = time.monotonic()
                             state.feeds_refreshing = needs_rss_refresh
                             try:
                                 added = await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh)
@@ -150,7 +156,6 @@ async def background_supervisor_task():
                                 state.feeds_refreshing = False
                             if needs_rss_refresh:
                                 state.last_feed_refresh_added = added
-                            feeds_seconds = int(time.monotonic() - feeds_started)
                             needs_rss_refresh = False
                         if not state.try_begin_cycle("background"):
                             # A manual cycle or show edit holds the slot. Wait for it
@@ -158,7 +163,6 @@ async def background_supervisor_task():
                             await asyncio.sleep(BUSY_RETRY_SECONDS)
                             continue
                         holding_slot = True
-                        cycle_started = time.monotonic()
                         logs = await supervisor.run_full_cycle(
                             force_rss_refresh=cycle_forced,
                             feed_cache=use_feed_cache,
@@ -166,12 +170,9 @@ async def background_supervisor_task():
                         needs_rss_refresh = False
                         state.last_cycle_time = datetime.now(timezone.utc)
                         retry_index = 0
-                        cycle_seconds = int(time.monotonic() - cycle_started)
                         for l in logs:
                             state.add_log(l, "INFO")
-                        cycle_done = f"Check done: {supervisor.summary}"
-                        if cycle_seconds + feeds_seconds >= 10:
-                            cycle_done = f"Check done in {cycle_seconds + feeds_seconds}s: {supervisor.summary}"
+                        cycle_summary = supervisor.summary
                     except QbitAuthenticationError as e:
                         connection_ready = False
                         needs_rss_refresh = True
@@ -218,15 +219,8 @@ async def background_supervisor_task():
                             if isinstance(retry_in, (int, float)) and retry_in < sleep_seconds:
                                 # A deferred AniList refresh must not wait out a long routine sleep.
                                 sleep_seconds = max(60, retry_in)
-                                reason = f"{reason}, AniList refresh in {_format_sleep(sleep_seconds)}"
-                            next_reason = deferred_reason or reason
-                            if cycle_done:
-                                _set_next_check(sleep_seconds, next_reason, log=False)
-                                state.add_log(
-                                    f"{cycle_done}. Next in {_format_sleep(sleep_seconds)}: {next_reason}", "INFO"
-                                )
-                            else:
-                                _set_next_check(sleep_seconds, next_reason)
+                                reason = f"{reason}, waiting on AniList"
+                            _set_next_check(sleep_seconds, deferred_reason or reason, cycle_summary)
                 else:
                     state.daemon_active = False
 
