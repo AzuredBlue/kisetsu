@@ -3199,9 +3199,9 @@ ${h.matched_regex}` : ''}`
       if (seconds === undefined || seconds === null) return 'Calculating...';
       const totalSec = Math.max(0, Math.floor(seconds));
       if (totalSec <= 0) return 'Checking now...';
-      if (totalSec < 60) return `< 1m (${totalSec}s)`;
+      if (totalSec < 60) return `in ${totalSec}s`;
       const totalMin = Math.floor(totalSec / 60);
-      if (totalMin < 60) return `in ${totalMin}m`;
+      if (totalMin < 60) return `in ${totalMin}m ${totalSec % 60}s`;
       const h = Math.floor(totalMin / 60);
       const m = totalMin % 60;
       return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
@@ -3226,13 +3226,13 @@ ${h.matched_regex}` : ''}`
       }
     }
 
-    function tickCountdown() {
-      renderServerPills();
+    function tickNextCheck() {
       const nextEl = document.getElementById('sidebar-next-check');
       if (nextEl && runningCheck) {
         const seconds = runningCheck.seconds + Math.round((Date.now() - runningCheck.seenAt) / 1000);
         nextEl.textContent = `Checking… ${seconds}s`;
-        nextEl.title = `A ${runningCheck.label} is running.`;
+        const runningTip = `A ${runningCheck.label} is running.`;
+        if (nextEl.title !== runningTip) nextEl.title = runningTip;
       } else if (nextEl) {
         if (!targetNextCheckTime) {
           nextEl.textContent = 'Routine check';
@@ -3243,11 +3243,17 @@ ${h.matched_regex}` : ''}`
 
           if (nextCheckReason) {
             const targetDate = new Date(targetNextCheckTime);
-            nextEl.title = `${nextCheckReason}
+            const tip = `${nextCheckReason}
 Target Time: ${targetDate.toLocaleTimeString()}`;
+            if (nextEl.title !== tip) nextEl.title = tip;
           }
         }
       }
+    }
+
+    function tickCountdown() {
+      renderServerPills();
+      tickNextCheck();
 
       document.querySelectorAll('.show-countdown[data-air-at]').forEach(el => {
         const airAt = el.getAttribute('data-air-at');
@@ -3833,6 +3839,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       if (showIdFromHash() !== null) openShowPage(showIdFromHash(), { push: false, instant: true });
       setInterval(updateStatus, 15000);
       setInterval(tickCountdown, 30000);
+      setInterval(() => { if (!document.hidden) tickNextCheck(); }, 1000);
       toggleLogsAutoRefresh(true);
     }
 
