@@ -11,6 +11,7 @@
       'FIXED': { label: 'Working', bg: 'st-ok' },
       'UNCONFIRMED': { label: 'Testing', bg: 'st-warn' },
       'UPCOMING': { label: 'Upcoming', bg: 'st-info' },
+      'WAITING': { label: 'Waiting', bg: 'st-info' },
       'STALLED': { label: 'Stalled', bg: 'st-bad' },
       'COMPLETED': { label: 'Completed', bg: 'st-done' },
       'PAUSED': { label: 'Paused', bg: 'st-idle' },
@@ -424,6 +425,7 @@
     function showStatusChip(label, cfg) {
       const tagTips = {
         Testing: 'No release seen yet. Trying the feeds by priority.',
+        Waiting: 'Aired, but no release has turned up yet. It is grabbed as soon as a feed carries it.',
         Stalled: 'The download has stopped making progress.',
         Paused: 'Monitoring is paused for this show.',
       };
@@ -1183,6 +1185,9 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         if (!show.is_released) {
           label = 'Upcoming';
           cfg = STATUS_CONFIG['UPCOMING'];
+        } else if (show.waiting_for_release) {
+          label = 'Waiting';
+          cfg = STATUS_CONFIG['WAITING'];
         } else {
           label = 'Testing';
           cfg = STATUS_CONFIG['UNCONFIRMED'];
@@ -1214,7 +1219,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         } else {
           epLabel = `Ep ${show.next_airing_episode}`;
           airInfo = formatCardCountdown(cd, localDateTime(show.next_airing_at));
-          if (cd === 'Aired') airClass = 'text-amber-300';
+          if (cd === 'Aired' && !show.waiting_for_release) airClass = 'text-amber-300';
           countdownAttr = `data-air-at="${show.next_airing_at}" data-date-str="${localDateTime(show.next_airing_at)}"`;
         }
       } else if (show.last_confirmed_episode) {
@@ -1910,7 +1915,9 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       } else if (data.candidate_feed_id) {
         feedHint = `May move to ${escapeHtml(data.candidate_feed_name || 'another feed')}, which posted first.`;
       } else if (!isCompleted && data.has_rule && (isUpcoming || isTesting)) {
-        feedHint = isUpcoming ? 'Auto: first feed to post wins.' : 'Auto: testing feeds by priority.';
+        feedHint = isUpcoming ? 'Auto: first feed to post wins.'
+          : data.waiting_for_release ? 'Auto: waiting for a release.'
+          : 'Auto: testing feeds by priority.';
       }
       const feedUrlTitle = (data.feed_url && !isAutoManaged) ? escapeHtml(data.feed_url) : '';
 
@@ -3342,7 +3349,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
 
         // The lists on screen are read once; reload them quietly when the ledger moved on the server.
         const fingerprint = [
-          st.last_cycle_time, st.counts.works, st.counts.testing, st.counts.upcoming, st.counts.stalled,
+          st.last_cycle_time, st.counts.works, st.counts.testing, st.counts.waiting, st.counts.upcoming, st.counts.stalled,
           st.counts.paused, st.counts.completed, st.wanted_episodes, st.completed_episodes,
           st.in_flight_episodes, st.failed_episodes, st.missed_episodes,
         ].join('|');

@@ -55,7 +55,7 @@ from kisetsu.core.rules import (
     sanitize_folder_name,
     show_match_patterns,
 )
-from kisetsu.workers.scheduler import calculate_next_poll_interval
+from kisetsu.workers.scheduler import calculate_next_poll_interval, waiting_for_release
 from kisetsu.server.state import state
 
 logger = logging.getLogger("kisetsu.server.api")
@@ -277,6 +277,7 @@ def get_shows(session: Session = Depends(get_db)):
             "save_folder": s.save_folder,
             "save_path": resolved_save_path,
             "is_released": is_released,
+            "waiting_for_release": waiting_for_release(s, now, settings.download_mode, show_episodes),
             "custom_aliases": s.custom_aliases,
             "feed_pinned": bool(s.feed_pinned),
             "feed_learned": s.learned_feed_id is not None,
@@ -742,6 +743,12 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "matched_release_group": show.matched_release_group,
         "has_learned_pattern": has_learned_pattern,
         "is_upcoming": is_upcoming,
+        "waiting_for_release": waiting_for_release(
+            show,
+            utc_now(),
+            download_mode,
+            session.exec(select(Episode).where(Episode.monitored_id == show.id)).all(),
+        ),
         "feed_pinned": bool(show.feed_pinned),
         "feed_learned": show.learned_feed_id is not None,
         "feed_locked": show.feed_is_locked,
@@ -2255,12 +2262,21 @@ def get_system_status(session: Session = Depends(get_db)):
     paused = sum(1 for s in shows if s.status == MonitoredStatus.PAUSED)
     completed = sum(1 for s in shows if s.status == MonitoredStatus.COMPLETED)
 
+    download_mode = normalized_download_mode(session)
+    unconfirmed_ids = [s.id for s in shows if s.status == MonitoredStatus.UNCONFIRMED]
+    episodes_by_show: Dict[int, List[Episode]] = {}
+    if unconfirmed_ids:
+        for episode in session.exec(select(Episode).where(Episode.monitored_id.in_(unconfirmed_ids))).all():
+            episodes_by_show.setdefault(episode.monitored_id, []).append(episode)
     upcoming = 0
     testing = 0
+    waiting = 0
     for s in shows:
         if s.status == MonitoredStatus.UNCONFIRMED:
             if is_show_rule_unreleased(s):
                 upcoming += 1
+            elif waiting_for_release(s, now, download_mode, episodes_by_show.get(s.id, [])):
+                waiting += 1
             else:
                 testing += 1
 
@@ -2296,7 +2312,7 @@ def get_system_status(session: Session = Depends(get_db)):
         "anilist_blocked_until": (
             datetime.fromtimestamp(anilist_blocked_until, tz=timezone.utc).isoformat() if anilist_blocked_until else None
         ),
-        "download_mode": normalized_download_mode(session),
+        "download_mode": download_mode,
         "all_paused": bool(get_settings(session).all_paused),
         "wanted_episodes": wanted,
         "is_running_cycle": state.is_running_cycle,
@@ -2313,6 +2329,7 @@ def get_system_status(session: Session = Depends(get_db)):
             "works": works,
             "upcoming": upcoming,
             "testing": testing,
+            "waiting": waiting,
             "stalled": stalled,
             "paused": paused,
             "completed": completed,

@@ -430,6 +430,7 @@ def test_system_status(client, session):
         "works": 1,
         "upcoming": 1,
         "testing": 0,
+        "waiting": 0,
         "stalled": 1,
         "paused": 1,
         "completed": 1,

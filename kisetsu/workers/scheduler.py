@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient
 from kisetsu.config import (
@@ -59,6 +59,39 @@ def earliest_scheduled_retry(session: Session, now: Optional[datetime] = None) -
     return max(0, int((soonest - now).total_seconds()))
 
 
+def past_hunting_window(air_at: Optional[datetime], now: datetime, download_mode: str) -> bool:
+    """In direct mode, whether an aired episode is past the day it is hunted for.
+
+    It is still grabbed after that, whenever qBittorrent's own refresh brings it in.
+    """
+    if air_at is None or str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower() != "direct":
+        return False
+    return now - as_utc(air_at) > timedelta(hours=MISSED_AFTER_HOURS)
+
+
+def waiting_for_release(show: Monitored, now: datetime, download_mode: str, episodes: Iterable[Episode] = ()) -> bool:
+    """An unconfirmed show that aired, was hunted for a day, and is now left to the regular refresh.
+
+    The newest stored episode that has aired decides, because AniList's next air time
+    moves on to the following episode as soon as one airs. A finished show with no air
+    time at all (a movie) was never hunted, so it waits from the start.
+    """
+    if show.status != MonitoredStatus.UNCONFIRMED:
+        return False
+    if str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower() != "direct":
+        return False
+    aired = [episode for episode in episodes if episode.air_at is not None and as_utc(episode.air_at) <= now]
+    if aired:
+        newest = max(aired, key=lambda episode: episode.episode_number)
+        return (
+            newest.status in (EpisodeStatus.WANTED, EpisodeStatus.MISSED)
+            and past_hunting_window(newest.air_at, now, download_mode)
+        )
+    if show.next_airing_at is not None:
+        return past_hunting_window(show.next_airing_at, now, download_mode)
+    return show.anilist_status == "FINISHED"
+
+
 def classify_shows(
     session: Session,
     *,
@@ -77,8 +110,6 @@ def classify_shows(
 
     mode = str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower()
     is_direct = mode == "direct"
-    # In direct mode an episode is hunted until it would be marked missed; after
-    # that it is still grabbed whenever qBittorrent's own refresh brings it in.
     hunt_for = timedelta(hours=MISSED_AFTER_HOURS) if is_direct else None
 
     shows = session.exec(select(Monitored)).all()
@@ -161,7 +192,7 @@ def classify_shows(
             continue
 
         has_aired = airing_at <= now
-        if has_aired and hunt_for is not None and now - airing_at > hunt_for:
+        if has_aired and past_hunting_window(airing_at, now, mode):
             has_aired = False
             airing_at = None
 
