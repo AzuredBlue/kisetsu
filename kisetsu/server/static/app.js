@@ -847,6 +847,18 @@
       const episodeEntries = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
+    // "airs Sat 5:00 PM" for an episode still to come, with the date once it is a week or more away.
+    function episodeAirLabel(ep) {
+      if (String(ep.status).toLowerCase() !== 'wanted' || !ep.air_at) return '';
+      const at = new Date(ep.air_at);
+      const ahead = at - Date.now();
+      if (isNaN(ahead) || ahead <= 0) return '';
+      const when = ahead >= 6 * 86400000
+        ? at.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      return `airs ${when}`;
+    }
+
         // A wanted episode whose air time has passed is being searched for, unlike one still to come.
         const failed = String(ep.status).toLowerCase() === 'failed';
         const aired = String(ep.status).toLowerCase() === 'wanted' && ep.air_at && new Date(ep.air_at) <= Date.now();
@@ -856,7 +868,9 @@
         const showPaused = data.status === 'paused';
         const statusLabel = retrying
           ? `retry ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
-          : aired ? (showPaused ? 'aired · paused' : 'aired · searching') : ep.status;
+          : aired ? (showPaused ? 'aired · paused' : 'aired · searching')
+          : done && ep.downloaded_at ? formatRelativeTime(ep.downloaded_at)
+          : episodeAirLabel(ep) || ep.status;
         const statusCls = done ? 'text-emerald-400' : failed ? 'text-rose-400' : missed || retrying ? 'text-amber-400' : aired && !showPaused ? 'text-sky-400' : 'text-zinc-500';
         const reason = ep.last_error ? ` title="${escapeHtml(ep.last_error)}"` : '';
         const retryMatch = failed && isDirect
@@ -872,7 +886,7 @@
             <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
-              <span class="${statusCls}"${reason}>${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
+              <span class="${statusCls}"${reason}>${escapeHtml(statusLabel)}${unmanaged ? ' · unmanaged' : ''}</span>
               ${retryMatch ? downloadButton(showId, retryMatch.title, 'Try this release again', DOWNLOAD_ICON) : ''}
               ${unmanaged ? restoreButton(showId, ep) : ''}
               ${swap ? downloadButton(showId, swap.title, replaceTip(ep.episode_number, ep.feed_name), SWAP_ICON) : ''}
