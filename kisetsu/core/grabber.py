@@ -2194,6 +2194,9 @@ def _resolve_feed_articles(
         if not matched:
             continue
         raw_episode = parsed.get("episode")
+        if raw_episode is None and target_count == 1:
+            # A movie's release carries no episode number; its one episode is the whole release.
+            raw_episode = 1
         if raw_episode is None or raw_episode <= 0:
             continue
         episode_number = _mapped_episode(
