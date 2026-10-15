@@ -869,7 +869,7 @@
         const group = done ? 'done' : failed || missed || retrying ? 'attention' : ['downloading', 'queued', 'replacing'].includes(String(ep.status).toLowerCase()) ? 'active' : 'waiting';
         const html = `
           <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, statusLabel, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0, ep.last_error || '', retryMatch ? retryMatch.title : ''].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
-            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` <span class="ver-badge">v${ep.version}</span>` : ''}</span>
+            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
               <span class="${statusCls}"${reason}>${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
@@ -3081,7 +3081,7 @@ ${h.matched_regex}` : ''}`
           </div>
           <div class="text-right flex-shrink-0">
             <div class="text-xs text-zinc-400" title="${escapeHtml(fullTime)}">${formatRelativeTime(h.created_at)}</div>
-            <div class="text-[11px] text-zinc-600 mt-0.5 truncate max-w-[12rem]"><span class="${added ? 'text-accent' : 'text-sky-400'}">${verb}</span>${h.feed_name ? ` · ${escapeHtml(h.feed_name)}` : ''}</div>
+            <div class="text-xs text-zinc-500 mt-0.5 truncate max-w-[12rem]"><span class="${added ? 'text-accent' : 'text-sky-400'}">${verb}</span>${h.feed_name ? ` ${added ? 'from' : 'in'} ${escapeHtml(h.feed_name)}` : ''}</div>
           </div>
         </div>
       `;
