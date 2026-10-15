@@ -972,7 +972,7 @@ def test_edit_show_alias_learns_the_release_name(client, session, mock_qbit):
     session.expire_all()
     updated = session.get(Monitored, show.id)
     assert updated.custom_aliases == ["Ao Ashi"]
-    assert updated.matched_title == "Ao Ashi"
+    assert updated.matched_title == "Ao Ashi S2"
     assert updated.status == MonitoredStatus.FIXED
     must_contain = mock_qbit.set_rss_rule.call_args.kwargs["rule_def"]["mustContain"]
     assert re.search(must_contain, "[SubsPlease] Ao Ashi S2 - 01 (1080p) [6DCF3E95].mkv", re.IGNORECASE)

@@ -353,6 +353,46 @@ def release_arc_qualifier(raw_title: str) -> Optional[str]:
     return extract_arc_qualifiers(raw_title[:token.start()] if token else raw_title)
 
 
+_ROMAN_SEASONS = {"ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6}
+_SEASON_NAME_PATTERNS = (
+    re.compile(r"\bseason\s*(\d{1,2})\b", re.IGNORECASE),
+    re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\s+season\b", re.IGNORECASE),
+    re.compile(r"\bS(\d{1,2})\b", re.IGNORECASE),
+)
+_SEASON_TAG = re.compile(r"\bS(\d{1,2})\s*[-_.]?\s*E\d{1,4}\b", re.IGNORECASE)
+_TRAILING_ROMAN = re.compile(r"\s(ii|iii|iv|v|vi)\s*$", re.IGNORECASE)
+
+
+def _series_name_part(raw_title: str) -> str:
+    """The series name of a release: no leading group tag, nothing from the episode number on."""
+    title = raw_title or ""
+    token = _EPISODE_TOKEN.search(title)
+    name = title[:token.start()] if token else title
+    return re.sub(r"^\s*\[[^\]]*\]\s*", "", name)
+
+
+def _name_season(name: str) -> Optional[int]:
+    for pattern in _SEASON_NAME_PATTERNS:
+        match = pattern.search(name)
+        if match:
+            return int(match.group(1))
+    roman = _TRAILING_ROMAN.search(name)
+    return _ROMAN_SEASONS[roman.group(1).lower()] if roman else None
+
+
+def release_season(raw_title: str) -> Optional[int]:
+    """The season a release names for itself, or None when it names none.
+
+    Reads the series name in front of the episode number ("Link Click S3",
+    "Foo 2nd Season", "Mob Psycho 100 III"), then an "S03E05" tag.
+    """
+    season = _name_season(_series_name_part(raw_title))
+    if season is not None:
+        return season
+    tag = _SEASON_TAG.search(raw_title or "")
+    return int(tag.group(1)) if tag else None
+
+
 def _alias_arc_requirement(aliases: List[str]) -> Optional[str]:
     """The arc marker a show's aliases insist on, if any.
 
@@ -378,6 +418,16 @@ def _arc_is_compatible(show_requirement: str, title_qualifier: Optional[str]) ->
     return False
 
 
+def _keep_season_in_title(raw_title: str, parsed: Dict[str, Any]) -> None:
+    """Make the learned title carry the season marker the release writes in its name ("Ao Ashi S2")."""
+    name = _series_name_part(raw_title)
+    if _name_season(name) is None or _name_season(parsed.get("title") or "") is not None:
+        return
+    name = re.sub(r"[\s\-_|/:]+$", "", name).strip()
+    if name:
+        parsed["title"] = name
+
+
 def match_release_to_show(
     raw_title: str,
     aliases: List[str],
@@ -386,6 +436,7 @@ def match_release_to_show(
     prepared_aliases: Optional[List[Tuple[str, str]]] = None,
     parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
     ignore_arc_marker: bool = True,
+    allow_fuzzy: bool = True,
 ) -> Tuple[bool, float, Dict[str, Any]]:
     """
     Evaluate if an RSS item or torrent matches an anime show.
@@ -423,9 +474,13 @@ def match_release_to_show(
             matched_token = m.group(0).strip()
             if matched_token:
                 parsed["title"] = matched_token
+            _keep_season_in_title(raw_title, parsed)
             return True, 100.0, parsed
     except re.error as e:
         logger.warning(f"Invalid match pattern for '{raw_title}': {e}")
+
+    if not allow_fuzzy:
+        return False, 0.0, parsed
 
     parsed_title = parsed.get("title", "")
     score, best_alias = calculate_match_score(
@@ -434,4 +489,6 @@ def match_release_to_show(
         prepared_aliases=prepared_aliases,
     )
     is_match = score >= threshold
+    if is_match:
+        _keep_season_in_title(raw_title, parsed)
     return is_match, score, parsed

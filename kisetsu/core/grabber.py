@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Collection, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Collection, Dict, Iterable, List, NamedTuple, Optional, Set, Tuple
 from uuid import uuid4
 
 from sqlmodel import Session, select
@@ -13,7 +13,7 @@ from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS, HUNTING_RECENT_DAY
 from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.notify import notify_episode
-from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier
+from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier, release_season
 from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
 from kisetsu.core.rules import (
     effective_title,
@@ -1972,12 +1972,41 @@ class _ShowMatcher(NamedTuple):
     test_pattern: str
     prepared_aliases: List[Tuple[str, str]]
     learned_pattern: Optional[str] = None
+    strict: bool = False
+    season_known: bool = False
+    season: Optional[int] = None
 
 
 def _show_matcher(show: Monitored) -> _ShowMatcher:
     aliases = show.effective_aliases
     pattern, learned_pattern = show_match_patterns(aliases, show.matched_title)
     return _ShowMatcher(pattern, prepare_aliases(aliases), learned_pattern)
+
+
+def _matcher_for_feed(matcher: _ShowMatcher, show: Monitored, feed: Feed, episodes: Iterable[Episode]) -> _ShowMatcher:
+    """``matcher`` narrowed to what the show's learned feed has delivered.
+
+    On the learned feed only the learned name matches, and a release must name the
+    same season as the releases already downloaded from it (or none, when they
+    name none). Other feeds, and a show that has not learned a feed, are untouched.
+    """
+    if show.learned_feed_id is None or show.learned_feed_id != feed.id or not matcher.learned_pattern:
+        return matcher
+    held = [
+        episode.release_title
+        for episode in episodes
+        if episode.release_title
+        and episode.status in _RELEASE_HOLDING
+        and episode.feed_id in (None, feed.id)
+    ]
+    named = {release_season(title) for title in held} | {release_season(show.matched_title or "")}
+    named.discard(None)
+    if len(named) > 1:
+        return matcher._replace(strict=True)
+    if named:
+        return matcher._replace(strict=True, season_known=True, season=next(iter(named)))
+    # Nothing downloaded names a season, so the feed does not write one for this show.
+    return matcher._replace(strict=True, season_known=bool(held))
 
 
 def _decide(
@@ -2000,11 +2029,14 @@ def _decide(
     matched, _, parsed = match_release_to_show(
         title,
         show.effective_aliases,
-        test_pattern=matcher.test_pattern,
+        test_pattern=matcher.learned_pattern if matcher.strict else matcher.test_pattern,
         prepared_aliases=matcher.prepared_aliases,
         parsed_cache=parsed_cache,
         ignore_arc_marker=learned_without_marker or (unmarked_ok and release_arc_qualifier(title) is None),
+        allow_fuzzy=not matcher.strict,
     )
+    if matched and matcher.season_known and release_season(title) != matcher.season:
+        return False, parsed
     return matched, parsed
 
 
@@ -2185,6 +2217,7 @@ def _resolve_feed_articles(
     """
     resolved: List[Tuple[Any, ...]] = []
     best_version: Dict[int, int] = {}
+    matcher = _matcher_for_feed(matcher, show, feed, episodes_by_number.values())
     newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
     for article in feed_articles:
         title = article.get("title", "")
@@ -2496,7 +2529,9 @@ def _manual_candidates(
     found = []
     matcher = _show_matcher(show)
     parsed_cache: Dict[str, Dict[str, Any]] = {}
+    base_matcher = matcher
     for feed in candidate_feeds:
+        matcher = _matcher_for_feed(base_matcher, show, feed, context.episodes)
         feed_articles = articles_by_url.get(feed.qbit_feed_url, [])
         newest_raw = _newest_raw_episode(show, feed_articles, matcher, parsed_cache)
         for article in feed_articles:
