@@ -30,7 +30,7 @@ from kisetsu.db.models import (
 )
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConflictError
 from kisetsu.clients.anilist import AniListClient, AniListError, rate_limit_status
-from kisetsu.config import DEFAULT_DOWNLOAD_MODE, SANDBOX
+from kisetsu.config import DEFAULT_DOWNLOAD_MODE, MAX_HUNT_INTERVAL_MINUTES, MIN_HUNT_INTERVAL_MINUTES, SANDBOX
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, failing_feed_since, last_failed_feed_names
@@ -1649,6 +1649,7 @@ def get_current_settings(session: Session = Depends(get_db)):
         "download_mode": normalized_download_mode(session),
         "backfill_window_days": s.backfill_window_days,
         "early_air_tolerance_hours": s.early_air_tolerance_hours,
+        "hunt_interval_minutes": s.hunt_interval_minutes,
         "accent_color": s.accent_color or "#2dd4bf",
         "accent_tint": s.accent_tint or "subtle",
         "desktop_notifications": bool(s.desktop_notifications),
@@ -1670,6 +1671,7 @@ class UpdateSettingsRequest(BaseModel):
     download_mode: Optional[str] = None
     backfill_window_days: Optional[int] = None
     early_air_tolerance_hours: Optional[int] = None
+    hunt_interval_minutes: Optional[int] = None
     accent_color: Optional[str] = None
     accent_tint: Optional[str] = None
     desktop_notifications: Optional[bool] = None
@@ -1708,6 +1710,12 @@ def _validate_settings_request(req) -> None:
         raise HTTPException(
             status_code=400,
             detail="early_air_tolerance_hours must be between 0 and 168",
+        )
+    hunt = getattr(req, "hunt_interval_minutes", None)
+    if hunt is not None and not (MIN_HUNT_INTERVAL_MINUTES <= hunt <= MAX_HUNT_INTERVAL_MINUTES):
+        raise HTTPException(
+            status_code=400,
+            detail=f"hunt_interval_minutes must be between {MIN_HUNT_INTERVAL_MINUTES} and {MAX_HUNT_INTERVAL_MINUTES}",
         )
 
     if getattr(req, "accent_color", None) is not None and not ACCENT_COLOR_RE.match(req.accent_color.strip()):
@@ -1852,6 +1860,8 @@ def _update_settings(req: UpdateSettingsRequest, session: Session):
         s.backfill_window_days = req.backfill_window_days
     if req.early_air_tolerance_hours is not None:
         s.early_air_tolerance_hours = req.early_air_tolerance_hours
+    if req.hunt_interval_minutes is not None:
+        s.hunt_interval_minutes = req.hunt_interval_minutes
 
     if new_mode != previous_mode:
         supervisor = Supervisor(
@@ -2204,6 +2214,9 @@ async def _run_cycle_now(session: Session, s: Settings, qbit: QBitClient, use_fe
             calculate_next_poll_interval,
             session,
             default_interval_seconds=default_interval,
+            hunting_interval_seconds=(
+                max(60, s.hunt_interval_minutes * 60) if s.download_mode == "direct" else None
+            ),
             qbit_client=qbit,
             download_mode=s.download_mode,
             early_air_tolerance_hours=s.early_air_tolerance_hours,

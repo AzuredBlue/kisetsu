@@ -13,8 +13,8 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 
-from kisetsu.config import RULE_OBSERVER_INTERVAL_SECONDS, SANDBOX
-from kisetsu.db.models import QbitRuleWatermark
+from kisetsu.config import DEFAULT_HUNT_INTERVAL_MINUTES, RULE_OBSERVER_INTERVAL_SECONDS, SANDBOX
+from kisetsu.db.models import Feed, QbitRuleWatermark
 from kisetsu.db.session import get_engine, get_settings, init_db
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitRSSRefreshError
 from kisetsu.clients.anilist import AniListClient
@@ -23,7 +23,7 @@ from kisetsu.core.confirmation import ingest_log_acceptances
 from kisetsu.core.feedcache import backfill_cache, ingest_rss, prune_cache
 from kisetsu.core.grabber import has_unsettled_work, update_episode_status
 from kisetsu.core.supervisor import Supervisor
-from kisetsu.workers.scheduler import calculate_next_poll_interval
+from kisetsu.workers.scheduler import calculate_next_poll_interval, hunted_feeds
 from kisetsu.server.api import router
 from kisetsu.server.state import state
 from kisetsu.server.web_ui import STATIC_DIR, get_web_ui_html
@@ -79,6 +79,25 @@ def _next_qbit_retry(retry_index: int) -> int:
 def _backoff(retry_index: int) -> tuple[int, int]:
     """The wait for this failure and the retry index to carry into the next one."""
     return _next_qbit_retry(retry_index), min(retry_index + 1, len(QBIT_RETRY_DELAYS) - 1)
+
+
+def _hunted_feed_urls(session: Session, settings) -> List[str]:
+    """The feeds of the shows being hunted, which a direct-mode check refreshes before it reads the cache."""
+    feeds = session.exec(select(Feed)).all()
+    hunted = hunted_feeds(
+        session,
+        feeds,
+        download_mode=settings.download_mode,
+        early_air_tolerance_hours=settings.early_air_tolerance_hours,
+    )
+    return [feed.qbit_feed_url for feed in hunted]
+
+
+def _hunting_interval_seconds(settings) -> Optional[int]:
+    """Direct mode hunts at its own rate; rules mode follows qBittorrent's refresh interval."""
+    if (settings.download_mode or "rules") != "direct":
+        return None
+    return max(60, int(settings.hunt_interval_minutes or DEFAULT_HUNT_INTERVAL_MINUTES) * 60)
 
 
 async def background_supervisor_task():
@@ -149,11 +168,18 @@ async def background_supervisor_task():
                             # Waiting for qBittorrent's feeds to settle is the slow part of a
                             # check and touches none of our data, so it happens before the
                             # slot is taken; the check then reads the copy in the database.
-                            state.feeds_refreshing = needs_rss_refresh
+                            # Outside a full refresh, only the feeds of the shows being hunted
+                            # are refreshed, so hunting does not wait on qBittorrent's interval.
+                            refresh_urls: Optional[List[str]] = None
+                            if not needs_rss_refresh:
+                                refresh_urls = await asyncio.to_thread(_hunted_feed_urls, session, settings) or None
+                            state.feeds_refreshing = needs_rss_refresh or bool(refresh_urls)
                             try:
-                                added = await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh)
+                                added = await asyncio.to_thread(ingest_rss, engine, qbit, needs_rss_refresh, refresh_urls)
                             finally:
                                 state.feeds_refreshing = False
+                            if refresh_urls:
+                                logger.debug(f"Refreshed {len(refresh_urls)} hunted feed(s): {added} new item(s).")
                             if needs_rss_refresh:
                                 state.last_feed_refresh_added = added
                             needs_rss_refresh = False
@@ -202,6 +228,7 @@ async def background_supervisor_task():
                                 calculate_next_poll_interval,
                                 session,
                                 default_interval_seconds=default_interval,
+                                hunting_interval_seconds=_hunting_interval_seconds(settings),
                                 qbit_client=qbit,
                                 download_mode=settings.download_mode,
                                 early_air_tolerance_hours=settings.early_air_tolerance_hours,

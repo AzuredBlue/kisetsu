@@ -1,7 +1,7 @@
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient
 from kisetsu.config import (
@@ -9,10 +9,12 @@ from kisetsu.config import (
     DEFAULT_DOWNLOAD_MODE,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
+from kisetsu.core.grabber import _grab_feeds
 from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     Episode,
     EpisodeStatus,
+    Feed,
     Monitored,
     MonitoredStatus,
     TorrentOperation,
@@ -184,6 +186,26 @@ def classify_shows(
         unresolved_upcoming=unresolved_upcoming,
         now=now,
     )
+
+
+def hunted_feeds(
+    session: Session,
+    feeds: List[Feed],
+    *,
+    download_mode: str = DEFAULT_DOWNLOAD_MODE,
+    early_air_tolerance_hours: int = DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
+) -> List[Feed]:
+    """The feeds the shows being hunted read from: a show's own feed, or every feed while it has none."""
+    classification = classify_shows(
+        session,
+        download_mode=download_mode,
+        early_air_tolerance_hours=early_air_tolerance_hours,
+    )
+    hunted: Dict[int, Feed] = {}
+    for show in classification.hunting:
+        for feed in _grab_feeds(session, show, feeds):
+            hunted.setdefault(feed.id, feed)
+    return list(hunted.values())
 
 
 def calculate_next_poll_interval(

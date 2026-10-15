@@ -2713,6 +2713,9 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       const selected = mode || 'rules';
       const hidden = document.getElementById('set-download-mode');
       if (hidden) hidden.value = selected;
+      // Only the direct engine refreshes feeds itself while hunting.
+      const huntRow = document.getElementById('set-hunt-interval-row');
+      if (huntRow) huntRow.classList.toggle('hidden', selected !== 'direct');
 
       ['rules', 'direct'].forEach(name => {
         const button = document.getElementById(`btn-mode-${name}`);
@@ -2809,6 +2812,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         stall_wait_hours: val('set-stall-window'),
         anilist_username: val('set-anilist-user'),
         refresh_interval_minutes: val('set-interval'),
+        hunt_interval_minutes: val('set-hunt-interval'),
         early_air_tolerance_hours: val('set-early-air-tolerance'),
       };
     }
@@ -2824,6 +2828,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       document.getElementById('set-stall-window').value = s.stall_wait_hours ?? 24;
       document.getElementById('set-anilist-user').value = s.anilist_username || '';
       document.getElementById('set-interval').value = s.refresh_interval_minutes ?? 360;
+      document.getElementById('set-hunt-interval').value = s.hunt_interval_minutes ?? 5;
       document.getElementById('set-early-air-tolerance').value = s.early_air_tolerance_hours ?? 6;
       settingsInitialState = readSettingsForm();
       updateSettingsSaveBar();
@@ -2880,6 +2885,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         stall_wait_hours: parseInt(document.getElementById('set-stall-window').value),
         anilist_username: document.getElementById('set-anilist-user').value,
         refresh_interval_minutes: parseInt(document.getElementById('set-interval').value),
+        hunt_interval_minutes: parseInt(document.getElementById('set-hunt-interval').value),
         early_air_tolerance_hours: parseInt(document.getElementById('set-early-air-tolerance').value),
       };
       const pwd = document.getElementById('set-qbit-pass').value;

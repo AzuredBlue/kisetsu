@@ -453,6 +453,9 @@ def init_db(engine=None):
         if "early_air_tolerance_hours" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN early_air_tolerance_hours INTEGER DEFAULT 6"))
             session.commit()
+        if "hunt_interval_minutes" not in settings_cols:
+            session.exec(text("ALTER TABLE settings ADD COLUMN hunt_interval_minutes INTEGER DEFAULT 5"))
+            session.commit()
         if "accent_color" not in settings_cols:
             session.exec(text("ALTER TABLE settings ADD COLUMN accent_color VARCHAR DEFAULT '#2dd4bf'"))
             session.commit()

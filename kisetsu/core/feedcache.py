@@ -15,7 +15,7 @@ import logging
 import threading
 import weakref
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Collection, Dict, Iterable, List, Optional, Tuple
 
 from sqlalchemy import delete, func, text
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
@@ -390,16 +390,22 @@ def backfill_from_seen(session: Session) -> int:
     return added
 
 
-def ingest_rss(engine, qbit: QBitClient, force: bool = False) -> int:
+def ingest_rss(engine, qbit: QBitClient, force: bool = False, feed_urls: Optional[Collection[str]] = None) -> int:
     """Copy what qBittorrent's feeds hold into the cache; returns rows added.
 
     This is the one place that waits on qBittorrent's RSS: it blocks until the
-    feeds have settled (and, when forced, refreshed). It runs on a thread with
-    its own session and does not need the cycle slot.
+    feeds have settled (and, when forced, refreshed). ``feed_urls`` refreshes
+    just those feeds first. It runs on a thread with its own session and does
+    not need the cycle slot.
     """
     with _ingest_lock:
         snapshot = RssSnapshot(qbit)
-        articles = snapshot.refresh() if force else snapshot.get()
+        if force:
+            articles = snapshot.refresh()
+        elif feed_urls:
+            articles = snapshot.refresh(feed_urls=feed_urls)
+        else:
+            articles = snapshot.get()
         _record_failed_feeds(snapshot.failed_feed_names)
         with Session(engine) as session:
             return store_matches(session, articles)

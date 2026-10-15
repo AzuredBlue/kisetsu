@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import logging
 import time
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Collection, Dict, List, Optional, Tuple
 from urllib.parse import urlsplit
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
@@ -205,6 +205,7 @@ class RssSnapshot:
         max_attempts: int = 3,
         poll_interval_seconds: float = 0.5,
         timeout_seconds: Optional[float] = None,
+        feed_urls: Optional[Collection[str]] = None,
     ) -> Dict[str, List[Dict[str, Any]]]:
         """Force a refresh and return articles only once the feeds have settled.
 
@@ -213,11 +214,18 @@ class RssSnapshot:
         half-fetched articles, a refresh that cannot settle within its attempts
         raises and caches the failure so ``get()`` re-raises instead of
         returning ``{}``.
+
+        ``feed_urls`` refreshes only those feeds; the others are read as they
+        are, and only a failure of a refreshed feed is retried.
         """
         self.invalidate()
         attempts = max(1, max_attempts)
         poll_interval = max(0.0, poll_interval_seconds)
         last_error: Optional[Exception] = None
+        target_paths: Optional[Dict[str, str]] = None
+        if feed_urls is not None:
+            paths = self.qbit_client.get_rss_feed_paths()
+            target_paths = {url: paths[url] for url in feed_urls if url in paths}
 
         for attempt in range(attempts):
             try:
@@ -232,8 +240,13 @@ class RssSnapshot:
                 if any(loading for _, _, loading, _ in states):
                     rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
 
-                if not self.qbit_client.refresh_rss_feeds():
-                    raise QbitRSSRefreshError("qBittorrent rejected the RSS refresh request")
+                if target_paths is None:
+                    if not self.qbit_client.refresh_rss_feeds():
+                        raise QbitRSSRefreshError("qBittorrent rejected the RSS refresh request")
+                else:
+                    for path in target_paths.values():
+                        if not self.qbit_client.refresh_rss_feeds(path):
+                            raise QbitRSSRefreshError(f"qBittorrent rejected the RSS refresh request for {path}")
 
                 deadline = time.monotonic() + effective_timeout
                 rss_tree, states = self._wait_for_settled_feeds(deadline, poll_interval)
@@ -242,10 +255,15 @@ class RssSnapshot:
                     for name, feed_url, _, has_error in states
                     if has_error
                 ]
-                if failed_feeds and attempt + 1 < attempts:
+                retry_feeds = (
+                    failed_feeds
+                    if target_paths is None
+                    else [(name, feed_url) for name, feed_url in failed_feeds if feed_url in target_paths]
+                )
+                if retry_feeds and attempt + 1 < attempts:
                     raise QbitRSSRefreshError(
                         "qBittorrent RSS refresh failed for: "
-                        + ", ".join(name for name, _ in failed_feeds)
+                        + ", ".join(name for name, _ in retry_feeds)
                     )
 
                 articles = flatten_rss_articles(rss_tree)

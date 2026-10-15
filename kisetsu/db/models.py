@@ -13,6 +13,7 @@ from kisetsu.config import (
     DEFAULT_CATEGORY,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
     DEFAULT_DOWNLOAD_MODE,
+    DEFAULT_HUNT_INTERVAL_MINUTES,
     DEFAULT_QBIT_HOST,
     DEFAULT_QBIT_PASSWORD,
     DEFAULT_QBIT_USERNAME,
@@ -149,6 +150,7 @@ class Settings(SQLModel, table=True):
     download_mode: str = Field(default=DEFAULT_DOWNLOAD_MODE)
     backfill_window_days: int = Field(default=DEFAULT_BACKFILL_WINDOW_DAYS)
     early_air_tolerance_hours: int = Field(default=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
+    hunt_interval_minutes: int = Field(default=DEFAULT_HUNT_INTERVAL_MINUTES)
     accent_color: str = Field(default="#2dd4bf")
     accent_tint: str = Field(default="subtle")  # "off", "subtle" or "full"
     desktop_notifications: bool = Field(default=False)

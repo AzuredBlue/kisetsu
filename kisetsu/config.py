@@ -25,6 +25,10 @@ HUNTING_RECENT_DAYS = 14
 # How long the newest aired episode may stay unfound before it counts as missed.
 MISSED_AFTER_HOURS = 24
 DEFAULT_EARLY_AIR_TOLERANCE_HOURS = 6
+# How often the direct engine refreshes the feeds of the shows it is hunting.
+DEFAULT_HUNT_INTERVAL_MINUTES = 5
+MIN_HUNT_INTERVAL_MINUTES = 2
+MAX_HUNT_INTERVAL_MINUTES = 60
 
 RULE_OBSERVER_INTERVAL_SECONDS = 300
 
