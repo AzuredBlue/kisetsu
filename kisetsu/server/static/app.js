@@ -1944,7 +1944,9 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         </div>`;
       const matchedAsField = data.matched_as
         ? readonlyField('Matched as', data.matched_as)
-        : `<div><span class="field-label">Matched as</span><p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet.` : 'Matched by name and aliases until a release appears.'}</p></div>`;
+        : data.match_pattern
+          ? `${readonlyField('Looking for', data.match_pattern)}<p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet. ` : ''}Titles that miss this pattern still match if they are close to an alias.</p>`
+          : `<div><span class="field-label">Matched as</span><p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet.` : 'Matched by name and aliases until a release appears.'}</p></div>`;
       const matchingFields = isDirect ? matchedAsField : rulePatternFields;
 
       // What the feed numbers the season from, when it continues a previous season.

@@ -53,6 +53,7 @@ from kisetsu.core.rules import (
     is_show_rule_unreleased,
     resolve_save_path,
     sanitize_folder_name,
+    show_match_patterns,
 )
 from kisetsu.workers.scheduler import calculate_next_poll_interval
 from kisetsu.server.state import state
@@ -728,6 +729,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
         "must_contain": saved_regex,
         "must_not_contain": saved_must_not,
         "matched_as": show.matched_title,
+        "match_pattern": show_match_patterns(show.effective_aliases, show.matched_title)[0] if download_mode == "direct" else None,
         "save_path": compress_home_path(download_params["save_path"]),
         "save_folder": download_params["custom_save_folder"],
         "current_feed_id": show.current_feed_id or 0,
