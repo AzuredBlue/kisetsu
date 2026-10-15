@@ -931,7 +931,7 @@
         if (m.replaces && (!best || m.version > best.version)) replacements.set(m.episode, m);
       }));
 
-      const episodeRows = episodes.map(ep => {
+      const episodeEntries = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
         // A wanted episode whose air time has passed is being searched for, unlike one still to come.
@@ -953,9 +953,10 @@
         const restoring = unmanaged && pendingDownloads.has(pendingKey(showId, `restore:${ep.id}`));
         const swap = isDirect && done && ep.torrent_hash ? replacements.get(ep.episode_number) : null;
         const swapPending = swap && pendingDownloads.has(pendingKey(showId, swap.title));
-        return `
+        const group = done ? 'done' : failed || missed || retrying ? 'attention' : ['downloading', 'queued', 'replacing'].includes(String(ep.status).toLowerCase()) ? 'active' : 'waiting';
+        const html = `
           <li ${rowAttrs(`e:${ep.id}`, [ep.episode_number, ep.version, ep.release_title, statusLabel, ep.torrent_hash ? 1 : 0, restoring ? 1 : 0, swap ? swap.title : '', swapPending ? 1 : 0, ep.last_error || '', retryMatch ? retryMatch.title : ''].join('|'))} class="flex items-center gap-3 py-1.5 text-xs">
-            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` · v${ep.version}` : ''}</span>
+            <span class="w-20 shrink-0 text-accent-soft tabular-nums">Ep ${ep.episode_number}${ep.version > 1 ? ` <span class="ver-badge">v${ep.version}</span>` : ''}</span>
             <span class="flex-1 min-w-0 truncate text-zinc-500 font-mono" title="${escapeHtml(ep.release_title || '')}">${escapeHtml(ep.release_title || '')}</span>
             <span class="shrink-0 h-7 flex items-center justify-end gap-2">
               <span class="${statusCls}"${reason}>${escapeHtml(statusLabel)}${done && !ep.torrent_hash ? ' · unmanaged' : ''}</span>
@@ -964,6 +965,26 @@
               ${swap ? downloadButton(showId, swap.title, replaceTip(ep.episode_number, ep.feed_name), SWAP_ICON) : ''}
             </span>
           </li>`;
+        return { ep, group, html };
+      });
+
+      // Newest episode first inside each group; a group with no episodes is left out.
+      const EPISODE_GROUPS = [['attention', 'Needs attention'], ['active', 'Downloading'], ['done', 'Completed'], ['waiting', 'Waiting']];
+      const episodeRows = EPISODE_GROUPS.map(([name, label]) => {
+        const entries = episodeEntries.filter(entry => entry.group === name).sort((a, b) => b.ep.episode_number - a.ep.episode_number);
+        if (!entries.length) return '';
+        const hasMissed = entries.some(entry => String(entry.ep.status).toLowerCase() === 'missed');
+        const searching = actionsInFlight.has(`search-releases-${showId}`);
+        const search = !(isDirect && hasMissed) ? ''
+          : searching ? `<span class="shrink-0 inline-flex items-center gap-1.5 text-zinc-400">${SPINNER_ICON}Searching…</span>`
+          : `<button type="button" onclick="searchPastReleases()" class="shrink-0 text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Ask the feeds' sites for the episodes that are no longer in their RSS">Search older</button>`;
+        const header = `
+          <li ${rowAttrs(`eg:${name}`, [label, entries.length, search ? (searching ? 2 : 1) : 0].join('|'))} class="flex items-center gap-2 py-2 text-xs sticky top-0 z-10" style="background-color: rgb(var(--field))">
+            <span class="font-medium text-zinc-200">${label}</span>
+            <span class="shrink-0 text-zinc-500 tabular-nums">${entries.length}</span>
+            <span class="ml-auto">${search}</span>
+          </li>`;
+        return header + entries.map(entry => entry.html).join('');
       }).join('');
 
       if (isDirect) {
