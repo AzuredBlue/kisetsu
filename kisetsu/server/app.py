@@ -365,7 +365,11 @@ async def ingest_task():
                 )
                 direct = bool(settings.setup_completed) and (settings.download_mode or "rules") == "direct"
             if direct:
-                await asyncio.to_thread(ingest_rss, engine, qbit, False)
+                added = await asyncio.to_thread(ingest_rss, engine, qbit, False)
+                if added:
+                    # A stored release may be one a show is waiting for; check now
+                    # rather than at the next scheduled cycle.
+                    state.trigger_immediate_cycle()
                 await _backfill_past_releases(engine)
                 delay = await asyncio.to_thread(_ingest_delay, qbit)
                 if time.monotonic() - last_prune >= PRUNE_INTERVAL_SECONDS:
