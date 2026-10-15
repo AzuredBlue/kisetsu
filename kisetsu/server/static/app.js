@@ -2559,16 +2559,13 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
     }
 
     function feedHealthMarkup(f) {
-      const dot = '<span style="display:inline-block;width:6px;height:6px;border-radius:9999px;background:currentColor"></span>';
-      if (!f.failing_since) {
-        return `<div class="inline-flex items-center gap-1.5 text-xs text-emerald-400 mt-0.5" title="qBittorrent read this feed on its last refresh">${dot}OK</div>`;
-      }
+      if (!f.failing_since) return '';
       const since = new Date(f.failing_since);
       const sameDay = since.toDateString() === new Date().toDateString();
       const when = sameDay
         ? since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : since.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-      return `<div class="inline-flex items-center gap-1.5 text-xs text-rose-400 mt-0.5" title="qBittorrent has not been able to read this feed since ${escapeHtml(since.toLocaleString())}">${dot}Failing since ${escapeHtml(when)}</div>`;
+      return `<span class="text-xs text-rose-400" title="qBittorrent has not been able to read this feed since ${escapeHtml(since.toLocaleString())}">Failing since ${escapeHtml(when)}</span>`;
     }
 
     function renderFeedsTable() {
@@ -2581,10 +2578,10 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
             ondragend="handleDragEnd(event)"
             ondrop="handleDrop(event, ${idx})"
             class="hover:bg-raised/60 cursor-grab active:cursor-grabbing transition-colors group select-none">
-          <td class="py-4 px-3 text-center text-zinc-500 group-hover:text-zinc-300">
+          <td class="py-3 px-3 text-center text-zinc-500 group-hover:text-zinc-300">
             <svg class="w-4 h-4 mx-auto opacity-60 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 24 24"><path d="M9 5a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm10-14a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0zm0 7a2 2 0 11-4 0 2 2 0 014 0z"/></svg>
           </td>
-          <td class="py-4 px-2 text-accent text-sm font-medium tabular-nums">
+          <td class="py-3 px-2 text-accent text-sm font-medium tabular-nums">
             <div class="flex items-center justify-center gap-1.5">
               <span>#${f.priority}</span>
               <span class="flex flex-col text-zinc-500 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
@@ -2593,13 +2590,17 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
               </span>
             </div>
           </td>
-          <td class="py-4 px-4">
-            <div class="font-medium text-zinc-100 text-sm">${escapeHtml(f.qbit_feed_name)}</div>
-            <div class="text-xs text-zinc-500 font-mono truncate max-w-2xl mt-0.5">${escapeHtml(f.qbit_feed_url)}</div>
-            <div>${feedHealthMarkup(f)}</div>
-            ${f.shows > 0 ? `<div class="text-xs text-zinc-500 mt-0.5">${f.shows} show${f.shows === 1 ? '' : 's'}${f.locked > 0 ? ` · ${f.locked} locked` : ''}</div>` : ''}
+          <td class="py-3 px-4" style="width:100%;max-width:0">
+            <div class="flex items-baseline gap-3">
+              <span class="font-medium text-zinc-100 text-sm">${escapeHtml(f.qbit_feed_name)}</span>
+              ${feedHealthMarkup(f)}
+            </div>
+            <div class="text-xs text-zinc-500 font-mono truncate mt-0.5" title="${escapeHtml(f.qbit_feed_url)}">${escapeHtml(f.qbit_feed_url)}</div>
           </td>
-          <td class="py-4 px-3">
+          <td class="py-3 px-3 text-right text-xs text-zinc-500 tabular-nums whitespace-nowrap">
+            ${f.shows > 0 ? `<div>${f.shows} show${f.shows === 1 ? '' : 's'}</div>${f.locked > 0 ? `<div class="mt-0.5">${f.locked} locked</div>` : ''}` : ''}
+          </td>
+          <td class="py-3 px-3">
             <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
               <button draggable="false" onclick="event.stopPropagation(); openFeedDialog(${f.id})" class="w-7 h-7 rounded-md flex items-center justify-center text-zinc-500 hover:text-zinc-50 hover:bg-raised transition-colors active:scale-90" title="Edit feed" aria-label="Edit feed">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"/></svg>
@@ -2610,7 +2611,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
             </div>
           </td>
         </tr>
-      `).join('') || '<tr><td colspan="4" class="text-center py-10 text-zinc-500 text-sm">No feeds registered.</td></tr>';
+      `).join('') || '<tr><td colspan="5" class="text-center py-10 text-zinc-500 text-sm">No feeds registered.</td></tr>';
     }
 
     // Add (no argument) or edit (feed id) a feed. qBittorrent is changed first; the
