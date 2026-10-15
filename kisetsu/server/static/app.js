@@ -780,6 +780,7 @@
     // pill; nothing is saved on leave, and leaving with unsaved edits asks first.
 
     let showListTab = 'episodes';
+    let showSideTab = 'feed';
     let showReturnTab = 'shows';
     let showReturnScroll = 0;
     let showPagePushed = false;
@@ -789,9 +790,23 @@
       ['episodes', 'feed'].forEach(name => {
         const panel = document.getElementById(`show-panel-${name}`);
         const button = document.getElementById(`show-tab-${name}`);
+        const count = document.getElementById(`show-count-${name}`);
+        if (panel) panel.classList.toggle('hidden', name !== tab);
+        if (count) count.classList.toggle('hidden', name !== tab);
+        if (button) button.className = name === tab ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
+      });
+    }
+
+    function setShowSideTab(tab) {
+      showSideTab = tab;
+      ['feed', 'download'].forEach(name => {
+        const panel = document.getElementById(`show-side-${name}`);
+        const button = document.getElementById(`show-side-tab-${name}`);
         if (panel) panel.classList.toggle('hidden', name !== tab);
         if (button) button.className = name === tab ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS;
       });
+      const reset = document.getElementById('show-side-reset');
+      if (reset) reset.classList.toggle('hidden', tab !== 'feed');
     }
 
     const DOWNLOAD_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="w-3.5 h-3.5"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>';
@@ -832,6 +847,18 @@
       return `<ul class="bg-canvas border border-line-soft rounded-lg px-3 flex-1 min-h-0 overflow-y-auto max-h-[60vh] lg:max-h-none divide-y divide-line-soft">${rows || `<li class="text-xs text-zinc-600 py-3 text-center">${emptyText}</li>`}</ul>`;
     }
 
+    // "airs Sat 5:00 PM" for an episode still to come, with the date once it is a week or more away.
+    function episodeAirLabel(ep) {
+      if (String(ep.status).toLowerCase() !== 'wanted' || !ep.air_at) return '';
+      const at = new Date(ep.air_at);
+      const ahead = at - Date.now();
+      if (isNaN(ahead) || ahead <= 0) return '';
+      const when = ahead >= 6 * 86400000
+        ? at.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+      return `airs ${when}`;
+    }
+
     // `feed` is null while the feed lookup is still loading.
     function buildShowLists(showId, data, episodes, feed) {
       const isDirect = data.download_mode === 'direct';
@@ -847,18 +874,6 @@
       const episodeEntries = episodes.map(ep => {
         const done = String(ep.status).toLowerCase() === 'completed';
         const missed = String(ep.status).toLowerCase() === 'missed';
-    // "airs Sat 5:00 PM" for an episode still to come, with the date once it is a week or more away.
-    function episodeAirLabel(ep) {
-      if (String(ep.status).toLowerCase() !== 'wanted' || !ep.air_at) return '';
-      const at = new Date(ep.air_at);
-      const ahead = at - Date.now();
-      if (isNaN(ahead) || ahead <= 0) return '';
-      const when = ahead >= 6 * 86400000
-        ? at.toLocaleDateString([], { month: 'short', day: 'numeric' })
-        : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-      return `airs ${when}`;
-    }
-
         // A wanted episode whose air time has passed is being searched for, unlike one still to come.
         const failed = String(ep.status).toLowerCase() === 'failed';
         const aired = String(ep.status).toLowerCase() === 'wanted' && ep.air_at && new Date(ep.air_at) <= Date.now();
@@ -914,8 +929,14 @@
         return header + entries.map(entry => entry.html).join('');
       }).join('');
 
+      // Releases are what the feeds carry for this show. Direct mode lists them by feed;
+      // a rule only has them once it has learned a pattern.
+      let releaseRows = '';
+      let releaseCount = 'checking feed…';
+      let releaseEmpty = loadingText;
+      let hasReleases = false;
       if (isDirect) {
-        const groups = feed ? (feed.feed_groups || []) : [];
+        hasReleases = true;
         const matches = groups.filter(g => g.usable).flatMap(g => g.matches);
         const ROLE_LABELS = { locked: 'Locked', picked: 'Picked', assigned: 'Assigned', other: 'Not used by this show' };
         const groupHeader = g => `
@@ -940,51 +961,49 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
                 : `<span class="text-zinc-600">${escapeHtml(m.episode_status)}</span>`}
             </span>
           </li>`;
-        const feedRows = groups.map(g => groupHeader(g) + g.matches.map(m => matchRow(g, m)).join('')).join('');
-        const emptyFeedText = 'Nothing in any feed matches this show right now. Try Search older.';
-        return `
-          <div class="flex-1 min-h-0 flex flex-col gap-3">
-            <div class="flex items-center justify-between gap-3">
-              <div class="seg">
-                <button type="button" id="show-tab-episodes" onclick="setShowListTab('episodes')" class="${showListTab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
-                <button type="button" id="show-tab-feed" onclick="setShowListTab('feed')" class="${showListTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Releases</button>
-              </div>
-              <span class="flex items-center gap-3">
-                <span class="text-xs text-zinc-500 tabular-nums">${episodes.length} tracked · ${feed ? `${matches.length} release${matches.length === 1 ? '' : 's'}` : 'checking feed…'}</span>
-                ${actionsInFlight.has(`search-releases-${showId}`)
-                  ? `<span class="inline-flex items-center gap-1.5 text-xs text-zinc-400">${SPINNER_ICON}Searching…</span>`
-                  : `<button type="button" onclick="searchPastReleases()" class="text-xs text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
-              </span>
-            </div>
-            <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${showListTab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
-            <div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${showListTab === 'feed' ? '' : 'hidden'}">${listShell(feedRows, feed ? emptyFeedText : loadingText)}</div>
-          </div>`;
+        releaseRows = groups.map(g => groupHeader(g) + g.matches.map(m => matchRow(g, m)).join('')).join('');
+        if (feed) releaseCount = `${matches.length} release${matches.length === 1 ? '' : 's'}`;
+        releaseEmpty = feed ? 'Nothing in any feed matches this show right now. Try Search older.' : loadingText;
+      } else if (data.has_qbit_rule && data.has_learned_pattern) {
+        hasReleases = true;
+        const articles = feed ? (feed.matched_articles || []) : [];
+        releaseRows = articles.map(a => `
+          <li ${rowAttrs(`r:${a}`, pendingDownloads.has(pendingKey(showId, a)) ? 1 : 0)} class="flex items-center gap-3 py-1.5 text-xs">
+            <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
+            ${downloadButton(showId, a, 'Download this release now with the same save path, category and ratio as the rule')}
+          </li>`).join('');
+        if (feed) releaseCount = `${articles.length} release${articles.length === 1 ? '' : 's'}`;
+        releaseEmpty = feed ? 'No cached RSS articles currently match this rule pattern.' : loadingText;
       }
 
-      if (!(data.has_qbit_rule && data.has_learned_pattern)) return '';
-      const articles = feed ? (feed.matched_articles || []) : [];
-      const count = articles.length;
-      const ruleRows = articles.map(a => `
-        <li ${rowAttrs(`r:${a}`, pendingDownloads.has(pendingKey(showId, a)) ? 1 : 0)} class="flex items-center gap-3 py-1.5 text-xs">
-          <span class="flex-1 min-w-0 truncate text-zinc-400 font-mono select-all" title="${escapeHtml(a)}">${escapeHtml(a)}</span>
-          ${downloadButton(showId, a, 'Download this release now with the same save path, category and ratio as the rule')}
-        </li>`).join('');
+      const tab = hasReleases && showListTab === 'feed' ? 'feed' : 'episodes';
+      const searching = actionsInFlight.has(`search-releases-${showId}`);
+      const searchControl = searching
+        ? `<span class="inline-flex items-center gap-1.5 text-xs text-zinc-400">${SPINNER_ICON}Searching…</span>`
+        : `<button type="button" onclick="searchPastReleases()" class="text-xs text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`;
+      const heading = hasReleases
+        ? `<div class="seg">
+            <button type="button" id="show-tab-episodes" onclick="setShowListTab('episodes')" class="${tab === 'episodes' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Episodes</button>
+            <button type="button" id="show-tab-feed" onclick="setShowListTab('feed')" class="${tab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Releases</button>
+          </div>`
+        : '<h3 class="section-title">Episodes</h3>';
       return `
-        <div class="flex-1 min-h-0 flex flex-col gap-3">
-          <div class="flex items-baseline justify-between gap-3">
-            <span class="section-title">In feed</span>
-            <span class="text-xs text-zinc-500">${!feed ? '' : count === 1 ? '1 match' : `${count} matches`}</span>
-          </div>
-          ${listShell(ruleRows, feed ? 'No cached RSS articles currently match this rule pattern.' : loadingText)}
+        <div class="pane-head">
+          ${heading}
+          <span class="flex items-center gap-3">
+            <span id="show-count-episodes" class="text-xs text-zinc-500 tabular-nums ${tab === 'episodes' ? '' : 'hidden'}">${episodes.length} tracked</span>
+            ${hasReleases ? `<span id="show-count-feed" class="text-xs text-zinc-500 tabular-nums ${tab === 'feed' ? '' : 'hidden'}">${releaseCount}</span>` : ''}
+            ${searchControl}
+          </span>
+        </div>
+        <div class="card p-4 flex-1 min-h-0 flex flex-col">
+          <div id="show-panel-episodes" class="flex-1 min-h-0 flex flex-col ${tab === 'episodes' ? '' : 'hidden'}">${listShell(episodeRows, 'No episode records yet.')}</div>
+          ${hasReleases ? `<div id="show-panel-feed" class="flex-1 min-h-0 flex flex-col ${tab === 'feed' ? '' : 'hidden'}">${listShell(releaseRows, releaseEmpty)}</div>` : ''}
         </div>`;
     }
 
     function showListsMarkup(showId, data, episodes, feed) {
-      const inner = buildShowLists(showId, data, episodes, feed)
-        || '<div class="flex-1 flex items-center justify-center text-center text-sm text-zinc-500 px-6 py-10">Episodes and feed matches appear here once the show has a rule and a matched release.</div>';
-      return `
-        <h3 class="section-title mb-2 px-1">Episodes</h3>
-        <div class="card p-4 flex-1 min-h-0 flex flex-col">${inner}</div>`;
+      return buildShowLists(showId, data, episodes, feed);
     }
 
     // What the open page was drawn from, so the lists can be redrawn when the
@@ -1148,7 +1167,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       const block = '<div class="h-4 mb-2.5"></div><div class="flex-1 min-h-[12rem] rounded-xl bg-raised/60"></div>';
       document.getElementById('show-side-form').innerHTML = block;
       setShowListsHtml(block);
-      document.getElementById('show-col-feed').innerHTML = block;
     }
 
     // A paused show keeps the colour of what it was before, and an unconfirmed one
@@ -1282,8 +1300,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
         : '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
 
-      const engineLine = block.dataset.engine ? `<p class="text-xs text-zinc-500 font-mono truncate">${escapeHtml(block.dataset.engine)}</p>` : '';
-
       block.innerHTML = `
         <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
           <div class="min-w-0 flex-1 basis-64">
@@ -1316,8 +1332,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         <div class="flex items-center gap-3 max-w-sm mt-3">
           <div class="flex-1 h-2 rounded-full bg-zinc-100/15 overflow-hidden"><div class="h-full ${barClass}" style="width:${pct}%"></div></div>
           <span class="text-xs tabular-nums text-zinc-400">${downloaded}/${total || '?'} downloaded</span>
-        </div>` : ''}
-        ${engineLine ? `<div class="mt-3">${engineLine}</div>` : ''}`;
+        </div>` : ''}`;
     }
 
     // Called after every list refresh, so pause/resume and the countdown stay current
@@ -1802,6 +1817,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       showFeedState = null;
       showInitialState = null;
       showListTab = 'episodes';
+      showSideTab = 'feed';
       updateSaveBar();
 
       if (opts.push !== false) {
@@ -1824,7 +1840,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         if (titleEl) titleEl.textContent = known ? known.display_name : 'Show';
         const block = document.getElementById('show-title-block');
         block.dataset.sig = '';
-        block.dataset.engine = '';
         renderShowHeader(known);
         loadShowPageBody(showId, true);
       };
@@ -1856,7 +1871,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       } catch (err) {
         if (currentInspectedShowId !== showId) return;
         document.getElementById('show-side-form').innerHTML = '';
-        document.getElementById('show-col-feed').innerHTML = '';
         setShowListsHtml(`<div class="card p-4 flex-1 flex items-center justify-center text-rose-400 text-sm text-center">Failed loading show details: ${escapeHtml(err.message || err)}</div>`);
       }
     }
@@ -1866,14 +1880,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       const isPaused = (data.status === 'paused');
       const isRuleActive = data.enabled === true;
       const isDirect = data.download_mode === 'direct';
-
-      const engine = isDirect ? 'Direct download engine' : (data.rule_name || (isCompleted ? 'Completed Series' : 'No Rule Configured'));
-      const titleBlock = document.getElementById('show-title-block');
-      if (titleBlock.dataset.engine !== engine) {
-        titleBlock.dataset.engine = engine;
-        titleBlock.dataset.sig = '';
-        renderShowHeader(allShows.find(s => s.id === showId));
-      }
 
       let ruleStatusText = '';
       if (isDirect) ruleStatusText = '';
@@ -1909,78 +1915,84 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       const feedUrlTitle = (data.feed_url && !isAutoManaged) ? escapeHtml(data.feed_url) : '';
 
       const noRulePlaceholder = isCompleted
-        ? '<p class="field-hint !mt-0 sm:col-span-2">Completed. The rule is disabled.</p>'
+        ? '<p class="field-hint !mt-0">Completed. The rule is disabled.</p>'
         : isDirect
-          ? '<p class="field-hint !mt-0 sm:col-span-2">No release found yet. The feed cache is checked now and on every check.</p>'
-          : '<p class="field-hint !mt-0 sm:col-span-2">The rule arms when the first episode airs.</p>';
+          ? '<p class="field-hint !mt-0">No release found yet. The feed cache is checked now and on every check.</p>'
+          : '<p class="field-hint !mt-0">The rule arms when the first episode airs.</p>';
 
-      const aliasesSection = data.has_rule ? `
+      const aliasesField = `
         <div>
           <label for="show-aliases" class="field-label">Custom aliases</label>
           <input type="text" id="show-aliases" value="${escapeHtml((data.custom_aliases || []).join(', '))}" placeholder="Comma separated" class="field font-mono">
-        </div>
-      ` : '';
+        </div>`;
 
       // Rules mode: the two patterns are the qBittorrent rule itself. Direct mode
       // matches by the learned name and the aliases, so it only shows what it learned.
       const rulePatternFields = `
-        <div class="sm:col-span-2">
+        <div>
           <label for="show-must-contain" class="field-label">Must contain (regex)</label>
           <input type="text" id="show-must-contain" value="${escapeHtml(data.must_contain || '')}" placeholder=".*" class="field font-mono">
         </div>
-        <div class="sm:col-span-2">
+        <div>
           <label for="show-must-not-contain" class="field-label">Must not contain</label>
           <input type="text" id="show-must-not-contain" value="${escapeHtml(data.must_not_contain || '')}" placeholder="(720p|480p|...)" class="field font-mono">
         </div>`;
-      const matchedAsField = `
-        <div class="sm:col-span-2">
-          <span class="field-label">Matched as</span>
-          ${data.matched_as
-            ? `<input type="text" readonly value="${escapeHtml(data.matched_as)}" onfocus="this.select()" class="field font-mono" title="${escapeHtml(data.matched_as)}">`
-            : `<p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet.` : 'Matched by name and aliases until a release appears.'}</p>`}
+      const readonlyField = (label, value) => `
+        <div>
+          <span class="field-label">${label}</span>
+          <input type="text" readonly value="${escapeHtml(value)}" onfocus="this.select()" class="field font-mono" title="${escapeHtml(value)}">
         </div>`;
-      const mustContainSections = !data.has_rule ? '' : isDirect ? matchedAsField : rulePatternFields;
+      const matchedAsField = data.matched_as
+        ? readonlyField('Matched as', data.matched_as)
+        : `<div><span class="field-label">Matched as</span><p class="field-hint !mt-0">${data.feed_name ? `Nothing in ${escapeHtml(data.feed_name)} matches this show yet.` : 'Matched by name and aliases until a release appears.'}</p></div>`;
+      const matchingFields = isDirect ? matchedAsField : rulePatternFields;
 
-      const regexSections = data.has_rule ? `${aliasesSection}${mustContainSections}` : noRulePlaceholder;
+      // What the feed numbers the season from, when it continues a previous season.
+      const shownShow = allShows.find(s => s.id === showId);
+      const mapping = isDirect && shownShow ? (shownShow.episode_mappings || []).find(m => m.feed_id === data.current_feed_id) : null;
+      const numberingHint = mapping && mapping.offset > 0 ? `This feed numbers the season from episode ${mapping.offset + 1}.` : '';
+      const ruleHint = !isDirect && data.has_rule && data.rule_name
+        ? `${ruleStatusText}. <span class="font-mono break-words select-all">${escapeHtml(data.rule_name)}</span>`
+        : '';
 
+      const linkClass = 'text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors';
       document.getElementById('show-side-form').innerHTML = `
-        <h3 class="section-title mb-2 px-1 flex items-center gap-2">Feed &amp; matching<span class="ml-auto text-xs font-normal text-zinc-500">${ruleStatusText}</span></h3>
-        <div class="card p-4 flex flex-col gap-4">
-         <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label for="show-feed-id" class="field-label">${feedLabel}</label>
-            <select id="show-feed-id" class="field" title="${feedUrlTitle}">
-              ${feedOptions}
-            </select>
-            ${feedHint ? `<p class="field-hint">${feedHint}</p>` : ''}
+        <div class="pane-head">
+          <div class="seg">
+            <button type="button" id="show-side-tab-feed" onclick="setShowSideTab('feed')" class="${showSideTab === 'feed' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Feed</button>
+            <button type="button" id="show-side-tab-download" onclick="setShowSideTab('download')" class="${showSideTab === 'download' ? SEG_ACTIVE_CLASS : SEG_INACTIVE_CLASS}">Download</button>
           </div>
-          ${regexSections}
-         </div>
-         <div class="flex flex-wrap items-center gap-x-5 gap-y-2">
-          <button type="button" onclick="showTriggerRediscover()" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors" title="Clear manual rule customizations and let the supervisor auto-match against feeds">
-           Reset to auto-discover
-          </button>
-          ${isDirect ? '' : `<button type="button" onclick="searchPastReleases(this)" class="text-sm text-zinc-400 hover:text-zinc-100 underline underline-offset-4 decoration-accent/50 hover:decoration-accent transition-colors disabled:opacity-50" title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">
-           Search past releases
-          </button>`}
-         </div>
-        </div>`;
-
-      document.getElementById('show-col-feed').innerHTML = `
-        <h3 class="section-title mb-2 px-1">Download</h3>
-        <div class="card p-4 space-y-4">
-          <div>
-            <label for="show-save-path" class="field-label">Save path</label>
-            <input type="text" id="show-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
-          </div>
-          <div class="grid grid-cols-2 gap-3">
+          <button type="button" id="show-side-reset" onclick="showTriggerRediscover()" class="${linkClass} text-xs ${showSideTab === 'feed' ? '' : 'hidden'}" title="Clear manual rule customizations and let the supervisor auto-match against feeds">Reset to auto-discover</button>
+        </div>
+        <div id="show-side-feed" class="min-h-0 flex flex-col ${showSideTab === 'feed' ? '' : 'hidden'}">
+          <div class="card p-4 min-h-0 lg:overflow-y-auto flex flex-col gap-3">
             <div>
-              <label for="show-category" class="field-label">Category</label>
-              <input type="text" id="show-category" value="${escapeHtml(data.category || '')}" placeholder="${escapeHtml(currentSettings.default_category || 'anime')}" class="field font-mono">
+              <label for="show-feed-id" class="field-label">${feedLabel}</label>
+              <select id="show-feed-id" class="field" title="${feedUrlTitle}">
+                ${feedOptions}
+              </select>
+              ${feedHint ? `<p class="field-hint">${feedHint}</p>` : ''}
+              ${numberingHint ? `<p class="field-hint">${numberingHint}</p>` : ''}
+              ${ruleHint ? `<p class="field-hint">${ruleHint}</p>` : ''}
             </div>
+            ${data.has_rule ? `${aliasesField}${matchingFields}` : noRulePlaceholder}
+          </div>
+        </div>
+        <div id="show-side-download" class="min-h-0 flex flex-col ${showSideTab === 'download' ? '' : 'hidden'}">
+          <div class="card p-4 min-h-0 lg:overflow-y-auto space-y-4">
             <div>
-              <label for="show-ratio-limit" class="field-label">Seed ratio</label>
-              <input type="number" step="0.1" min="0" id="show-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="field font-mono">
+              <label for="show-save-path" class="field-label">Save path</label>
+              <input type="text" id="show-save-path" value="${escapeHtml(data.save_path || data.save_folder || '')}" placeholder="~/Anime/${escapeHtml(data.display_name)}" class="field font-mono" title="${escapeHtml(data.save_path || '')}">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label for="show-category" class="field-label">Category</label>
+                <input type="text" id="show-category" value="${escapeHtml(data.category || '')}" placeholder="${escapeHtml(currentSettings.default_category || 'anime')}" class="field font-mono">
+              </div>
+              <div>
+                <label for="show-ratio-limit" class="field-label">Seed ratio</label>
+                <input type="number" step="0.1" min="0" id="show-ratio-limit" value="${data.ratio_limit !== undefined && data.ratio_limit !== null ? data.ratio_limit : ''}" placeholder="${currentSettings.default_seed_ratio || 1.0}" class="field font-mono">
+              </div>
             </div>
           </div>
         </div>`;

@@ -147,6 +147,7 @@
     .show-title { font-size: 1.5rem; line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; color: rgb(var(--z50)); }
     @media (min-width: 768px) { .show-title { font-size: 2rem; } }
     #tab-settings .danger-zone { margin-top: 2rem; }
+    .pane-head { flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 2.125rem; margin-bottom: .5rem; padding: 0 .25rem; }
 
     /* Text lines under a show card. */
     .card-meta { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; min-width: 0; font-size: .75rem; line-height: 1rem; color: rgb(var(--t-hint)); }
@@ -735,16 +736,15 @@
         </button>
       </div>
 
-      <div id="show-body" oninput="updateSaveBar()" onchange="updateSaveBar()" class="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,29rem)_minmax(0,1fr)_17rem] lg:grid-rows-[auto_minmax(0,1fr)] gap-x-6 gap-y-5 px-4 md:px-8 pb-6 max-w-[1700px] w-full">
+      <div id="show-body" oninput="updateSaveBar()" onchange="updateSaveBar()" class="flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_22rem] lg:grid-rows-[auto_minmax(0,1fr)] gap-x-6 gap-y-5 px-4 md:px-8 pb-6 max-w-[1700px] w-full">
 
-        <div class="order-1 lg:order-none lg:col-span-3 flex flex-col lg:flex-row lg:items-end gap-x-6 gap-y-4 min-w-0">
+        <div class="order-1 lg:order-none lg:col-span-2 flex flex-col lg:flex-row lg:items-end gap-x-6 gap-y-4 min-w-0">
           <div id="show-poster" class="relative z-10 -mt-24 lg:-mt-40 w-36 lg:w-[13.5rem] aspect-[2/3] flex-shrink-0 rounded-lg overflow-hidden bg-surface border border-line shadow-lg shadow-black/40"></div>
           <div id="show-title-block" class="min-w-0 flex-1 lg:pb-1"></div>
         </div>
 
-        <div id="show-side-form" class="order-3 lg:order-none min-w-0 lg:min-h-0 flex flex-col"></div>
         <div id="show-lists" class="order-2 lg:order-none flex flex-col lg:min-h-0 min-w-0"></div>
-        <div id="show-col-feed" class="order-4 lg:order-none min-w-0 lg:min-h-0 flex flex-col"></div>
+        <div id="show-side-form" class="order-3 lg:order-none min-w-0 lg:min-h-0 flex flex-col"></div>
 
       </div>
 
