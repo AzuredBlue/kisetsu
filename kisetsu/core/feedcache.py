@@ -43,6 +43,8 @@ _CHUNK = 500
 
 # Feeds the last ingest could not read; their (stale) cache is not treated as current.
 _failed_feed_names: List[str] = []
+# When each currently failing feed was first seen failing.
+_failing_since: Dict[str, datetime] = {}
 # One copy from qBittorrent at a time; a second caller just waits and reads the settled result.
 _ingest_lock = threading.Lock()
 # Articles already matched against the followed shows are not matched again.
@@ -73,6 +75,21 @@ def _evaluated_for(session: Session) -> _Evaluated:
 
 def last_failed_feed_names() -> List[str]:
     return list(_failed_feed_names)
+
+
+def failing_feed_since(name: str) -> Optional[datetime]:
+    """When ``name`` was first seen failing, or None while it reads fine."""
+    return _failing_since.get(name) if name in _failed_feed_names else None
+
+
+def _record_failed_feeds(names: List[str]) -> None:
+    now = utc_now()
+    _failed_feed_names[:] = names
+    for name in list(_failing_since):
+        if name not in names:
+            del _failing_since[name]
+    for name in names:
+        _failing_since.setdefault(name, now)
 
 
 def item_id_of(article: Dict[str, Any]) -> str:
@@ -383,7 +400,7 @@ def ingest_rss(engine, qbit: QBitClient, force: bool = False) -> int:
     with _ingest_lock:
         snapshot = RssSnapshot(qbit)
         articles = snapshot.refresh() if force else snapshot.get()
-        _failed_feed_names[:] = snapshot.failed_feed_names
+        _record_failed_feeds(snapshot.failed_feed_names)
         with Session(engine) as session:
             return store_matches(session, articles)
 
@@ -416,6 +433,6 @@ class CachedRssSnapshot(RssSnapshot):
         """A live refresh, for the rare caller that needs a fresh look; its result is cached."""
         live = RssSnapshot(self.qbit_client)
         articles = live.refresh(**kwargs)
-        _failed_feed_names[:] = live.failed_feed_names
+        _record_failed_feeds(live.failed_feed_names)
         store_matches(self.session, articles)
         return self.get()

@@ -2558,6 +2558,19 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       }
     }
 
+    function feedHealthMarkup(f) {
+      const dot = '<span style="display:inline-block;width:6px;height:6px;border-radius:9999px;background:currentColor"></span>';
+      if (!f.failing_since) {
+        return `<div class="inline-flex items-center gap-1.5 text-xs text-emerald-400 mt-0.5" title="qBittorrent read this feed on its last refresh">${dot}OK</div>`;
+      }
+      const since = new Date(f.failing_since);
+      const sameDay = since.toDateString() === new Date().toDateString();
+      const when = sameDay
+        ? since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        : since.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return `<div class="inline-flex items-center gap-1.5 text-xs text-rose-400 mt-0.5" title="qBittorrent has not been able to read this feed since ${escapeHtml(since.toLocaleString())}">${dot}Failing since ${escapeHtml(when)}</div>`;
+    }
+
     function renderFeedsTable() {
       const tbody = document.getElementById('feeds-table-body');
       tbody.innerHTML = allFeeds.map((f, idx) => `
@@ -2583,6 +2596,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
           <td class="py-4 px-4">
             <div class="font-medium text-zinc-100 text-sm">${escapeHtml(f.qbit_feed_name)}</div>
             <div class="text-xs text-zinc-500 font-mono truncate max-w-2xl mt-0.5">${escapeHtml(f.qbit_feed_url)}</div>
+            <div>${feedHealthMarkup(f)}</div>
             ${f.shows > 0 ? `<div class="text-xs text-zinc-500 mt-0.5">${f.shows} show${f.shows === 1 ? '' : 's'}${f.locked > 0 ? ` · ${f.locked} locked` : ''}</div>` : ''}
           </td>
           <td class="py-4 px-3">
@@ -3304,6 +3318,9 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
       });
     }
 
+    // The failing feeds the last status answer listed; a change reloads the feed list so its health stays current.
+    let lastFailingKey = null;
+
     async function updateStatus(force = false) {
       if (statusUpdateInFlight) {
         if (force) statusUpdateQueued = true;
@@ -3316,6 +3333,9 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         const st = await apiFetch('/api/status');
         answered = true;
         serverReachable = true;
+        const failingKey = (st.failing_feeds || []).join('|');
+        if (lastFailingKey !== null && failingKey !== lastFailingKey) loadShows({ quiet: true });
+        lastFailingKey = failingKey;
         anilistBlockedUntil = st.anilist_blocked_until ? new Date(st.anilist_blocked_until).getTime() : null;
         nextCheckReason = st.next_check_reason || '';
         if (st.target_next_check_time) {

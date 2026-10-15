@@ -33,7 +33,7 @@ from kisetsu.clients.anilist import AniListClient, AniListError, rate_limit_stat
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE, SANDBOX
 from kisetsu.core.backfill import missing_episodes, run_backfill
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.feedcache import cached_articles, last_failed_feed_names
+from kisetsu.core.feedcache import cached_articles, failing_feed_since, last_failed_feed_names
 from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
 from kisetsu.core.grabber import cancel_episode_operations, cancel_unfinished_downloads, direct_feed_matches, find_show_torrents, manual_grab, rebase_ledger, restore_episode, show_torrent_preview
 from kisetsu.core.supervisor import Supervisor, delete_monitored_show
@@ -1397,6 +1397,7 @@ def _feed_json(feed: Feed, usage: Optional[Dict[str, int]] = None) -> Dict[str, 
         "priority": feed.priority,
         "shows": usage.get("shows", 0),
         "locked": usage.get("locked", 0),
+        "failing_since": since.isoformat() if (since := failing_feed_since(feed.qbit_feed_name)) else None,
     }
 
 
