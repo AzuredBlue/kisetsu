@@ -38,6 +38,8 @@ QBIT_RETRY_DELAYS = (1, 2, 4, 8, 16, 30, 60)
 QBIT_AUTH_RETRY_SECONDS = 300
 STARTUP_GRACE_SECONDS = 5
 BUSY_RETRY_SECONDS = 5
+# A rejected RSS refresh is retried this soon, whatever the routine schedule says.
+RSS_RETRY_SECONDS = 60
 SETTLE_INTERVAL_SECONDS = 4
 INGEST_INTERVAL_SECONDS = 60
 INGEST_ERROR_SECONDS = 30
@@ -113,6 +115,7 @@ async def background_supervisor_task():
         connection_ready = False
         sleep_seconds = 60
         deferred_reason: Optional[str] = None
+        rss_retry_seconds: Optional[int] = None
         # Cleared before the work, not after: a trigger that arrives while a check
         # runs (a past-release search finding something) must cut the next sleep short.
         state.wake_event.clear()
@@ -207,7 +210,7 @@ async def background_supervisor_task():
                     except QbitRSSRefreshError as e:
                         needs_rss_refresh = True
                         deferred_reason = f"qBittorrent RSS refresh failed; direct evaluation deferred: {e}"
-                        sleep_seconds = min(_next_qbit_retry(retry_index), 60)
+                        rss_retry_seconds = RSS_RETRY_SECONDS
                     except QbitClientError as e:
                         connection_ready = False
                         needs_rss_refresh = True
@@ -247,6 +250,8 @@ async def background_supervisor_task():
                                 # A deferred AniList refresh must not wait out a long routine sleep.
                                 sleep_seconds = max(60, retry_in)
                                 reason = f"{reason}, waiting on AniList"
+                            if rss_retry_seconds is not None:
+                                sleep_seconds = min(sleep_seconds, rss_retry_seconds)
                             _set_next_check(sleep_seconds, deferred_reason or reason, cycle_summary)
                 else:
                     state.daemon_active = False
