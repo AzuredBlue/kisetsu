@@ -69,6 +69,21 @@ def generate_season_variants(alias: str) -> List[str]:
     return variants
 
 
+def name_end_guard(name: str) -> str:
+    """The lookahead that keeps a name's trailing season number from matching a longer one.
+
+    "Foo 3" must not match "Foo 30" and "Foo II" must not match "Foo III", but
+    "Foo 3 - 01" and "Foo S03E01" still match.
+    """
+    stripped = (name or "").strip()
+    if stripped[-1:].isdigit():
+        return r"(?!\d)"
+    words = stripped.split()
+    if len(words) > 1 and words[-1].upper() in ROMAN_TO_INT:
+        return r"(?![A-Za-z0-9])"
+    return ""
+
+
 def sanitize_regex_token(title: str) -> str:
     """Escape true regex metacharacters while keeping spaces and hyphens clean and human-readable."""
     if not title:
@@ -91,11 +106,7 @@ def build_release_name_pattern(release_name: str) -> str:
     stripped = (release_name or "").strip()
     if not stripped:
         return ""
-    pattern = sanitize_regex_token(stripped)
-    if stripped[-1:].isdigit():
-        # "Foo 3" must not match "Foo 30", but "Foo 3 - 01" still matches.
-        pattern += r"(?!\d)"
-    return pattern
+    return sanitize_regex_token(stripped) + name_end_guard(stripped)
 
 
 def build_tolerant_name_pattern(name: str) -> str:
@@ -118,8 +129,8 @@ def build_tolerant_name_pattern(name: str) -> str:
             safe += r"\b"
         escaped.append(safe)
     pattern = NAME_SEPARATORS.join(escaped)
-    if tokens[-1][-1:].isdigit() and not tokens[-1].isdigit():
-        pattern += r"(?!\d)"
+    if not tokens[-1].isdigit():
+        pattern += name_end_guard(" ".join(tokens))
     return pattern
 
 
@@ -162,13 +173,10 @@ def build_regex_pattern(
     for a in target_aliases:
         expanded_aliases.extend(generate_season_variants(a))
 
-    # A variant ending in a number ("Foo 3", "Foo S03") must not match a longer
-    # number ("Foo 30"). A digit lookahead rather than \b, so "Foo S03E01" still
-    # matches; it is appended after escaping so it stays a regex.
-    tokens = [
-        sanitize_regex_token(a) + (r"(?!\d)" if a.strip()[-1:].isdigit() else "")
-        for a in expanded_aliases
-    ]
+    # A variant ending in a season number ("Foo 3", "Foo S03", "Foo II") must not
+    # match a longer one ("Foo 30", "Foo III"). A lookahead rather than \b, so
+    # "Foo S03E01" still matches; it is appended after escaping so it stays a regex.
+    tokens = [sanitize_regex_token(a) + name_end_guard(a) for a in expanded_aliases]
     unique_tokens = list(dict.fromkeys(tokens))
     alternation = "|".join(unique_tokens)
 
