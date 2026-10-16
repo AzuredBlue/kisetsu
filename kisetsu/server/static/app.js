@@ -2300,6 +2300,8 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
         showToast(err.message || 'Restore failed.', err.status === 409 ? 'info' : 'error');
       } finally {
         pendingDownloads.delete(key);
+        btn.disabled = false;
+        btn.classList.remove('opacity-50', 'pointer-events-none');
         rerenderShowLists();
       }
     }
