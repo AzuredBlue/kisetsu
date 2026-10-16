@@ -1074,7 +1074,8 @@ def _discovery_window_open(
         return True
 
     published_at = parse_article_date(article)
-    reference = published_at if published_at > datetime.min.replace(tzinfo=timezone.utc) else now
+    # In UTC: the database drops the offset, and as_utc reads the stored value as UTC.
+    reference = published_at.astimezone(timezone.utc) if published_at > datetime.min.replace(tzinfo=timezone.utc) else now
 
     if show.candidate_feed_id != feed.id:
         show.candidate_feed_id = feed.id
