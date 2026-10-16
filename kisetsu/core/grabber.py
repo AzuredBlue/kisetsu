@@ -1955,8 +1955,10 @@ def cancel_unfinished_downloads(
                 TorrentOperation.status.in_(list(ACTIVE_OPERATION_STATUSES)),
             )
         ).all())
-        if episode.torrent_hash:
+        replacing = any(op.kind == "replace" for op in operations)
+        if episode.torrent_hash and not replacing:
             # A grab that finished its bookkeeping while its torrent is still downloading.
+            # During a replace the hash is the release being replaced, which stays.
             operations += [
                 op for op in session.exec(
                     select(TorrentOperation).where(
@@ -1967,7 +1969,6 @@ def cancel_unfinished_downloads(
                 ).all()
                 if op not in operations
             ]
-        replacing = any(op.kind == "replace" for op in operations)
         from_feed = next((op.feed_id for op in operations if op.feed_id), None) or episode.feed_id
         if from_feed is None or from_feed == keep_feed_id:
             continue
