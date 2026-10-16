@@ -1721,11 +1721,13 @@ def _attempt_operation_add(
             return
     # The feed that just delivered a release is now proven for this show. It is
     # recorded as learned so nothing downstream may quietly move the show
-    # somewhere else on the strength of a heuristic.
-    show.learned_feed_id = operation.feed_id
-    show.current_feed_id = operation.feed_id
-    show.candidate_feed_id = None
-    show.candidate_feed_since = None
+    # somewhere else on the strength of a heuristic. An operation whose feed was
+    # deleted since proves nothing about any feed.
+    if operation.feed_id is not None:
+        show.learned_feed_id = operation.feed_id
+        show.current_feed_id = operation.feed_id
+        show.candidate_feed_id = None
+        show.candidate_feed_since = None
     # Learn the series name, never the filename. The raw title carries this one
     # episode's number, quality and group, so storing it would build a rule that
     # matches nothing but the episode it came from.

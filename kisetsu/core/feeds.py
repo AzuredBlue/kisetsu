@@ -4,7 +4,7 @@ from typing import Dict
 from sqlalchemy import delete, func, update
 from sqlmodel import Session, select
 
-from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, RuleHistory, SeenFeedItem
+from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, RuleHistory, SeenFeedItem, TorrentOperation
 
 
 def forget_feed(session: Session, feed: Feed) -> None:
@@ -40,6 +40,16 @@ def forget_feed(session: Session, feed: Feed) -> None:
     for history in session.exec(select(RuleHistory).where(RuleHistory.feed_id == feed_id)).all():
         history.feed_id = None
         session.add(history)
+
+    # An operation still retrying would otherwise lock its show to the deleted feed's id.
+    for operation in session.exec(
+        select(TorrentOperation).where((TorrentOperation.feed_id == feed_id) | (TorrentOperation.old_feed_id == feed_id))
+    ).all():
+        if operation.feed_id == feed_id:
+            operation.feed_id = None
+        if operation.old_feed_id == feed_id:
+            operation.old_feed_id = None
+        session.add(operation)
 
     session.delete(feed)
 
