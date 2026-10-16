@@ -396,6 +396,9 @@ def _remove_superseded_torrent(qbit: QBitClient, operation: TorrentOperation, ne
         raise QbitClientError(f"Could not read torrent {old_hash}: {e}") from e
     if not existing:
         return
+    if new_torrent is None:
+        # Without the replacement's path there is no telling whether the files are shared.
+        raise QbitClientError(f"Replacement torrent {operation.new_torrent_hash} is not listed in qBittorrent")
     old_path = _content_path(existing[0])
     shares_files = old_path is not None and old_path == _content_path(new_torrent)
     qbit.delete_torrents([old_hash], delete_files=not shares_files)
@@ -478,7 +481,12 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             session.commit()
         elif operation.status == TorrentOperationStatus.OLD_STOPPED:
             try:
-                _remove_superseded_torrent(qbit, operation, _operation_torrent(qbit, operation))
+                torrent = _operation_torrent(qbit, operation)
+                if torrent is None and list(qbit.get_torrents(hashes=[operation.old_torrent_hash])):
+                    # The previous release is still there and the replacement is gone for good.
+                    _fail_operation(session, operation, episode, "Replacement torrent is no longer present in qBittorrent; the previous release was kept.")
+                    return None
+                _remove_superseded_torrent(qbit, operation, torrent)
             except Exception as e:
                 _operation_retry(session, operation, episode, str(e))
                 return None
