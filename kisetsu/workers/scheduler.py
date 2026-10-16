@@ -204,10 +204,18 @@ def classify_shows(
         elif s.status == MonitoredStatus.UNCONFIRMED:
             is_near = has_aired
             if not is_near and airing_at is not None and (s.next_airing_episode or 1) > 1:
-                previous_air = airing_at - timedelta(days=7)
                 expected_ep = (s.next_airing_episode or 1) - 1
-                # previous_air lies in the future when the next airing is more
-                # than a week out (hiatus or delay); that is not "just aired".
+                # The stored air time of the episode that just aired, when known: the
+                # next one can be more or less than a week out (a break, two a week).
+                stored_air = session.exec(
+                    select(Episode.air_at).where(
+                        Episode.monitored_id == s.id,
+                        Episode.episode_number == expected_ep,
+                    )
+                ).first()
+                previous_air = as_utc(stored_air) if stored_air else airing_at - timedelta(days=7)
+                # A guessed previous_air lies in the future when the next airing is
+                # more than a week out (hiatus or delay); that is not "just aired".
                 since_previous = now - previous_air
                 if (
                     timedelta(0) <= since_previous <= timedelta(hours=24)
