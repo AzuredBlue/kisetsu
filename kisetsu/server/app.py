@@ -38,6 +38,8 @@ QBIT_RETRY_DELAYS = (1, 2, 4, 8, 16, 30, 60)
 QBIT_AUTH_RETRY_SECONDS = 300
 STARTUP_GRACE_SECONDS = 5
 BUSY_RETRY_SECONDS = 5
+# How long a check waits for a settle round or request to free the cycle slot.
+BUSY_WAIT_SECONDS = 10
 # A rejected RSS refresh is retried this soon, whatever the routine schedule says.
 RSS_RETRY_SECONDS = 60
 SETTLE_INTERVAL_SECONDS = 4
@@ -186,9 +188,10 @@ async def background_supervisor_task():
                             if needs_rss_refresh:
                                 state.last_feed_refresh_added = added
                             needs_rss_refresh = False
-                        if not state.try_begin_cycle("background"):
-                            # A manual cycle or show edit holds the slot. Wait for it
-                            # briefly instead of re-probing every second.
+                        # A settle round or request holds the slot only briefly, so wait for
+                        # it here rather than starting over and refreshing the feeds again.
+                        if not await asyncio.to_thread(state.try_begin_cycle, "background", BUSY_WAIT_SECONDS):
+                            needs_rss_refresh = cycle_forced
                             await asyncio.sleep(BUSY_RETRY_SECONDS)
                             continue
                         holding_slot = True
