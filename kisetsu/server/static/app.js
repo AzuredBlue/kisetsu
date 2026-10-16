@@ -3879,7 +3879,10 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
     });
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && currentInspectedShowId !== null) closeShowPage();
+      if (e.key !== 'Escape' || currentInspectedShowId === null) return;
+      // Escape in an open dialog closes only the dialog.
+      const dialogOpen = [...document.querySelectorAll('[aria-modal="true"]')].some(el => !el.closest('.hidden'));
+      if (!dialogOpen) closeShowPage();
     });
 
     // Browser back/forward moves between the list and a show page.
