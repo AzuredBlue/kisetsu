@@ -789,6 +789,9 @@
 
     function setShowListTab(tab) {
       showListTab = tab;
+      // Without a releases panel (rules mode before a pattern is learned) the episodes
+      // stay shown; the next redraw opens the releases if it brings them.
+      if (tab === 'feed' && !document.getElementById('show-panel-feed')) return;
       ['episodes', 'feed'].forEach(name => {
         const panel = document.getElementById(`show-panel-${name}`);
         const button = document.getElementById(`show-tab-${name}`);
