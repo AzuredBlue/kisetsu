@@ -32,7 +32,8 @@ def _cached_cover(url: str) -> Optional[Path]:
             if len(resp.content) > MAX_IMAGE_BYTES:
                 return None
         COVER_DIR.mkdir(parents=True, exist_ok=True)
-        temp = path.with_suffix(".tmp")
+        # One temp file per thread: two episodes of a show can finish together.
+        temp = path.with_name(f"{path.stem}.{threading.get_ident()}.tmp")
         temp.write_bytes(resp.content)
         temp.replace(path)
         return path
