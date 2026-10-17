@@ -48,6 +48,7 @@ from kisetsu.core.rules import (
     create_or_update_rule,
     delete_rule,
     effective_title,
+    has_released_without_air_time,
     is_show_rule_deferred,
     is_show_rule_enabled,
     is_show_rule_unreleased,
@@ -217,6 +218,7 @@ def get_shows(session: Session = Depends(get_db)):
             or (s.next_airing_episode is not None and s.next_airing_episode > 1)
             or (s.last_confirmed_episode is not None and s.last_confirmed_episode >= 1)
             or (airing_at is not None and airing_at <= now)
+            or has_released_without_air_time(s)
         )
 
         romaji_title = s.title_romaji or s.display_name

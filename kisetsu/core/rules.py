@@ -272,11 +272,18 @@ def build_rule_name(monitored_id: int, display_name: str) -> str:
     return f"[Seasonal] {clean_name}"
 
 
+def has_released_without_air_time(monitored: Monitored) -> bool:
+    """A show AniList calls releasing or finished that has no air time to go by (typically a movie)."""
+    return monitored.next_airing_at is None and monitored.anilist_status in ("RELEASING", "FINISHED")
+
+
 def is_show_rule_unreleased(monitored: Monitored) -> bool:
     """
     True while a show has not started airing yet: premiere still ahead (or unscheduled)
     and nothing downloaded so far. These shows are "upcoming", not "testing".
     """
+    if has_released_without_air_time(monitored):
+        return False
     now = utc_now()
     air_at = monitored.next_airing_at
     if air_at and air_at.tzinfo is None:
