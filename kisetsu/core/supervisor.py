@@ -20,6 +20,7 @@ from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, bu
 from kisetsu.core.stall import check_and_handle_stalls
 from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
+from kisetsu.workers.scheduler import waiting_for_release
 
 logger = logging.getLogger("kisetsu.core.supervisor")
 
@@ -1758,18 +1759,29 @@ class Supervisor:
         stalled_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.STALLED)
         paused_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.PAUSED)
         completed_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.COMPLETED)
+        unconfirmed_ids = [s.id for s in total_shows if s.status == MonitoredStatus.UNCONFIRMED]
+        episodes_by_show: Dict[int, List[Episode]] = {}
+        if unconfirmed_ids:
+            for episode in self.session.exec(select(Episode).where(Episode.monitored_id.in_(unconfirmed_ids))).all():
+                episodes_by_show.setdefault(episode.monitored_id, []).append(episode)
+        now = utc_now()
         upcoming_cnt = 0
         testing_cnt = 0
+        waiting_cnt = 0
         for s in total_shows:
             if s.status == MonitoredStatus.UNCONFIRMED:
                 if is_show_rule_unreleased(s):
                     upcoming_cnt += 1
+                elif waiting_for_release(s, now, self.settings.download_mode, episodes_by_show.get(s.id, [])):
+                    waiting_cnt += 1
                 else:
                     testing_cnt += 1
 
         summary = f"{works_cnt} Working, {upcoming_cnt} Upcoming"
         if testing_cnt > 0:
             summary += f", {testing_cnt} Testing"
+        if waiting_cnt > 0:
+            summary += f", {waiting_cnt} Waiting"
         if stalled_cnt > 0:
             summary += f", {stalled_cnt} Stalled"
         if completed_cnt > 0:
