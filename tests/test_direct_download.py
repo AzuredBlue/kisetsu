@@ -3564,3 +3564,66 @@ def test_a_show_held_for_its_saved_files_is_not_grabbed_until_released():
     assert qbit.add_torrent.call_count == 1
     session.close()
     engine.dispose()
+
+
+def _finished_episodes(session, hashes):
+    show = _show(session)
+    for number, torrent_hash in enumerate(hashes, start=1):
+        session.add(Episode(
+            monitored_id=show.id, episode_number=number, status=EpisodeStatus.COMPLETED,
+            torrent_hash=torrent_hash, release_title=f"Show - {number:02d}",
+        ))
+    session.commit()
+
+
+def _qbit_listing(listed):
+    qbit = MagicMock()
+    qbit.get_torrents.side_effect = lambda **kw: [
+        MagicMock(hash=h, name=f"Torrent {h}")
+        for h in (kw.get("hashes") or listed) if h in listed
+    ]
+    return qbit
+
+
+def test_a_finished_episode_whose_torrent_was_deleted_is_no_longer_managed(monkeypatch):
+    from kisetsu.core.grabber import reconcile_removed_torrents
+
+    monkeypatch.setattr("kisetsu.core.grabber.time.sleep", lambda s: None)
+    engine, session = _database()
+    _finished_episodes(session, ["aaa", "bbb"])
+
+    logs = reconcile_removed_torrents(session, _qbit_listing(["aaa"]))
+
+    hashes = {e.episode_number: e.torrent_hash for e in session.exec(select(Episode)).all()}
+    assert hashes == {1: "aaa", 2: None}
+    assert len(logs) == 1
+    session.close()
+    engine.dispose()
+
+
+def test_every_deleted_torrent_is_forgotten_while_qbittorrent_lists_others(monkeypatch):
+    from kisetsu.core.grabber import reconcile_removed_torrents
+
+    monkeypatch.setattr("kisetsu.core.grabber.time.sleep", lambda s: None)
+    engine, session = _database()
+    _finished_episodes(session, ["aaa", "bbb", "ccc"])
+
+    reconcile_removed_torrents(session, _qbit_listing(["unrelated"]))
+
+    assert [e.torrent_hash for e in session.exec(select(Episode)).all()] == [None, None, None]
+    session.close()
+    engine.dispose()
+
+
+def test_nothing_is_forgotten_while_qbittorrent_lists_no_torrents_at_all(monkeypatch):
+    from kisetsu.core.grabber import reconcile_removed_torrents
+
+    monkeypatch.setattr("kisetsu.core.grabber.time.sleep", lambda s: None)
+    engine, session = _database()
+    _finished_episodes(session, ["aaa", "bbb", "ccc"])
+
+    assert reconcile_removed_torrents(session, _qbit_listing([])) == []
+
+    assert {e.torrent_hash for e in session.exec(select(Episode)).all()} == {"aaa", "bbb", "ccc"}
+    session.close()
+    engine.dispose()

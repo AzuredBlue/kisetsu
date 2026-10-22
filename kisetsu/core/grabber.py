@@ -921,8 +921,9 @@ def reconcile_removed_torrents(session: Session, qbit: QBitClient) -> List[str]:
         missing = [h for h in hashes if h not in present]
         if not missing:
             return []
-        if len(hashes) >= 3 and not present:
-            # None of them exist: qBittorrent has most likely not loaded its torrents yet.
+        if len(hashes) >= 3 and not present and not list(qbit.get_torrents()):
+            # None of them exist and qBittorrent lists nothing at all: it has most likely not
+            # loaded its torrents yet. If it lists others, these were really removed.
             return []
         # Ask again before believing it, so a moment of qBittorrent listing too little is not enough.
         time.sleep(2)
