@@ -52,6 +52,7 @@ from kisetsu.core.rules import (
     is_show_rule_deferred,
     is_show_rule_enabled,
     is_show_rule_unreleased,
+    premiere_out_of_reach,
     resolve_save_path,
     sanitize_folder_name,
     show_match_patterns,
@@ -1064,6 +1065,12 @@ def _auto_discover_now(session: Session, qbit: QBitClient, show: Monitored) -> s
     # An explicit request starts fresh: feeds that failed this show before are
     # not skipped here, only by the unattended check.
     feeds = session.exec(select(Feed).order_by(Feed.priority)).all()
+    if premiere_out_of_reach(show):
+        state.add_log(f"Auto-Discover for '{show.display_name}': it hasn't started airing yet.", "INFO")
+        return (
+            f"'{show.display_name}' set to Auto-Discover. It hasn't started airing yet; "
+            "it will be picked up once it does."
+        )
     found = discover_feed_for_show(
         monitored=show,
         feeds=feeds,

@@ -18,7 +18,7 @@ from kisetsu.core.feeds import compact_priorities, forget_feed
 from kisetsu.core.library import saved_release_names
 from kisetsu.core.grabber import MANAGED_TAG, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
+from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, premiere_out_of_reach, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
 from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
@@ -217,6 +217,7 @@ class Supervisor:
         # for a new assignment. Repair any drift before selecting candidates so
         # a restored feed cannot be re-guessed in the same cycle.
         logs.extend(self._restore_learned_feeds())
+        logs.extend(self._unwind_unreleased_discoveries(create_qbit_rules))
         logs.extend(self._lock_feeds_from_saved_files(
             self.session.exec(select(Feed).order_by(Feed.priority)).all(),
             rss_snapshot,
@@ -276,7 +277,8 @@ class Supervisor:
                 continue
             excluded = excluded_by_show.get(show.id, [])
 
-            res = discover_feed_for_show(
+            # Not on air yet: any release that carries its name is an earlier season's.
+            res = None if premiere_out_of_reach(show) else discover_feed_for_show(
                 monitored=show,
                 feeds=all_feeds,
                 qbit_client=self.qbit,
@@ -1238,6 +1240,8 @@ class Supervisor:
         ).all()
 
         for show in candidate_shows:
+            if premiere_out_of_reach(show):
+                continue
             if show.id in downloaded_show_ids:
                 show.candidate_feed_id = None
                 show.candidate_feed_since = None
@@ -1361,6 +1365,48 @@ class Supervisor:
                     feed_ids |= ids
         # A release mirrored on several feeds proves none of them in particular.
         return next(iter(feed_ids)) if len(feed_ids) == 1 else None
+
+    def _unwind_unreleased_discoveries(self, create_qbit_rules: bool) -> List[str]:
+        """Put back to Upcoming a show that was matched before it started airing.
+
+        Such a match is an earlier season's release. A show with a locked feed, a
+        pin or a download is left alone. In direct mode the feed is cleared so the
+        grabber discovers across every feed again; in rules mode the rule is
+        dropped by ``sync_active_rules`` once the show is deferred again.
+        """
+        logs: List[str] = []
+        downloaded = {
+            show_id for show_id in self.session.exec(
+                select(Episode.monitored_id).where(Episode.torrent_hash.is_not(None))
+            ).all() if show_id
+        }
+        shows = self.session.exec(
+            select(Monitored).where(
+                Monitored.learned_feed_id.is_(None),
+                Monitored.feed_pinned.isnot(True),
+                Monitored.status.in_([MonitoredStatus.FIXED, MonitoredStatus.UNCONFIRMED, MonitoredStatus.STALLED]),
+            )
+        ).all()
+        for show in shows:
+            matched = show.status == MonitoredStatus.FIXED or show.matched_title or show.candidate_feed_id is not None
+            if not matched or show.id in downloaded or not premiere_out_of_reach(show):
+                continue
+            show.status = MonitoredStatus.UNCONFIRMED
+            show.matched_title = None
+            show.matched_release_group = None
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+            if not create_qbit_rules:
+                show.current_feed_id = None
+            self.session.add(show)
+            self.session.commit()
+            msg = (
+                f"'{show.display_name}' put back to Upcoming: it hasn't started airing, "
+                "so the releases it matched were from an earlier season."
+            )
+            logger.info(msg)
+            logs.append(msg)
+        return logs
 
     def _saved_file_candidates(self) -> List[Tuple[Monitored, List[str]]]:
         """Shows with no feed lock that already have release files in their save folder."""

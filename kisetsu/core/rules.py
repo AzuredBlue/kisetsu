@@ -310,6 +310,19 @@ def is_show_rule_deferred(monitored: Monitored) -> bool:
     return air_at is None or air_at > utc_now() + RULE_LEAD_TIME
 
 
+def premiere_out_of_reach(monitored: Monitored) -> bool:
+    """
+    True while AniList says a show has not started airing and its premiere is unknown
+    or further away than RULE_LEAD_TIME. Nothing a feed carries can be this show's
+    yet, only an earlier season under the same name, so it is not matched against
+    releases.
+    """
+    if monitored.anilist_status != "NOT_YET_RELEASED" or not is_show_rule_unreleased(monitored):
+        return False
+    air_at = as_utc(monitored.next_airing_at)
+    return air_at is None or air_at > utc_now() + RULE_LEAD_TIME
+
+
 def is_show_rule_enabled(monitored: Monitored) -> bool:
     """
     Determine if a show's RSS rule in qBittorrent should be actively enabled.

@@ -1471,3 +1471,83 @@ def test_a_held_show_is_not_given_a_guessed_feed(tmp_path):
     create_rule.assert_not_called()
     library.release(1)
     engine.dispose()
+
+
+# --- shows that have not started airing ------------------------------------------
+
+def _unreleased_setup(mode="direct", **show_fields):
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+    settings = Settings(id=1, base_dir="/tmp", download_mode=mode)
+    erai = Feed(id=1, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=1)
+    values = dict(
+        id=1, anilist_id=1, display_name="Akane-banashi 2nd Season", aliases_json='["Akane-banashi", "Akane-banashi 2nd Season"]',
+        status=MonitoredStatus.UNCONFIRMED, anilist_status="NOT_YET_RELEASED",
+    )
+    values.update(show_fields)
+    show = Monitored(**values)
+    session.add_all([settings, erai, show])
+    session.commit()
+    qbit = MagicMock()
+    qbit.get_rss_items.return_value = {"Erai": {"url": erai.qbit_feed_url, "articles": [{
+        "id": "s1-12", "title": "[Erai-raws] Akane-banashi - 12 [1080p NF WEB-DL AVC AAC][MultiSub][CE5E41F4]",
+        "torrentURL": "magnet:s1-12",
+    }]}}
+    return engine, session, show, _direct_supervisor(session, settings, qbit)
+
+
+def test_a_show_that_has_not_started_airing_is_not_matched_to_an_earlier_seasons_release():
+    engine, session, show, supervisor = _unreleased_setup()
+
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert (show.current_feed_id, show.matched_title, show.status) == (None, None, MonitoredStatus.UNCONFIRMED)
+    engine.dispose()
+
+
+def test_a_show_premiering_within_a_week_is_still_discovered():
+    engine, session, show, supervisor = _unreleased_setup(
+        next_airing_episode=1, next_airing_at=utc_now() + timedelta(days=2),
+    )
+
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert show.current_feed_id == 1
+    engine.dispose()
+
+
+def test_a_show_matched_before_it_started_airing_is_put_back_to_upcoming():
+    engine, session, show, supervisor = _unreleased_setup(
+        status=MonitoredStatus.FIXED, current_feed_id=1, matched_title="Akane-banashi", matched_release_group="Erai-raws",
+    )
+
+    logs = supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert (show.status, show.current_feed_id, show.matched_title) == (MonitoredStatus.UNCONFIRMED, None, None)
+    assert any("put back to Upcoming" in line for line in logs)
+    engine.dispose()
+
+
+def test_putting_a_show_back_leaves_pinned_locked_and_downloaded_shows_alone():
+    for fields in ({"feed_pinned": True}, {"learned_feed_id": 1}):
+        engine, session, show, supervisor = _unreleased_setup(
+            status=MonitoredStatus.FIXED, current_feed_id=1, matched_title="Akane-banashi", **fields,
+        )
+        supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+        session.refresh(show)
+        assert (show.status, show.current_feed_id) == (MonitoredStatus.FIXED, 1)
+        engine.dispose()
+
+    engine, session, show, supervisor = _unreleased_setup(
+        status=MonitoredStatus.FIXED, current_feed_id=1, matched_title="Akane-banashi",
+    )
+    session.add(Episode(monitored_id=1, episode_number=1, status=EpisodeStatus.COMPLETED, torrent_hash="h1"))
+    session.commit()
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+    session.refresh(show)
+    assert show.status == MonitoredStatus.FIXED
+    engine.dispose()

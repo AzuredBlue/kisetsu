@@ -2992,3 +2992,20 @@ def test_accent_endpoint_does_not_remember_a_failed_fetch(client, session, db_en
     assert client.get("/api/shows/1/accent").json()["accent_ready"] is False
     assert client.get("/api/shows/999/accent").status_code == 404
 
+
+def test_auto_discover_does_not_match_a_show_that_has_not_started_airing(client, session, mock_qbit):
+    feed = Feed(id=1, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=1)
+    show = Monitored(
+        anilist_id=4010, display_name="Akane-banashi 2nd Season", aliases_json='["Akane-banashi"]',
+        status=MonitoredStatus.UNCONFIRMED, anilist_status="NOT_YET_RELEASED",
+    )
+    session.add_all([feed, show])
+    session.commit()
+    session.refresh(show)
+
+    res = client.post("/api/shows/auto-discover-all")
+
+    assert res.status_code == 200
+    session.expire_all()
+    assert session.get(Monitored, show.id).current_feed_id is None
+    assert session.get(Monitored, show.id).status == MonitoredStatus.UNCONFIRMED

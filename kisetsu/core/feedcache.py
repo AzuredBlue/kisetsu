@@ -24,7 +24,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient
 from kisetsu.core.discovery import RssSnapshot, parse_article_date
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
-from kisetsu.core.rules import show_match_patterns
+from kisetsu.core.rules import premiere_out_of_reach, show_match_patterns
 from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, SeenFeedItem, utc_now
 
 logger = logging.getLogger("kisetsu.core.feedcache")
@@ -153,7 +153,7 @@ class _FollowedShows:
 
 def _followed(session: Session) -> _FollowedShows:
     shows = session.exec(select(Monitored).where(Monitored.status != MonitoredStatus.COMPLETED)).all()
-    return _FollowedShows(shows)
+    return _FollowedShows([show for show in shows if not premiere_out_of_reach(show)])
 
 
 def _insert_rows(session: Session, rows: List[Dict[str, Any]]) -> int:
@@ -311,6 +311,17 @@ def prune(session: Session, now: Optional[datetime] = None) -> int:
                 MatchedFeedItem.published_at.is_not(None),
                 MatchedFeedItem.published_at < premiere_cutoff(first_air),
             )
+        ).rowcount or 0
+
+    # A show that has not started airing has no releases of its own; what matched it
+    # came from an earlier season under the same name.
+    not_started = [
+        show.id for show in session.exec(select(Monitored).where(Monitored.status != MonitoredStatus.COMPLETED)).all()
+        if premiere_out_of_reach(show)
+    ]
+    if not_started:
+        removed += session.execute(
+            delete(MatchedFeedItem).where(MatchedFeedItem.monitored_id.in_(not_started))
         ).rowcount or 0
 
     completed_ids = select(Monitored.id).where(Monitored.status == MonitoredStatus.COMPLETED)

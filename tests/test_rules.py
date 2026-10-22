@@ -1,14 +1,16 @@
 import json
 import re
 import unittest
+from datetime import timedelta
 from kisetsu.core.rules import (
     build_regex_pattern,
     build_release_name_pattern,
     build_rule_definition,
     build_rule_name,
+    premiere_out_of_reach,
     sanitize_folder_name,
 )
-from kisetsu.db.models import Monitored, MonitoredStatus
+from kisetsu.db.models import Monitored, MonitoredStatus, utc_now
 
 STEEL_BALL_RUN_ALIASES = [
     "JoJo no Kimyou na Bouken: Steel Ball Run - 2nd - 3rd STAGE",
@@ -435,6 +437,27 @@ class TestRules(unittest.TestCase):
 
         p4 = resolve_save_path("~/Anime/{name}", "Aoashi", custom_save_folder="Aoashi 2nd Season")
         self.assertEqual(p4, f"{home}/Anime/Aoashi 2nd Season")
+
+
+class TestPremiereOutOfReach(unittest.TestCase):
+    def show(self, **fields):
+        values = {"anilist_id": 1, "display_name": "Akane-banashi 2nd Season", "anilist_status": "NOT_YET_RELEASED"}
+        values.update(fields)
+        return Monitored(**values)
+
+    def test_a_show_with_no_air_date_or_a_far_premiere_is_out_of_reach(self):
+        self.assertTrue(premiere_out_of_reach(self.show()))
+        self.assertTrue(premiere_out_of_reach(
+            self.show(next_airing_episode=1, next_airing_at=utc_now() + timedelta(days=30))
+        ))
+
+    def test_a_show_about_to_premiere_or_already_airing_is_in_reach(self):
+        self.assertFalse(premiere_out_of_reach(
+            self.show(next_airing_episode=1, next_airing_at=utc_now() + timedelta(days=2))
+        ))
+        self.assertFalse(premiere_out_of_reach(self.show(anilist_status="RELEASING")))
+        self.assertFalse(premiere_out_of_reach(self.show(anilist_status=None)))
+        self.assertFalse(premiere_out_of_reach(self.show(last_confirmed_episode=1)))
 
 
 if __name__ == "__main__":

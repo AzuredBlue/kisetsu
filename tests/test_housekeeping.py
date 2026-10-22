@@ -159,3 +159,29 @@ def test_prune_drops_the_cache_of_a_feed_that_was_removed(cache_session):
 
     assert feedcache.prune(cache_session) == 1
     assert feedcache.cached_articles(cache_session) == {"https://b.example/rss": []}
+def _not_started(cache_session):
+    show = cache_session.get(Monitored, 1)
+    show.anilist_status = "NOT_YET_RELEASED"
+    cache_session.add(show)
+    cache_session.commit()
+
+
+def test_the_cache_keeps_nothing_for_a_show_that_has_not_started_airing(cache_session):
+    from kisetsu.core import feedcache
+
+    _not_started(cache_session)
+    articles = {"https://a.example/rss": [_article("[SubsPlease] Frieren - 05 (1080p).mkv", "a")]}
+
+    assert feedcache.store_matches(cache_session, articles) == 0
+
+
+def test_prune_drops_what_a_show_matched_before_it_started_airing(cache_session):
+    from kisetsu.core import feedcache
+
+    feedcache.store_matches(cache_session, {"https://a.example/rss": [
+        _article("[SubsPlease] Frieren - 05 (1080p).mkv", "a"),
+    ]})
+    _not_started(cache_session)
+
+    assert feedcache.prune(cache_session) == 1
+    assert feedcache.cached_articles(cache_session)["https://a.example/rss"] == []
