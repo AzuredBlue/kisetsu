@@ -54,6 +54,43 @@ class TestScheduler(unittest.TestCase):
         self.assertEqual(dur, 300)
         self.assertIn("hunting", reason)
 
+    def test_rules_mode_stops_hunting_a_show_a_day_past_its_air_time(self):
+        now = utc_now()
+        show = Monitored(
+            id=1,
+            anilist_id=101,
+            display_name="Movie",
+            aliases_json='["Movie"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=1,
+            anilist_status="FINISHED",
+            next_airing_episode=1,
+            next_airing_at=now - timedelta(days=8),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        self.assertFalse(is_hunting(self.session))
+        self.assertTrue(scheduler.waiting_for_release(show, now, "rules"))
+
+    def test_rules_mode_still_hunts_a_show_that_aired_hours_ago(self):
+        now = utc_now()
+        show = Monitored(
+            id=1,
+            anilist_id=101,
+            display_name="Fresh",
+            aliases_json='["Fresh"]',
+            status=MonitoredStatus.UNCONFIRMED,
+            current_feed_id=1,
+            next_airing_episode=1,
+            next_airing_at=now - timedelta(hours=2),
+        )
+        self.session.add(show)
+        self.session.commit()
+
+        self.assertTrue(is_hunting(self.session))
+        self.assertFalse(scheduler.waiting_for_release(show, now, "rules"))
+
     def test_wake_on_air_time_when_upcoming_show_airs_soon(self):
         now = utc_now()
         show = Monitored(

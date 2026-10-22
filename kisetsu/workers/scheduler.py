@@ -60,11 +60,11 @@ def earliest_scheduled_retry(session: Session, now: Optional[datetime] = None) -
 
 
 def past_hunting_window(air_at: Optional[datetime], now: datetime, download_mode: str) -> bool:
-    """In direct mode, whether an aired episode is past the day it is hunted for.
+    """Whether an aired episode is past the day it is hunted for.
 
     It is still grabbed after that, whenever qBittorrent's own refresh brings it in.
     """
-    if air_at is None or str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower() != "direct":
+    if air_at is None:
         return False
     return now - as_utc(air_at) > timedelta(hours=MISSED_AFTER_HOURS)
 
@@ -77,8 +77,6 @@ def waiting_for_release(show: Monitored, now: datetime, download_mode: str, epis
     time at all (a movie) was never hunted, so it waits from the start.
     """
     if show.status != MonitoredStatus.UNCONFIRMED:
-        return False
-    if str(download_mode or DEFAULT_DOWNLOAD_MODE).strip().lower() != "direct":
         return False
     aired = [episode for episode in episodes if episode.air_at is not None and as_utc(episode.air_at) <= now]
     if aired:
