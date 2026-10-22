@@ -139,7 +139,7 @@ def test_the_page_loads_its_styles_and_fonts_from_the_server_not_a_cdn(client):
     assert stylesheet.status_code == 200
     assert "text/css" in stylesheet.headers["content-type"]
     # Every font file the stylesheet points at is served.
-    font_files = set(re.findall(r"url\(([^)]+\.woff2)\)", stylesheet.text))
+    font_files = set(re.findall(r"url\(([^)?]+\.woff2)(?:\?[^)]*)?\)", stylesheet.text))
     assert font_files
     for name in font_files:
         assert client.get(f"/static/{name.lstrip('/')}").status_code == 200, name
