@@ -2120,6 +2120,7 @@ async def _sync_anilist_now(session: Session):
         logs.extend(sync_logs)
         if direct:
             logs.extend(await sup.prime_new_shows())
+        logs.extend(await sup.search_for_saved_files())
         bootstrap_logs = await asyncio.to_thread(
             sup.bootstrap_unassigned_shows,
             create_qbit_rules=not direct,

@@ -9,11 +9,13 @@ from sqlmodel import Session, select
 from kisetsu.clients.anilist import AniListClient, AniListDeferred, AniListError, get_current_and_next_season
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionError
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
-from kisetsu.core.backfill import prime_new_shows
+from kisetsu.core import library
+from kisetsu.core.backfill import prime_new_shows, run_backfill, search_completed
 from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
-from kisetsu.core.feedcache import CachedRssSnapshot
+from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles
 from kisetsu.core.feeds import compact_priorities, forget_feed
+from kisetsu.core.library import saved_release_names
 from kisetsu.core.grabber import MANAGED_TAG, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, RULE_LEAD_TIME
@@ -215,6 +217,12 @@ class Supervisor:
         # for a new assignment. Repair any drift before selecting candidates so
         # a restored feed cannot be re-guessed in the same cycle.
         logs.extend(self._restore_learned_feeds())
+        logs.extend(self._lock_feeds_from_saved_files(
+            self.session.exec(select(Feed).order_by(Feed.priority)).all(),
+            rss_snapshot,
+            create_qbit_rules,
+            known_categories,
+        ))
         if create_qbit_rules:
             assignment_filter = (
                 (Monitored.current_feed_id.is_(None))
@@ -264,6 +272,8 @@ class Supervisor:
             excluded_by_show.setdefault(monitored_id, []).append(feed_id)
 
         for show in unassigned_shows:
+            if library.is_held(show.id):
+                continue
             excluded = excluded_by_show.get(show.id, [])
 
             res = discover_feed_for_show(
@@ -1310,13 +1320,24 @@ class Supervisor:
     def shield_owned_articles_from_snapshot(self, rss_snapshot: RssSnapshot) -> List[str]:
         return self.shield_owned_articles(rss_snapshot.get())
 
-    def _feed_ids_by_release_title(self, rss_snapshot: Optional[RssSnapshot] = None) -> Dict[str, Set[int]]:
-        """Map each normalized RSS article title to the feeds carrying it."""
+    def _feed_ids_by_release_title(
+        self,
+        rss_snapshot: Optional[RssSnapshot] = None,
+        extra: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    ) -> Dict[str, Set[int]]:
+        """Map each normalized RSS article title to the feeds carrying it.
+
+        ``extra`` adds articles that are not in the snapshot, such as Kisetsu's own copy of matched feed items.
+        """
         try:
-            articles_by_url = (rss_snapshot or RssSnapshot(self.qbit)).get()
+            articles_by_url = dict((rss_snapshot or RssSnapshot(self.qbit)).get())
         except Exception as e:
             logger.debug(f"Feed attribution for imports skipped: {e}")
-            return {}
+            if not extra:
+                return {}
+            articles_by_url = {}
+        for url, articles in (extra or {}).items():
+            articles_by_url[url] = list(articles_by_url.get(url, [])) + list(articles)
         feed_ids_by_url = {feed.qbit_feed_url: feed.id for feed in self.session.exec(select(Feed)).all()}
         index: Dict[str, Set[int]] = {}
         for url, articles in articles_by_url.items():
@@ -1340,6 +1361,180 @@ class Supervisor:
                     feed_ids |= ids
         # A release mirrored on several feeds proves none of them in particular.
         return next(iter(feed_ids)) if len(feed_ids) == 1 else None
+
+    def _saved_file_candidates(self) -> List[Tuple[Monitored, List[str]]]:
+        """Shows with no feed lock that already have release files in their save folder."""
+        shows = self.session.exec(
+            select(Monitored).where(
+                Monitored.learned_feed_id.is_(None),
+                Monitored.feed_pinned.isnot(True),
+                Monitored.status.in_([
+                    MonitoredStatus.UNCONFIRMED,
+                    MonitoredStatus.FIXED,
+                    MonitoredStatus.STALLED,
+                ]),
+            )
+        ).all()
+        candidates = []
+        for show in shows:
+            names = saved_release_names(show, self.settings)
+            if names:
+                candidates.append((show, names))
+        return candidates
+
+    def _feed_ids_failed_for(self, show_id: Optional[int]) -> List[int]:
+        return [
+            feed_id for feed_id in self.session.exec(
+                select(RuleHistory.feed_id).where(
+                    RuleHistory.monitored_id == show_id,
+                    RuleHistory.outcome.in_([RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED]),
+                    RuleHistory.feed_id.isnot(None),
+                )
+            ).all()
+        ]
+
+    def _feed_from_saved_files(
+        self,
+        names: List[str],
+        feed_ids_by_title: Dict[str, Set[int]],
+        excluded: List[int],
+    ) -> Optional[Tuple[int, Optional[str], Optional[str]]]:
+        """(feed id, release group, title) of the feed the newest saved file came from, if one feed carries it.
+
+        A file several feeds carry proves none of them. When the files came from
+        different feeds, the newest episode is the latest choice.
+        """
+        best: Optional[Tuple[int, int, Dict[str, Any]]] = None
+        for name in names:
+            feed_id = self._feed_carrying_release(name, feed_ids_by_title)
+            if feed_id is None or feed_id in excluded:
+                continue
+            parsed = parse_release_title(name)
+            try:
+                episode = int(parsed.get("episode") or 0)
+            except (TypeError, ValueError):
+                episode = 0
+            if best is None or episode >= best[0]:
+                best = (episode, feed_id, parsed)
+        if best is None:
+            return None
+        return best[1], best[2].get("release_group"), best[2].get("title")
+
+    def _saved_file_index(self, rss_snapshot: Optional[RssSnapshot]) -> Dict[str, Set[int]]:
+        return self._feed_ids_by_release_title(rss_snapshot, cached_articles(self.session))
+
+    def _lock_feeds_from_saved_files(
+        self,
+        all_feeds: List[Feed],
+        rss_snapshot: Optional[RssSnapshot],
+        create_qbit_rules: bool,
+        known_categories: Optional[Set[str]],
+    ) -> List[str]:
+        """Lock a show to the feed its saved files came from, so a library carried over from another machine keeps its source."""
+        logs: List[str] = []
+        candidates = self._saved_file_candidates()
+        if not candidates:
+            return logs
+        index = self._saved_file_index(rss_snapshot)
+        if not index:
+            return logs
+        feeds_by_id = {feed.id: feed for feed in all_feeds}
+        for show, names in candidates:
+            found = self._feed_from_saved_files(names, index, self._feed_ids_failed_for(show.id))
+            feed = feeds_by_id.get(found[0]) if found else None
+            if feed is None:
+                continue
+            _, release_group, matched_title = found
+            show.learned_feed_id = feed.id
+            show.candidate_feed_id = None
+            show.candidate_feed_since = None
+            already_there = show.current_feed_id == feed.id and show.status == MonitoredStatus.FIXED
+            try:
+                if create_qbit_rules:
+                    if not (already_there and show.qbit_rule_name):
+                        show.matched_title = matched_title
+                        show.matched_release_group = release_group
+                        show.qbit_rule_name = create_or_update_rule(
+                            qbit_client=self.qbit,
+                            monitored=show,
+                            feed=feed,
+                            base_dir=self.settings.base_dir,
+                            category=self.settings.default_category,
+                            ratio_limit=self.settings.default_seed_ratio,
+                            release_group=release_group,
+                            title_language=getattr(self.settings, "title_language", "english"),
+                            known_categories=known_categories,
+                        )
+                        show.current_feed_id = feed.id
+                        show.status = MonitoredStatus.FIXED
+                        self.session.add(RuleHistory(
+                            monitored_id=show.id,
+                            feed_id=feed.id,
+                            created_at=utc_now(),
+                            outcome=RuleOutcome.CONFIRMED,
+                            note="Matched the files already in the save folder",
+                        ))
+                    self.session.add(show)
+                    self.session.commit()
+                elif already_there:
+                    self.session.add(show)
+                    self.session.commit()
+                else:
+                    record_direct_discovery(self.session, show, feed, release_group, matched_title)
+            except QbitClientError as e:
+                self.session.rollback()
+                logs.append(f"Could not lock '{show.display_name}' to '{feed.qbit_feed_name}': {e}")
+                continue
+            library.release(show.id)
+            msg = f"'{show.display_name}' locked to '{feed.qbit_feed_name}': its save folder holds releases from it."
+            logger.info(msg)
+            logs.append(msg)
+        return logs
+
+    def _unmatched_saved_files(self, rss_snapshot: Optional[RssSnapshot]) -> List[Monitored]:
+        """Shows with saved files that no feed's items account for yet."""
+        candidates = self._saved_file_candidates()
+        if not candidates:
+            return []
+        index = self._saved_file_index(rss_snapshot)
+        unmatched = []
+        for show, names in candidates:
+            if self._feed_from_saved_files(names, index, self._feed_ids_failed_for(show.id)) is None:
+                unmatched.append(show)
+            else:
+                library.release(show.id)
+        return unmatched
+
+    async def search_for_saved_files(self, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
+        """Search the feeds' sites for the releases of shows whose saved files no feed carries yet.
+
+        The files can only be matched to a feed once the feed items for them are
+        known, and the feeds' current items no longer hold the older episodes. A
+        show waits (``library.hold``) until this search has completed, so the
+        priority feed is not grabbed from, and locked, in the meantime.
+        """
+        logs: List[str] = []
+        unmatched = await asyncio.to_thread(self._unmatched_saved_files, rss_snapshot)
+        for show in unmatched:
+            if library.hold(show.id):
+                logs.append(f"Waiting to match '{show.display_name}' to the files in its save folder.")
+        searching = [show for show in unmatched if library.is_held(show.id)]
+        if not searching:
+            return logs
+        if any(not self._schedule_is_dated(show) for show in searching):
+            logs.extend(await self.refresh_episode_schedules())
+        engine = self.session.get_bind()
+        for show in searching:
+            name = show.display_name
+            try:
+                found = await asyncio.to_thread(run_backfill, engine, show_id=show.id)
+                if found:
+                    logs.append(f"Found {sum(found.values())} past release(s) for '{name}' to match its saved files.")
+                if await asyncio.to_thread(search_completed, engine, show.id):
+                    library.release(show.id)
+            except Exception as e:
+                logger.warning(f"Searching for the saved files of '{name}' failed: {e}", exc_info=True)
+        return logs
 
     def import_existing_torrents(self, rss_snapshot: Optional[RssSnapshot] = None) -> List[str]:
         """Adopt torrents already in qBittorrent into the canonical model.
@@ -1694,6 +1889,7 @@ class Supervisor:
                         + str(len(unexplained_missing))
                     )
             all_logs.extend(await self.prime_new_shows())
+            all_logs.extend(await self.search_for_saved_files(rss_snapshot))
             all_logs.extend(await asyncio.to_thread(
                 self.bootstrap_unassigned_shows,
                 rss_snapshot,
@@ -1722,6 +1918,7 @@ class Supervisor:
                 self.shield_owned_articles_from_snapshot,
                 rss_snapshot,
             ))
+            all_logs.extend(await self.search_for_saved_files(rss_snapshot))
             all_logs.extend(await asyncio.to_thread(
                 self.bootstrap_unassigned_shows,
                 rss_snapshot,

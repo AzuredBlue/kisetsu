@@ -3528,3 +3528,39 @@ def test_no_desktop_notification_by_default(monkeypatch):
     assert sent == []
     session.close()
     engine.dispose()
+
+
+def test_a_show_held_for_its_saved_files_is_not_grabbed_until_released():
+    from kisetsu.core import library
+
+    library._held.clear()
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    feed = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    session.add(settings)
+    session.add(feed)
+    show = _show(session)
+    qbit, _ = _qbit()
+    qbit.get_rss_items.return_value = {
+        "SubsPlease": {
+            "url": feed.qbit_feed_url,
+            "articles": [{
+                "id": "ep8",
+                "title": "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv",
+                "torrentURL": "magnet:ep8",
+            }],
+        }
+    }
+    library.hold(show.id)
+
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.call_count == 0
+    assert session.get(Monitored, show.id).learned_feed_id is None
+
+    library.release(show.id)
+    evaluate_and_grab_releases(session, qbit, settings, [feed], mode="direct")
+
+    assert qbit.add_torrent.call_count == 1
+    session.close()
+    engine.dispose()

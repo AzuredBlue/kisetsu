@@ -369,6 +369,25 @@ def _first_air(session: Session, show: Monitored) -> Optional[datetime]:
     ).first()
 
 
+def search_completed(engine, show_id: int) -> bool:
+    """Whether the show's aired episodes were searched for, or no search has anything left to look for.
+
+    A show without air dates has not been searched, however empty the search looks.
+    """
+    with Session(engine) as session:
+        dated = session.exec(
+            select(func.count()).select_from(Episode).where(
+                Episode.monitored_id == show_id, Episode.air_at.is_not(None),
+            )
+        ).one()
+        if not dated:
+            return False
+        with _searched_lock:
+            if show_id in _searched:
+                return True
+        return not backfill_due(session, show_id=show_id, force=True)
+
+
 def missing_episodes(engine, show_id: int) -> List[int]:
     """The episodes of one show that a forced search would look for (empty: nothing is missing)."""
     with Session(engine) as session:

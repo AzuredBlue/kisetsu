@@ -2230,6 +2230,7 @@ def test_sync_anilist_stands_rules_down_before_grabbing(client, session, monkeyp
     supervisor.anilist_sync_succeeded = True
     supervisor.sync_anilist_schedule = AsyncMock(return_value=[])
     supervisor.prime_new_shows = AsyncMock(return_value=[])
+    supervisor.search_for_saved_files = AsyncMock(return_value=[])
     supervisor.bootstrap_unassigned_shows.return_value = []
     supervisor.reconcile_schedule_rollover.return_value = []
     monkeypatch.setattr(api_module, "Supervisor", MagicMock(return_value=supervisor))

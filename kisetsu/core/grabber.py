@@ -14,6 +14,7 @@ from kisetsu.core.confirmation import record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.notify import notify_episode
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier, release_season
+from kisetsu.core import library
 from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles, first_seen_map, item_id_of, last_failed_feed_names, store_matches
 from kisetsu.core.rules import (
     effective_title,
@@ -2392,6 +2393,8 @@ def evaluate_and_grab_releases(
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     parsed_cache: Dict[str, Dict[str, Any]] = {}
     for show in shows:
+        if show.learned_feed_id is None and library.is_held(show.id):
+            continue
         matcher = _show_matcher(show)
         air_horizon = _air_horizon(show, now, tolerance_hours)
         episodes, episodes_by_number, failed_versions, target_count, latest_aired = _show_grab_context(

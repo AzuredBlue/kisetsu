@@ -1300,3 +1300,174 @@ def test_prune_past_season_prunes_completed_show_and_cleans_up_records():
     assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == 18)).all() == []
     assert session.exec(select(MatchHistory).where(MatchHistory.monitored_id == None)).all() == []
 
+
+# --- saved files decide the feed ---------------------------------------------------
+
+SAVED_SUBS = "[SubsPlease] Sousou no Frieren - 08 (1080p) [AAAA1111].mkv"
+SAVED_ERAI = "[Erai-raws] Sousou no Frieren - 08 [1080p][BBBB2222].mkv"
+
+
+def _saved_files_setup(tmp_path, files, mode="direct", feeds_carry=None, **show_fields):
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    session = Session(engine)
+    settings = Settings(id=1, base_dir=str(tmp_path / "{name}"), download_mode=mode, default_category="Anime")
+    subs = Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1)
+    erai = Feed(id=2, qbit_feed_name="Erai", qbit_feed_url="https://erai.example/rss", priority=2)
+    show = Monitored(
+        id=1, anilist_id=1, display_name="Sousou no Frieren", aliases_json='["Sousou no Frieren"]',
+        status=MonitoredStatus.UNCONFIRMED, **show_fields,
+    )
+    session.add_all([settings, subs, erai, show])
+    session.commit()
+    folder = tmp_path / "Sousou no Frieren"
+    folder.mkdir()
+    for name in files:
+        (folder / name).write_text("x")
+    carry = feeds_carry or {"SubsPlease": [SAVED_SUBS], "Erai": [SAVED_ERAI]}
+    urls = {"SubsPlease": subs.qbit_feed_url, "Erai": erai.qbit_feed_url}
+    qbit = MagicMock()
+    qbit.get_rss_items.return_value = {
+        name: {"url": urls[name], "articles": [
+            {"id": title, "title": title, "torrentURL": f"magnet:{index}"} for index, title in enumerate(titles)
+        ]}
+        for name, titles in carry.items()
+    }
+    return engine, session, settings, show, _direct_supervisor(session, settings, qbit)
+
+
+def test_saved_files_lock_the_show_to_the_feed_they_came_from_in_direct_mode(tmp_path):
+    engine, session, settings, show, supervisor = _saved_files_setup(tmp_path, [SAVED_ERAI])
+
+    logs = supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert show.learned_feed_id == 2
+    assert show.current_feed_id == 2
+    assert show.status == MonitoredStatus.FIXED
+    assert any("locked to 'Erai'" in line for line in logs)
+    engine.dispose()
+
+
+def test_saved_files_lock_the_show_and_arm_its_rule_in_rules_mode(tmp_path):
+    engine, session, settings, show, supervisor = _saved_files_setup(tmp_path, [SAVED_ERAI], mode="rules")
+
+    with patch("kisetsu.core.supervisor.create_or_update_rule", return_value="[Seasonal] Frieren") as create_rule:
+        supervisor.bootstrap_unassigned_shows(create_qbit_rules=True)
+
+    session.refresh(show)
+    assert show.learned_feed_id == 2
+    assert show.qbit_rule_name == "[Seasonal] Frieren"
+    assert create_rule.call_args.kwargs["feed"].id == 2
+    engine.dispose()
+
+
+def test_saved_files_that_two_feeds_carry_prove_no_feed(tmp_path):
+    engine, session, settings, show, supervisor = _saved_files_setup(
+        tmp_path, [SAVED_SUBS], feeds_carry={"SubsPlease": [SAVED_SUBS], "Erai": [SAVED_SUBS]},
+    )
+
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert show.learned_feed_id is None
+    engine.dispose()
+
+
+def test_saved_files_leave_pinned_and_locked_shows_alone(tmp_path):
+    engine, session, settings, show, supervisor = _saved_files_setup(tmp_path, [SAVED_ERAI], feed_pinned=True)
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+    session.refresh(show)
+    assert show.learned_feed_id is None
+
+    show.feed_pinned = False
+    show.learned_feed_id = 1
+    show.current_feed_id = 1
+    session.add(show)
+    session.commit()
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+    session.refresh(show)
+    assert show.learned_feed_id == 1
+    engine.dispose()
+
+
+def test_saved_files_move_a_show_a_guess_had_put_on_another_feed(tmp_path):
+    engine, session, settings, show, supervisor = _saved_files_setup(tmp_path, [SAVED_ERAI], current_feed_id=1)
+
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert (show.current_feed_id, show.learned_feed_id) == (2, 2)
+    engine.dispose()
+
+
+def test_the_newest_saved_file_decides_when_the_files_came_from_different_feeds(tmp_path):
+    older = "[SubsPlease] Sousou no Frieren - 07 (1080p) [CCCC3333].mkv"
+    engine, session, settings, show, supervisor = _saved_files_setup(
+        tmp_path, [older, SAVED_ERAI],
+        feeds_carry={"SubsPlease": [older], "Erai": [SAVED_ERAI]},
+    )
+
+    supervisor.bootstrap_unassigned_shows(create_qbit_rules=False)
+
+    session.refresh(show)
+    assert show.learned_feed_id == 2
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unmatched_saved_files_hold_the_show_and_search_for_their_releases(tmp_path):
+    from kisetsu.core import library
+
+    library._held.clear()
+    engine, session, settings, show, supervisor = _saved_files_setup(
+        tmp_path, [SAVED_ERAI], feeds_carry={"SubsPlease": [], "Erai": []},
+    )
+    supervisor.refresh_episode_schedules = AsyncMock(return_value=[])
+
+    with patch("kisetsu.core.supervisor.run_backfill", return_value={"Sousou no Frieren": 2}) as search,             patch("kisetsu.core.supervisor.search_completed", return_value=False):
+        logs = await supervisor.search_for_saved_files()
+
+    supervisor.refresh_episode_schedules.assert_awaited_once()
+    assert search.call_args.kwargs["show_id"] == 1
+    assert library.is_held(1)
+    assert any("Waiting to match" in line for line in logs)
+    assert any("Found 2 past release(s)" in line for line in logs)
+
+    with patch("kisetsu.core.supervisor.run_backfill", return_value={}),             patch("kisetsu.core.supervisor.search_completed", return_value=True):
+        await supervisor.search_for_saved_files()
+    assert not library.is_held(1)
+    engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_saved_files_that_a_feed_carries_need_no_search(tmp_path):
+    from kisetsu.core import library
+
+    library._held.clear()
+    engine, session, settings, show, supervisor = _saved_files_setup(tmp_path, [SAVED_ERAI])
+    supervisor.refresh_episode_schedules = AsyncMock(return_value=[])
+
+    with patch("kisetsu.core.supervisor.run_backfill") as search:
+        await supervisor.search_for_saved_files()
+
+    search.assert_not_called()
+    assert not library.is_held(1)
+    engine.dispose()
+
+
+def test_a_held_show_is_not_given_a_guessed_feed(tmp_path):
+    from kisetsu.core import library
+
+    library._held.clear()
+    engine, session, settings, show, supervisor = _saved_files_setup(
+        tmp_path, [SAVED_ERAI], mode="rules", feeds_carry={"SubsPlease": [], "Erai": []},
+    )
+    library.hold(1)
+
+    with patch("kisetsu.core.supervisor.create_or_update_rule") as create_rule:
+        supervisor.bootstrap_unassigned_shows(create_qbit_rules=True)
+
+    create_rule.assert_not_called()
+    library.release(1)
+    engine.dispose()
