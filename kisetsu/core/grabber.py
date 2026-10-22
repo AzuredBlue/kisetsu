@@ -624,7 +624,6 @@ def show_torrent_preview(session: Session, qbit: QBitClient, settings: Settings,
             for other in session.exec(select(Monitored).where(Monitored.id != show.id)).all()
         )
         if not shared:
-            wanted = save_path.rstrip("/\\")
             air_times = session.exec(
                 select(Episode.air_at).where(Episode.monitored_id == show.id, Episode.air_at.is_not(None))
             ).all()
@@ -634,7 +633,7 @@ def show_torrent_preview(session: Session, qbit: QBitClient, settings: Settings,
                 torrent_hash = _torrent_hash(torrent)
                 if not torrent_hash or torrent_hash in entries:
                     continue
-                if str(getattr(torrent, "save_path", "") or "").rstrip("/\\") != wanted:
+                if not _same_dir(getattr(torrent, "save_path", ""), save_path):
                     continue
                 if _added_before_air(torrent, first_air, tolerance_hours) or not _named_like_show(torrent, show):
                     continue
@@ -645,7 +644,10 @@ def show_torrent_preview(session: Session, qbit: QBitClient, settings: Settings,
 
 
 def _same_dir(a: Any, b: str) -> bool:
-    return str(a or "").rstrip("/\\") == b.rstrip("/\\")
+    """Whether two folder paths are one, however each writes its separators (qBittorrent reports "/" on Windows)."""
+    def uniform(path: Any) -> str:
+        return str(path or "").replace("\\", "/").rstrip("/")
+    return uniform(a) == uniform(b)
 
 
 def plan_language_move(session: Session, qbit: QBitClient, settings: Settings, new_language: str) -> List[Dict[str, Any]]:

@@ -2,6 +2,7 @@ import json
 import re
 import unittest
 from datetime import timedelta
+from pathlib import Path
 from kisetsu.core.rules import (
     build_regex_pattern,
     build_release_name_pattern,
@@ -427,16 +428,16 @@ class TestRules(unittest.TestCase):
         home = os.path.expanduser("~")
 
         p1 = resolve_save_path("~/Anime/{name}", "BLEACH: Sennen Kessen-hen")
-        self.assertEqual(p1, f"{home}/Anime/BLEACH - Sennen Kessen-hen")
+        self.assertEqual(p1, str(Path(home) / "Anime" / "BLEACH - Sennen Kessen-hen"))
 
         p2 = resolve_save_path("~/Anime", "Sousou no Frieren")
-        self.assertEqual(p2, f"{home}/Anime/Sousou no Frieren")
+        self.assertEqual(p2, str(Path(home) / "Anime" / "Sousou no Frieren"))
 
         p3 = resolve_save_path("~/Anime/{name}", "Dandadan", custom_save_folder="~/Downloads/{name}")
-        self.assertEqual(p3, f"{home}/Downloads/Dandadan")
+        self.assertEqual(p3, str(Path(home) / "Downloads" / "Dandadan"))
 
         p4 = resolve_save_path("~/Anime/{name}", "Aoashi", custom_save_folder="Aoashi 2nd Season")
-        self.assertEqual(p4, f"{home}/Anime/Aoashi 2nd Season")
+        self.assertEqual(p4, str(Path(home) / "Anime" / "Aoashi 2nd Season"))
 
 
 class TestPremiereOutOfReach(unittest.TestCase):

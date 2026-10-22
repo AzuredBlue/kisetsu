@@ -3,6 +3,7 @@ import asyncio
 import importlib
 from datetime import datetime, timedelta, timezone
 import re
+from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import inspect, text
@@ -2152,7 +2153,7 @@ def test_shows_report_no_save_path_when_the_base_directory_is_blank(client, sess
     session.commit()
 
     entry = next(item for item in client.get("/api/shows").json() if item["anilist_id"] == 4202)
-    assert entry["save_path"] == "/data/Anime/Blank Base Show"
+    assert entry["save_path"] == str(Path("/data/Anime/Blank Base Show").resolve())
 
 
 def test_status_reports_failing_feeds_and_problem_episodes(client, session, monkeypatch):
@@ -2327,9 +2328,11 @@ def test_delete_show_reports_a_rule_that_cannot_be_deleted(client, session, mock
 
 
 def _show_with_torrents(session, mock_qbit):
+    # What resolve_save_path makes of "/downloads" on this OS, written the way qBittorrent reports paths.
+    root = Path("/downloads").resolve().as_posix()
     settings = session.exec(select(Settings)).first()
     settings.default_category = "Anime"
-    settings.base_dir = "/downloads"
+    settings.base_dir = root
     session.add(settings)
     show = Monitored(anilist_id=4500, display_name="Doomed Show", status=MonitoredStatus.FIXED, save_folder="Doomed Show")
     session.add(show)
@@ -2338,9 +2341,9 @@ def _show_with_torrents(session, mock_qbit):
     session.commit()
     # "bbb" was added by a rule and sits in the show's folder; "ccc" belongs to something else.
     mock_qbit.get_torrents.return_value = [
-        MagicMock(hash="aaa", save_path="/downloads/Doomed Show"),
-        MagicMock(hash="bbb", save_path="/downloads/Doomed Show/"),
-        MagicMock(hash="ccc", save_path="/downloads/Other Show"),
+        MagicMock(hash="aaa", save_path=f"{root}/Doomed Show"),
+        MagicMock(hash="bbb", save_path=f"{root}/Doomed Show/"),
+        MagicMock(hash="ccc", save_path=f"{root}/Other Show"),
     ]
     return show
 
