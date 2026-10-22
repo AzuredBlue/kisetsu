@@ -3627,3 +3627,20 @@ def test_nothing_is_forgotten_while_qbittorrent_lists_no_torrents_at_all(monkeyp
     assert {e.torrent_hash for e in session.exec(select(Episode)).all()} == {"aaa", "bbb", "ccc"}
     session.close()
     engine.dispose()
+
+
+def test_nothing_is_forgotten_while_qbittorrent_is_still_loading_its_torrents(monkeypatch):
+    from kisetsu.core.grabber import reconcile_removed_torrents
+
+    engine, session = _database()
+    _finished_episodes(session, ["aaa", "bbb"])
+    listed = ["unrelated"]
+    qbit = _qbit_listing(listed)
+    # More torrents show up while we wait, as they do while qBittorrent restores.
+    monkeypatch.setattr("kisetsu.core.grabber.time.sleep", lambda s: listed.extend(["more", "of", "them"]))
+
+    assert reconcile_removed_torrents(session, qbit) == []
+
+    assert {e.torrent_hash for e in session.exec(select(Episode)).all()} == {"aaa", "bbb"}
+    session.close()
+    engine.dispose()

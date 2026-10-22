@@ -921,12 +921,15 @@ def reconcile_removed_torrents(session: Session, qbit: QBitClient) -> List[str]:
         missing = [h for h in hashes if h not in present]
         if not missing:
             return []
-        if len(hashes) >= 3 and not present and not list(qbit.get_torrents()):
-            # None of them exist and qBittorrent lists nothing at all: it has most likely not
-            # loaded its torrents yet. If it lists others, these were really removed.
+        # qBittorrent has no "finished loading" signal. While it restores, torrents appear one
+        # by one, so a gap is believed only if the list has stopped growing: it must not be
+        # empty (when several are expected) and must be the same size after a short wait.
+        listed = len(list(qbit.get_torrents()))
+        if len(hashes) >= 3 and not present and not listed:
             return []
-        # Ask again before believing it, so a moment of qBittorrent listing too little is not enough.
         time.sleep(2)
+        if len(list(qbit.get_torrents())) != listed:
+            return []
         still_present = _present_torrents(qbit, missing)
         gone = [h for h in missing if h not in still_present]
     except QbitClientError as e:
