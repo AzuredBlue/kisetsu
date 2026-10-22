@@ -3009,3 +3009,10 @@ def test_auto_discover_does_not_match_a_show_that_has_not_started_airing(client,
     session.expire_all()
     assert session.get(Monitored, show.id).current_feed_id is None
     assert session.get(Monitored, show.id).status == MonitoredStatus.UNCONFIRMED
+
+
+def test_fonts_are_served_with_the_font_mime_type(client):
+    res = client.get("/static/fonts/ibm-plex-sans-latin-400.woff2")
+
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "font/woff2"

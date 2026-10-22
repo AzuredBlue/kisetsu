@@ -1,4 +1,5 @@
 import hashlib
+import mimetypes
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -7,6 +8,9 @@ from fastapi.responses import HTMLResponse
 SERVER_DIR = Path(__file__).parent
 STATIC_DIR = SERVER_DIR / "static"
 INDEX_PATH = SERVER_DIR / "ui" / "index.html"
+
+# Windows has no registry entry for .woff2, so the fonts would be served as application/octet-stream.
+mimetypes.add_type("font/woff2", ".woff2")
 
 
 def _asset_version(name: str) -> str:
