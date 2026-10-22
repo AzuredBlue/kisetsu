@@ -238,6 +238,27 @@ def test_locked_show_only_searches_its_locked_feed():
     engine.dispose()
 
 
+def test_rules_mode_background_search_leaves_working_shows_alone():
+    backfill._searched.clear()
+    engine, session = _database()
+    settings, show = _frieren_setup(session, [Feed(id=1, qbit_feed_name="Erai", qbit_feed_url=NYAA_FEED, priority=1)])
+    show.status = MonitoredStatus.FIXED
+    settings.download_mode = "rules"
+    session.add_all([show, settings])
+    session.commit()
+
+    assert backfill.backfill_due(session) == []
+    # Searching the one show by hand still works.
+    assert [item.missing for item in backfill.backfill_due(session, show_id=1, force=True)] == [[7]]
+
+    show.status = MonitoredStatus.UNCONFIRMED
+    session.add(show)
+    session.commit()
+    assert backfill.backfill_due(session) != []
+    session.close()
+    engine.dispose()
+
+
 def test_a_rate_limited_site_stops_the_round_and_is_retried_later():
     backfill._searched.clear()
     engine, session = _database()

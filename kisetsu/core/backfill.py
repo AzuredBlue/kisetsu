@@ -296,6 +296,9 @@ def backfill_due(
         return []
 
     statuses = [MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED]
+    if show_id is None and settings.download_mode != "direct":
+        # Rules mode does not track which episodes qBittorrent already has, so a working show would be searched for them.
+        statuses.remove(MonitoredStatus.FIXED)
     if show_id is not None:
         # Searching one show by hand also covers a paused one; the background pass leaves it alone.
         statuses.append(MonitoredStatus.PAUSED)
