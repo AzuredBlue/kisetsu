@@ -493,6 +493,16 @@ def get_show_episodes(show_id: int, session: Session = Depends(get_db)):
     ]
 
 
+def _has_undated_wanted(session: Session, show_id: int) -> bool:
+    return bool(session.exec(
+        select(func.count()).select_from(Episode).where(
+            Episode.monitored_id == show_id,
+            Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
+            Episode.air_at.is_(None),
+        )
+    ).one())
+
+
 @router.post("/shows/{show_id}/search-releases")
 async def search_past_releases(show_id: int, session: Session = Depends(get_db)):
     """Ask the feeds' sites for the aired episodes of this show that no feed item supplies.
@@ -507,20 +517,29 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
     engine = session.get_bind()
     missing = await asyncio.to_thread(missing_episodes, engine, show_id)
     paused = show.status == MonitoredStatus.PAUSED
+    deferred = False
+    if not missing and _has_undated_wanted(session, show_id):
+        # Rules mode never dates episodes on its own, and the search cannot run without air times.
+        s = get_settings(session)
+        if s.anilist_username:
+            await asyncio.to_thread(require_exclusive_cycle)
+            try:
+                sup = Supervisor(session=session, qbit=_qbit_from_settings(s), anilist=anilist_client, settings=s)
+                for line in await sup.refresh_episode_schedules():
+                    state.add_log(line, "INFO")
+                deferred = sup.next_schedule_retry_seconds is not None
+            finally:
+                release_cycle()
+            session.expire_all()
+            missing = await asyncio.to_thread(missing_episodes, engine, show_id)
     if not missing:
-        undated = session.exec(
-            select(func.count()).select_from(Episode).where(
-                Episode.monitored_id == show_id,
-                Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
-                Episode.air_at.is_(None),
-            )
-        ).one()
+        undated = _has_undated_wanted(session, show_id)
         dated = session.exec(
             select(func.count()).select_from(Episode).where(
                 Episode.monitored_id == show_id, Episode.air_at.is_not(None),
             )
         ).one()
-        reason = "no_schedule" if undated and not dated else "covered"
+        reason = ("deferred" if deferred else "no_schedule") if undated and not dated else "covered"
         return {"added": 0, "searched": False, "missing": [], "reason": reason, "paused": paused}
     found = await asyncio.to_thread(run_backfill, engine, show_id=show_id, force=True)
     added = sum(found.values())
@@ -528,7 +547,13 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
         state.add_log(f"Found {added} past release(s) for '{name}' by searching the feeds.", "INFO")
         if not paused:
             state.trigger_immediate_cycle()
-    return {"added": added, "searched": True, "missing": missing, "paused": paused}
+    return {
+        "added": added,
+        "searched": True,
+        "missing": missing,
+        "paused": paused,
+        "direct": normalized_download_mode(session) == "direct",
+    }
 
 
 @router.post("/shows/{show_id}/rediscover")

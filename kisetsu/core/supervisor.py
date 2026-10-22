@@ -644,6 +644,13 @@ class Supervisor:
             logs.append(msg)
         return logs
 
+    async def refresh_episode_schedules(self) -> List[str]:
+        """Date every show's episodes now, for a search that cannot run without air times.
+
+        Shows refreshed within the routine window are skipped, so repeated calls share one fetch.
+        """
+        return await self._sync_episode_airing_schedules()
+
     async def _sync_episode_airing_schedules(self) -> List[str]:
         """Refresh the authoritative per-episode air dates the direct engine needs.
 

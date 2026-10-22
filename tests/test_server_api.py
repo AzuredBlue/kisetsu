@@ -2697,7 +2697,60 @@ def test_search_past_releases_names_the_missing_episodes_it_searches_for(client,
 
     response = client.post("/api/shows/1/search-releases")
 
-    assert response.json() == {"added": 2, "searched": True, "missing": [3, 4], "paused": False}
+    assert response.json() == {"added": 2, "searched": True, "missing": [3, 4], "paused": False, "direct": False}
+
+
+def test_search_past_releases_dates_the_episodes_first_when_they_have_no_air_time(client, db_engine, monkeypatch):
+    with Session(db_engine) as s:
+        settings = s.exec(select(Settings)).first()
+        settings.anilist_username = "user"
+        s.add(settings)
+        s.add(Monitored(id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]'))
+        s.commit()
+        s.add(Episode(monitored_id=1, episode_number=1, status=EpisodeStatus.WANTED))
+        s.commit()
+    refreshed = []
+
+    async def refresh(self):
+        refreshed.append(1)
+        with Session(db_engine) as s:
+            episode = s.exec(select(Episode)).first()
+            episode.air_at = datetime.now(timezone.utc) - timedelta(days=2)
+            s.add(episode)
+            s.commit()
+        return []
+
+    monkeypatch.setattr(api_module.Supervisor, "refresh_episode_schedules", refresh)
+    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id: [1] if refreshed else [])
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force: {"Show": 1})
+
+    response = client.post("/api/shows/1/search-releases")
+
+    assert refreshed == [1]
+    assert response.json()["searched"] is True
+    assert response.json()["missing"] == [1]
+
+
+def test_search_past_releases_reports_a_deferred_air_date_refresh(client, db_engine, monkeypatch):
+    with Session(db_engine) as s:
+        settings = s.exec(select(Settings)).first()
+        settings.anilist_username = "user"
+        s.add(settings)
+        s.add(Monitored(id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]'))
+        s.commit()
+        s.add(Episode(monitored_id=1, episode_number=1, status=EpisodeStatus.WANTED))
+        s.commit()
+
+    async def refresh(self):
+        self.next_schedule_retry_seconds = 60
+        return []
+
+    monkeypatch.setattr(api_module.Supervisor, "refresh_episode_schedules", refresh)
+
+    response = client.post("/api/shows/1/search-releases")
+
+    assert response.json()["reason"] == "deferred"
+    assert response.json()["searched"] is False
 
 
 def _show_downloading_from_old_feed(session, mock_qbit, progress=0.3):
