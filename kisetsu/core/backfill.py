@@ -270,12 +270,19 @@ def backfill_due(
     now: Optional[datetime] = None,
     show_id: Optional[int] = None,
     force: bool = False,
+    unmanaged: bool = False,
+    unsearchable: Optional[List[int]] = None,
 ) -> List[_Due]:
     """Shows with an aired episode of the current season that is still wanted and that no cached feed item can supply.
 
     Searching is only for what the feeds have lost. An episode the cache already
     holds a usable release for is taken from there by the next check, so it never
     triggers a search; neither does one that is queued, downloading or done.
+
+    ``unmanaged`` also counts finished episodes Kisetsu holds no torrent for (a
+    manual search may find the release to restore them from). ``unsearchable``,
+    when given, collects the ids of shows skipped because no feed can be searched
+    or the show has no usable search term.
     """
     settings = get_settings(session)
     now = _naive_utc(now or utc_now())
@@ -283,10 +290,13 @@ def backfill_due(
     if not feeds:
         return []
 
+    wanted = Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED])
+    if unmanaged:
+        wanted = wanted | ((Episode.status == EpisodeStatus.COMPLETED) & Episode.torrent_hash.is_(None))
     outstanding: Dict[int, List[int]] = {}
     for monitored_id, number in session.exec(
         select(Episode.monitored_id, Episode.episode_number).where(
-            Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
+            wanted,
             Episode.air_at.is_not(None),
             Episode.air_at <= now,
         ).order_by(Episode.episode_number)
@@ -302,6 +312,9 @@ def backfill_due(
     if show_id is not None:
         # Searching one show by hand also covers a paused one; the background pass leaves it alone.
         statuses.append(MonitoredStatus.PAUSED)
+        if unmanaged:
+            # A finished show can still have episodes that were never found.
+            statuses.append(MonitoredStatus.COMPLETED)
     query = select(Monitored).where(Monitored.status.in_(statuses), Monitored.id.in_(list(outstanding)))
     if show_id is not None:
         query = query.where(Monitored.id == show_id)
@@ -316,6 +329,8 @@ def backfill_due(
         terms = search_terms(show)
         show_feeds = _searchable_feeds(show, feeds)
         if not terms or not show_feeds:
+            if unsearchable is not None:
+                unsearchable.append(show.id)
             continue
         covered = episodes_in_cache(session, show, feeds, cache, settings, now=now.replace(tzinfo=timezone.utc))
         missing = [number for number in outstanding[show.id] if number not in covered]
@@ -388,11 +403,19 @@ def search_completed(engine, show_id: int) -> bool:
         return not backfill_due(session, show_id=show_id, force=True)
 
 
-def missing_episodes(engine, show_id: int) -> List[int]:
+def missing_episodes(engine, show_id: int, unmanaged: bool = False) -> List[int]:
     """The episodes of one show that a forced search would look for (empty: nothing is missing)."""
     with Session(engine) as session:
-        due = backfill_due(session, show_id=show_id, force=True)
+        due = backfill_due(session, show_id=show_id, force=True, unmanaged=unmanaged)
     return due[0].missing if due else []
+
+
+def search_unavailable(engine, show_id: int, unmanaged: bool = False) -> bool:
+    """Whether the show has episodes to look for but no feed or search term to look with."""
+    skipped: List[int] = []
+    with Session(engine) as session:
+        backfill_due(session, show_id=show_id, force=True, unmanaged=unmanaged, unsearchable=skipped)
+    return show_id in skipped
 
 
 # --- running -------------------------------------------------------------------
@@ -476,13 +499,14 @@ def run_backfill(
     fetch: Optional[Fetch] = None,
     pause: Optional[Callable[[float], None]] = None,
     now: Optional[datetime] = None,
+    unmanaged: bool = False,
 ) -> Dict[str, int]:
     """Search for the due shows' releases; returns ``{show name: rows added}`` for the ones that found some."""
     fetch = fetch or http_fetch
     pause = time.sleep if pause is None else pause
     found: Dict[str, int] = {}
     with Session(engine) as session:
-        due = backfill_due(session, now=now, show_id=show_id, force=force)
+        due = backfill_due(session, now=now, show_id=show_id, force=force, unmanaged=unmanaged)
         if not due:
             return found
         followed = feedcache._followed(session)

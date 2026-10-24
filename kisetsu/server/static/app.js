@@ -2242,6 +2242,8 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
                 ? 'AniList is rate-limiting right now; try again in a minute.'
                 : data.reason === 'no_schedule'
                 ? "AniList has no air dates for this show yet; try again later."
+                : data.reason === 'unsearchable'
+                ? "This show's feed can't be searched (only Nyaa and SubsPlease feeds can), so older episodes can't be looked up."
                 : 'Every aired episode is already in the feeds or downloaded.')
               : data.added && data.paused ? `Found ${data.added} past release(s); resume the show to download them.`
               : data.added && !data.direct ? `Found ${data.added} past release(s); see the Releases tab.`

@@ -2693,8 +2693,8 @@ def test_search_past_releases_reports_when_nothing_is_missing(client, db_engine,
 
 
 def test_search_past_releases_names_the_missing_episodes_it_searches_for(client, db_engine, monkeypatch):
-    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id: [3, 4])
-    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force: {"Show": 2})
+    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id, unmanaged=False: [3, 4])
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force, unmanaged=False: {"Show": 2})
     with Session(db_engine) as s:
         s.add(Monitored(id=1, anilist_id=1, display_name="Show", aliases_json='["Show"]'))
         s.commit()
@@ -2725,8 +2725,8 @@ def test_search_past_releases_dates_the_episodes_first_when_they_have_no_air_tim
         return []
 
     monkeypatch.setattr(api_module.Supervisor, "refresh_episode_schedules", refresh)
-    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id: [1] if refreshed else [])
-    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force: {"Show": 1})
+    monkeypatch.setattr(api_module, "missing_episodes", lambda engine, show_id, unmanaged=False: [1] if refreshed else [])
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force, unmanaged=False: {"Show": 1})
 
     response = client.post("/api/shows/1/search-releases")
 
@@ -3019,3 +3019,102 @@ def test_fonts_are_served_with_the_font_mime_type(client):
 
     assert res.status_code == 200
     assert res.headers["content-type"] == "font/woff2"
+
+
+def _direct_show_with_missed(db_engine, feed_url, status=MonitoredStatus.FIXED):
+    now = datetime.now(timezone.utc)
+    with Session(db_engine) as s:
+        settings = s.exec(select(Settings)).first()
+        settings.download_mode = "direct"
+        s.add(settings)
+        s.add(Feed(id=1, qbit_feed_name="Feed", qbit_feed_url=feed_url, priority=1))
+        s.add(Monitored(
+            id=1, anilist_id=1, display_name="Sousou no Frieren", title_romaji="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]', status=status, total_episodes=3, last_confirmed_episode=3,
+        ))
+        s.commit()
+        for number, episode_status in ((1, EpisodeStatus.COMPLETED), (2, EpisodeStatus.MISSED), (3, EpisodeStatus.COMPLETED)):
+            s.add(Episode(
+                monitored_id=1, episode_number=number, status=episode_status,
+                air_at=now - timedelta(days=30 - number), torrent_hash=f"h{number}" if number != 2 else None,
+            ))
+        s.commit()
+
+
+def test_search_past_releases_says_when_no_feed_can_be_searched(client, db_engine):
+    _direct_show_with_missed(db_engine, "https://www.erai-raws.info/rss-1080p/")
+
+    body = client.post("/api/shows/1/search-releases").json()
+
+    assert body["searched"] is False
+    assert body["reason"] == "unsearchable"
+
+
+def test_search_past_releases_reopens_a_finished_show_that_found_its_missed_episode(client, db_engine, monkeypatch):
+    _direct_show_with_missed(db_engine, "https://nyaa.si/?page=rss&u=subsplease", status=MonitoredStatus.COMPLETED)
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force, unmanaged=False: {"Sousou no Frieren": 1})
+
+    body = client.post("/api/shows/1/search-releases").json()
+
+    assert body["searched"] is True and body["missing"] == [2]
+    with Session(db_engine) as s:
+        assert s.get(Monitored, 1).status == MonitoredStatus.FIXED
+
+
+def _unmanaged_episode(db_engine):
+    now = datetime.now(timezone.utc)
+    with Session(db_engine) as s:
+        settings = s.exec(select(Settings)).first()
+        settings.download_mode = "direct"
+        s.add(settings)
+        s.add(Feed(id=1, qbit_feed_name="Nyaa", qbit_feed_url="https://nyaa.si/?page=rss&u=subsplease", priority=1))
+        s.add(Monitored(
+            id=1, anilist_id=1, display_name="Sousou no Frieren", title_romaji="Sousou no Frieren",
+            aliases_json='["Sousou no Frieren"]', status=MonitoredStatus.FIXED, current_feed_id=1, total_episodes=3,
+            next_airing_episode=4, next_airing_at=now + timedelta(days=3),
+        ))
+        s.commit()
+        for number in (1, 2, 3):
+            s.add(Episode(
+                monitored_id=1, episode_number=number, air_at=now - timedelta(days=7 * (3 - number) + 1),
+                status=EpisodeStatus.COMPLETED if number == 2 else EpisodeStatus.WANTED,
+                release_title="[SubsPlease] Sousou no Frieren - 02 (1080p) [ABCDEF02].mkv" if number == 2 else None,
+            ))
+        s.commit()
+        return s.exec(select(Episode).where(Episode.episode_number == 2)).one().id
+
+
+def test_restore_searches_the_feeds_when_the_release_left_the_rss(client, db_engine, mock_qbit, monkeypatch):
+    from email.utils import format_datetime
+    from kisetsu.core import feedcache
+    episode_id = _unmanaged_episode(db_engine)
+    mock_qbit.get_torrents.return_value = []
+
+    def search(engine, show_id, force, unmanaged=False):
+        with Session(engine) as s:
+            air = s.exec(select(Episode).where(Episode.episode_number == 2)).one().air_at
+            feedcache.store_matches(s, {"https://nyaa.si/?page=rss&u=subsplease": [{
+                "id": "g2", "title": "[SubsPlease] Sousou no Frieren - 02 (1080p) [ABCDEF02].mkv",
+                "torrentURL": "https://nyaa.si/download/2.torrent",
+                "date": format_datetime(air.replace(tzinfo=timezone.utc) + timedelta(hours=1)),
+            }]})
+        return {"Sousou no Frieren": 1}
+
+    monkeypatch.setattr(api_module, "run_backfill", search)
+
+    response = client.post(f"/api/shows/1/episodes/{episode_id}/restore")
+
+    assert response.status_code == 200, response.text
+    assert mock_qbit.add_torrent.call_count == 1
+
+
+def test_restore_reports_when_the_search_finds_nothing(client, db_engine, mock_qbit, monkeypatch):
+    episode_id = _unmanaged_episode(db_engine)
+    mock_qbit.get_torrents.return_value = []
+    monkeypatch.setattr(api_module, "run_backfill", lambda engine, show_id, force, unmanaged=False: {})
+
+    response = client.post(f"/api/shows/1/episodes/{episode_id}/restore")
+
+    assert response.status_code == 409
+    assert "searching the feeds" in response.json()["detail"]
+    assert mock_qbit.add_torrent.call_count == 0

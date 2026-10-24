@@ -2776,7 +2776,7 @@ def manual_grab(
     if candidate is None and fuzzy:
         near = [item for item in candidates if same_release(item[1].get("title", ""), wanted_title)]
         if len(near) > 1:
-            raise ValueError("Several releases in the feed match that name; pick one from the In feed tab.")
+            raise ValueError("Several releases in the feed match that name; pick one from the Releases tab.")
         candidate = near[0] if near else None
     if candidate is None:
         raise ValueError(

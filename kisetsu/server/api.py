@@ -31,7 +31,7 @@ from kisetsu.db.models import (
 from kisetsu.clients.qbit import QBitClient, QbitAuthenticationError, QbitClientError, QbitConflictError
 from kisetsu.clients.anilist import AniListClient, AniListError, rate_limit_status
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE, MAX_HUNT_INTERVAL_MINUTES, MIN_HUNT_INTERVAL_MINUTES, SANDBOX
-from kisetsu.core.backfill import missing_episodes, run_backfill
+from kisetsu.core.backfill import missing_episodes, run_backfill, search_unavailable
 from kisetsu.core.discovery import discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import cached_articles, failing_feed_since, last_failed_feed_names
 from kisetsu.core.feeds import compact_priorities, feeds_usage, forget_feed, repoint_feed_url
@@ -504,6 +504,15 @@ def _has_undated_wanted(session: Session, show_id: int) -> bool:
     ).one())
 
 
+def _has_unfetched_episode(session: Session, show_id: int) -> bool:
+    return bool(session.exec(
+        select(func.count()).select_from(Episode).where(
+            Episode.monitored_id == show_id,
+            Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
+        )
+    ).one())
+
+
 @router.post("/shows/{show_id}/search-releases")
 async def search_past_releases(show_id: int, session: Session = Depends(get_db)):
     """Ask the feeds' sites for the aired episodes of this show that no feed item supplies.
@@ -516,7 +525,9 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
         raise HTTPException(status_code=404, detail="Show not found")
     name = show.display_name
     engine = session.get_bind()
-    missing = await asyncio.to_thread(missing_episodes, engine, show_id)
+    # Only the direct engine tracks which finished episodes it holds a torrent for.
+    direct = normalized_download_mode(session) == "direct"
+    missing = await asyncio.to_thread(missing_episodes, engine, show_id, direct)
     paused = show.status == MonitoredStatus.PAUSED
     deferred = False
     if not missing and _has_undated_wanted(session, show_id):
@@ -532,7 +543,7 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
             finally:
                 release_cycle()
             session.expire_all()
-            missing = await asyncio.to_thread(missing_episodes, engine, show_id)
+            missing = await asyncio.to_thread(missing_episodes, engine, show_id, direct)
     if not missing:
         undated = _has_undated_wanted(session, show_id)
         dated = session.exec(
@@ -541,11 +552,21 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
             )
         ).one()
         reason = ("deferred" if deferred else "no_schedule") if undated and not dated else "covered"
+        if reason == "covered" and await asyncio.to_thread(search_unavailable, engine, show_id, direct):
+            reason = "unsearchable"
         return {"added": 0, "searched": False, "missing": [], "reason": reason, "paused": paused}
-    found = await asyncio.to_thread(run_backfill, engine, show_id=show_id, force=True)
+    found = await asyncio.to_thread(run_backfill, engine, show_id=show_id, force=True, unmanaged=direct)
     added = sum(found.values())
     if added:
         state.add_log(f"Found {added} past release(s) for '{name}' by searching the feeds.", "INFO")
+        session.expire_all()
+        show = session.get(Monitored, show_id)
+        if direct and show.status == MonitoredStatus.COMPLETED and _has_unfetched_episode(session, show_id):
+            # A finished show still has episodes nobody fetched; the grabber only reads open shows.
+            show.status = MonitoredStatus.FIXED if (show.last_confirmed_episode or 0) > 0 else MonitoredStatus.UNCONFIRMED
+            session.add(show)
+            session.commit()
+            state.add_log(f"'{name}' reopened: it has episodes that were never downloaded.", "INFO")
         if not paused:
             state.trigger_immediate_cycle()
     return {
@@ -553,7 +574,7 @@ async def search_past_releases(show_id: int, session: Session = Depends(get_db))
         "searched": True,
         "missing": missing,
         "paused": paused,
-        "direct": normalized_download_mode(session) == "direct",
+        "direct": direct,
     }
 
 
@@ -955,19 +976,31 @@ def restore_show_episode(
     if not uses_direct_engine(normalized_download_mode(session)):
         raise HTTPException(status_code=409, detail="Restoring an episode needs the direct download mode.")
 
-    # The restore writes the episode ledger, so it must not interleave with a cycle.
-    require_exclusive_cycle()
-    try:
-        # Both rows were read before this request got the slot; start from their current state.
-        session.refresh(show)
-        session.refresh(episode)
-        message = restore_episode(session, qbit, get_settings(session), show, episode)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    except QbitClientError as e:
-        raise HTTPException(status_code=502, detail=str(e))
-    finally:
-        release_cycle()
+    searched = False
+    while True:
+        # The restore writes the episode ledger, so it must not interleave with a cycle.
+        require_exclusive_cycle()
+        try:
+            # Both rows were read before this request got the slot; start from their current state.
+            session.refresh(show)
+            session.refresh(episode)
+            message = restore_episode(session, qbit, get_settings(session), show, episode)
+            break
+        except ValueError as e:
+            if searched or not str(e).startswith("Not in qBittorrent"):
+                raise HTTPException(status_code=409, detail=str(e))
+        except QbitClientError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+        finally:
+            release_cycle()
+        # Neither qBittorrent nor the feed cache holds the release: it may have left the
+        # feed's RSS, so look for it on the feed's site once, without holding the slot.
+        searched = True
+        found = run_backfill(session.get_bind(), show_id=show_id, force=True, unmanaged=True)
+        if not found:
+            raise HTTPException(status_code=409, detail=(
+                f"Episode {episode.episode_number} is not in qBittorrent, and searching the feeds' sites did not find its release."
+            ))
     state.add_log(message, "INFO")
     return {"status": "success", "message": message}
 
