@@ -3118,3 +3118,34 @@ def test_restore_reports_when_the_search_finds_nothing(client, db_engine, mock_q
     assert response.status_code == 409
     assert "searching the feeds" in response.json()["detail"]
     assert mock_qbit.add_torrent.call_count == 0
+
+
+def _rules_show_with_searched_release(db_engine, mock_qbit):
+    from kisetsu.core import feedcache
+    title = "[SubsPlease] Sousou no Frieren - 02 (1080p) [ABCDEF02].mkv"
+    url = "https://nyaa.si/?page=rss&u=subsplease"
+    with Session(db_engine) as s:
+        s.add(Feed(id=1, qbit_feed_name="Nyaa", qbit_feed_url=url, priority=1))
+        s.add(Monitored(
+            id=1, anilist_id=1, display_name="Sousou no Frieren", aliases_json='["Sousou no Frieren"]',
+            status=MonitoredStatus.FIXED, current_feed_id=1, qbit_rule_name="[Seasonal] Sousou no Frieren",
+            matched_title="Sousou no Frieren",
+        ))
+        s.commit()
+        # What Search older stored: the RSS no longer holds it.
+        feedcache.store_matches(s, {url: [{"id": "g2", "title": title, "torrentURL": "https://nyaa.si/download/2.torrent"}]})
+    rule = {"enabled": True, "mustContain": "Sousou no Frieren", "affectedFeeds": [url], "savePath": "/tmp/Anime/Frieren"}
+    mock_qbit.get_rss_rules.return_value = {"[Seasonal] Sousou no Frieren": rule}
+    mock_qbit.get_rss_items.return_value = {"Nyaa": {"url": url, "articles": []}}
+    mock_qbit.get_matching_articles.return_value = {}
+    return title
+
+
+def test_rules_mode_lists_and_downloads_releases_found_by_a_search(client, db_engine, mock_qbit):
+    title = _rules_show_with_searched_release(db_engine, mock_qbit)
+
+    assert client.get("/api/shows/1/feed-matches").json()["matched_articles"] == [title]
+    response = client.post("/api/shows/1/quick-download", json={"title": title})
+
+    assert response.status_code == 200, response.text
+    assert mock_qbit.add_torrent.call_args.kwargs["urls"] == "https://nyaa.si/download/2.torrent"

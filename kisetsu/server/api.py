@@ -676,17 +676,27 @@ def _rule_download_params(rule: Dict[str, Any], show: Monitored, settings: Setti
     }
 
 
-def _resolve_article_url(qbit: QBitClient, title: str, feed_urls: List[str]) -> Optional[str]:
+def _resolve_article_url(
+    qbit: QBitClient,
+    title: str,
+    feed_urls: List[str],
+    cached: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+) -> Optional[str]:
+    """The download link of a release by title: qBittorrent's RSS first, then Kisetsu's own copy.
+
+    The copy also holds releases a search of the feeds' sites found after they left the RSS.
+    """
     try:
         articles_by_url = flatten_rss_articles(qbit.get_rss_items(with_data=True))
     except Exception as e:
         logger.debug(f"Could not resolve RSS article '{title}' for manual download: {e}")
-        return None
+        articles_by_url = {}
 
-    for feed_url in feed_urls:
-        for article in articles_by_url.get(feed_url) or []:
-            if isinstance(article, dict) and article.get("title") == title:
-                return article.get("torrentURL") or None
+    for source in (articles_by_url, cached or {}):
+        for feed_url in feed_urls:
+            for article in source.get(feed_url) or []:
+                if isinstance(article, dict) and article.get("title") == title:
+                    return article.get("torrentURL") or None
     return None
 
 
@@ -853,13 +863,15 @@ def get_show_feed_matches(show_id: int, session: Session = Depends(get_db), qbit
             state.add_log(f"Could not read rule details from qBittorrent: {e}", "WARNING")
 
     feed_items = articles_by_url.get(feed.qbit_feed_url, []) if feed else []
+    # Releases a search of the feed's site found after they left its RSS live in Kisetsu's copy.
+    searched_items = cached_articles(session).get(feed.qbit_feed_url, []) if feed else []
     saved_regex, saved_must_not = _saved_patterns(session, show, qbit_rule_data)
-    if not matched_articles and feed_items and saved_regex:
+    if (feed_items or searched_items) and saved_regex and (not matched_articles or searched_items):
         try:
             must_re = re.compile(saved_regex, re.IGNORECASE)
             must_not_re = re.compile(saved_must_not, re.IGNORECASE) if saved_must_not else None
 
-            for item in feed_items:
+            for item in (feed_items if not matched_articles else []) + searched_items:
                 title = item.get("title", "") if isinstance(item, dict) else str(item)
                 if must_re.search(title):
                     if must_not_re and must_not_re.search(title):
@@ -910,7 +922,7 @@ def quick_download_show_match(show_id: int, req: QuickDownloadRequest, session: 
     feed_urls += [u for u in (rule.get("affectedFeeds") or []) if u and u not in feed_urls]
 
     title = req.title.strip()
-    url = _resolve_article_url(qbit, title, feed_urls)
+    url = _resolve_article_url(qbit, title, feed_urls, cached_articles(session))
     if not url:
         raise HTTPException(status_code=404, detail="That release is no longer in qBittorrent's RSS cache, so it cannot be downloaded.")
 
