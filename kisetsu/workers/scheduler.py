@@ -5,12 +5,12 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from sqlmodel import Session, select
 from kisetsu.clients.qbit import QBitClient
 from kisetsu.config import (
-    HUNTING_RECENT_DAYS,
     DEFAULT_DOWNLOAD_MODE,
     MISSED_AFTER_HOURS,
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
 )
 from kisetsu.core.grabber import _grab_feeds
+from kisetsu.core.rules import is_show_rule_unreleased
 from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
     Episode,
@@ -59,7 +59,7 @@ def earliest_scheduled_retry(session: Session, now: Optional[datetime] = None) -
     return max(0, int((soonest - now).total_seconds()))
 
 
-def past_hunting_window(air_at: Optional[datetime], now: datetime, download_mode: str) -> bool:
+def past_hunting_window(air_at: Optional[datetime], now: datetime) -> bool:
     """Whether an aired episode is past the day it is hunted for.
 
     It is still grabbed after that, whenever qBittorrent's own refresh brings it in.
@@ -69,7 +69,7 @@ def past_hunting_window(air_at: Optional[datetime], now: datetime, download_mode
     return now - as_utc(air_at) > timedelta(hours=MISSED_AFTER_HOURS)
 
 
-def waiting_for_release(show: Monitored, now: datetime, download_mode: str, episodes: Iterable[Episode] = ()) -> bool:
+def waiting_for_release(show: Monitored, now: datetime, episodes: Iterable[Episode] = ()) -> bool:
     """An unconfirmed show that aired, was hunted for a day, and is now left to the regular refresh.
 
     The newest stored episode that has aired decides, because AniList's next air time
@@ -83,11 +83,44 @@ def waiting_for_release(show: Monitored, now: datetime, download_mode: str, epis
         newest = max(aired, key=lambda episode: episode.episode_number)
         return (
             newest.status in (EpisodeStatus.WANTED, EpisodeStatus.MISSED)
-            and past_hunting_window(newest.air_at, now, download_mode)
+            and past_hunting_window(newest.air_at, now)
         )
     if show.next_airing_at is not None:
-        return past_hunting_window(show.next_airing_at, now, download_mode)
+        return past_hunting_window(show.next_airing_at, now)
     return show.anilist_status == "FINISHED"
+
+
+_COUNTED_STATUSES = {
+    MonitoredStatus.FIXED: "works",
+    MonitoredStatus.STALLED: "stalled",
+    MonitoredStatus.PAUSED: "paused",
+    MonitoredStatus.COMPLETED: "completed",
+}
+
+
+def count_show_states(session: Session, shows: List[Monitored], now: datetime) -> Dict[str, int]:
+    """How many shows are in each state the status line and ``/status`` report.
+
+    Unconfirmed shows split three ways: not out yet (upcoming), left to the regular
+    refresh after their hunting day (waiting), and the rest (testing).
+    """
+    counts = {"works": 0, "upcoming": 0, "testing": 0, "waiting": 0, "stalled": 0, "paused": 0, "completed": 0}
+    unconfirmed = [show for show in shows if show.status == MonitoredStatus.UNCONFIRMED]
+    for show in shows:
+        if show.status in _COUNTED_STATUSES:
+            counts[_COUNTED_STATUSES[show.status]] += 1
+    episodes_by_show: Dict[int, List[Episode]] = {}
+    if unconfirmed:
+        for episode in session.exec(select(Episode).where(Episode.monitored_id.in_([show.id for show in unconfirmed]))).all():
+            episodes_by_show.setdefault(episode.monitored_id, []).append(episode)
+    for show in unconfirmed:
+        if is_show_rule_unreleased(show):
+            counts["upcoming"] += 1
+        elif waiting_for_release(show, now, episodes_by_show.get(show.id, [])):
+            counts["waiting"] += 1
+        else:
+            counts["testing"] += 1
+    return counts
 
 
 def classify_shows(
@@ -129,6 +162,13 @@ def classify_shows(
             ).all())
             operation_shows = {s.id for s in shows if s.id in pending_show_ids}
 
+    episodes_by_show: Dict[int, List[Episode]] = {}
+    if is_direct:
+        fixed_ids = [s.id for s in shows if s.status == MonitoredStatus.FIXED and s.id is not None]
+        if fixed_ids:
+            for episode in session.exec(select(Episode).where(Episode.monitored_id.in_(fixed_ids))).all():
+                episodes_by_show.setdefault(episode.monitored_id, []).append(episode)
+
     for s in shows:
         airing_at = as_utc(s.next_airing_at)
         suspended = s.status in (MonitoredStatus.PAUSED, MonitoredStatus.COMPLETED)
@@ -143,13 +183,8 @@ def classify_shows(
         if s.status == MonitoredStatus.FIXED:
             if not is_direct or s.id is None:
                 continue
-            scheduled = session.exec(
-                select(Episode).where(
-                    Episode.monitored_id == s.id,
-                    Episode.air_at.is_not(None),
-                )
-            ).all()
-            air_times = {episode.episode_number: as_utc(episode.air_at) for episode in scheduled}
+            show_episodes = episodes_by_show.get(s.id, [])
+            air_times = {episode.episode_number: as_utc(episode.air_at) for episode in show_episodes if episode.air_at}
             # Start hunting a little before the stated air time, so a release
             # that lands early is still picked up promptly.
             # The early-air window only covers a show's first episodes; after that
@@ -167,16 +202,14 @@ def classify_shows(
                 latest_air_at = air_times.get(latest_aired_episode)
                 latest_is_recent = (
                     latest_air_at is None
-                    or now - latest_air_at <= (hunt_for or timedelta(days=HUNTING_RECENT_DAYS))
+                    or now - latest_air_at <= hunt_for
                 )
-                newest_wanted = session.exec(
-                    select(Episode.id).where(
-                        Episode.monitored_id == s.id,
-                        Episode.status.in_([EpisodeStatus.WANTED, EpisodeStatus.MISSED]),
-                        Episode.episode_number == latest_aired_episode,
-                    ).limit(1)
-                ).first()
-                if newest_wanted is not None and latest_is_recent:
+                newest_wanted = any(
+                    episode.episode_number == latest_aired_episode
+                    and episode.status in (EpisodeStatus.WANTED, EpisodeStatus.MISSED)
+                    for episode in show_episodes
+                )
+                if newest_wanted and latest_is_recent:
                     hunting_shows.append(s)
             future_airings = [air for air in air_times.values() if air and air > horizon]
             next_airing = min(future_airings, default=None)
@@ -190,7 +223,7 @@ def classify_shows(
             continue
 
         has_aired = airing_at <= now
-        if has_aired and past_hunting_window(airing_at, now, mode):
+        if has_aired and past_hunting_window(airing_at, now):
             has_aired = False
             airing_at = None
 

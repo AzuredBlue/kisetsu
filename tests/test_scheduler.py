@@ -71,7 +71,7 @@ class TestScheduler(unittest.TestCase):
         self.session.commit()
 
         self.assertFalse(is_hunting(self.session))
-        self.assertTrue(scheduler.waiting_for_release(show, now, "rules"))
+        self.assertTrue(scheduler.waiting_for_release(show, now))
 
     def test_rules_mode_still_hunts_a_show_that_aired_hours_ago(self):
         now = utc_now()
@@ -89,7 +89,7 @@ class TestScheduler(unittest.TestCase):
         self.session.commit()
 
         self.assertTrue(is_hunting(self.session))
-        self.assertFalse(scheduler.waiting_for_release(show, now, "rules"))
+        self.assertFalse(scheduler.waiting_for_release(show, now))
 
     def test_wake_on_air_time_when_upcoming_show_airs_soon(self):
         now = utc_now()

@@ -18,11 +18,11 @@ from kisetsu.core.feeds import compact_priorities, failed_feed_ids_by_show, forg
 from kisetsu.core.library import saved_release_names
 from kisetsu.core.grabber import _managed_torrents, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
-from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, premiere_out_of_reach, RULE_LEAD_TIME
+from kisetsu.core.rules import sanitize_folder_name, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, premiere_out_of_reach, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
 from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, ACTIVE_SHOW_STATUSES, IN_FLIGHT_EPISODE_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
-from kisetsu.workers.scheduler import waiting_for_release
+from kisetsu.workers.scheduler import count_show_states
 
 logger = logging.getLogger("kisetsu.core.supervisor")
 
@@ -1937,40 +1937,14 @@ class Supervisor:
         beat()
         all_logs.extend(await asyncio.to_thread(self.prune_past_season_shows))
 
-        total_shows = self.session.exec(select(Monitored)).all()
-        works_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.FIXED)
-        stalled_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.STALLED)
-        paused_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.PAUSED)
-        completed_cnt = sum(1 for s in total_shows if s.status == MonitoredStatus.COMPLETED)
-        unconfirmed_ids = [s.id for s in total_shows if s.status == MonitoredStatus.UNCONFIRMED]
-        episodes_by_show: Dict[int, List[Episode]] = {}
-        if unconfirmed_ids:
-            for episode in self.session.exec(select(Episode).where(Episode.monitored_id.in_(unconfirmed_ids))).all():
-                episodes_by_show.setdefault(episode.monitored_id, []).append(episode)
-        now = utc_now()
-        upcoming_cnt = 0
-        testing_cnt = 0
-        waiting_cnt = 0
-        for s in total_shows:
-            if s.status == MonitoredStatus.UNCONFIRMED:
-                if is_show_rule_unreleased(s):
-                    upcoming_cnt += 1
-                elif waiting_for_release(s, now, self.settings.download_mode, episodes_by_show.get(s.id, [])):
-                    waiting_cnt += 1
-                else:
-                    testing_cnt += 1
-
-        summary = f"{works_cnt} Working, {upcoming_cnt} Upcoming"
-        if testing_cnt > 0:
-            summary += f", {testing_cnt} Testing"
-        if waiting_cnt > 0:
-            summary += f", {waiting_cnt} Waiting"
-        if stalled_cnt > 0:
-            summary += f", {stalled_cnt} Stalled"
-        if completed_cnt > 0:
-            summary += f", {completed_cnt} Completed"
-        if paused_cnt > 0:
-            summary += f", {paused_cnt} Paused"
+        counts = count_show_states(self.session, self.session.exec(select(Monitored)).all(), utc_now())
+        summary = f"{counts['works']} Working, {counts['upcoming']} Upcoming"
+        for key, label in (
+            ("testing", "Testing"), ("waiting", "Waiting"), ("stalled", "Stalled"),
+            ("completed", "Completed"), ("paused", "Paused"),
+        ):
+            if counts[key] > 0:
+                summary += f", {counts[key]} {label}"
         self.summary = summary
 
         return all_logs
