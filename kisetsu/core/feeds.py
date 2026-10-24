@@ -1,10 +1,26 @@
 """Database bookkeeping for RSS feeds, shared by the API and the supervisor's feed sync."""
-from typing import Dict
+from typing import Dict, List
 
 from sqlalchemy import delete, func, update
 from sqlmodel import Session, select
 
-from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, RuleHistory, SeenFeedItem, TorrentOperation
+from kisetsu.db.models import Episode, Feed, MatchedFeedItem, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, TorrentOperation
+
+# Outcomes that count against the feed a rule was on.
+FAILED_FEED_OUTCOMES = (RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED)
+
+
+def failed_feed_ids_by_show(session: Session) -> Dict[int, List[int]]:
+    """Per show id: the feeds it already failed on, which discovery must not pick again."""
+    failed: Dict[int, List[int]] = {}
+    for monitored_id, feed_id in session.exec(
+        select(RuleHistory.monitored_id, RuleHistory.feed_id).where(
+            RuleHistory.outcome.in_(FAILED_FEED_OUTCOMES),
+            RuleHistory.feed_id.isnot(None),
+        )
+    ).all():
+        failed.setdefault(monitored_id, []).append(feed_id)
+    return failed
 
 
 def forget_feed(session: Session, feed: Feed) -> None:

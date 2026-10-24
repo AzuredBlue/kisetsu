@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
 from kisetsu.core.rules import build_regex_pattern
-from kisetsu.db.models import Feed, Monitored
+from kisetsu.db.models import Feed, Monitored, as_utc
 
 logger = logging.getLogger("kisetsu.core.discovery")
 
@@ -373,9 +373,7 @@ def discover_feed_for_show(
     if lower_match:
         matched_feed, rel_group, m_title, matched_art = lower_match
         now = datetime.now(timezone.utc)
-        air_at = monitored.next_airing_at
-        if air_at and air_at.tzinfo is None:
-            air_at = air_at.replace(tzinfo=timezone.utc)
+        air_at = as_utc(monitored.next_airing_at)
 
         # The grace period lets a higher priority feed catch up once a release
         # drops. Measure it from when the release became visible here rather than

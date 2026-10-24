@@ -13,6 +13,7 @@ import qbittorrentapi
 
 from kisetsu.db.session import get_engine, get_settings
 from kisetsu.db.models import (
+    IN_FLIGHT_EPISODE_STATUSES,
     DismissedShow,
     Episode,
     EpisodeNumberMapping,
@@ -210,9 +211,7 @@ def get_shows(session: Session = Depends(get_db)):
         mappings_by_show.setdefault(mapping.monitored_id, []).append(mapping)
 
     for s in shows:
-        airing_at = s.next_airing_at
-        if airing_at and airing_at.tzinfo is None:
-            airing_at = airing_at.replace(tzinfo=timezone.utc)
+        airing_at = as_utc(s.next_airing_at)
 
         is_released = (
             s.status in (MonitoredStatus.FIXED, MonitoredStatus.COMPLETED)
@@ -241,7 +240,7 @@ def get_shows(session: Session = Depends(get_db)):
         )
         unfinished_by_feed: Dict[int, int] = {}
         for e in show_episodes:
-            if e.status in (EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING) and e.feed_id:
+            if e.status in IN_FLIGHT_EPISODE_STATUSES and e.feed_id:
                 unfinished_by_feed[e.feed_id] = unfinished_by_feed.get(e.feed_id, 0) + 1
         episode_mappings = [
             {
@@ -762,7 +761,7 @@ def get_show_rule_details(show_id: int, session: Session = Depends(get_db), qbit
 
     effective_display_name = _effective_display_name(show, settings)
 
-    expected_rule_name = build_rule_name(show.id or 0, effective_display_name)
+    expected_rule_name = build_rule_name(effective_display_name)
     rule_is_enabled = qbit_rule_data.get("enabled") if "enabled" in qbit_rule_data else is_show_rule_enabled(show)
 
     download_params = _rule_download_params(qbit_rule_data, show, settings, effective_display_name)
@@ -1291,7 +1290,7 @@ def _edit_show(show_id: int, req: EditShowRequest, session: Session, qbit: QBitC
         state.add_log(f"Show '{show.display_name}': {msg}", "INFO")
         return {"status": "success", "message": msg}
 
-    title_language = getattr(settings, "title_language", "english")
+    title_language = settings.title_language
     feed_changed = req.current_feed_id is not None and new_feed_id != previous_feed_id
     matching_changed = req.must_contain is not None or req.aliases is not None
     if new_feed_id is not None and show.matched_title and not feed_changed and not matching_changed:
@@ -2373,7 +2372,7 @@ def get_system_status(session: Session = Depends(get_db)):
     wanted = ledger.get(EpisodeStatus.WANTED, 0)
     in_flight = sum(
         ledger.get(status, 0)
-        for status in (EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING)
+        for status in IN_FLIGHT_EPISODE_STATUSES
     )
     anilist_blocked_until = rate_limit_status()["blocked_until"]
 
@@ -2430,14 +2429,14 @@ def get_match_history(limit: int = 100, session: Session = Depends(get_db)):
     stmt = select(MatchHistory).order_by(MatchHistory.created_at.desc()).limit(limit)
     items = session.exec(stmt).all()
 
-
-    shows_map = {s.id: s for s in session.exec(select(Monitored)).all()}
+    show_ids = {item.monitored_id for item in items if item.monitored_id}
+    shows_map = (
+        {s.id: s for s in session.exec(select(Monitored).where(Monitored.id.in_(show_ids))).all()}
+        if show_ids else {}
+    )
     res = []
     for item in items:
-        created_str = None
-        if item.created_at:
-            dt = item.created_at if item.created_at.tzinfo else item.created_at.replace(tzinfo=timezone.utc)
-            created_str = dt.isoformat()
+        created_str = _utc_iso(item.created_at)
 
         matched_reg = item.matched_regex
         if not matched_reg and item.monitored_id and item.monitored_id in shows_map:

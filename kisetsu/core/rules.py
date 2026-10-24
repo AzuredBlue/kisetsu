@@ -1,7 +1,7 @@
 import logging
 import os
 import re
-from datetime import timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 from kisetsu.clients.qbit import QBitClient, QbitClientError
@@ -266,7 +266,7 @@ def resolve_save_path(base_dir: str, display_name: str, custom_save_folder: Opti
     return str(Path(os.path.expanduser(expanded)).resolve())
 
 
-def build_rule_name(monitored_id: int, display_name: str) -> str:
+def build_rule_name(display_name: str) -> str:
     """Construct a clean, human-readable rule name for qBittorrent without ID clutter."""
     clean_name = sanitize_folder_name(display_name)
     return f"[Seasonal] {clean_name}"
@@ -285,9 +285,7 @@ def is_show_rule_unreleased(monitored: Monitored) -> bool:
     if has_released_without_air_time(monitored):
         return False
     now = utc_now()
-    air_at = monitored.next_airing_at
-    if air_at and air_at.tzinfo is None:
-        air_at = air_at.replace(tzinfo=timezone.utc)
+    air_at = as_utc(monitored.next_airing_at)
 
     return (
         (monitored.next_airing_episode == 1 or monitored.next_airing_episode is None)
@@ -349,7 +347,6 @@ def build_rule_definition(
     base_dir: str,
     category: str = "",
     ratio_limit: float = 1.0,
-    release_group: Optional[str] = None,
     enabled: Optional[bool] = None,
     must_contain: Optional[str] = None,
     must_not_contain: Optional[str] = None,
@@ -419,7 +416,6 @@ def create_or_update_rule(
     base_dir: str,
     category: str = "",
     ratio_limit: float = 1.0,
-    release_group: Optional[str] = None,
     enabled: Optional[bool] = None,
     must_contain: Optional[str] = None,
     must_not_contain: Optional[str] = None,
@@ -432,7 +428,7 @@ def create_or_update_rule(
         if qbit_client.ensure_category_exists(category) and known_categories is not None:
             known_categories.add(category)
 
-    rule_name = monitored.qbit_rule_name or build_rule_name(monitored.id or 0, monitored.display_name)
+    rule_name = monitored.qbit_rule_name or build_rule_name(monitored.display_name)
 
     if previous_rule is None:
         try:
@@ -447,7 +443,6 @@ def create_or_update_rule(
         base_dir=base_dir,
         category=category,
         ratio_limit=ratio_limit,
-        release_group=release_group,
         enabled=enabled,
         must_contain=must_contain,
         must_not_contain=must_not_contain,

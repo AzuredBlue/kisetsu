@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS, HUNTING_RECENT_DAYS, MISSED_AFTER_HOURS
-from kisetsu.core.confirmation import record_match_event
+from kisetsu.core.confirmation import FEED_SWITCH_GRACE_SECONDS, record_match_event
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles, parse_article_date
 from kisetsu.core.notify import notify_episode
 from kisetsu.core.matching import _alias_arc_requirement, match_release_to_show, prepare_aliases, release_arc_qualifier, release_season
@@ -23,7 +23,9 @@ from kisetsu.core.rules import (
 )
 from kisetsu.db.models import (
     ACTIVE_OPERATION_STATUSES,
+    ACTIVE_SHOW_STATUSES,
     CANCELLABLE_OPERATION_STATUSES,
+    IN_FLIGHT_EPISODE_STATUSES,
     Episode,
     EpisodeMappingSource,
     EpisodeNumberMapping,
@@ -44,8 +46,8 @@ logger = logging.getLogger("kisetsu.core.grabber")
 AIR_DATE_TOLERANCE = timedelta(days=3)
 # How long a release must stay on a lower-ranked feed before a show with no feed
 # assignment adopts it, so a higher-ranked feed gets a chance to post first.
-# Matches the grace windows used by rules-mode discovery and feed switching.
-FEED_DISCOVERY_GRACE_SECONDS = 300
+# The same window rules-mode discovery and feed switching use.
+FEED_DISCOVERY_GRACE_SECONDS = FEED_SWITCH_GRACE_SECONDS
 _FAILED_TORRENT_STATES = {"error", "missingfiles", "unknown"}
 MAX_OPERATION_ATTEMPTS = 8
 # A grab whose torrent never appeared (the site or the network was down) is tried again later
@@ -234,6 +236,21 @@ def _give_up_retry_hours(session: Session, operation: TorrentOperation) -> Optio
     return GIVE_UP_RETRY_HOURS[len(earlier)] if len(earlier) < len(GIVE_UP_RETRY_HOURS) else None
 
 
+def _set_operation_status(operation: TorrentOperation, status: TorrentOperationStatus) -> None:
+    """Move an operation to ``status`` with no retry pending and no error carried over."""
+    operation.status = status
+    operation.next_retry_at = None
+    operation.last_error = None
+    operation.updated_at = utc_now()
+
+
+def _mark_canceled(operation: TorrentOperation, reason: str) -> None:
+    operation.status = TorrentOperationStatus.CANCELED
+    operation.last_error = reason
+    operation.next_retry_at = None
+    operation.updated_at = utc_now()
+
+
 def _expire_operation(
     session: Session,
     operation: TorrentOperation,
@@ -249,10 +266,7 @@ def _expire_operation(
     failed operation would have blocked.
     """
     retry_at = utc_now() + timedelta(hours=hours)
-    operation.status = TorrentOperationStatus.CANCELED
-    operation.last_error = error
-    operation.next_retry_at = None
-    operation.updated_at = utc_now()
+    _mark_canceled(operation, error)
     _restore_episode_before_operation(session, operation, episode, error, retry_at)
     session.add(operation)
     session.add(episode)
@@ -310,9 +324,15 @@ def _find_old_hash(qbit: QBitClient, settings: Settings, show: Monitored, episod
         return episode.torrent_hash
     if not episode.release_title:
         return None
-    for torrent in _managed_torrents(qbit, settings):
-        if same_release(str(getattr(torrent, "name", "") or ""), episode.release_title):
-            return _torrent_hash(torrent)
+    torrent = _torrent_named(_managed_torrents(qbit, settings), episode.release_title)
+    return _torrent_hash(torrent) if torrent is not None else None
+
+
+def _torrent_named(torrents: Iterable[Any], release_title: str) -> Optional[Any]:
+    """The first torrent whose name is the same release as ``release_title``."""
+    for torrent in torrents:
+        if same_release(str(getattr(torrent, "name", "") or ""), release_title):
+            return torrent
     return None
 
 
@@ -417,10 +437,7 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
             except Exception as e:
                 _operation_retry(session, operation, episode, str(e))
                 return None
-            operation.status = TorrentOperationStatus.NEW_VERIFIED
-            operation.next_retry_at = None
-            operation.last_error = None
-            operation.updated_at = utc_now()
+            _set_operation_status(operation, TorrentOperationStatus.NEW_VERIFIED)
             session.add(operation)
             session.commit()
             return None
@@ -474,10 +491,7 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
                 return None
             # OLD_STOPPED is kept as the stored name for "superseded release
             # removed" so existing rows keep loading.
-            operation.status = TorrentOperationStatus.OLD_STOPPED
-            operation.next_retry_at = None
-            operation.last_error = None
-            operation.updated_at = utc_now()
+            _set_operation_status(operation, TorrentOperationStatus.OLD_STOPPED)
             session.add(operation)
             session.commit()
         elif operation.status == TorrentOperationStatus.OLD_STOPPED:
@@ -504,10 +518,7 @@ def _finish_operation(session: Session, qbit: QBitClient, operation: TorrentOper
         episode.release_title = torrent_name.strip()
     if torrent is not None and is_seeding_torrent(torrent):
         _complete_episode(session, episode)
-    operation.status = TorrentOperationStatus.COMPLETED
-    operation.next_retry_at = None
-    operation.last_error = None
-    operation.updated_at = utc_now()
+    _set_operation_status(operation, TorrentOperationStatus.COMPLETED)
     session.add(operation)
     session.add(episode)
     session.commit()
@@ -731,10 +742,7 @@ def _recover_operations(session: Session, qbit: QBitClient, settings: Settings) 
             torrent = _find_tagged(qbit, operation.operation_tag)
             if torrent:
                 operation.new_torrent_hash = _torrent_hash(torrent)
-                operation.status = TorrentOperationStatus.ADDED
-                operation.next_retry_at = None
-                operation.last_error = None
-                operation.updated_at = utc_now()
+                _set_operation_status(operation, TorrentOperationStatus.ADDED)
                 session.add(operation)
                 session.commit()
                 _release_operation_tag(qbit, operation.new_torrent_hash, operation.operation_tag)
@@ -805,27 +813,18 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
         Episode.status == EpisodeStatus.COMPLETED,
     )).all()
     for episode in untracked:
-        show = session.get(Monitored, episode.monitored_id)
-        if not show:
+        if not episode.release_title or not session.get(Monitored, episode.monitored_id):
             continue
-        for torrent in torrents:
-            name = str(getattr(torrent, "name", "") or "").strip()
-            if not name or not episode.release_title:
-                continue
-            if not same_release(name, episode.release_title):
-                continue
-            episode.torrent_hash = _torrent_hash(torrent)
-            episode.release_title = name
-            episode.status = EpisodeStatus.COMPLETED if is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
-            episode.last_error = None
-            session.add(episode)
-            break
+        torrent = _torrent_named(torrents, episode.release_title)
+        if torrent is None:
+            continue
+        episode.torrent_hash = _torrent_hash(torrent)
+        episode.release_title = str(getattr(torrent, "name", "") or "").strip()
+        episode.status = EpisodeStatus.COMPLETED if is_seeding_torrent(torrent) else EpisodeStatus.DOWNLOADING
+        episode.last_error = None
+        session.add(episode)
     episodes = session.exec(select(Episode).where(
-        Episode.status.in_([
-            EpisodeStatus.QUEUED,
-            EpisodeStatus.DOWNLOADING,
-            EpisodeStatus.REPLACING,
-        ])
+        Episode.status.in_(IN_FLIGHT_EPISODE_STATUSES)
         # A torrent in an error state (disk full, drive unmounted) can recover, so a
         # failed episode that still has its torrent keeps being watched.
         | ((Episode.status == EpisodeStatus.FAILED) & Episode.torrent_hash.is_not(None))
@@ -866,7 +865,7 @@ def update_episode_status(session: Session, qbit: QBitClient, settings: Settings
             episode.last_error = None
             session.add(episode)
             logs.append(f"Resumed {show_name(episode, session)} Ep {episode.episode_number} after qBittorrent recovered")
-    logs.extend(_release_stale_operation_tags(session, qbit))
+    _release_stale_operation_tags(session, qbit)
     _sweep_operation_tags(session, qbit)
     session.commit()
     if settings.desktop_notifications:
@@ -950,7 +949,7 @@ def reconcile_removed_torrents(session: Session, qbit: QBitClient) -> List[str]:
     return logs
 
 
-def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[str]:
+def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> None:
     """
     Remove per-operation tags left behind before the tag was released on success.
 
@@ -961,7 +960,6 @@ def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[st
     here rather than as a migration because removing a tag needs qBittorrent,
     which the database layer has no access to.
     """
-    logs: List[str] = []
     episodes = session.exec(
         select(Episode).where(
             Episode.operation_tag.isnot(None),
@@ -969,13 +967,12 @@ def _release_stale_operation_tags(session: Session, qbit: QBitClient) -> List[st
         )
     ).all()
     for episode in episodes:
-        if episode.status in {EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING}:
+        if episode.status in IN_FLIGHT_EPISODE_STATUSES:
             # Still in flight: the tag is the only way to find the torrent.
             continue
         _release_operation_tag(qbit, episode.torrent_hash, episode.operation_tag)
         episode.operation_tag = None
         session.add(episode)
-    return logs
 
 
 _OPERATION_TAG_PATTERN = re.compile(r"^kisetsu-op-[0-9a-f]{32}$")
@@ -1001,7 +998,7 @@ def _sweep_operation_tags(session: Session, qbit: QBitClient) -> None:
         ).all())
         needed.update(session.exec(
             select(Episode.operation_tag).where(
-                Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING]),
+                Episode.status.in_(IN_FLIGHT_EPISODE_STATUSES),
                 Episode.torrent_hash.is_(None),
             )
         ).all())
@@ -1021,7 +1018,7 @@ def has_unsettled_work(session: Session) -> bool:
         return True
     return session.exec(
         select(Episode.id).where(
-            Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING])
+            Episode.status.in_(IN_FLIGHT_EPISODE_STATUSES)
         ).limit(1)
     ).first() is not None
 
@@ -1593,7 +1590,7 @@ def _already_added_torrent(qbit: QBitClient, operation: TorrentOperation) -> Opt
     """
     info_hash = _magnet_info_hash(operation.new_torrent_url)
     if not info_hash:
-        return _already_added_by_name(qbit, operation)
+        return _find_torrent_by_name(qbit, operation.release_title)
     try:
         existing = list(qbit.get_torrents(hashes=[info_hash]))
     except Exception as e:
@@ -1637,10 +1634,6 @@ def _find_torrent_by_name(qbit: QBitClient, title: str) -> Optional[Any]:
         logger.debug(f"Could not look for an existing torrent named '{title}': {e}")
         return None
     return matches[0] if len(matches) == 1 else None
-
-
-def _already_added_by_name(qbit: QBitClient, operation: TorrentOperation) -> Optional[Any]:
-    return _find_torrent_by_name(qbit, operation.release_title)
 
 
 def _attempt_operation_add(
@@ -1910,23 +1903,10 @@ def cancel_episode_operations(
                 session.add(operation)
                 session.commit()
                 continue
-        operation.status = TorrentOperationStatus.CANCELED
-        operation.last_error = reason
-        operation.next_retry_at = None
-        operation.updated_at = utc_now()
-        _restore_episode_before_operation(
-            session,
-            operation,
-            episode,
-            reason,
-            utc_now() + timedelta(minutes=15),
-        )
-        if operation.kind == "replace" or _is_restore_operation(operation):
-            episode.retry_after = None
-        else:
+        _mark_canceled(operation, reason)
+        _restore_episode_before_operation(session, operation, episode, reason, None)
+        if not (operation.kind == "replace" or _is_restore_operation(operation)):
             episode.status = EpisodeStatus.WANTED
-            episode.torrent_hash = None
-            episode.retry_after = None
         session.add(operation)
         session.add(episode)
         session.commit()
@@ -1955,7 +1935,7 @@ def cancel_unfinished_downloads(
     episodes = session.exec(
         select(Episode).where(
             Episode.monitored_id == show.id,
-            Episode.status.in_([EpisodeStatus.QUEUED, EpisodeStatus.DOWNLOADING, EpisodeStatus.REPLACING]),
+            Episode.status.in_(IN_FLIGHT_EPISODE_STATUSES),
         ).order_by(Episode.episode_number)
     ).all()
     for episode in episodes:
@@ -1986,10 +1966,8 @@ def cancel_unfinished_downloads(
         hashes = [op.new_torrent_hash for op in operations if op.new_torrent_hash]
         if episode.torrent_hash and not replacing:
             hashes.append(episode.torrent_hash)
-        torrents: Dict[str, Any] = {}
-        for torrent_hash in dict.fromkeys(hashes):
-            for torrent in qbit.get_torrents(hashes=[torrent_hash]):
-                torrents[str(_torrent_hash(torrent) or torrent_hash).lower()] = torrent
+        # An empty hash list would make get_torrents return every torrent.
+        torrents: Dict[str, Any] = _present_torrents(qbit, list(dict.fromkeys(hashes))) if hashes else {}
         for op in operations:
             if not op.new_torrent_hash and op.operation_tag:
                 torrent = _find_tagged(qbit, op.operation_tag)
@@ -2002,10 +1980,7 @@ def cancel_unfinished_downloads(
         for torrent_hash in torrents:
             _delete_torrent_by_hash(qbit, torrent_hash, keep_files_of=old_hash)
         for op in operations:
-            op.status = TorrentOperationStatus.CANCELED
-            op.last_error = reason
-            op.next_retry_at = None
-            op.updated_at = utc_now()
+            _mark_canceled(op, reason)
             _restore_episode_before_operation(session, op, episode, reason, None)
             session.add(op)
         if not replacing:
@@ -2390,11 +2365,7 @@ def evaluate_and_grab_releases(
     if not isinstance(rss_snapshot, CachedRssSnapshot):
         # A cached snapshot is made of rows that are already stored; only a live read has articles to add.
         _sync_seen_items(session, feeds, articles_by_url)
-    shows = session.exec(select(Monitored).where(Monitored.status.in_([
-        MonitoredStatus.UNCONFIRMED,
-        MonitoredStatus.FIXED,
-        MonitoredStatus.STALLED,
-    ]))).all()
+    shows = session.exec(select(Monitored).where(Monitored.status.in_(ACTIVE_SHOW_STATUSES))).all()
     now = utc_now()
     tolerance_hours = max(0, int(settings.early_air_tolerance_hours or 0))
     parsed_cache: Dict[str, Dict[str, Any]] = {}
@@ -2577,12 +2548,11 @@ def _manual_refusal(
 
 def _manual_candidates(
     session: Session,
-    qbit: QBitClient,
     settings: Settings,
     show: Monitored,
     articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     feeds: Optional[List[Feed]] = None,
-) -> List[Tuple[Feed, Dict[str, Any], Dict[str, Any], int, int, int, Episode, _GrabContext]]:
+) -> List[Tuple[Feed, Dict[str, Any], Dict[str, Any], int, int, int, Episode]]:
     """Every feed article the grabber would accept for ``show``, with its episode.
 
     Reads only the feeds the show may use (so the feed lock is honoured) and never
@@ -2627,7 +2597,7 @@ def _manual_candidates(
             if episode is None:
                 continue
             version = int(parsed.get("version") or 1)
-            found.append((feed, article, parsed, int(raw_episode), episode_number, version, episode, context))
+            found.append((feed, article, parsed, int(raw_episode), episode_number, version, episode))
     return found
 
 
@@ -2663,7 +2633,7 @@ def direct_feed_matches(
     groups: Dict[int, Dict[str, Any]] = {}
 
     def add(feed: Feed, role: str, usable: bool, candidates) -> None:
-        for _feed, article, _parsed, _raw, episode_number, version, episode, _context in candidates:
+        for _feed, article, _parsed, _raw, episode_number, version, episode in candidates:
             group = groups.setdefault(feed.id, {
                 "feed_id": feed.id, "feed_name": feed.qbit_feed_name, "role": role, "usable": usable, "matches": [],
             })
@@ -2694,11 +2664,11 @@ def direct_feed_matches(
                 "downloadable": refusal is None,
             })
 
-    for feed, *rest in _manual_candidates(session, qbit, settings, show, articles_by_url):
-        add(feed, role_of(feed), True, [(feed, *rest)])
+    for candidate in _manual_candidates(session, settings, show, articles_by_url):
+        add(candidate[0], role_of(candidate[0]), True, [candidate])
     for feed in feeds:
         if feed.id not in own_ids:
-            add(feed, "other", False, _manual_candidates(session, qbit, settings, show, articles_by_url, feeds=[feed]))
+            add(feed, "other", False, _manual_candidates(session, settings, show, articles_by_url, feeds=[feed]))
     # A feed qBittorrent could not read is dropped from the cache, so it would simply be
     # missing here. Say so for the feeds the show uses instead of leaving a silent gap.
     failed_names = set(last_failed_feed_names())
@@ -2771,7 +2741,7 @@ def manual_grab(
     if show.status == MonitoredStatus.PAUSED:
         raise ValueError("This show is paused. Resume it before downloading.")
     wanted_title = title.strip()
-    candidates = _manual_candidates(session, qbit, settings, show)
+    candidates = _manual_candidates(session, settings, show)
     candidate = next((item for item in candidates if item[1].get("title") == wanted_title), None)
     if candidate is None and fuzzy:
         near = [item for item in candidates if same_release(item[1].get("title", ""), wanted_title)]
@@ -2782,7 +2752,7 @@ def manual_grab(
         raise ValueError(
             "That release is not in this show's feed any more, or does not match this show."
         )
-    feed, article, parsed, raw_episode, episode_number, version, episode, _context = candidate
+    feed, article, parsed, raw_episode, episode_number, version, episode = candidate
     if expect_episode is not None and episode_number != expect_episode:
         raise ValueError(f"The matching release in the feed is episode {episode_number}, not episode {expect_episode}.")
     wanted_title = article.get("title", wanted_title)

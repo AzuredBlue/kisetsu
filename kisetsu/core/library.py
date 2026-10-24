@@ -26,7 +26,7 @@ def saved_release_names(show: Monitored, settings: Settings) -> List[str]:
     """Names of the show's video files in its save folder, top level and one folder down."""
     path = resolve_save_path(
         settings.base_dir,
-        effective_title(show, getattr(settings, "title_language", "english")),
+        effective_title(show, settings.title_language),
         show.save_folder,
     )
     if not path or not os.path.isdir(path):

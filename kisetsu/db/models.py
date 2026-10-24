@@ -85,6 +85,18 @@ RESUME_STATUS_ORDER: Tuple[TorrentOperationStatus, ...] = (
 ACTIVE_OPERATION_STATUSES: Tuple[str, ...] = tuple(
     status.name for status in RESUME_STATUS_ORDER
 )
+# Episodes whose torrent is being fetched or swapped right now.
+IN_FLIGHT_EPISODE_STATUSES: Tuple[EpisodeStatus, ...] = (
+    EpisodeStatus.QUEUED,
+    EpisodeStatus.DOWNLOADING,
+    EpisodeStatus.REPLACING,
+)
+# Shows the app is still following: not paused and not completed.
+ACTIVE_SHOW_STATUSES: Tuple[MonitoredStatus, ...] = (
+    MonitoredStatus.UNCONFIRMED,
+    MonitoredStatus.FIXED,
+    MonitoredStatus.STALLED,
+)
 # In-flight statuses a user action may cancel. FAILED is terminal, and SEEDING
 # (a replacement still downloading) is left to finish.
 CANCELLABLE_OPERATION_STATUSES: Tuple[str, ...] = (

@@ -31,7 +31,7 @@ from kisetsu.core import feedcache
 from kisetsu.core.discovery import parse_article_date
 from kisetsu.core.grabber import episodes_in_cache
 from kisetsu.core.matching import parse_release_title
-from kisetsu.db.models import Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, utc_now
+from kisetsu.db.models import ACTIVE_SHOW_STATUSES, Episode, EpisodeStatus, Feed, Monitored, MonitoredStatus, utc_now
 from kisetsu.db.session import get_settings
 
 logger = logging.getLogger("kisetsu.core.backfill")
@@ -305,7 +305,7 @@ def backfill_due(
     if not outstanding:
         return []
 
-    statuses = [MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED]
+    statuses = list(ACTIVE_SHOW_STATUSES)
     if show_id is None and settings.download_mode != "direct":
         # Rules mode does not track which episodes qBittorrent already has, so a working show would be searched for them.
         statuses.remove(MonitoredStatus.FIXED)

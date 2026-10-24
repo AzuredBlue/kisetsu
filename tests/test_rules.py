@@ -303,7 +303,7 @@ class TestRules(unittest.TestCase):
         self.assertFalse(_rules_are_equivalent(current, drifted))
 
     def test_build_rule_name(self):
-        name = build_rule_name(42, "Frieren: Beyond Journey's End")
+        name = build_rule_name("Frieren: Beyond Journey's End")
         self.assertEqual(name, "[Seasonal] Frieren - Beyond Journey's End")
 
     def test_generate_season_variants_does_not_corrupt_pronoun_i(self):

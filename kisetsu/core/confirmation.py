@@ -13,9 +13,10 @@ from kisetsu.core.matching import (
     prepare_aliases,
 )
 from kisetsu.core.discovery import RssSnapshot, flatten_rss_articles
+from kisetsu.core.feeds import failed_feed_ids_by_show
 from kisetsu.core.notify import notify_episode
 from kisetsu.core.rules import create_or_update_rule, build_regex_pattern
-from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, Feed, MatchHistory, utc_now
+from kisetsu.db.models import Episode, EpisodeNumberMapping, EpisodeStatus, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, Feed, MatchHistory, as_utc, utc_now
 
 logger = logging.getLogger("kisetsu.core.confirmation")
 
@@ -116,9 +117,7 @@ def _canonical_episode(
 
     now = current_time or utc_now()
     if show.next_airing_episode and show.next_airing_at:
-        air_at = show.next_airing_at
-        if air_at.tzinfo is None:
-            air_at = air_at.replace(tzinfo=timezone.utc)
+        air_at = as_utc(show.next_airing_at)
 
         # An episode cannot air if its scheduled broadcast is in the future.
         # When an offset mapping is used, any mapping that produces an episode >= next_airing_episode
@@ -219,10 +218,8 @@ def record_match_event(
         session.add(record)
 
         # Keep the latest 200 items in match_history
-        all_hist = session.exec(select(MatchHistory).order_by(MatchHistory.created_at.desc())).all()
-        if len(all_hist) > 200:
-            for extra in all_hist[200:]:
-                session.delete(extra)
+        for extra in session.exec(select(MatchHistory).order_by(MatchHistory.created_at.desc()).offset(200)).all():
+            session.delete(extra)
 
         return record
     except Exception as e:
@@ -271,7 +268,8 @@ def ingest_log_acceptances(
         if show is None:
             continue
 
-        source_episode = parse_release_title(release_title).get("episode")
+        parsed_release = parse_release_title(release_title)
+        source_episode = parsed_release.get("episode")
         canonical = _canonical_episode(session, show, show.current_feed_id, source_episode)
         if canonical is None:
             logger.debug(
@@ -301,9 +299,8 @@ def ingest_log_acceptances(
         # sitting on has carried the show. Lock it before anything can move it.
         if show.current_feed_id is not None:
             show.learned_feed_id = show.current_feed_id
-            parsed = parse_release_title(release_title).get("title")
-            if parsed:
-                show.matched_title = parsed
+            if parsed_release.get("title"):
+                show.matched_title = parsed_release["title"]
         session.add(show)
 
         record_match_event(
@@ -357,6 +354,8 @@ def _best_article_match(
     return best
 
 
+# How long another feed has to keep carrying a release before a show moves to it.
+# Direct-mode discovery (grabber.FEED_DISCOVERY_GRACE_SECONDS) waits the same time.
 FEED_SWITCH_GRACE_SECONDS = 300
 
 
@@ -420,7 +419,6 @@ def _confirm_show_on_feed(
             base_dir=settings.base_dir,
             category=settings.default_category,
             ratio_limit=settings.default_seed_ratio,
-            release_group=show.matched_release_group,
             title_language=settings.title_language,
             known_categories=known_categories,
         )
@@ -475,13 +473,7 @@ def verify_and_confirm_rules_from_feeds(
 
     ordered_feeds = sorted(feeds_map.values(), key=lambda f: f.priority)
     top_feed = ordered_feeds[0] if ordered_feeds else None
-    failed_stmt = select(RuleHistory.monitored_id, RuleHistory.feed_id).where(
-        RuleHistory.outcome.in_([RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED]),
-        RuleHistory.feed_id.isnot(None),
-    )
-    failed_feeds_by_show: Dict[int, List[int]] = {}
-    for monitored_id, failed_feed_id in session.exec(failed_stmt).all():
-        failed_feeds_by_show.setdefault(monitored_id, []).append(failed_feed_id)
+    failed_feeds_by_show = failed_feed_ids_by_show(session)
 
     candidates = []
     for show in monitored_shows:
@@ -525,9 +517,7 @@ def verify_and_confirm_rules_from_feeds(
 
             if detected_feed and detected_feed.id != feed.id:
                 now = utc_now()
-                since = show.candidate_feed_since
-                if since and since.tzinfo is None:
-                    since = since.replace(tzinfo=timezone.utc)
+                since = as_utc(show.candidate_feed_since)
                 is_recorded_candidate = show.candidate_feed_id == detected_feed.id and since is not None
                 grace_elapsed = is_recorded_candidate and (now - since).total_seconds() >= FEED_SWITCH_GRACE_SECONDS
 
@@ -558,7 +548,6 @@ def verify_and_confirm_rules_from_feeds(
                             base_dir=settings.base_dir,
                             category=settings.default_category,
                             ratio_limit=settings.default_seed_ratio,
-                            release_group=detected_group,
                             title_language=settings.title_language,
                             known_categories=known_categories,
                         )
@@ -786,9 +775,7 @@ def has_downloaded_final_episode(
         if show.next_airing_episode < show.total_episodes:
             return False
         if show.next_airing_episode == show.total_episodes:
-            air_at = show.next_airing_at
-            if air_at and air_at.tzinfo is None:
-                air_at = air_at.replace(tzinfo=timezone.utc)
+            air_at = as_utc(show.next_airing_at)
             if air_at and air_at > now:
                 return False
 
@@ -807,9 +794,7 @@ def has_downloaded_final_episode(
                     return False
                 # A finale that was only just given up on may still turn up, so it keeps
                 # the season open for as long as the grabber keeps looking for it.
-                air_at = episode.air_at
-                if air_at and air_at.tzinfo is None:
-                    air_at = air_at.replace(tzinfo=timezone.utc)
+                air_at = as_utc(episode.air_at)
                 return not (
                     episode.episode_number == show.total_episodes
                     and air_at is not None

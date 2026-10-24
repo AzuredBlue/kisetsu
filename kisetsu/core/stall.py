@@ -1,4 +1,4 @@
-from datetime import timedelta, timezone
+from datetime import timedelta
 import logging
 from typing import Any, Dict, List, Optional, Set
 from sqlmodel import Session, select
@@ -6,7 +6,8 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show
 from kisetsu.core.rules import create_or_update_rule, delete_rule, disable_rule
 from kisetsu.core.confirmation import has_downloaded_final_episode
-from kisetsu.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, utc_now
+from kisetsu.core.feeds import failed_feed_ids_by_show
+from kisetsu.db.models import Feed, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, Settings, as_utc, utc_now
 
 logger = logging.getLogger("kisetsu.core.stall")
 
@@ -37,9 +38,7 @@ def check_and_handle_stalls(
 
     for show in shows:
         is_finished_broadcast = (show.next_airing_at is None and show.next_airing_episode is None)
-        air_at = show.next_airing_at
-        if air_at and air_at.tzinfo is None:
-            air_at = air_at.replace(tzinfo=timezone.utc)
+        air_at = as_utc(show.next_airing_at)
         has_aired_finale = (
             show.total_episodes is not None
             and (show.next_airing_episode or 0) >= show.total_episodes
@@ -63,11 +62,7 @@ def check_and_handle_stalls(
         if show.status != MonitoredStatus.UNCONFIRMED:
             continue
 
-        if show.next_airing_at:
-            air_at = show.next_airing_at
-            if air_at.tzinfo is None:
-                air_at = air_at.replace(tzinfo=timezone.utc)
-
+        if air_at:
             hist_stmt = (
                 select(RuleHistory)
                 .where(RuleHistory.monitored_id == show.id)
@@ -76,9 +71,7 @@ def check_and_handle_stalls(
             )
             latest_hist = session.exec(hist_stmt).first()
 
-            rule_created_at = latest_hist.created_at if latest_hist else air_at
-            if rule_created_at and rule_created_at.tzinfo is None:
-                rule_created_at = rule_created_at.replace(tzinfo=timezone.utc)
+            rule_created_at = as_utc(latest_hist.created_at) if latest_hist else air_at
 
             cutoff_time = max(air_at, rule_created_at) + stall_delta
 
@@ -132,12 +125,7 @@ def check_and_handle_stalls(
                     if show.qbit_rule_name:
                         delete_rule(qbit_client, show.qbit_rule_name)
 
-                    failed_hist_stmt = select(RuleHistory.feed_id).where(
-                        RuleHistory.monitored_id == show.id,
-                        RuleHistory.outcome.in_([RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED]),
-                        RuleHistory.feed_id.isnot(None),
-                    )
-                    failed_feed_ids = list(session.exec(failed_hist_stmt).all())
+                    failed_feed_ids = list(failed_feed_ids_by_show(session).get(show.id, []))
                     if stalled_feed_id and stalled_feed_id not in failed_feed_ids:
                         failed_feed_ids.append(stalled_feed_id)
 
@@ -163,7 +151,6 @@ def check_and_handle_stalls(
                                 base_dir=settings.base_dir,
                                 category=settings.default_category,
                                 ratio_limit=settings.default_seed_ratio,
-                                release_group=obs_group,
                                 title_language=settings.title_language,
                                 known_categories=known_categories,
                             )
@@ -201,7 +188,6 @@ def check_and_handle_stalls(
                                     base_dir=settings.base_dir,
                                     category=settings.default_category,
                                     ratio_limit=settings.default_seed_ratio,
-                                    release_group=None,
                                     title_language=settings.title_language,
                                     known_categories=known_categories,
                                 )

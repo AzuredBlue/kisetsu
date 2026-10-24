@@ -11,16 +11,16 @@ from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitConnectionErro
 from kisetsu.config import DEFAULT_DOWNLOAD_MODE
 from kisetsu.core import library
 from kisetsu.core.backfill import prime_new_shows, run_backfill, search_completed
-from kisetsu.core.confirmation import _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
+from kisetsu.core.confirmation import FEED_SWITCH_GRACE_SECONDS, _find_release_on_feed, verify_and_confirm_torrents, has_downloaded_final_episode
 from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_rss_articles
 from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles
-from kisetsu.core.feeds import compact_priorities, forget_feed
+from kisetsu.core.feeds import compact_priorities, failed_feed_ids_by_show, forget_feed
 from kisetsu.core.library import saved_release_names
 from kisetsu.core.grabber import _managed_torrents, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, premiere_out_of_reach, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
-from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
+from kisetsu.db.models import ACTIVE_OPERATION_STATUSES, ACTIVE_SHOW_STATUSES, IN_FLIGHT_EPISODE_STATUSES, DismissedShow, Episode, EpisodeNumberMapping, EpisodeScheduleState, EpisodeStatus, Feed, MatchedFeedItem, MatchHistory, Monitored, MonitoredStatus, RuleHistory, RuleOutcome, SeenFeedItem, Settings, TorrentOperation, as_utc, utc_now
 from kisetsu.db.session import acquire_supervision_lease, heartbeat_supervision_lease, release_supervision_lease
 from kisetsu.workers.scheduler import waiting_for_release
 
@@ -31,10 +31,6 @@ EPISODE_SCHEDULE_MAX_AGE_SECONDS = 6 * 3600
 # A refresh that only looks ahead still reaches this far back, in case an episode was rescheduled as it aired.
 SCHEDULE_REFRESH_LOOKBACK_DAYS = 3
 SCHEDULE_FULL_LOOKBACK_DAYS = 180
-
-
-# How long another feed has to keep carrying a release before a show moves to it.
-FEED_SWITCH_GRACE_SECONDS = 300
 
 # How many existing torrents the last import left alone, so the cycle log reports a change and not every pass.
 _reported_refusals = 0
@@ -264,13 +260,7 @@ class Supervisor:
             logger.warning(f"Could not fetch RSS cache for bootstrap: {e}")
             cached_articles = {}
 
-        failed_stmt = select(RuleHistory.monitored_id, RuleHistory.feed_id).where(
-            RuleHistory.outcome.in_([RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED]),
-            RuleHistory.feed_id.isnot(None),
-        )
-        excluded_by_show: Dict[int, List[int]] = {}
-        for monitored_id, feed_id in self.session.exec(failed_stmt).all():
-            excluded_by_show.setdefault(monitored_id, []).append(feed_id)
+        excluded_by_show = failed_feed_ids_by_show(self.session)
 
         for show in unassigned_shows:
             if library.is_held(show.id):
@@ -304,8 +294,7 @@ class Supervisor:
                         base_dir=self.settings.base_dir,
                         category=self.settings.default_category,
                         ratio_limit=self.settings.default_seed_ratio,
-                        release_group=obs_group,
-                        title_language=getattr(self.settings, "title_language", "english"),
+                        title_language=self.settings.title_language,
                         known_categories=known_categories,
                     )
                     show.current_feed_id = chosen_feed.id
@@ -351,8 +340,7 @@ class Supervisor:
                             base_dir=self.settings.base_dir,
                             category=self.settings.default_category,
                             ratio_limit=self.settings.default_seed_ratio,
-                            release_group=None,
-                            title_language=getattr(self.settings, "title_language", "english"),
+                            title_language=self.settings.title_language,
                             known_categories=known_categories,
                         )
                         show.current_feed_id = target_feed.id
@@ -458,7 +446,7 @@ class Supervisor:
         new_shows_count = 0
         added_shows: List[Monitored] = []
         rules_to_disable: List[str] = []
-        pref_lang = getattr(self.settings, "title_language", "english")
+        pref_lang = self.settings.title_language
 
         # Shows the user deleted stay out until they leave the AniList list, so
         # putting one back on AniList later adds it again.
@@ -679,12 +667,7 @@ class Supervisor:
         due = [
             show for show in self.session.exec(
                 select(Monitored).where(
-                    Monitored.status.in_([
-                        MonitoredStatus.UNCONFIRMED,
-                        MonitoredStatus.FIXED,
-                        MonitoredStatus.STALLED,
-                        MonitoredStatus.PAUSED,
-                    ])
+                    Monitored.status.in_([*ACTIVE_SHOW_STATUSES, MonitoredStatus.PAUSED])
                 )
             ).all()
             if show.schedule_synced_at is None or as_utc(show.schedule_synced_at) < cutoff
@@ -842,7 +825,7 @@ class Supervisor:
                 if not feed:
                     continue
 
-                rule_name = show.qbit_rule_name or build_rule_name(show.id or 0, show.display_name)
+                rule_name = show.qbit_rule_name or build_rule_name(show.display_name)
                 current_def = existing_rules.get(rule_name)
                 if is_show_rule_deferred(show):
                     if current_def is not None or show.qbit_rule_name:
@@ -861,8 +844,7 @@ class Supervisor:
                     base_dir=self.settings.base_dir,
                     category=self.settings.default_category,
                     ratio_limit=self.settings.default_seed_ratio,
-                    release_group=show.matched_release_group,
-                    title_language=getattr(self.settings, "title_language", "english"),
+                    title_language=self.settings.title_language,
                     previous_rule=current_def,
                 )
 
@@ -911,7 +893,7 @@ class Supervisor:
         changed = False
         now = utc_now()
         active_stmt = select(Monitored).where(
-            Monitored.status.in_([MonitoredStatus.UNCONFIRMED, MonitoredStatus.FIXED, MonitoredStatus.STALLED])
+            Monitored.status.in_(ACTIVE_SHOW_STATUSES)
         )
         shows = self.session.exec(active_stmt).all()
         use_heuristic = self.download_mode() == "rules"
@@ -1010,9 +992,7 @@ class Supervisor:
             if show_season_idx >= cur_season_idx:
                 continue
 
-            air_at = show.next_airing_at
-            if air_at and air_at.tzinfo is None:
-                air_at = air_at.replace(tzinfo=timezone.utc)
+            air_at = as_utc(show.next_airing_at)
 
             # Non-completed shows from past seasons are never pruned
             if show.status != MonitoredStatus.COMPLETED:
@@ -1051,38 +1031,27 @@ class Supervisor:
         articles_by_url: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     ) -> List[str]:
         logs: List[str] = []
-        for show in self.session.exec(select(Monitored)).all():
+        shows = self.session.exec(select(Monitored)).all()
+        for show in shows:
             sync_show_episodes(self.session, show)
-        owned_titles_by_show: Dict[int, set] = {}
+        show_ids = {show.id for show in shows if show.id}
         feed_urls = {feed.id: feed.qbit_feed_url for feed in self.session.exec(select(Feed)).all()}
-        for show in self.session.exec(select(Monitored)).all():
-            titles = {
-                episode.release_title
-                for episode in self.session.exec(select(Episode).where(
-                    Episode.monitored_id == show.id,
-                    Episode.status.in_([
-                        EpisodeStatus.QUEUED,
-                        EpisodeStatus.DOWNLOADING,
-                        EpisodeStatus.COMPLETED,
-                        EpisodeStatus.REPLACING,
-                    ]),
-                )).all()
-                if episode.release_title
-                and (
-                    episode.status == EpisodeStatus.COMPLETED
-                    or bool(episode.torrent_hash)
-                )
-            }
-            history_titles = {
-                history.release_title
-                for history in self.session.exec(select(MatchHistory).where(
-                    MatchHistory.monitored_id == show.id,
-                )).all()
-                if history.release_title
-            }
-            titles |= history_titles
-            if titles and show.id:
-                owned_titles_by_show[show.id] = titles
+        owned_titles_by_show: Dict[int, set] = {}
+        for episode in self.session.exec(select(Episode).where(
+            Episode.status.in_([
+                EpisodeStatus.QUEUED,
+                EpisodeStatus.DOWNLOADING,
+                EpisodeStatus.COMPLETED,
+                EpisodeStatus.REPLACING,
+            ]),
+        )).all():
+            if episode.monitored_id in show_ids and episode.release_title and (
+                episode.status == EpisodeStatus.COMPLETED or bool(episode.torrent_hash)
+            ):
+                owned_titles_by_show.setdefault(episode.monitored_id, set()).add(episode.release_title)
+        for history in self.session.exec(select(MatchHistory)).all():
+            if history.monitored_id in show_ids and history.release_title:
+                owned_titles_by_show.setdefault(history.monitored_id, set()).add(history.release_title)
         if not owned_titles_by_show:
             return logs
         try:
@@ -1106,7 +1075,7 @@ class Supervisor:
         }
         shielded_count = 0
         shielded_shows = set()
-        for show in self.session.exec(select(Monitored)).all():
+        for show in shows:
             if not show.current_feed_id:
                 continue
             titles = owned_titles_by_show.get(show.id, set())
@@ -1266,8 +1235,7 @@ class Supervisor:
                 self.session.add(show)
                 self.session.commit()
                 continue
-            since = show.candidate_feed_since
-            since_utc = since.replace(tzinfo=timezone.utc) if (since and since.tzinfo is None) else since
+            since_utc = as_utc(show.candidate_feed_since)
             if since_utc is None or since_utc + timedelta(seconds=FEED_SWITCH_GRACE_SECONDS) > now:
                 continue
             show.current_feed_id = chosen_feed.id
@@ -1384,7 +1352,7 @@ class Supervisor:
             select(Monitored).where(
                 Monitored.learned_feed_id.is_(None),
                 Monitored.feed_pinned.isnot(True),
-                Monitored.status.in_([MonitoredStatus.FIXED, MonitoredStatus.UNCONFIRMED, MonitoredStatus.STALLED]),
+                Monitored.status.in_(ACTIVE_SHOW_STATUSES),
             )
         ).all()
         for show in shows:
@@ -1414,11 +1382,7 @@ class Supervisor:
             select(Monitored).where(
                 Monitored.learned_feed_id.is_(None),
                 Monitored.feed_pinned.isnot(True),
-                Monitored.status.in_([
-                    MonitoredStatus.UNCONFIRMED,
-                    MonitoredStatus.FIXED,
-                    MonitoredStatus.STALLED,
-                ]),
+                Monitored.status.in_(ACTIVE_SHOW_STATUSES),
             )
         ).all()
         candidates = []
@@ -1427,17 +1391,6 @@ class Supervisor:
             if names:
                 candidates.append((show, names))
         return candidates
-
-    def _feed_ids_failed_for(self, show_id: Optional[int]) -> List[int]:
-        return [
-            feed_id for feed_id in self.session.exec(
-                select(RuleHistory.feed_id).where(
-                    RuleHistory.monitored_id == show_id,
-                    RuleHistory.outcome.in_([RuleOutcome.STALLED, RuleOutcome.FALSE_POSITIVE, RuleOutcome.REPLACED]),
-                    RuleHistory.feed_id.isnot(None),
-                )
-            ).all()
-        ]
 
     def _feed_from_saved_files(
         self,
@@ -1485,8 +1438,9 @@ class Supervisor:
         if not index:
             return logs
         feeds_by_id = {feed.id: feed for feed in all_feeds}
+        failed_by_show = failed_feed_ids_by_show(self.session)
         for show, names in candidates:
-            found = self._feed_from_saved_files(names, index, self._feed_ids_failed_for(show.id))
+            found = self._feed_from_saved_files(names, index, failed_by_show.get(show.id, []))
             feed = feeds_by_id.get(found[0]) if found else None
             if feed is None:
                 continue
@@ -1507,8 +1461,7 @@ class Supervisor:
                             base_dir=self.settings.base_dir,
                             category=self.settings.default_category,
                             ratio_limit=self.settings.default_seed_ratio,
-                            release_group=release_group,
-                            title_language=getattr(self.settings, "title_language", "english"),
+                            title_language=self.settings.title_language,
                             known_categories=known_categories,
                         )
                         show.current_feed_id = feed.id
@@ -1544,8 +1497,9 @@ class Supervisor:
             return []
         index = self._saved_file_index(rss_snapshot)
         unmatched = []
+        failed_by_show = failed_feed_ids_by_show(self.session)
         for show, names in candidates:
-            if self._feed_from_saved_files(names, index, self._feed_ids_failed_for(show.id)) is None:
+            if self._feed_from_saved_files(names, index, failed_by_show.get(show.id, [])) is None:
                 unmatched.append(show)
             else:
                 library.release(show.id)
@@ -1597,10 +1551,9 @@ class Supervisor:
         except QbitClientError as e:
             logger.warning(f"Could not read managed torrents for import: {e}")
             return [f"Could not import existing torrents: {e}"]
-        known_hashes = {
-            episode.torrent_hash
-            for episode in self.session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
-        }
+        known_hashes = set(
+            self.session.exec(select(Episode.torrent_hash).where(Episode.torrent_hash.is_not(None))).all()
+        )
         # A release a replacement superseded is accounted for: adopting it again
         # would roll the episode back and trigger the same replacement forever.
         known_hashes.update(
@@ -1610,11 +1563,7 @@ class Supervisor:
         )
         shows = self.session.exec(
             select(Monitored).where(
-                Monitored.status.in_([
-                    MonitoredStatus.UNCONFIRMED,
-                    MonitoredStatus.FIXED,
-                    MonitoredStatus.STALLED,
-                ])
+                Monitored.status.in_(ACTIVE_SHOW_STATUSES)
             )
         ).all()
         candidates = [
@@ -1658,11 +1607,7 @@ class Supervisor:
                 (item for item in episodes if item.episode_number == int(raw_episode)),
                 None,
             )
-            if not episode or episode.torrent_hash or episode.status in {
-                EpisodeStatus.QUEUED,
-                EpisodeStatus.DOWNLOADING,
-                EpisodeStatus.REPLACING,
-            }:
+            if not episode or episode.torrent_hash or episode.status in IN_FLIGHT_EPISODE_STATUSES:
                 # Only fill gaps; never overwrite a release that is tracked.
                 continue
             if adoption_refusal(self.session, matched_show, episode, torrent, now, tolerance_hours, schedules):

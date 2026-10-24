@@ -156,9 +156,7 @@ def _repair_legacy_episode_state(session: Session) -> None:
 
     for show in shows.values():
         if show.status == MonitoredStatus.COMPLETED:
-            air_at = show.next_airing_at
-            if air_at and air_at.tzinfo is None:
-                air_at = air_at.replace(tzinfo=timezone.utc)
+            air_at = as_utc(show.next_airing_at)
             if air_at is not None and air_at > datetime.now(timezone.utc):
                 show.schedule_stale = True
             session.add(show)
