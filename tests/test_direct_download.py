@@ -1672,6 +1672,33 @@ def test_import_without_a_category_does_not_adopt_unmanaged_torrents():
     engine.dispose()
 
 
+def test_import_adopts_category_torrents_even_when_others_are_tagged():
+    engine, session = _database()
+    settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")
+    session.add(settings)
+    session.add(Feed(id=1, qbit_feed_name="SubsPlease", qbit_feed_url="https://subsplease.org/rss", priority=1))
+    show = _show(session)
+    tagged = MagicMock(hash="tagged-hash", progress=1, state="stoppedUP")
+    tagged.name = "[SubsPlease] Dandadan - 03 (1080p) [AAAAAAAA].mkv"
+    mine = MagicMock(hash="mine-hash", progress=1, state="stoppedUP")
+    mine.name = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
+    qbit, _ = _qbit()
+    qbit.get_torrents.side_effect = lambda **kwargs: (
+        [tagged] if kwargs.get("tag") == "kisetsu-managed"
+        else [tagged, mine] if kwargs.get("category") == "Anime" else []
+    )
+    supervisor = Supervisor(session=session, qbit=qbit, anilist=MagicMock(), settings=settings)
+
+    supervisor.import_existing_torrents()
+
+    episode = session.exec(
+        select(Episode).where(Episode.monitored_id == show.id, Episode.episode_number == 8)
+    ).first()
+    assert episode.torrent_hash == "mine-hash"
+    session.close()
+    engine.dispose()
+
+
 def test_stuck_loading_feed_does_not_discard_healthy_feed_articles():
     engine, session = _database()
     settings = Settings(id=1, default_category="Anime", base_dir="/tmp/Anime", download_mode="direct")

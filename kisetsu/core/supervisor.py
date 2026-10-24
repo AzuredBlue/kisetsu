@@ -16,7 +16,7 @@ from kisetsu.core.discovery import RssSnapshot, discover_feed_for_show, flatten_
 from kisetsu.core.feedcache import CachedRssSnapshot, cached_articles
 from kisetsu.core.feeds import compact_priorities, forget_feed
 from kisetsu.core.library import saved_release_names
-from kisetsu.core.grabber import MANAGED_TAG, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
+from kisetsu.core.grabber import _managed_torrents, adoption_refusal, cancel_episode_operations, is_seeding_torrent, evaluate_and_grab_releases, reconcile_removed_torrents, release_key, sync_show_episodes
 from kisetsu.core.matching import match_release_to_show, parse_release_title, prepare_aliases
 from kisetsu.core.rules import sanitize_folder_name, is_show_rule_unreleased, build_regex_pattern, build_rule_definition, build_rule_name, create_or_update_rule, delete_rule, disable_rule, is_show_rule_deferred, premiere_out_of_reach, RULE_LEAD_TIME
 from kisetsu.core.stall import check_and_handle_stalls
@@ -1589,19 +1589,14 @@ class Supervisor:
         known before the pipeline decides what is still missing.
         """
         logs: List[str] = []
+        # Tagged torrents and the ones in the category, whether or not any is tagged yet:
+        # a show added later has downloads of the user's that were never tagged. Without
+        # a configured category only the tag is read, not every torrent in the client.
         try:
-            torrents = list(self.qbit.get_torrents(tag=MANAGED_TAG))
-        except Exception as e:
+            torrents = _managed_torrents(self.qbit, self.settings)
+        except QbitClientError as e:
             logger.warning(f"Could not read managed torrents for import: {e}")
             return [f"Could not import existing torrents: {e}"]
-        # Without a configured category the fallback would list every torrent
-        # in the client, not just the ones this app is responsible for.
-        if not torrents and self.settings.default_category:
-            try:
-                torrents = list(self.qbit.get_torrents(category=self.settings.default_category))
-            except Exception as e:
-                logger.warning(f"Could not read category torrents for import: {e}")
-                return []
         known_hashes = {
             episode.torrent_hash
             for episode in self.session.exec(select(Episode).where(Episode.torrent_hash.is_not(None))).all()
