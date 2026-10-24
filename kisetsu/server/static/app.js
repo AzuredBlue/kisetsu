@@ -164,7 +164,7 @@
       let stopped = false;
       const timer = setTimeout(async () => {
         try {
-          const st = await (await fetch('/api/status')).json();
+          const st = await apiFetch('/api/status');
           if (stopped || !st.is_running_cycle) return;
           const baseSeconds = st.cycle_seconds || 0;
           const seenAt = Date.now();
@@ -183,8 +183,13 @@
       };
     }
 
+    // `json` is sent as the request body, with the matching header.
     async function apiFetch(url, options = {}) {
-      const { notice = true, ...fetchOptions } = options;
+      const { notice = true, json, ...fetchOptions } = options;
+      if (json !== undefined) {
+        fetchOptions.headers = { 'Content-Type': 'application/json', ...fetchOptions.headers };
+        fetchOptions.body = JSON.stringify(json);
+      }
       const method = String(fetchOptions.method || 'GET').toUpperCase();
       const stopWatching = method !== 'GET' && notice ? watchForRunningCheck() : null;
       try {
@@ -434,9 +439,10 @@
         : '';
     }
 
-    function pauseIconSvg(isPaused) {
+    // `nudge` shifts the play triangle right so it looks centred in an icon-only button.
+    function pauseIconSvg(isPaused, nudge = true) {
       return isPaused
-        ? `<svg class="w-3.5 h-3.5 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
+        ? `<svg class="w-3.5 h-3.5${nudge ? ' ml-0.5' : ''}" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>`
         : `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>`;
     }
 
@@ -642,42 +648,27 @@
           const baseAirDate = new Date(show.next_airing_at);
           if (isNaN(baseAirDate.getTime())) return;
 
+          // A released show repeats weekly on its air day; an unreleased one appears once, on its premiere date.
+          let instanceDate = null;
           if (show.is_released) {
             if (baseAirDate.getDay() === dayOfWeek) {
-              const showInstanceDate = new Date(colDate);
-              showInstanceDate.setHours(baseAirDate.getHours(), baseAirDate.getMinutes(), 0, 0);
-
-              const timeMinutes = baseAirDate.getHours() * 60 + baseAirDate.getMinutes();
-              const hasPassed = isPastDay || (isToday && (timeMinutes <= nowMinutes));
-              const timeStr = formatTime(showInstanceDate);
-              const isPaused = (show.status || '').toUpperCase() === 'PAUSED';
-
-              colShows.push({
-                show,
-                instanceDate: showInstanceDate,
-                timeMinutes,
-                timeStr,
-                hasPassed,
-                isPaused,
-              });
+              instanceDate = new Date(colDate);
+              instanceDate.setHours(baseAirDate.getHours(), baseAirDate.getMinutes(), 0, 0);
             }
-          } else {
-            if (baseAirDate >= monday && baseAirDate <= sunday && baseAirDate.toDateString() === colDate.toDateString()) {
-              const timeMinutes = baseAirDate.getHours() * 60 + baseAirDate.getMinutes();
-              const hasPassed = isPastDay || (isToday && (timeMinutes <= nowMinutes));
-              const timeStr = formatTime(baseAirDate);
-              const isPaused = (show.status || '').toUpperCase() === 'PAUSED';
-
-              colShows.push({
-                show,
-                instanceDate: baseAirDate,
-                timeMinutes,
-                timeStr,
-                hasPassed,
-                isPaused,
-              });
-            }
+          } else if (baseAirDate >= monday && baseAirDate <= sunday && baseAirDate.toDateString() === colDate.toDateString()) {
+            instanceDate = baseAirDate;
           }
+          if (!instanceDate) return;
+
+          const timeMinutes = baseAirDate.getHours() * 60 + baseAirDate.getMinutes();
+          colShows.push({
+            show,
+            instanceDate,
+            timeMinutes,
+            timeStr: formatTime(instanceDate),
+            hasPassed: isPastDay || (isToday && (timeMinutes <= nowMinutes)),
+            isPaused: (show.status || '').toUpperCase() === 'PAUSED',
+          });
         });
 
         totalCalendarShows += colShows.length;
@@ -736,7 +727,7 @@
         `;
       }
 
-      gridContainer.innerHTML = gridHtml;
+      setGridHtml(gridContainer, gridHtml);
 
       const badgeEl = document.getElementById('badge-calendar-shows');
       if (badgeEl) {
@@ -1007,10 +998,6 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
         </div>`;
     }
 
-    function showListsMarkup(showId, data, episodes, feed) {
-      return buildShowLists(showId, data, episodes, feed);
-    }
-
     // What the open page was drawn from, so the lists can be redrawn when the
     // slower feed lookup lands or after a download.
     let showContext = null;
@@ -1029,7 +1016,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
     function rerenderShowLists() {
       const target = document.getElementById('show-lists');
       if (!target || !showContext || currentInspectedShowId !== showContext.showId) return;
-      const html = showListsMarkup(showContext.showId, showContext.data, showContext.episodes, showFeedState);
+      const html = buildShowLists(showContext.showId, showContext.data, showContext.episodes, showFeedState);
       if (html === drawnListsHtml) return;
       syncShowLists(target, html);
       drawnListsHtml = html;
@@ -1304,9 +1291,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       const barClass = (isPaused || isCompleted) ? 'bg-zinc-400' : 'bg-accent';
 
       const feedName = show.current_feed_name ? escapeHtml(show.current_feed_name) : 'No feed';
-      const pauseIcon = isPaused
-        ? '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>'
-        : '<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+      const pauseIcon = pauseIconSvg(isPaused, false);
 
       block.innerHTML = `
         <div class="flex flex-wrap items-start gap-x-4 gap-y-3">
@@ -1680,8 +1665,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       try {
         await apiFetch('/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ accent_color: color, accent_tint: tint })
+          json: { accent_color: color, accent_tint: tint }
         });
         if (currentSettings) {
           currentSettings.accent_color = color;
@@ -2012,7 +1996,7 @@ ${m.title}` : m.title)}">${escapeHtml(m.display_title || m.title)}</span>
       // Whatever the form renders is the unmodified state.
       showInitialState = readShowForm();
       showContext = { showId, data, episodes };
-      setShowListsHtml(showListsMarkup(showId, data, episodes, null));
+      setShowListsHtml(buildShowLists(showId, data, episodes, null));
       updateSaveBar();
       loadShowFeedMatches(showId);
       scheduleShowPoll(showId);
@@ -2182,8 +2166,7 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
       try {
         const data = await apiFetch(`/api/shows/${showId}/edit`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          json: payload
         });
         showToast(data.message || 'Show updated.', 'success');
         // Redraw from the saved values, which also resets the dirty state.
@@ -2264,10 +2247,10 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
       });
     }
 
-    async function quickDownloadMatch(showId, btn) {
-      const title = btn.dataset.title;
-      if (!title) return;
-      const key = pendingKey(showId, title);
+    // One action on an episode or release row. The button is dimmed and the key held while the
+    // request is out, so a second click does nothing; a 409 is a refusal to explain, not an error.
+    async function runRowAction(showId, pendingId, btn, url, options, doneText, failedText) {
+      const key = pendingKey(showId, pendingId);
       if (pendingDownloads.has(key)) return;
       pendingDownloads.add(key);
 
@@ -2275,15 +2258,11 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
       btn.classList.add('opacity-50', 'pointer-events-none');
 
       try {
-        const data = await apiFetch(`/api/shows/${showId}/quick-download`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title })
-        });
-        showToast(data.message || 'Download started.', 'success');
+        const data = await apiFetch(url, { method: 'POST', ...options });
+        showToast(data.message || doneText, 'success');
         await refreshShowLists(showId);
       } catch (err) {
-        showToast(err.message || 'Download failed.', err.status === 409 ? 'info' : 'error');
+        showToast(err.message || failedText, err.status === 409 ? 'info' : 'error');
       } finally {
         pendingDownloads.delete(key);
         btn.disabled = false;
@@ -2292,26 +2271,14 @@ ${unfinishedElsewhere} unfinished download(s) from the old feed will be canceled
       }
     }
 
-    async function restoreEpisode(showId, episodeId, btn) {
-      const key = pendingKey(showId, `restore:${episodeId}`);
-      if (pendingDownloads.has(key)) return;
-      pendingDownloads.add(key);
+    function quickDownloadMatch(showId, btn) {
+      const title = btn.dataset.title;
+      if (!title) return;
+      return runRowAction(showId, title, btn, `/api/shows/${showId}/quick-download`, { json: { title } }, 'Download started.', 'Download failed.');
+    }
 
-      btn.disabled = true;
-      btn.classList.add('opacity-50', 'pointer-events-none');
-
-      try {
-        const data = await apiFetch(`/api/shows/${showId}/episodes/${episodeId}/restore`, { method: 'POST' });
-        showToast(data.message || 'Restored.', 'success');
-        await refreshShowLists(showId);
-      } catch (err) {
-        showToast(err.message || 'Restore failed.', err.status === 409 ? 'info' : 'error');
-      } finally {
-        pendingDownloads.delete(key);
-        btn.disabled = false;
-        btn.classList.remove('opacity-50', 'pointer-events-none');
-        rerenderShowLists();
-      }
+    function restoreEpisode(showId, episodeId, btn) {
+      return runRowAction(showId, `restore:${episodeId}`, btn, `/api/shows/${showId}/episodes/${episodeId}/restore`, {}, 'Restored.', 'Restore failed.');
     }
 
     function togglePauseShow(id) {
@@ -2384,15 +2351,40 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       return `<ul class="rounded-md border border-line divide-y divide-line-soft" style="margin-top: 0.75rem; max-height: 10rem; overflow-y: auto; background: rgb(var(--field))">${rows}</ul>`;
     }
 
+    // A dialog centred over the page. Escape, a click outside and any [data-act="cancel"] button
+    // call `dismiss`; any other data-act button calls `act(name, overlay)`.
+    // Returns { overlay, close }; `close` removes the dialog without calling either.
+    function openModal(html, { dismiss, act } = {}) {
+      const overlay = document.createElement('div');
+      // Spacing is inline: app.css only holds the utility classes the page already uses.
+      overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
+      overlay.innerHTML = html;
+      const close = () => {
+        document.removeEventListener('keydown', onKey);
+        overlay.remove();
+      };
+      const dismissed = () => {
+        close();
+        if (dismiss) dismiss();
+      };
+      const onKey = e => { if (e.key === 'Escape') dismissed(); };
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) return dismissed();
+        const name = e.target.dataset.act;
+        if (name === 'cancel') dismissed();
+        else if (name && act) act(name, overlay);
+      });
+      document.addEventListener('keydown', onKey);
+      document.body.appendChild(overlay);
+      return { overlay, close };
+    }
+
     // Resolves to { deleteFiles } when confirmed, or null when cancelled.
     function confirmDeleteShow(name, preview) {
       return new Promise(resolve => {
-        const overlay = document.createElement('div');
-        // Spacing is inline: app.css only holds the utility classes the page already uses.
-        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
         const count = preview && Array.isArray(preview.torrents) ? preview.torrents.length : null;
         const filesLabel = count ? `Also delete the downloaded files of ${count === 1 ? 'this torrent' : `these ${count} torrents`}` : 'Also delete the downloaded files';
-        overlay.innerHTML = `
+        const { overlay, close } = openModal(`
           <div class="card w-full shadow-lg shadow-black/40" style="max-width: 26rem; padding: 1.5rem" role="dialog" aria-modal="true">
             <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">Delete '${escapeHtml(name)}'?</h3>
             <p class="field-hint" style="margin-top: 0.5rem">Removes the show, its qBittorrent rule and the torrents listed below, whether they are downloading or seeding.</p>
@@ -2405,19 +2397,15 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
               <button type="button" data-act="cancel" class="btn">Cancel</button>
               <button type="button" data-act="ok" class="btn btn-danger">Delete</button>
             </div>
-          </div>`;
-        const finish = result => {
-          document.removeEventListener('keydown', onKey);
-          overlay.remove();
-          resolve(result);
-        };
-        const onKey = e => { if (e.key === 'Escape') finish(null); };
-        overlay.addEventListener('click', e => {
-          if (e.target === overlay || e.target.dataset.act === 'cancel') finish(null);
-          else if (e.target.dataset.act === 'ok') finish({ deleteFiles: overlay.querySelector('#delete-files-check').checked });
+          </div>`, {
+          dismiss: () => resolve(null),
+          act: (act, el) => {
+            if (act !== 'ok') return;
+            const deleteFiles = el.querySelector('#delete-files-check').checked;
+            close();
+            resolve({ deleteFiles });
+          },
         });
-        document.addEventListener('keydown', onKey);
-        document.body.appendChild(overlay);
         overlay.querySelector('[data-act="cancel"]').focus();
       });
     }
@@ -2495,8 +2483,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       try {
         await apiFetch('/api/feeds/reorder', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(reorderPayload)
+          json: reorderPayload
         });
       } catch (err) {
         showToast(`Failed updating priority: ${err}`, 'error');
@@ -2577,9 +2564,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
     function openFeedDialog(feedId = null) {
       const feed = feedId === null ? null : allFeeds.find(f => f.id === feedId);
       if (feedId !== null && !feed) return;
-      const overlay = document.createElement('div');
-      overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
-      overlay.innerHTML = `
+      const { overlay, close } = openModal(`
         <form class="card w-full shadow-lg shadow-black/40" style="max-width: 28rem; padding: 1.5rem" role="dialog" aria-modal="true">
           <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">${feed ? `Edit '${escapeHtml(feed.qbit_feed_name)}'` : 'Add RSS feed'}</h3>
           <div style="margin-top: 1.25rem">
@@ -2596,21 +2581,13 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
             <button type="button" data-act="cancel" class="btn">Cancel</button>
             <button type="submit" data-act="save" class="btn btn-primary">${feed ? 'Save' : 'Add'}</button>
           </div>
-        </form>`;
+        </form>`);
       const nameInput = overlay.querySelector('#feed-dlg-name');
       const urlInput = overlay.querySelector('#feed-dlg-url');
       const errorLine = overlay.querySelector('#feed-dlg-error');
       const saveBtn = overlay.querySelector('[data-act="save"]');
       nameInput.value = feed ? feed.qbit_feed_name : '';
       urlInput.value = feed ? feed.qbit_feed_url : '';
-      const close = () => {
-        document.removeEventListener('keydown', onKey);
-        overlay.remove();
-      };
-      const onKey = e => { if (e.key === 'Escape') close(); };
-      overlay.addEventListener('click', e => {
-        if (e.target === overlay || e.target.dataset.act === 'cancel') close();
-      });
       overlay.querySelector('form').addEventListener('submit', async e => {
         e.preventDefault();
         const name = nameInput.value.trim();
@@ -2621,9 +2598,9 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
           if (name !== feed.qbit_feed_name) body.name = name;
           if (url !== feed.qbit_feed_url) body.url = url;
           if (!Object.keys(body).length) { close(); return; }
-          request = { url: `/api/feeds/${feed.id}`, options: { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } };
+          request = { url: `/api/feeds/${feed.id}`, options: { method: 'PATCH', json: body } };
         } else {
-          request = { url: '/api/feeds', options: { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, url }) } };
+          request = { url: '/api/feeds', options: { method: 'POST', json: { name, url } } };
         }
         await once('feed-save', async () => {
           saveBtn.disabled = true;
@@ -2641,23 +2618,19 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
           }
         });
       });
-      document.addEventListener('keydown', onKey);
-      document.body.appendChild(overlay);
       nameInput.focus();
     }
 
     // Resolves to true when confirmed.
     function confirmDeleteFeed(feed) {
       return new Promise(resolve => {
-        const overlay = document.createElement('div');
-        overlay.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4';
         const usage = feed.shows > 0
           ? ` ${feed.shows} show${feed.shows === 1 ? ' uses' : 's use'} it and will go back to Auto-Discover.`
           : '';
         const lockWarning = feed.locked > 0
           ? `<p class="field-hint" style="color: rgb(var(--danger-fg))">${feed.locked} show${feed.locked === 1 ? ' is' : 's are'} locked to this feed; ${feed.locked === 1 ? 'its' : 'their'} lock is released.</p>`
           : '';
-        overlay.innerHTML = `
+        const { overlay, close } = openModal(`
           <div class="card w-full shadow-lg shadow-black/40" style="max-width: 26rem; padding: 1.5rem" role="dialog" aria-modal="true">
             <h3 class="section-title" style="font-size: 0.9375rem; color: rgb(var(--t-title))">Delete '${escapeHtml(feed.qbit_feed_name)}'?</h3>
             <p class="field-hint" style="margin-top: 0.5rem">Removes the feed from qBittorrent and Kisetsu.${usage}</p>
@@ -2666,19 +2639,14 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
               <button type="button" data-act="cancel" class="btn">Cancel</button>
               <button type="button" data-act="ok" class="btn btn-danger">Delete</button>
             </div>
-          </div>`;
-        const finish = result => {
-          document.removeEventListener('keydown', onKey);
-          overlay.remove();
-          resolve(result);
-        };
-        const onKey = e => { if (e.key === 'Escape') finish(false); };
-        overlay.addEventListener('click', e => {
-          if (e.target === overlay || e.target.dataset.act === 'cancel') finish(false);
-          else if (e.target.dataset.act === 'ok') finish(true);
+          </div>`, {
+          dismiss: () => resolve(false),
+          act: act => {
+            if (act !== 'ok') return;
+            close();
+            resolve(true);
+          },
         });
-        document.addEventListener('keydown', onKey);
-        document.body.appendChild(overlay);
         overlay.querySelector('[data-act="cancel"]').focus();
       });
     }
@@ -2747,8 +2715,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       try {
         const data = await apiFetch('/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ download_mode: mode })
+          json: { download_mode: mode }
         });
         showToast(data.message || `Download engine switched to ${mode}.`, 'success');
         await loadSettings();
@@ -2773,8 +2740,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       try {
         await apiFetch('/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ desktop_notifications: on })
+          json: { desktop_notifications: on }
         });
         if (currentSettings) currentSettings.desktop_notifications = on;
       } catch (err) {
@@ -2803,8 +2769,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         updateTitleLanguageUi(lang);
         await apiFetch('/api/settings', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title_language: lang, move_existing: moveExisting })
+          json: { title_language: lang, move_existing: moveExisting }
         });
         if (currentSettings) currentSettings.title_language = lang;
         await loadShows();
@@ -2912,8 +2877,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
         try {
           const data = await apiFetch('/api/settings', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+            json: payload
           });
           showToast(data.message || 'Settings saved.', 'success');
           settingsInitialState = null;
@@ -2938,8 +2902,7 @@ Hand-picked feeds are cleared. Shows locked to a feed they already downloaded fr
       try {
         const data = await apiFetch('/api/settings/test-qbit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          json: payload
         });
         statusEl.textContent = `Connected (qBit ${data.app_version})`;
         statusEl.className = 'text-xs font-mono text-emerald-400 font-semibold';
@@ -3319,7 +3282,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         answered = true;
         serverReachable = true;
         const failingKey = (st.failing_feeds || []).join('|');
-        if (lastFailingKey !== null && failingKey !== lastFailingKey) loadShows({ quiet: true });
+        const failingChanged = lastFailingKey !== null && failingKey !== lastFailingKey;
         lastFailingKey = failingKey;
         anilistBlockedUntil = st.anilist_blocked_until ? new Date(st.anilist_blocked_until).getTime() : null;
         nextCheckReason = st.next_check_reason || '';
@@ -3365,7 +3328,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
         ].join('|');
         const ledgerMoved = ledgerFingerprint !== null && fingerprint !== ledgerFingerprint;
         ledgerFingerprint = fingerprint;
-        if (ledgerMoved) loadShows({ quiet: true });
+        if (failingChanged || ledgerMoved) loadShows({ quiet: true });
 
         if (activeTab === 'history') loadHistory();
       } catch {
@@ -3391,7 +3354,6 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
     // through /api/setup/*, which closes for good once the last step is done.
     const SETUP_STEPS = ['welcome', 'qbit', 'mode', 'feeds', 'downloads', 'appearance', 'anilist', 'done'];
     const SETUP_COUNTED = 6;
-    const JSON_HEADERS = { 'Content-Type': 'application/json' };
     let setupOpen = false;
     let setupIndex = 0;
     let setupSandbox = false;
@@ -3559,7 +3521,7 @@ Target Time: ${targetDate.toLocaleTimeString()}`;
     }
 
     async function setupPost(url, payload) {
-      return apiFetch(url, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(payload), notice: false });
+      return apiFetch(url, { method: 'POST', json: payload, notice: false });
     }
 
     // Stores the step on the server; false keeps the user on the step.
