@@ -22,26 +22,22 @@ _NAME_SPLIT = re.compile(NAME_SEPARATORS)
 RULE_LEAD_TIME = timedelta(days=7)
 
 
+_SEASON_MARK = re.compile(
+    r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
+    re.IGNORECASE,
+)
+
+
 def generate_season_variants(alias: str) -> List[str]:
     """Generate common release group season abbreviations (e.g. 'Mushoku Tensei S3', 'Mushoku Tensei Season 3')."""
     variants = [alias]
-    m_s = re.search(
-        r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
-        alias,
-        re.IGNORECASE,
-    )
+    m_s = _SEASON_MARK.search(alias)
     if not m_s:
         return variants
 
-    s_num = 0
-    if m_s.group(1):
-        s_num = int(m_s.group(1))
-    elif m_s.group(2):
-        s_num = int(m_s.group(2))
-    elif m_s.group(3):
-        s_num = ROMAN_TO_INT.get(m_s.group(3).upper(), 0)
-    elif m_s.group(4):
-        s_num = ROMAN_TO_INT.get(m_s.group(4).upper(), 0)
+    # Whichever alternative matched is the only group that captured anything.
+    token = next(group for group in m_s.groups() if group)
+    s_num = int(token) if token.isdigit() else ROMAN_TO_INT.get(token.upper(), 0)
 
     if s_num == 0:
         return variants
@@ -49,12 +45,7 @@ def generate_season_variants(alias: str) -> List[str]:
     # Cut the season off the whole alias. Separators inside a title ("Re:Zero",
     # "Kaguya-sama", "Fate/stay night") are part of the name, so the base is never
     # truncated at one; only dangling ones left by the removal are trimmed.
-    base = re.sub(
-        r"\b(?:season|s)\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(?:I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
-        "",
-        alias,
-        flags=re.IGNORECASE,
-    )
+    base = _SEASON_MARK.sub("", alias)
     base = re.sub(r"\s+", " ", base).strip()
     base = re.sub(r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", "", base).strip()
 

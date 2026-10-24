@@ -251,10 +251,6 @@ class _Due:
     signature: int
 
 
-def _naive_utc(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
-
-
 def _searchable_feeds(show: Monitored, feeds: List[Feed]) -> List[Feed]:
     if show.feed_is_locked:
         # A locked show reads one feed; searching others would only fill the cache with
@@ -285,7 +281,7 @@ def backfill_due(
     or the show has no usable search term.
     """
     settings = get_settings(session)
-    now = _naive_utc(now or utc_now())
+    now = feedcache.naive_utc(now or utc_now())
     feeds = session.exec(select(Feed).order_by(Feed.priority, Feed.id)).all()
     if not feeds:
         return []
@@ -366,10 +362,9 @@ def date_gate(
     cutoff = feedcache.premiere_cutoff(first_air) if first_air else None
     kept = []
     for article in articles:
-        published = parse_article_date(article)
-        if published.year <= 2000:
+        published = feedcache.published_at(article)
+        if published is None:
             continue
-        published = published.astimezone(timezone.utc).replace(tzinfo=None)
         if published > now + FUTURE_SLACK:
             continue
         if cutoff and published < cutoff:
@@ -484,7 +479,7 @@ def _search_site(
             found.setdefault(feed.qbit_feed_url, []).extend(articles)
             for article in date_gate(articles, first_air, now):
                 title = article.get("title") or ""
-                if item.show.id in followed.matching_ids(title):
+                if followed.matching_ids(title, {item.show.id}):
                     covered.add(parse_release_title(title).get("episode"))
             if covered.issuperset(item.missing):
                 break
@@ -510,7 +505,7 @@ def run_backfill(
         if not due:
             return found
         followed = feedcache._followed(session)
-        naive_now = _naive_utc(now or utc_now())
+        naive_now = feedcache.naive_utc(now or utc_now())
         for position, item in enumerate(due):
             if position:
                 pause(REQUEST_GAP_SECONDS)

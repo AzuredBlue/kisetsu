@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import logging
 import time
 from email.utils import parsedate_to_datetime
-from typing import Any, Collection, Dict, List, Optional, Tuple
+from typing import Any, Collection, Dict, Iterator, List, Optional, Tuple
 from urllib.parse import urlsplit
 from kisetsu.clients.qbit import QBitClient, QbitClientError, QbitRSSRefreshError
 from kisetsu.core.matching import match_release_to_show, prepare_aliases
@@ -43,6 +43,17 @@ def parse_article_date(art: Dict[str, Any]) -> datetime:
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
+def _iter_feeds(node: Dict[str, Any]) -> Iterator[Tuple[str, Dict[str, Any]]]:
+    """(name, feed) for every feed in a qBittorrent RSS item tree, folders walked through."""
+    for name, value in node.items():
+        if not isinstance(value, dict):
+            continue
+        if "url" in value:
+            yield name, value
+        else:
+            yield from _iter_feeds(value)
+
+
 def flatten_rss_articles(rss_tree: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     """
     Parse qBittorrent RSS item tree into a mapping:
@@ -50,22 +61,11 @@ def flatten_rss_articles(rss_tree: Dict[str, Any]) -> Dict[str, List[Dict[str, A
     Articles are sorted newest-to-oldest by publication date.
     """
     feed_articles: Dict[str, List[Dict[str, Any]]] = {}
-
-    def traverse(node: Dict[str, Any]):
-        for key, val in node.items():
-            if isinstance(val, dict):
-                if "url" in val:
-                    feed_url = val["url"]
-                    articles = val.get("articles") or []
-                    if isinstance(articles, list):
-                        sorted_articles = sorted(articles, key=parse_article_date, reverse=True)
-                    else:
-                        sorted_articles = []
-                    feed_articles[feed_url] = sorted_articles
-                else:
-                    traverse(val)
-
-    traverse(rss_tree)
+    for _, feed in _iter_feeds(rss_tree):
+        articles = feed.get("articles") or []
+        feed_articles[feed["url"]] = (
+            sorted(articles, key=parse_article_date, reverse=True) if isinstance(articles, list) else []
+        )
     return feed_articles
 
 
@@ -81,24 +81,10 @@ def _rss_feed_states(rss_tree: Dict[str, Any]) -> List[Tuple[str, str, bool, boo
     the article payload is then trusted exactly as it always was. Genuine
     refresh problems are caught by the retry-and-raise path in ``refresh()``.
     """
-    states: List[Tuple[str, str, bool, bool]] = []
-
-    def traverse(node: Dict[str, Any]) -> None:
-        for name, value in node.items():
-            if not isinstance(value, dict):
-                continue
-            if "url" in value:
-                states.append((
-                    name,
-                    str(value["url"]),
-                    bool(value.get("isLoading")),
-                    bool(value.get("hasError")),
-                ))
-            else:
-                traverse(value)
-
-    traverse(rss_tree)
-    return states
+    return [
+        (name, str(feed["url"]), bool(feed.get("isLoading")), bool(feed.get("hasError")))
+        for name, feed in _iter_feeds(rss_tree)
+    ]
 
 
 class RssSnapshot:
@@ -122,16 +108,21 @@ class RssSnapshot:
             if any(loading for _, _, loading, _ in states):
                 settle_timeout = self.calculate_settle_timeout(states)
                 rss_tree, states = self._wait_for_settled_feeds(time.monotonic() + settle_timeout, 0.25)
-            articles = flatten_rss_articles(rss_tree)
-            self.failed_feed_names = [name for name, _, _, has_error in states if has_error]
-            for name, feed_url, _, has_error in states:
-                if has_error:
-                    articles.pop(feed_url, None)
-            self._articles_by_url = articles
+            articles = self._store(rss_tree, states)
         except Exception as e:
             self._articles_by_url = {}
             self._load_error = e
             raise
+        return articles
+
+    def _store(self, rss_tree: Dict[str, Any], states: List[Tuple[str, str, bool, bool]]) -> Dict[str, List[Dict[str, Any]]]:
+        """Keep the articles of the feeds that read cleanly, and remember the names of the ones that did not."""
+        articles = flatten_rss_articles(rss_tree)
+        self.failed_feed_names = [name for name, _, _, has_error in states if has_error]
+        for _, feed_url, _, has_error in states:
+            if has_error:
+                articles.pop(feed_url, None)
+        self._articles_by_url = articles
         return articles
 
     def calculate_settle_timeout(
@@ -266,11 +257,7 @@ class RssSnapshot:
                         + ", ".join(name for name, _ in retry_feeds)
                     )
 
-                articles = flatten_rss_articles(rss_tree)
-                for _, feed_url in failed_feeds:
-                    articles.pop(feed_url, None)
-                self.failed_feed_names = [name for name, _ in failed_feeds]
-                self._articles_by_url = articles
+                articles = self._store(rss_tree, states)
                 self._load_error = None
                 self._load_attempted = True
                 return articles
@@ -335,39 +322,35 @@ def discover_feed_for_show(
         logger.warning(f"Could not fetch RSS cache for discovery: {e}.")
         articles_by_url = {}
 
-    top_articles = articles_by_url.get(top_feed.qbit_feed_url) or []
-    for art in top_articles:
-        title = art.get("title", "")
-        is_match, score, parsed = match_release_to_show(
-            title,
-            aliases,
-            test_pattern=test_pattern,
-            prepared_aliases=prepared_aliases,
-            parsed_cache=parsed_articles,
-        )
-        if is_match:
-            logger.info(
-                f"Discovered #1 priority match for '{monitored.display_name}' in feed '{top_feed.qbit_feed_name}': "
-                f"'{title}' (score: {score:.1f})"
-            )
-            return top_feed, parsed.get("release_group"), parsed.get("title")
-
-    lower_match = None
-    for feed in sorted_feeds[1:]:
-        articles = articles_by_url.get(feed.qbit_feed_url) or []
-        for art in articles:
-            title = art.get("title", "")
-            is_match, _, parsed = match_release_to_show(
-                title,
+    def first_match(articles: Optional[List[Dict[str, Any]]]) -> Optional[Tuple[Dict[str, Any], float, Dict[str, Any]]]:
+        """The first article that is this show's release, with its score and parsed metadata."""
+        for art in articles or []:
+            is_match, score, parsed = match_release_to_show(
+                art.get("title", ""),
                 aliases,
                 test_pattern=test_pattern,
                 prepared_aliases=prepared_aliases,
                 parsed_cache=parsed_articles,
             )
             if is_match:
-                lower_match = (feed, parsed.get("release_group"), parsed.get("title"), art)
-                break
-        if lower_match:
+                return art, score, parsed
+        return None
+
+    top_match = first_match(articles_by_url.get(top_feed.qbit_feed_url))
+    if top_match:
+        art, score, parsed = top_match
+        logger.info(
+            f"Discovered #1 priority match for '{monitored.display_name}' in feed '{top_feed.qbit_feed_name}': "
+            f"'{art.get('title', '')}' (score: {score:.1f})"
+        )
+        return top_feed, parsed.get("release_group"), parsed.get("title")
+
+    lower_match = None
+    for feed in sorted_feeds[1:]:
+        found = first_match(articles_by_url.get(feed.qbit_feed_url))
+        if found:
+            art, _, parsed = found
+            lower_match = (feed, parsed.get("release_group"), parsed.get("title"), art)
             break
 
     if lower_match:
@@ -378,8 +361,8 @@ def discover_feed_for_show(
         # The grace period lets a higher priority feed catch up once a release
         # drops. Measure it from when the release became visible here rather than
         # from AniList's airing time, which can be stale or still in the future.
-        released_at = parse_article_date(matched_art) if matched_art else None
-        if released_at and released_at > datetime.min.replace(tzinfo=timezone.utc):
+        released_at = parse_article_date(matched_art)
+        if released_at > datetime.min.replace(tzinfo=timezone.utc):
             grace_reference = released_at
         else:
             grace_reference = air_at
@@ -402,18 +385,11 @@ def discover_feed_for_show(
                 qbit_client.refresh_rss_feeds()
                 fresh_tree = qbit_client.get_rss_items(with_data=True)
                 fresh_articles = flatten_rss_articles(fresh_tree)
-            for art in (fresh_articles.get(top_feed.qbit_feed_url) or []):
-                t = art.get("title", "")
-                m, sc, pr = match_release_to_show(
-                    t,
-                    aliases,
-                    test_pattern=test_pattern,
-                    prepared_aliases=prepared_aliases,
-                    parsed_cache=parsed_articles,
-                )
-                if m:
-                    logger.info(f"Priority #1 feed '{top_feed.qbit_feed_name}' caught up after refresh for '{monitored.display_name}'!")
-                    return top_feed, pr.get("release_group"), pr.get("title")
+            caught_up = first_match(fresh_articles.get(top_feed.qbit_feed_url))
+            if caught_up:
+                parsed = caught_up[2]
+                logger.info(f"Priority #1 feed '{top_feed.qbit_feed_name}' caught up after refresh for '{monitored.display_name}'!")
+                return top_feed, parsed.get("release_group"), parsed.get("title")
         except Exception as e:
             logger.debug(f"Fresh check of #1 feed skipped: {e}")
 

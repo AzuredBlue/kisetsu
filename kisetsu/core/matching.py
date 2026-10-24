@@ -1,5 +1,6 @@
 import logging
 import re
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from guessit import guessit
 from rapidfuzz import fuzz
@@ -26,6 +27,11 @@ def prepare_aliases(aliases: List[str]) -> List[Tuple[str, str]]:
     return prepared
 
 
+_ROMAN_NUMERALS = {"x": "10", "ix": "9", "viii": "8", "vii": "7", "vi": "6", "v": "5", "iv": "4", "iii": "3", "ii": "2"}
+_ROMAN_NUMERAL_RE = re.compile(r"\b(" + "|".join(_ROMAN_NUMERALS) + r")\b")
+
+
+@lru_cache(maxsize=4096)
 def normalize_title(title: str) -> str:
     """Normalize anime title for comparison by standardizing seasons, roman numerals, and symbols."""
     if not title:
@@ -33,15 +39,7 @@ def normalize_title(title: str) -> str:
     t = title.lower()
     t = re.sub(r"\[.*?\]|\(.*?\)", " ", t)
 
-    t = re.sub(r"\b(x)\b", "10", t)
-    t = re.sub(r"\b(ix)\b", "9", t)
-    t = re.sub(r"\b(viii)\b", "8", t)
-    t = re.sub(r"\b(vii)\b", "7", t)
-    t = re.sub(r"\b(vi)\b", "6", t)
-    t = re.sub(r"\b(v)\b", "5", t)
-    t = re.sub(r"\b(iv)\b", "4", t)
-    t = re.sub(r"\b(iii)\b", "3", t)
-    t = re.sub(r"\b(ii)\b", "2", t)
+    t = _ROMAN_NUMERAL_RE.sub(lambda m: _ROMAN_NUMERALS[m.group(1)], t)
     t = re.sub(r"\b(\d+)(?:st|nd|rd|th)\s+season\b", r"season \1", t)
     t = re.sub(r"\bs(\d+)\b", r"season \1", t)
 
@@ -458,8 +456,8 @@ def match_release_to_show(
     if not is_valid_release(raw_title):
         return False, 0.0, parsed
 
-    requirement = _alias_arc_requirement(aliases)
-    if requirement and not ignore_arc_marker and not _arc_is_compatible(requirement, release_arc_qualifier(raw_title)):
+    requirement = None if ignore_arc_marker else _alias_arc_requirement(aliases)
+    if requirement and not _arc_is_compatible(requirement, release_arc_qualifier(raw_title)):
         logger.info(
             f"Rejected '{raw_title}': show requires arc marker '{requirement}'."
         )

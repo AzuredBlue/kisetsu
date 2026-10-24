@@ -105,7 +105,7 @@ def _slim(article: Dict[str, Any]) -> Dict[str, Any]:
     return {key: article[key] for key in CACHE_FIELDS if article.get(key) not in (None, "")}
 
 
-def _published_at(article: Dict[str, Any]) -> Optional[datetime]:
+def published_at(article: Dict[str, Any]) -> Optional[datetime]:
     """Naive UTC publication time, or None when the feed gave none."""
     parsed = parse_article_date(article)
     if parsed.year <= 2000:
@@ -113,13 +113,13 @@ def _published_at(article: Dict[str, Any]) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-def _naive(value: datetime) -> datetime:
+def naive_utc(value: datetime) -> datetime:
     return value.astimezone(timezone.utc).replace(tzinfo=None) if value.tzinfo else value
 
 
 def premiere_cutoff(first_air: datetime) -> datetime:
     """Naive UTC time before which a release cannot be this show's."""
-    return _naive(first_air) - timedelta(days=PREMIERE_SLACK_DAYS)
+    return naive_utc(first_air) - timedelta(days=PREMIERE_SLACK_DAYS)
 
 
 class _FollowedShows:
@@ -137,11 +137,13 @@ class _FollowedShows:
         self.signature = hash(tuple(sorted(parts)))
         self._parsed: Dict[str, Dict[str, Any]] = {}
 
-    def matching_ids(self, title: str) -> List[int]:
+    def matching_ids(self, title: str, only: Optional[Collection[int]] = None) -> List[int]:
+        """The followed shows the title belongs to; ``only`` leaves every other show out of the matching."""
         return [
             show_id
             for show_id, aliases, pattern, prepared in self._entries
-            if match_release_to_show(
+            if (only is None or show_id in only)
+            and match_release_to_show(
                 title,
                 aliases,
                 test_pattern=pattern,
@@ -187,7 +189,7 @@ def store_matches(
     Such articles are not marked as evaluated, so the regular copy still sees them.
     """
     followed = followed or _followed(session)
-    now = _naive(now or utc_now())
+    now = naive_utc(now or utc_now())
     state = _evaluated_for(session)
     with state.lock:
         if state.signature != followed.signature or len(state.keys) > _EVALUATED_CAP:
@@ -206,13 +208,11 @@ def store_matches(
                 continue
             if only_show_ids is None:
                 seen.add((feed_url, item_id))
-            show_ids = followed.matching_ids(title)
-            if only_show_ids is not None:
-                show_ids = [show_id for show_id in show_ids if show_id in only_show_ids]
+            show_ids = followed.matching_ids(title, only_show_ids)
             if not show_ids:
                 continue
             data = json.dumps(_slim(article), separators=(",", ":"))
-            published = _published_at(article)
+            published = published_at(article)
             for show_id in show_ids:
                 rows.append({
                     "monitored_id": show_id,
@@ -254,9 +254,8 @@ def cached_articles(session: Session) -> Dict[str, List[Dict[str, Any]]]:
     Every known feed has an entry (empty when nothing is kept for it), except
     feeds the last ingest could not read, which are left out as before.
     """
-    articles: Dict[str, List[Dict[str, Any]]] = {
-        url: [] for url in session.exec(select(Feed.qbit_feed_url)).all()
-    }
+    feeds = session.exec(select(Feed.qbit_feed_url, Feed.qbit_feed_name)).all()
+    articles: Dict[str, List[Dict[str, Any]]] = {url: [] for url, _ in feeds}
     seen: set = set()
     rows = session.exec(
         select(MatchedFeedItem.feed_url, MatchedFeedItem.item_id, MatchedFeedItem.data_json)
@@ -271,12 +270,8 @@ def cached_articles(session: Session) -> Dict[str, List[Dict[str, Any]]]:
         except (TypeError, ValueError):
             continue
         articles.setdefault(feed_url, []).append(article)
-    if _failed_feed_names:
-        failed_urls = {
-            url for url, name in session.exec(select(Feed.qbit_feed_url, Feed.qbit_feed_name)).all()
-            if name in _failed_feed_names
-        }
-        for url in failed_urls:
+    for url, name in feeds:
+        if name in _failed_feed_names:
             articles.pop(url, None)
     return articles
 
@@ -289,7 +284,7 @@ def prune(session: Session, now: Optional[datetime] = None) -> int:
     deleted show go with it.) Unshielded "seen" rows from before the cache, and
     from rules mode, older than SEEN_KEEP_DAYS go too.
     """
-    now = _naive(now or utc_now())
+    now = naive_utc(now or utc_now())
     removed = 0
 
     feed_urls = set(session.exec(select(Feed.qbit_feed_url)).all())
@@ -360,9 +355,9 @@ def prune(session: Session, now: Optional[datetime] = None) -> int:
 
 def _parse_stored_time(value: Any) -> Optional[datetime]:
     if isinstance(value, datetime):
-        return _naive(value)
+        return naive_utc(value)
     try:
-        return _naive(datetime.fromisoformat(str(value))) if value else None
+        return naive_utc(datetime.fromisoformat(str(value))) if value else None
     except ValueError:
         return None
 
@@ -392,7 +387,7 @@ def backfill_from_seen(session: Session) -> int:
                 "item_id": item_id,
                 "title": title or "",
                 "published_at": _parse_stored_time(published_at),
-                "first_seen_at": _parse_stored_time(created_at) or _naive(utc_now()),
+                "first_seen_at": _parse_stored_time(created_at) or naive_utc(utc_now()),
                 "data_json": data_json,
             })
     added = _insert_rows(session, rows) if rows else 0
