@@ -19,6 +19,7 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn>=0.28.0",
     "pillow>=10.0.0",
+    "desktop-notifier>=6.0.0",
 ]
 
 [project.optional-dependencies]
@@ -34,7 +35,7 @@ kisetsu = "kisetsu.main:main"
 include = ["kisetsu*"]
 
 [tool.setuptools.package-data]
-"kisetsu.server" = ["static/*.css", "static/*.js", "static/fonts/*", "ui/*.html"]
+"kisetsu.web" = ["static/index.html", "static/css/*.css", "static/js/*.js", "static/js/components/*.js", "static/js/views/*.js", "static/vendor/*", "static/fonts/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

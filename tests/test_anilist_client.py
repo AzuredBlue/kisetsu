@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from kisetsu.clients.anilist import AniListClient, AniListError, get_current_and_next_season
 
 
@@ -320,3 +320,28 @@ async def test_failed_query_leaves_the_schedule_marked_stale():
 
     assert client.last_sync_at is None
     assert client.is_sync_due(3600) is True
+
+
+def answer(status_code, payload=None):
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload or {}
+    return response
+
+
+@pytest.mark.parametrize("response, expected", [
+    (answer(200, {"data": {"User": {"id": 5}}}), True),
+    (answer(200, {"data": {"User": None}}), False),
+    (answer(404, {"errors": [{"message": "Not Found."}]}), False),
+])
+async def test_user_exists_reads_the_answer(monkeypatch, response, expected):
+    post = AsyncMock(return_value=response)
+    monkeypatch.setattr("httpx2.AsyncClient.post", post)
+    assert await AniListClient().user_exists("alvaro") is expected
+    post.assert_awaited_once()
+
+
+async def test_user_exists_raises_when_anilist_misbehaves(monkeypatch):
+    monkeypatch.setattr("httpx2.AsyncClient.post", AsyncMock(return_value=answer(429)))
+    with pytest.raises(AniListError):
+        await AniListClient().user_exists("alvaro")

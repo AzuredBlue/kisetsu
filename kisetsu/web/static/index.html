@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kisetsu</title>
+  <link rel="preload" href="/static/fonts/ibm-plex-sans-latin-400.woff2?v=3" as="font" type="font/woff2" crossorigin>
+  <script>
+    // Theme and accent are resolved before first paint. 'system' follows the OS.
+    (function () {
+      var mode = 'dark';
+      try { mode = localStorage.getItem('kisetsu_theme') || 'dark'; } catch (err) {}
+      var light = mode === 'light' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: light)').matches);
+      document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+    })();
+  </script>
+  <link rel="stylesheet" href="/static/css/tokens.css?v=@@v:css/tokens.css@@">
+  <link rel="stylesheet" href="/static/css/base.css?v=@@v:css/base.css@@">
+  <link rel="stylesheet" href="/static/css/components.css?v=@@v:css/components.css@@">
+  <link rel="stylesheet" href="/static/css/layout.css?v=@@v:css/layout.css@@">
+  <link rel="stylesheet" href="/static/css/views.css?v=@@v:css/views.css@@">
+  <script>
+    // After the stylesheets, so the cached accent overrides their colours.
+    try {
+      var css = localStorage.getItem('kisetsu_accent_css4');
+      if (css) { var el = document.createElement('style'); el.id = 'user-accent'; el.textContent = css; document.head.appendChild(el); }
+    } catch (err) {}
+  </script>
+</head>
+<body>
+  <div id="app" style="display:contents"></div>
+  <noscript>Kisetsu needs JavaScript.</noscript>
+  <script type="module" src="/static/js/main.js?v=@@v:js/main.js@@"></script>
+</body>
+</html>
