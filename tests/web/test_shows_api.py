@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 from sqlmodel import select
 
@@ -293,7 +294,7 @@ async def test_the_save_path_is_blank_without_a_base_directory_and_resolved_once
     set_base("")
     assert (await web.client.get(f"/api/shows/{show}")).json()["save_path"] == ""
     set_base("/media/{name}")
-    assert (await web.client.get(f"/api/shows/{show}")).json()["save_path"] == "/media/Sousou no Frieren"
+    assert (await web.client.get(f"/api/shows/{show}")).json()["save_path"] == str(Path("/media/Sousou no Frieren").resolve())
 
 
 async def test_a_show_is_kept_when_qbit_cannot_remove_its_torrents(web):

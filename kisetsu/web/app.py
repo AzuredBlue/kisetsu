@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import logging
+import mimetypes
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -31,6 +32,10 @@ from kisetsu.web.deps import Runtime, install_errors
 from kisetsu.web.logs import LogRing
 
 logger = logging.getLogger("kisetsu.web")
+
+# Windows takes its types from the registry, which has none for web fonts.
+mimetypes.add_type("font/woff2", ".woff2")
+mimetypes.add_type("font/woff", ".woff")
 
 STATIC_DIR = Path(__file__).parent / "static"
 # Blocking work that is not the engine's: file scans and the like.

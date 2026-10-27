@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -308,14 +309,15 @@ def test_the_torrent_preview_lists_tracked_ones_and_untracked_ones_in_the_show_f
     feed = world.feed("Top", "https://top/rss", 1)
     ctx = world.ctx()
     ctx.settings.default_category = "Seasonal"
-    ctx.settings.base_dir = "/anime"
+    base = Path("/anime").resolve()
+    ctx.settings.base_dir = base.as_posix()
     show = world.show(episodes=1, first_air=START - timedelta(days=1))
     ingest.ingest(ctx, feed, [article("[Grp] Sousou no Frieren - 01 (1080p).mkv", START)])
     world.commit()
     grab.grab_pass(world.ctx())
     world.commit()
-    world.qbit.seed("[Old] Sousou no Frieren - 00 (1080p).mkv", save_path="/anime/Sousou no Frieren", category="Seasonal")
-    world.qbit.seed("[Old] Other Show - 01 (1080p).mkv", save_path="/anime/Sousou no Frieren", category="Seasonal")
+    world.qbit.seed("[Old] Sousou no Frieren - 00 (1080p).mkv", save_path=(base / "Sousou no Frieren").as_posix(), category="Seasonal")
+    world.qbit.seed("[Old] Other Show - 01 (1080p).mkv", save_path=(base / "Sousou no Frieren").as_posix(), category="Seasonal")
     from kisetsu.services import library
 
     preview = library.show_torrent_preview(world.ctx(), show)
@@ -327,12 +329,13 @@ def test_changing_the_title_language_moves_only_torrents_that_are_where_the_old_
 
     ctx = world.ctx()
     ctx.settings.default_category = "Seasonal"
-    ctx.settings.base_dir = "/anime"
+    base = Path("/anime").resolve()
+    ctx.settings.base_dir = base.as_posix()
     show = world.show(episodes=1, first_air=START - timedelta(days=1), title="Frieren", title_romaji="Sousou no Frieren")
-    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path="/anime/Frieren", category="Seasonal")
+    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path=(base / "Frieren").as_posix(), category="Seasonal")
     world.qbit.sync()
     plan = library.plan_language_move(world.ctx(), "romaji")
-    assert [(p["old"], p["new"], len(p["hashes"])) for p in plan] == [("/anime/Frieren", "/anime/Sousou no Frieren", 1)]
+    assert [(p["old"], p["new"], len(p["hashes"])) for p in plan] == [(str(base / "Frieren"), str(base / "Sousou no Frieren"), 1)]
     logs, failed = library.relocate_torrents(world.ctx(), plan)
     assert failed == [] and "Moved 1 downloads" in logs[0] and show.id
 
