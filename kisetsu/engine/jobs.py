@@ -98,6 +98,8 @@ class Jobs:
                 continue
             if value is not None and key != "anilist_retry_in":
                 logger.warning(f"{'qBittorrent' if key == 'qbit' else 'AniList'}: {value}")
+            if value is None and key == "qbit":
+                logger.info("qBittorrent connection restored.")
             self.health[key] = value
             changed = True
         if changed:
