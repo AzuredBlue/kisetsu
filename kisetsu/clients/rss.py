@@ -1,8 +1,10 @@
 """Fetching and parsing RSS feeds directly, without qBittorrent."""
 
+import asyncio
 import base64
 import binascii
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -16,6 +18,8 @@ USER_AGENT = "Kisetsu (feed reader)"
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 10.0
 MAX_BODY_BYTES = 8 * 1024 * 1024
+# Minimum gap between two requests to the same host, as in qBittorrent's RSS settings.
+SAME_HOST_DELAY_SECONDS = 2.0
 
 _HEX_HASH = re.compile(r"^[0-9a-fA-F]{40}$")
 _BASE32_HASH = re.compile(r"^[A-Za-z2-7]{32}$")
@@ -102,9 +106,28 @@ def parse_feed(body: bytes) -> List[FeedArticle]:
     return articles
 
 
+class HostDelay:
+    """Spaces out requests to one host, however many are waiting at once."""
+
+    def __init__(self, seconds: float = SAME_HOST_DELAY_SECONDS):
+        self.seconds = seconds
+        self._next_slot: Dict[str, float] = {}
+
+    async def wait(self, host: str) -> None:
+        now = time.monotonic()
+        slot = max(now, self._next_slot.get(host, now))
+        self._next_slot[host] = slot + self.seconds
+        if slot > now:
+            await asyncio.sleep(slot - now)
+
+
+_host_delay = HostDelay()
+
+
 async def fetch_bytes(client: httpx2.AsyncClient, url: str) -> bytes:
-    """GET ``url``. Every failure becomes a FeedFetchError."""
+    """GET ``url``, at most one request per SAME_HOST_DELAY_SECONDS to its host. Every failure becomes a FeedFetchError."""
     host = urlparse(url).hostname or url
+    await _host_delay.wait(host)
     try:
         response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
     except httpx2.TimeoutException as e:
