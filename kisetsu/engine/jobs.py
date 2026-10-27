@@ -345,7 +345,7 @@ class Jobs:
         due = await self.engine.run(lambda ctx: backfill.due(ctx, show_id=show_id, force=force, unmanaged=unmanaged))
         return await self._search(due)
 
-    async def _search(self, due: List[backfill.Due]) -> int:
+    async def _search(self, due: "List[backfill.Due]") -> int:
         added = 0
         for position, item in enumerate(due):
             if position:
