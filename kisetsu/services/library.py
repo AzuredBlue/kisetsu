@@ -16,6 +16,7 @@ from kisetsu.db.schema import ACTIVE_DOWNLOAD_STATES, Download, DownloadState, E
 from kisetsu.domain.matcher import build_matcher, decide
 from kisetsu.domain.patterns import resolve_save_path
 from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK
+from kisetsu.services import tags
 from kisetsu.services.context import Context
 
 logger = logging.getLogger("kisetsu.services.library")
@@ -101,6 +102,11 @@ def show_torrent_preview(ctx: Context, show: Show) -> List[Dict[str, Any]]:
     for value in show_torrent_hashes(ctx, show):
         torrent = view.get(value)
         entries[value] = {"hash": value, "name": torrent.name if torrent else None, "size": torrent.size if torrent else None, "tracked": True}
+    owned = tags.owners(ctx)
+    for torrent in view.values():
+        # Its series tag is proof the torrent is this show's, even when the database lost track of it.
+        if torrent.hash not in entries and tags.owner_id(torrent, owned) == show.id:
+            entries[torrent.hash] = {"hash": torrent.hash, "name": torrent.name, "size": torrent.size, "tracked": True}
     settings = ctx.settings
     save_path = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
     if save_path and settings.default_category:
@@ -118,6 +124,8 @@ def show_torrent_preview(ctx: Context, show: Show) -> List[Dict[str, Any]]:
             cache: Dict[str, dict] = {}
             for torrent in view.values():
                 if torrent.hash in entries or torrent.category != settings.default_category:
+                    continue
+                if tags.owner_id(torrent, owned) not in (None, show.id):
                     continue
                 if not _same_dir(torrent.save_path, save_path):
                     continue
