@@ -340,27 +340,32 @@ def test_changing_the_title_language_moves_only_torrents_that_are_where_the_old_
     assert failed == [] and "Moved 1 downloads" in logs[0] and show.id
 
 
+def host_path(path):
+    """A POSIX-looking path as the host spells it, with "/" like qBittorrent reports it (Windows adds a drive)."""
+    return Path(path).resolve().as_posix()
+
+
 def test_changing_a_shows_save_folder_moves_only_the_torrents_that_are_in_its_old_folder(world):
     ctx = world.ctx()
     ctx.settings.default_category = "Seasonal"
     ctx.settings.base_dir = "/anime/{name}"
     show = world.show(episodes=3, first_air=START - timedelta(days=21), title="Frieren")
-    kept = world.qbit.seed("[Grp] Frieren - 03 (1080p).mkv", save_path="/elsewhere", category="Seasonal")
-    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path="/anime/Frieren", category="Seasonal")
-    unfinished = world.qbit.seed("[Grp] Frieren - 02 (1080p).mkv", save_path="/anime/Frieren", category="Seasonal", finished=False)
+    kept = world.qbit.seed("[Grp] Frieren - 03 (1080p).mkv", save_path=host_path("/elsewhere"), category="Seasonal")
+    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path=host_path("/anime/Frieren"), category="Seasonal")
+    unfinished = world.qbit.seed("[Grp] Frieren - 02 (1080p).mkv", save_path=host_path("/anime/Frieren"), category="Seasonal", finished=False)
     world.qbit.sync()
     result = shows.edit_show(world.ctx(), show, save_folder="/media/{name}")
     assert show.save_folder == "/media/{name}" and "Moved 2 downloads" in result.message
     moved = world.qbit.calls_named("set_location")
-    assert len(moved) == 1 and len(moved[0]["hashes"]) == 2 and moved[0]["location"] == "/media/Frieren"
-    assert world.qbit.truth[kept.hash].save_path == "/elsewhere"
-    assert world.qbit.truth[unfinished.hash].save_path == "/media/Frieren"
+    assert len(moved) == 1 and len(moved[0]["hashes"]) == 2 and Path(moved[0]["location"]).as_posix() == host_path("/media/Frieren")
+    assert world.qbit.truth[kept.hash].save_path == host_path("/elsewhere")
+    assert Path(world.qbit.truth[unfinished.hash].save_path).as_posix() == host_path("/media/Frieren")
     feed = world.feed("Top", "https://top/rss", 1)
     row = _new_item(feed, article("[Grp] Frieren - 03 (1080p).mkv", START), world.clock())
     world.session.add(row)
     world.session.flush()
     downloads.start_download(world.ctx(), show, feed, world.episode(show, 3), row)
-    assert world.qbit.calls_named("add_torrent")[-1]["save_path"] == "/media/Frieren"
+    assert Path(world.qbit.calls_named("add_torrent")[-1]["save_path"]).as_posix() == host_path("/media/Frieren")
     shows.edit_show(world.ctx(), show, save_folder="/media/{name}")
     assert len(world.qbit.calls_named("set_location")) == 1
 
@@ -373,13 +378,13 @@ def test_changing_the_base_folder_moves_the_downloads_of_shows_that_follow_it_on
     ctx.settings.base_dir = "/anime/{name}"
     world.show(1, "Frieren", episodes=1, first_air=START - timedelta(days=1))
     world.show(2, "Bleach", episodes=1, first_air=START - timedelta(days=1), save_folder="/fixed/Bleach")
-    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path="/anime/Frieren", category="Seasonal")
-    world.qbit.seed("[Grp] Bleach - 01 (1080p).mkv", save_path="/fixed/Bleach", category="Seasonal")
+    world.qbit.seed("[Grp] Frieren - 01 (1080p).mkv", save_path=host_path("/anime/Frieren"), category="Seasonal")
+    world.qbit.seed("[Grp] Bleach - 01 (1080p).mkv", save_path=host_path("/fixed/Bleach"), category="Seasonal")
     world.qbit.sync()
     logs = apply_settings(world.ctx(), SettingsPatch(base_dir="/library"))
     assert world.ctx().settings.base_dir == "/library/{name}" and "Moved 1 downloads of Frieren" in logs[0]
     moved = world.qbit.calls_named("set_location")
-    assert len(moved) == 1 and moved[0]["location"] == "/library/Frieren"
+    assert len(moved) == 1 and Path(moved[0]["location"]).as_posix() == host_path("/library/Frieren")
 
 
 def test_a_new_base_folder_is_saved_even_when_qbit_cannot_be_asked_to_move_the_downloads(world):
@@ -409,9 +414,9 @@ def test_saving_the_folder_again_gathers_the_downloads_that_sit_elsewhere(world)
     world.qbit._update(dl.info_hash, save_path="/home/u/Anime", progress=1.0, amount_left=0, state="stalledUP")
     world.qbit.sync()
     apply_settings(world.ctx(), SettingsPatch(base_dir="/random"))
-    assert world.qbit.truth[dl.info_hash].save_path == "/random/Frieren"
+    assert Path(world.qbit.truth[dl.info_hash].save_path).as_posix() == host_path("/random/Frieren")
     apply_settings(world.ctx(), SettingsPatch(base_dir="/downloads"))
-    assert world.qbit.truth[dl.info_hash].save_path == "/downloads/Frieren"
+    assert Path(world.qbit.truth[dl.info_hash].save_path).as_posix() == host_path("/downloads/Frieren")
 
 
 def test_a_show_with_no_airing_schedule_still_gets_its_episode_rows(world):

@@ -1,4 +1,5 @@
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from sqlmodel import select
@@ -573,4 +574,4 @@ def test_a_torrent_qbit_keeps_outside_the_requested_folder_is_reported_once_per_
         world.qbit._update(row.info_hash, save_path="/downloads")
     settle(world)
     notes = [e.message for e in world.session.exec(select(Event)).all() if "can see" in e.message]
-    assert len(notes) == 1 and "/downloads" in notes[0] and "/home/u/Anime/Sousou no Frieren" in notes[0]
+    assert len(notes) == 1 and "/downloads" in notes[0] and str(Path("/home/u/Anime/Sousou no Frieren").resolve()) in notes[0]
