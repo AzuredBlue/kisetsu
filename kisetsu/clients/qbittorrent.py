@@ -63,6 +63,7 @@ class Torrent:
     tags: FrozenSet[str]
     added_on: Optional[datetime]
     completion_on: Optional[datetime]
+    seeding_time: int = 0
 
     @property
     def finished(self) -> bool:
@@ -81,7 +82,7 @@ ERROR_STATES = {"error", "missingfiles", "unknown"}
 
 _NEEDED_FIELDS = (
     "name", "state", "progress", "amount_left", "size", "save_path", "content_path",
-    "category", "tags", "added_on", "completion_on",
+    "category", "tags", "added_on", "completion_on", "seeding_time",
 )
 
 
@@ -109,6 +110,7 @@ def _torrent(info_hash: str, raw: Dict[str, Any]) -> Torrent:
         tags=tags,
         added_on=_timestamp(raw.get("added_on")),
         completion_on=_timestamp(raw.get("completion_on")),
+        seeding_time=int(raw.get("seeding_time") or 0),
     )
 
 

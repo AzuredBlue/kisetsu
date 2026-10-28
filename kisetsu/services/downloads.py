@@ -607,8 +607,9 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
         dl.next_retry_at = None
         ctx.session.add(dl)
         return
-    if torrent.state.lower().startswith(("stopped", "paused")):
-        # Complete but not running: it has not been resumed, so it is not seeding and the old release must stay.
+    if torrent.state.lower().startswith(("stopped", "paused")) and torrent.seeding_time == 0:
+        # Complete but not running and never seeded: it has not been resumed, so the old release must stay.
+        # One that already seeded was stopped by qBittorrent at its seed limit and counts as seeding.
         try:
             ctx.qbit.resume([torrent.hash])
         except QbitError as e:

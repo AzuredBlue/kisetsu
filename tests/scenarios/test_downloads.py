@@ -394,6 +394,18 @@ def test_a_finished_but_stopped_replacement_is_resumed_and_the_old_release_waits
     assert v2.state == DownloadState.DONE and row1.info_hash not in world.qbit.truth
 
 
+def test_a_replacement_qbit_stopped_at_its_seed_limit_completes_and_the_old_release_goes(world):
+    feed, show, ep = setup(world)
+    v1, row1 = grab(world, show, feed, ep)
+    world.qbit.finish(row1.torrent_url)
+    settle(world)
+    v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
+    world.qbit._update(row2.info_hash, progress=1.0, amount_left=0, state="stoppedUP", seeding_time=371)
+    settle(world)
+    assert v2.state == DownloadState.DONE and row1.info_hash not in world.qbit.truth
+    assert world.qbit.calls_named("resume") == [[row2.info_hash]]
+
+
 def test_the_lock_survives_an_error_after_qbit_accepted_the_add(world):
     from kisetsu.clients.qbittorrent import QbitUnavailable
 
