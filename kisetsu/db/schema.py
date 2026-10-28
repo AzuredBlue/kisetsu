@@ -242,6 +242,8 @@ class Show(Base, table=True):
     save_folder: str = Field(default="")
     category: Optional[str] = Field(default=None, nullable=True)
     seed_ratio: Optional[float] = Field(default=None, nullable=True)
+    # The per-series tag Kisetsu put on this show's torrents in qBittorrent.
+    qbit_tag: Optional[str] = Field(default=None, nullable=True)
 
     paused: bool = Field(default=False, index=True)
     paused_by: Optional[PausedBy] = Field(default=None, nullable=True)

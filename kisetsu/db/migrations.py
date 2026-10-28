@@ -27,11 +27,18 @@ def _v2(engine: Engine) -> None:
             conn.exec_driver_sql("ALTER TABLE settings ADD COLUMN feed_refresh_minutes INTEGER NOT NULL DEFAULT 15")
 
 
+def _v3(engine: Engine) -> None:
+    if "qbit_tag" not in {c["name"] for c in inspect(engine).get_columns("shows")}:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("ALTER TABLE shows ADD COLUMN qbit_tag VARCHAR")
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (1, _v1),
     (2, _v2),
+    (3, _v3),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 

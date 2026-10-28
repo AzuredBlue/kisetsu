@@ -124,6 +124,18 @@ def test_an_unversioned_database_with_tables_is_refused():
         migrate(engine)
 
 
+def test_a_version_2_database_gains_the_show_tag_column():
+    engine = make_engine()
+    migrate(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE shows DROP COLUMN qbit_tag")
+        conn.exec_driver_sql("PRAGMA user_version = 2")
+    migrate(engine)
+    with engine.connect() as conn:
+        assert "qbit_tag" in {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(shows)")}
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
+
+
 def test_the_schema_has_the_new_tables_only():
     from kisetsu.db.schema import Base
 
