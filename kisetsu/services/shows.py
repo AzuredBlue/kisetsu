@@ -23,7 +23,7 @@ from kisetsu.db.schema import (
     Show,
 )
 from kisetsu.domain.patterns import resolve_save_path
-from kisetsu.services import downloads, feeds, ingest, legacy, library
+from kisetsu.services import downloads, feeds, ingest, legacy, library, tags
 from kisetsu.services.context import Context, get_state, set_state
 
 logger = logging.getLogger("kisetsu.services.shows")
@@ -251,6 +251,7 @@ def delete_show(
     while it is still on the AniList list.
     """
     hashes = library.find_show_torrents(ctx, show) if delete_torrents else []
+    show_tag = (show.qbit_tag or tags.wanted_tags(ctx)[show.id]) if delete_torrents else None
     for episode in ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all():
         downloads.cancel_episode(ctx, episode, reason)
     if dismiss:
@@ -260,6 +261,11 @@ def delete_show(
     ctx.session.flush()
     if hashes:
         ctx.qbit.delete(hashes, delete_files=delete_files)
+    if show_tag:
+        try:
+            ctx.qbit.delete_tags([show_tag])
+        except QbitError as e:
+            logger.debug(f"Could not delete the tag '{show_tag}': {e}")
     ctx.caches.matchers = None
     ctx.emit("shows", "history")
     return len(hashes)

@@ -14,7 +14,7 @@ from kisetsu.config import DEFAULT_FEED_REFRESH_MINUTES
 from kisetsu.db.schema import Show
 from kisetsu.engine.runner import Engine
 from kisetsu.engine.scheduler import Scheduler
-from kisetsu.services import adoption, backfill, cycle, feedsync
+from kisetsu.services import adoption, backfill, cycle, feedsync, tags
 from kisetsu.services.context import setup_completed
 from kisetsu.services.shows import SCHEDULE_FULL_LOOKBACK, SCHEDULE_REFRESH_LOOKBACK
 
@@ -128,6 +128,7 @@ class Jobs:
         await self.engine.run(adoption.adopt_existing)
         await self.backfill()
         await self.engine.run(adoption.reattribute)
+        await self.engine.run(tags.sync_tags)
         await self.search_saved_files()
         self.ready.set()
         self.engine.bus.publish(["status"])

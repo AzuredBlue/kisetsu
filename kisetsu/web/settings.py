@@ -10,7 +10,7 @@ from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, MIN_FEED_REFRESH_MINUTES, MIN_HUNT_INTERVAL_MINUTES
 from kisetsu.db.schema import Settings, Show
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
-from kisetsu.services import library
+from kisetsu.services import library, tags
 from kisetsu.services.context import Context
 
 ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -137,6 +137,7 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
     language = given.get("title_language")
     if language and language != s.title_language:
         s.title_language = language
+        tags.sync_tags(ctx)
     ctx.session.add(s)
     ctx.emit("settings", "shows")
     if unreachable:

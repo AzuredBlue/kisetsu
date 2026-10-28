@@ -20,10 +20,11 @@ from kisetsu.db.schema import (
     FeedState,
     Show,
 )
+from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.domain import matcher as matching
 from kisetsu.domain.parsing import parse_release_title, release_key
 from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK, air_horizon, latest_aired
-from kisetsu.services import events, feeds, library
+from kisetsu.services import events, feeds, library, tags
 from kisetsu.services.context import Context
 from kisetsu.services.downloads import MANAGED_TAG, recompute_episode
 from kisetsu.services.facts import facts_for
@@ -216,6 +217,10 @@ def _adopt(ctx: Context, show: Show, episode: Episode, torrent, parsed: dict, ra
     episode.current_download_id = dl.id
     recompute_episode(ctx, episode)
     events.record(ctx, EventKind.ADOPTED, f"Found in qBittorrent: {torrent.name}", show=show, episode=episode.number, feed_id=dl.feed_id, title=torrent.name)
+    try:
+        ctx.qbit.add_tags([torrent.hash], [tags.series_tag(ctx, show)])
+    except QbitError as e:
+        logger.debug(f"Could not tag '{torrent.name}' with its show: {e}")
     # Only a feed that actually carries this release is recorded; an assigned feed is a guess and never the lock.
     if feed is not None and show.feed_state != FeedState.LOCKED:
         feeds.lock(ctx, show, feed, Evidence.ADOPTED_UNIQUE, learned_name=item.parsed_title if item else None, learned_group=item.release_group if item else None)

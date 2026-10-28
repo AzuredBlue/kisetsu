@@ -24,7 +24,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain.parsing import same_release
 from kisetsu.domain.patterns import resolve_save_path
-from kisetsu.services import events, feeds
+from kisetsu.services import events, feeds, tags
 from kisetsu.services.context import Context
 from kisetsu.services.feeds import Evidence
 from kisetsu.services.library import _same_dir
@@ -219,10 +219,11 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     dl.last_error = None
     dl.updated_at = ctx.now
     save_path = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
+    show_tag = tags.series_tag(ctx, show)
     ctx.checkpoint()
     try:
         ctx.qbit.add_torrent(
-            dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag],
+            dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag, show_tag],
             paused=paused, ratio_limit=ratio,
         )
     except QbitUnavailable as e:
@@ -235,7 +236,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
             _retry(ctx, dl, episode, str(e), AMBIGUOUS_RETRY)
             return
         try:
-            ctx.qbit.add_tags([existing.hash], [MANAGED_TAG, dl.tag])
+            ctx.qbit.add_tags([existing.hash], [MANAGED_TAG, dl.tag, show_tag])
         except QbitError as tag_error:
             _retry(ctx, dl, episode, str(tag_error), AMBIGUOUS_RETRY)
             return

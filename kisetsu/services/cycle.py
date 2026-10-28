@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from sqlmodel import select
 
 from kisetsu.db.schema import Event, Show
-from kisetsu.services import adoption, downloads, feeds, grab, ingest, library, shows
+from kisetsu.services import adoption, downloads, feeds, grab, ingest, library, shows, tags
 from kisetsu.services.context import Context, get_state, set_state
 
 logger = logging.getLogger("kisetsu.services.cycle")
@@ -77,6 +77,7 @@ def apply_sync(ctx: Context, seasonal: List[Dict[str, Any]]) -> SyncApplied:
     _say(logs)
     set_state(ctx, LAST_SYNC_KEY, ctx.now.isoformat())
     ingest.ensure_matches_current(ctx)
+    tags.sync_tags(ctx)
     ctx.emit("shows", "status")
     return SyncApplied([s.id for s in applied.added], logs)
 
@@ -163,6 +164,7 @@ def housekeeping(ctx: Context) -> Dict[str, int]:
         "tags": downloads.sweep_tags(ctx) if ctx.qbit is not None else 0,
         "shows": len(pruned),
     }
+    tags.sync_tags(ctx)
     old = ctx.session.execute(delete(Event).where(Event.at < ctx.now - EVENTS_KEEP))
     removed["events"] = old.rowcount or 0
     return removed

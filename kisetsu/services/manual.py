@@ -13,7 +13,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain.parsing import same_release
 from kisetsu.domain.schedule import RELEASE_HOLDING
-from kisetsu.services import downloads, feeds, grab
+from kisetsu.services import downloads, feeds, grab, tags
 from kisetsu.services.context import Context
 from kisetsu.services.downloads import MANAGED_TAG
 from kisetsu.services.facts import facts_for
@@ -220,7 +220,7 @@ def restore_episode(ctx: Context, show: Show, episode: Episode) -> str:
     named = [t for t in ctx.qbit.torrents.values() if same_release(t.name, title)]
     if len(named) == 1:
         torrent = named[0]
-        ctx.qbit.add_tags([torrent.hash], [MANAGED_TAG])
+        ctx.qbit.add_tags([torrent.hash], [MANAGED_TAG, tags.series_tag(ctx, show)])
         cur.info_hash = torrent.hash
         cur.state = DownloadState.DONE if torrent.finished else DownloadState.DOWNLOADING
         ctx.session.add(cur)
