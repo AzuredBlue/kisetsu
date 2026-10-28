@@ -251,7 +251,8 @@ def delete_show(
     while it is still on the AniList list.
     """
     hashes = library.find_show_torrents(ctx, show) if delete_torrents else []
-    show_tag = (show.qbit_tag or tags.wanted_tags(ctx)[show.id]) if delete_torrents else None
+    # Only a tag Kisetsu put on this show's torrents is its own to clear.
+    show_tag = show.qbit_tag
     for episode in ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all():
         downloads.cancel_episode(ctx, episode, reason)
     if dismiss:
@@ -261,7 +262,10 @@ def delete_show(
     ctx.session.flush()
     if hashes:
         ctx.qbit.delete(hashes, delete_files=delete_files)
-    if show_tag:
+    if show_tag and not delete_torrents:
+        # The torrents stay, so the tag does too until none carries it; housekeeping clears it then.
+        tags.retire(ctx, show_tag)
+    elif show_tag:
         try:
             ctx.qbit.delete_tags([show_tag])
         except QbitError as e:

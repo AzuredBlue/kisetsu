@@ -139,6 +139,7 @@ def adopt_existing(ctx: Context) -> AdoptResult:
     by_id = {s.id: s for s in shows}
     carried = _hash_owners(ctx, [t.hash for t in pending], set(by_id))
     tagged_shows = tags.owners(ctx)
+    retired_tags = set(tags.retired(ctx))
     cache = ctx.caches.parsed_cache()
     states: Dict[int, Tuple[List[Episode], Optional[int], Optional[datetime]]] = {}
     for torrent in pending:
@@ -150,6 +151,8 @@ def adopt_existing(ctx: Context) -> AdoptResult:
         tagged = tags.owner_id(torrent, tagged_shows)
         if tagged is not None:
             show = by_id.get(tagged)
+        elif retired_tags & torrent.tags:
+            show = None
         else:
             show = by_id.get(carried.get(torrent.hash)) or next((s for s, m in matchers if matching.decide(m, torrent.name, cache)[0]), None)
         if show is None:

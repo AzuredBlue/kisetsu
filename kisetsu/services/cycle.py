@@ -165,7 +165,8 @@ def housekeeping(ctx: Context) -> Dict[str, int]:
         "shows": len(pruned),
     }
     tags.sync_tags(ctx)
-    old = ctx.session.execute(delete(Event).where(Event.at < ctx.now - EVENTS_KEEP))
+    tags.sweep_retired(ctx)
+    old =ctx.session.execute(delete(Event).where(Event.at < ctx.now - EVENTS_KEEP))
     removed["events"] = old.rowcount or 0
     return removed
 

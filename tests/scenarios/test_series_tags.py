@@ -129,3 +129,59 @@ def test_a_replacement_and_the_release_it_replaces_both_carry_the_tag(world):
     v2 = downloads.start_download(world.ctx(), show, feed, episode, _new_item(feed, article("[Grp] Sousou no Frieren - 01v2 (1080p).mkv", START), START))
     world.commit()
     assert all("Sousou no Frieren" in world.qbit.truth[h].tags for h in (v1.info_hash, v2.info_hash))
+
+
+def grabbed_show(world, title="Sousou no Frieren"):
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=1, first_air=START - timedelta(days=1), title=title)
+    ingest.ingest(world.ctx(), feed, [article(f"[Grp] {title} - 01 (1080p).mkv", START)])
+    world.commit()
+    grab.grab_pass(world.ctx())
+    world.commit()
+    return show
+
+
+def test_a_removed_show_keeps_its_torrents_and_tag_and_the_tag_goes_when_no_torrent_carries_it(world):
+    show = grabbed_show(world)
+    world.qbit.finish(next(iter(world.qbit.truth)))
+    downloads.settle(world.ctx())
+    world.commit()
+    shows.delete_show(world.ctx(), show, reason="Show pruned at season change.")
+    world.commit()
+    assert len(world.qbit.truth) == 1 and tags.retired(world.ctx()) == ["Sousou no Frieren"]
+    assert tags.sweep_retired(world.ctx()) == 0 and "Sousou no Frieren" in world.qbit.tags()
+    world.qbit.truth.clear()
+    assert tags.sweep_retired(world.ctx()) == 1
+    world.commit()
+    assert "Sousou no Frieren" not in world.qbit.tags() and tags.retired(world.ctx()) == []
+
+
+def test_a_tag_a_followed_show_owns_again_is_not_deleted(world):
+    show = grabbed_show(world)
+    shows.delete_show(world.ctx(), show, reason="Show pruned at season change.")
+    world.commit()
+    world.show(anilist_id=2, title="Sousou no Frieren")
+    world.qbit.truth.clear()
+    assert tags.sweep_retired(world.ctx()) == 0
+    world.commit()
+    assert tags.retired(world.ctx()) == []
+
+
+def test_a_torrent_with_a_retired_tag_is_not_adopted_by_name_into_another_show(world):
+    show = grabbed_show(world, "Frieren Season 1")
+    shows.delete_show(world.ctx(), show, reason="Show pruned at season change.")
+    world.commit()
+    second = airing(world, anilist_id=2, title="Frieren Season 2", aliases=["Sousou no Frieren"])
+    world.qbit.seed(TITLE, save_path="/d", tags=["kisetsu-managed", "Frieren Season 1"])
+    world.qbit.sync()
+    assert adopt(world).imported == 0 and world.episode(second, 3).status == EpisodeStatus.WANTED
+
+
+def test_a_tag_kisetsu_never_put_on_a_show_is_not_deleted_with_it(world):
+    show = world.show(title="Sousou no Frieren")
+    world.qbit.seed("Mine", save_path="/d", tags=["Sousou no Frieren"])
+    world.qbit.sync()
+    shows.delete_show(world.ctx(), show, reason="user")
+    world.commit()
+    assert tags.sweep_retired(world.ctx()) == 0 and tags.retired(world.ctx()) == []
+    assert "Sousou no Frieren" in world.qbit.tags()

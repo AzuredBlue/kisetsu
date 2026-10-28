@@ -1,17 +1,21 @@
 """A qBittorrent tag per show, named after it, so its torrents can be filtered there and told apart here."""
 
+import json
 import logging
 import re
 from collections import Counter
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitError, Torrent
 from kisetsu.db.schema import Show
-from kisetsu.services.context import Context
+from kisetsu.services.context import Context, get_state, set_state
 
 logger = logging.getLogger("kisetsu.services.tags")
+
+# Tags of removed shows whose torrents were kept; each is deleted from qBittorrent once no torrent carries it.
+RETIRED_KEY = "retired_series_tags"
 
 
 def _clean(name: str) -> str:
@@ -50,6 +54,53 @@ def owner_id(torrent: Torrent, owned: Dict[str, int]) -> Optional[int]:
     """The show the torrent's tags name, if they name exactly one."""
     ids = {owned[tag] for tag in torrent.tags if tag in owned}
     return next(iter(ids)) if len(ids) == 1 else None
+
+
+def retired(ctx: Context) -> List[str]:
+    try:
+        data = json.loads(get_state(ctx, RETIRED_KEY, "[]"))
+    except ValueError:
+        return []
+    return [str(tag) for tag in data] if isinstance(data, list) else []
+
+
+def _store_retired(ctx: Context, tags: List[str]) -> None:
+    set_state(ctx, RETIRED_KEY, json.dumps(list(dict.fromkeys(tags))))
+
+
+def retire(ctx: Context, tag: Optional[str]) -> None:
+    """Remember the tag of a removed show whose torrents stay in qBittorrent."""
+    if tag:
+        _store_retired(ctx, [*retired(ctx), tag])
+
+
+def sweep_retired(ctx: Context) -> int:
+    """Delete the retired tags no torrent carries any more; returns how many.
+
+    A tag a followed show owns again (it was added back) is no longer retired and stays.
+    """
+    pending = retired(ctx)
+    if not pending or ctx.qbit is None:
+        return 0
+    live = set(owners(ctx))
+    keep: List[str] = []
+    deleted = 0
+    try:
+        ctx.qbit.sync()
+        carried = {tag for torrent in ctx.qbit.torrents.values() for tag in torrent.tags}
+        for tag in pending:
+            if tag in live:
+                continue
+            if tag in carried:
+                keep.append(tag)
+                continue
+            ctx.qbit.delete_tags([tag])
+            deleted += 1
+    except QbitError as e:
+        logger.debug(f"Could not clear retired series tags: {e}")
+        return deleted
+    _store_retired(ctx, keep)
+    return deleted
 
 
 def sync_tags(ctx: Context) -> int:
