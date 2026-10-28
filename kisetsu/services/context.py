@@ -27,6 +27,8 @@ class Caches:
     held: Dict[int, datetime] = field(default_factory=dict)
     # Torrents already reported as refused for adoption, so one that stays refused is mentioned once.
     refused: Set[str] = field(default_factory=set)
+    # Shows already told that qBittorrent keeps their torrents outside the folder it was given.
+    misplaced: Set[int] = field(default_factory=set)
     # Past-release searches already run: show id -> (what was searched for, when).
     searched: Dict[int, Tuple[int, datetime]] = field(default_factory=dict)
 

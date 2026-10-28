@@ -1,5 +1,6 @@
 """Adding torrents for episodes and following them in qBittorrent until they are done."""
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -26,6 +27,9 @@ from kisetsu.domain.patterns import resolve_save_path
 from kisetsu.services import events, feeds
 from kisetsu.services.context import Context
 from kisetsu.services.feeds import Evidence
+from kisetsu.services.library import _same_dir
+
+logger = logging.getLogger("kisetsu.services.downloads")
 
 MANAGED_TAG = "kisetsu-managed"
 TAG_PREFIX = "kisetsu-op-"
@@ -282,12 +286,28 @@ def _release_tag(ctx: Context, dl: Download) -> None:
     dl.tag = None
 
 
+def _check_folder(ctx: Context, show: Show, torrent: Torrent) -> None:
+    """Say once per show when a torrent is not in the folder Kisetsu asked qBittorrent to use."""
+    wanted = resolve_save_path(ctx.settings.base_dir, show.title(ctx.settings.title_language), show.save_folder)
+    if not wanted or _same_dir(torrent.save_path, wanted) or show.id in ctx.caches.misplaced:
+        return
+    ctx.caches.misplaced.add(show.id)
+    message = (
+        f"qBittorrent has a torrent of this show in {torrent.save_path or 'its default folder'}, not in {wanted}. "
+        "The folder must be one qBittorrent itself can see: with qBittorrent in Docker, use the path inside the container."
+    )
+    logger.warning(f"{show.title(ctx.settings.title_language)}: {message}")
+    events.record(ctx, EventKind.INFO, message, show=show, title=torrent.name)
+
+
 def _exposed(ctx: Context, dl: Download, episode: Episode, torrent: Torrent) -> None:
     """The torrent is in qBittorrent: a replacement is verified first, anything else just downloads."""
     dl.info_hash = torrent.hash
     dl.last_error = None
     _release_tag(ctx, dl)
     show = ctx.session.get(Show, episode.show_id)
+    if show is not None and not dl.adopted:
+        _check_folder(ctx, show, torrent)
     if show is not None and dl.feed_id is not None and not dl.adopted and show.feed_state not in FIXED_FEED_STATES:
         feed = ctx.session.get(Feed, dl.feed_id)
         if feed is not None:

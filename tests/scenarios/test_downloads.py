@@ -557,3 +557,20 @@ def test_switching_feeds_cancels_a_replacement_and_restores_the_previous_release
     episode = world.episode(show, 1)
     assert v2.state == DownloadState.CANCELED and row2.info_hash not in world.qbit.truth
     assert episode.current_download_id == v1.id and episode.status == EpisodeStatus.COMPLETED
+
+
+def test_a_torrent_qbit_keeps_outside_the_requested_folder_is_reported_once_per_show(world):
+    from kisetsu.db.schema import Event
+
+    feed, show, ep = setup(world)
+    ctx = world.ctx()
+    ctx.settings.base_dir = "/home/u/Anime/{name}"
+    world.commit()
+    world.qbit.hide_added = True
+    rows = [grab(world, show, feed, world.episode(show, n), V1.replace("01", f"0{n}"))[1] for n in (1, 2)]
+    world.qbit.reveal()
+    for row in rows:
+        world.qbit._update(row.info_hash, save_path="/downloads")
+    settle(world)
+    notes = [e.message for e in world.session.exec(select(Event)).all() if "can see" in e.message]
+    assert len(notes) == 1 and "/downloads" in notes[0] and "/home/u/Anime/Sousou no Frieren" in notes[0]

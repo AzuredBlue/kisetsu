@@ -97,7 +97,7 @@ export function Settings() {
     <section>
       <h3 class="section-title section-gap">Downloading</h3>
       <div class="card card-divided">
-        <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
+        <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
         <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
         <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
       </div>
