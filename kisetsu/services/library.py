@@ -7,7 +7,7 @@ so the feed is read from it before anything is guessed.
 import logging
 import os
 from datetime import timedelta
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 from sqlmodel import select
 
@@ -135,16 +135,25 @@ def find_show_torrents(ctx: Context, show: Show) -> List[str]:
 def plan_language_move(ctx: Context, new_language: str) -> List[Dict[str, Any]]:
     """The folder renames switching to ``new_language`` causes, per show with torrents to move.
 
-    ``settings.title_language`` must still be the current language. Torrents are judged by
-    where qBittorrent has them now, so one that already moved is left alone and one the user
+    ``settings.title_language`` must still be the current language.
+    """
+    base_dir = ctx.settings.base_dir
+    return plan_move(ctx, list(ctx.session.exec(select(Show)).all()), lambda show: resolve_save_path(base_dir, show.title(new_language), show.save_folder))
+
+
+def plan_move(ctx: Context, shows: List[Show], new_path: Callable[[Show], str]) -> List[Dict[str, Any]]:
+    """The folder moves ``new_path`` (a show's future save path) causes, per show with torrents to move.
+
+    The settings and shows must still be as they are now. Torrents are judged by where
+    qBittorrent has them now, so one that already moved is left alone and one the user
     relocated by hand is never touched. Each entry has ``show``, ``old``, ``new``, ``hashes``
     and ``moving``, the torrents qBittorrent is still moving.
     """
     plan: List[Dict[str, Any]] = []
     settings = ctx.settings
-    for show in ctx.session.exec(select(Show)).all():
+    for show in shows:
         old = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
-        new = resolve_save_path(settings.base_dir, show.title(new_language), show.save_folder)
+        new = new_path(show)
         if not old or not new or _same_dir(old, new):
             continue
         found = [ctx.qbit.torrents[e["hash"]] for e in show_torrent_preview(ctx, show) if e["hash"] in ctx.qbit.torrents]

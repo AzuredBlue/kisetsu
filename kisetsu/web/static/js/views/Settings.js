@@ -46,6 +46,7 @@ export function Settings() {
     setSaving(false);
     if (!result) return;
     toast(result.message || 'Settings saved.', 'success');
+    (result.logs || []).forEach(line => toast(line, 'info'));
     form.reset();
     reload();
   };

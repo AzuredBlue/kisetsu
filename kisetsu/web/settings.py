@@ -1,13 +1,15 @@
 """The user's settings: one validated shape for the Settings page and the first-run wizard."""
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlmodel import select
 
+from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, MIN_FEED_REFRESH_MINUTES, MIN_HUNT_INTERVAL_MINUTES
-from kisetsu.db.schema import Settings
-from kisetsu.domain.patterns import compress_home_path
+from kisetsu.db.schema import Settings, Show
+from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.services import library
 from kisetsu.services.context import Context
 
@@ -113,6 +115,7 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
     """Store the patch; returns the log lines of a folder move the title language asked for."""
     s = ctx.settings
     given = patch.given()
+    plan, unreachable = patch_moves(ctx, given)
     if "qbit_host" in given:
         host = given["qbit_host"].strip()
         check_password_travels_with_host(s, host, given.get("qbit_password"))
@@ -131,16 +134,14 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
             setattr(s, name, given[name])
     if "anilist_username" in given:
         s.anilist_username = given["anilist_username"].strip()
-    plan = None
     language = given.get("title_language")
     if language and language != s.title_language:
-        if given.get("move_existing"):
-            # Planned before the language changes, since the plan reads where the downloads are now.
-            plan = move_plan(ctx, language)
         s.title_language = language
     ctx.session.add(s)
     ctx.emit("settings", "shows")
-    if plan is None:
+    if unreachable:
+        return ["qBittorrent could not be reached, so the downloads already made stayed in their old folders."]
+    if not plan:
         return []
     ctx.checkpoint()
     logs, failed = library.relocate_torrents(ctx, plan)
@@ -156,3 +157,32 @@ def move_plan(ctx: Context, language: str) -> List[Dict[str, Any]]:
     if moving:
         raise SettingsError(f"{moving} downloads are still moving to their folders. Try again in a moment.")
     return plan
+
+
+def patch_moves(ctx: Context, given: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], bool]:
+    """The folder moves this patch causes, and whether qBittorrent could not be asked.
+
+    A new base folder always moves the downloads; a new title language only when asked to.
+    Planned before anything changes, since the plan reads where the downloads are now, and
+    refused while qBittorrent is still moving some.
+    """
+    s = ctx.settings
+    base_dir = normalize_base_dir(given["base_dir"]) if "base_dir" in given else s.base_dir
+    language = given.get("title_language")
+    rename = bool(language and language != s.title_language and given.get("move_existing"))
+    if base_dir == s.base_dir and not rename:
+        return [], False
+    new_language = language if rename else s.title_language
+    try:
+        plan = library.plan_move(
+            ctx, list(ctx.session.exec(select(Show)).all()),
+            lambda show: resolve_save_path(base_dir, show.title(new_language), show.save_folder),
+        )
+    except QbitError:
+        if rename:
+            raise
+        return [], True
+    moving = sum(item["moving"] for item in plan)
+    if moving:
+        raise SettingsError(f"{moving} downloads are still moving to their folders. Try again in a moment.")
+    return plan, False

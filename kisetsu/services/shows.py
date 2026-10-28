@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 from sqlmodel import select
 
 from kisetsu.clients.anilist import get_current_and_next_season
+from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.db.schema import (
     DismissedShow,
@@ -21,6 +22,7 @@ from kisetsu.db.schema import (
     ScheduleState,
     Show,
 )
+from kisetsu.domain.patterns import resolve_save_path
 from kisetsu.services import downloads, feeds, ingest, legacy, library
 from kisetsu.services.context import Context, get_state, set_state
 
@@ -474,9 +476,22 @@ def edit_show(
             raise ValueError("Selected feed not found")
     if feed_id is not None and show.feed_state == FeedState.LOCKED and not release_lock and (feed is None or show.feed_id != feed.id):
         raise feeds.FeedLockedError(f"'{show.title()}' is locked to another feed")
+    moves: Optional[List[Dict[str, Any]]] = None
+    moves_unreachable = False
     if save_folder is not None:
         value = save_folder.strip()
-        show.save_folder = "" if not value or value == "{name}" else value
+        folder = "" if not value or value == "{name}" else value
+        if folder != show.save_folder:
+            settings = ctx.settings
+            try:
+                moves = library.plan_move(
+                    ctx, [show], lambda s: resolve_save_path(settings.base_dir, s.title(settings.title_language), folder)
+                )
+            except QbitError:
+                moves_unreachable = True
+            if moves and sum(item["moving"] for item in moves):
+                raise ValueError("Some of this show's downloads are still moving to their folder. Try again in a moment.")
+        show.save_folder = folder
     if aliases is not None:
         # Only the hand-written set is replaced; AniList re-supplies its own on every sync.
         show.custom_aliases = [a.strip() for a in aliases if a and a.strip()]
@@ -505,4 +520,10 @@ def edit_show(
     if aliases is not None:
         ingest.rematch(ctx, [show.id])
     ctx.emit("shows", f"show:{show.id}")
+    if moves:
+        ctx.checkpoint()
+        logs, _ = library.relocate_torrents(ctx, moves)
+        result.message += " " + " ".join(logs)
+    elif moves_unreachable:
+        result.message += " qBittorrent could not be reached, so the downloads already made stayed in the old folder."
     return result
