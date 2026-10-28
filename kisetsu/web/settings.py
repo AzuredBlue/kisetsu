@@ -177,6 +177,7 @@ def patch_moves(ctx: Context, given: Dict[str, Any]) -> Tuple[List[Dict[str, Any
         plan = library.plan_move(
             ctx, list(ctx.session.exec(select(Show)).all()),
             lambda show: resolve_save_path(base_dir, show.title(new_language), show.save_folder),
+            anywhere=base_dir != s.base_dir,
         )
     except QbitError:
         if rename:

@@ -394,6 +394,26 @@ def test_a_new_base_folder_is_saved_even_when_qbit_cannot_be_asked_to_move_the_d
     assert world.ctx().settings.base_dir == "/library/{name}" and "could not be reached" in logs[0]
 
 
+def test_saving_the_folder_again_gathers_the_downloads_that_sit_elsewhere(world):
+    from kisetsu.web.settings import SettingsPatch, apply_settings
+
+    ctx = world.ctx()
+    ctx.settings.base_dir = "/downloads/{name}"
+    show = world.show(episodes=1, first_air=START - timedelta(days=1), title="Frieren")
+    feed = world.feed("Top", "https://top/rss", 1)
+    row = _new_item(feed, article("[Grp] Frieren - 01 (1080p).mkv", START), world.clock())
+    world.session.add(row)
+    world.session.flush()
+    dl = downloads.start_download(world.ctx(), show, feed, world.episode(show, 1), row)
+    world.commit()
+    world.qbit._update(dl.info_hash, save_path="/home/u/Anime", progress=1.0, amount_left=0, state="stalledUP")
+    world.qbit.sync()
+    apply_settings(world.ctx(), SettingsPatch(base_dir="/random"))
+    assert world.qbit.truth[dl.info_hash].save_path == "/random/Frieren"
+    apply_settings(world.ctx(), SettingsPatch(base_dir="/downloads"))
+    assert world.qbit.truth[dl.info_hash].save_path == "/downloads/Frieren"
+
+
 def test_a_show_with_no_airing_schedule_still_gets_its_episode_rows(world):
     from kisetsu.db.schema import Episode
 

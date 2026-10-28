@@ -141,24 +141,30 @@ def plan_language_move(ctx: Context, new_language: str) -> List[Dict[str, Any]]:
     return plan_move(ctx, list(ctx.session.exec(select(Show)).all()), lambda show: resolve_save_path(base_dir, show.title(new_language), show.save_folder))
 
 
-def plan_move(ctx: Context, shows: List[Show], new_path: Callable[[Show], str]) -> List[Dict[str, Any]]:
+def plan_move(ctx: Context, shows: List[Show], new_path: Callable[[Show], str], *, anywhere: bool = False) -> List[Dict[str, Any]]:
     """The folder moves ``new_path`` (a show's future save path) causes, per show with torrents to move.
 
     The settings and shows must still be as they are now. Torrents are judged by where
-    qBittorrent has them now, so one that already moved is left alone and one the user
-    relocated by hand is never touched. Each entry has ``show``, ``old``, ``new``, ``hashes``
-    and ``moving``, the torrents qBittorrent is still moving.
+    qBittorrent has them now, so one that already moved is left alone. By default only
+    torrents in the show's current folder move, so one the user relocated by hand is never
+    touched; with ``anywhere`` every download Kisetsu tracks moves, wherever it is now.
+    Each entry has ``show``, ``old``, ``new``, ``hashes`` and ``moving``, the torrents
+    qBittorrent is still moving.
     """
     plan: List[Dict[str, Any]] = []
     settings = ctx.settings
     for show in shows:
         old = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
         new = new_path(show)
-        if not old or not new or _same_dir(old, new):
+        if not new or (not anywhere and (not old or _same_dir(old, new))):
             continue
-        found = [ctx.qbit.torrents[e["hash"]] for e in show_torrent_preview(ctx, show) if e["hash"] in ctx.qbit.torrents]
-        here = [t for t in found if _same_dir(t.save_path, old)]
-        moving = [t for t in found if t.state.lower() == "moving"]
+        entries = show_torrent_preview(ctx, show)
+        found = [(e["tracked"], ctx.qbit.torrents[e["hash"]]) for e in entries if e["hash"] in ctx.qbit.torrents]
+        if anywhere:
+            here = [t for tracked, t in found if (tracked or _same_dir(t.save_path, old)) and not _same_dir(t.save_path, new)]
+        else:
+            here = [t for _, t in found if _same_dir(t.save_path, old)]
+        moving = [t for _, t in found if t.state.lower() == "moving"]
         if here or moving:
             plan.append({"show": show, "old": old, "new": new, "hashes": [t.hash for t in here], "moving": len(moving)})
     return plan

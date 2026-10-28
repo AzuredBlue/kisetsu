@@ -485,7 +485,8 @@ def edit_show(
             settings = ctx.settings
             try:
                 moves = library.plan_move(
-                    ctx, [show], lambda s: resolve_save_path(settings.base_dir, s.title(settings.title_language), folder)
+                    ctx, [show], lambda s: resolve_save_path(settings.base_dir, s.title(settings.title_language), folder),
+                    anywhere=True,
                 )
             except QbitError:
                 moves_unreachable = True
