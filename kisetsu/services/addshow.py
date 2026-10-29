@@ -16,7 +16,7 @@ from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import DismissedShow, Episode, EpisodeStatus, Feed, FeedItem, Show
 from kisetsu.domain.matcher import build_matcher, decide
-from kisetsu.domain.parsing import batch_range, is_batch, parse_release_title, strip_batch
+from kisetsu.domain.parsing import batch_range, is_batch, parse_release_title, release_season, strip_batch
 from kisetsu.domain.patterns import sanitize_folder_name
 from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows
 from kisetsu.services.context import Context
@@ -170,17 +170,26 @@ def _covered(span: Optional[Tuple[int, int]], target: int) -> List[int]:
     if last - first + 1 == target:
         # Numbered from the series' start: the batch is this whole season.
         return list(range(1, target + 1))
-    return list(range(first, target + 1)) if first <= target else []
+    # Longer than the season: another season's, or several seasons together.
+    return []
 
 
 def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
-    """The feed's batches of the show, the ones holding most episodes first."""
+    """The feed's batches of the show, the ones holding most episodes first.
+
+    A batch names its season more often than single releases do, so it must name the same
+    season as the show's titles; naming none counts as the first.
+    """
     matcher = build_matcher(show.effective_aliases, None)
     cache: Dict[str, dict] = {}
     target = show.total_episodes or len(shows.ensure_episodes(ctx, show))
+    season = max((n for n in (release_season(a) for a in show.effective_aliases) if n), default=1)
     found: List[Batch] = []
     for item in ctx.session.exec(select(FeedItem).where(FeedItem.feed_id == feed.id)).all():
-        if not item.torrent_url or not is_batch(item.title) or not decide(matcher, strip_batch(item.title), cache)[0]:
+        if not item.torrent_url or not is_batch(item.title):
+            continue
+        name = strip_batch(item.title)
+        if (release_season(name) or 1) != season or not decide(matcher, name, cache)[0]:
             continue
         numbers = _covered(batch_range(item.title), target)
         if numbers:
@@ -213,8 +222,8 @@ def _feed_from_files(ctx: Context, show: Show, files: List[str]) -> Optional[Fee
 def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str]] = None) -> Dict[str, Any]:
     """What each feed carries for the entry, episode by episode and in batches, and the feed its files on disk came from.
 
-    Meant for ``Engine.read``: the show it builds to number the releases exactly as the grabber
-    will is rolled back with the rest of the read.
+    Meant for ``Engine.dry_run``: the show it builds to number the releases exactly as the
+    grabber will is rolled back with the rest of the run.
     """
     if ctx.session.exec(select(Show.id).where(Show.anilist_id == entry["anilist_id"])).first() is not None:
         raise ValueError("Kisetsu already follows this show.")
@@ -243,6 +252,7 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
                     "item_id": b.item.id,
                     "title": b.item.title,
                     "numbers": b.numbers,
+                    "ranged": batch_range(b.item.title) is not None,
                     "published_at": b.item.published_at.isoformat() if b.item.published_at else None,
                     "on_disk": len(disk_numbers & set(b.numbers)),
                 }
@@ -334,11 +344,18 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     ctx.checkpoint()
     # Torrents already in qBittorrent are taken over rather than added twice.
     adoption.adopt_existing(ctx)
+    added: Dict[int, str] = {}
     for number, (episode, item) in sorted(picked.items()):
         ctx.session.refresh(episode)
         if episode.status not in (EpisodeStatus.WANTED, EpisodeStatus.MISSED):
             continue
-        dl = downloads.start_download(ctx, show, feed, episode, item)
+        if item.id in added:
+            # The rest of a batch already in qBittorrent follow that torrent; adding it again would fetch it again.
+            dl = downloads.follow_download(ctx, show, feed, episode, item, added[item.id])
+        else:
+            dl = downloads.start_download(ctx, show, feed, episode, item)
+            if dl is not None and is_batch(item.title) and (dl.info_hash or item.info_hash):
+                added[item.id] = dl.info_hash or item.info_hash
         if dl is None:
             result["errors"].append(f"Ep {number}: {episode.last_error or 'could not start the download'}")
         else:

@@ -195,6 +195,40 @@ def start_download(
     return dl
 
 
+def follow_download(ctx: Context, show: Show, feed: Feed, episode: Episode, item: FeedItem, info_hash: str) -> Download:
+    """Track another episode of a torrent already added (a batch) on its hash, without adding it again."""
+    dl = Download(
+        episode_id=episode.id,
+        feed_id=feed.id,
+        feed_item_guid=item.guid,
+        title=item.title,
+        parsed_title=item.parsed_title,
+        release_group=item.release_group,
+        version=item.version,
+        source_episode=item.episode_raw,
+        torrent_url=item.torrent_url,
+        info_hash=info_hash,
+        state=DownloadState.ADDING,
+        attempts=1,
+        created_at=ctx.now,
+        updated_at=ctx.now,
+    )
+    ctx.session.add(dl)
+    ctx.session.flush()
+    cur = current(ctx, episode)
+    if cur is not None and cur.state != DownloadState.DONE:
+        cur.state = DownloadState.SUPERSEDED
+        ctx.session.add(cur)
+    episode.current_download_id = dl.id
+    torrent = ctx.qbit.torrents.get(info_hash)
+    if torrent is not None:
+        _exposed(ctx, dl, episode, torrent)
+    else:
+        recompute_episode(ctx, episode)
+    events.record(ctx, EventKind.GRABBED, f"Added {item.title}", show=show, episode=episode.number, feed_id=feed.id, title=item.title)
+    return dl
+
+
 def _retry(ctx: Context, dl: Download, episode: Episode, error: str, delay: timedelta) -> None:
     dl.state = DownloadState.RETRY_WAIT
     dl.last_error = error

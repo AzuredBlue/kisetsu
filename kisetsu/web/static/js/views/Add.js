@@ -91,12 +91,14 @@ function coverage(group, picked) {
 }
 
 // Picking a feed takes its batches when it has any (the largest first, then those that add episodes), else every single episode.
+// A batch that names its episodes is trusted over one that only says "Batch".
 function defaultPick(group) {
   const batches = group.batches || [];
   if (!batches.length) return new Set(group.episodes.map(e => e.item_id));
+  const ranged = batches.filter(b => b.ranged);
   const taken = new Set();
   const ids = new Set();
-  batches.forEach(b => {
+  (ranged.length ? ranged : batches).forEach(b => {
     if (b.numbers.some(n => taken.has(n))) return;
     ids.add(b.item_id);
     b.numbers.forEach(n => taken.add(n));

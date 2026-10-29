@@ -199,3 +199,46 @@ async def test_single_episodes_after_a_batch_are_still_grabbed_from_the_feed(web
     await web.runtime.jobs.refresh_feeds()
     await web.runtime.engine.run(lambda ctx: grab.grab_pass(ctx))
     assert web.episode(show_id, 3).status == EpisodeStatus.DOWNLOADING
+
+
+async def test_a_batch_is_added_once_even_before_qbittorrent_shows_it(web, tmp_path):
+    from kisetsu.services import downloads
+
+    _user(web, tmp_path / "Anime")
+    _finished(web)
+    batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
+    web.feeds.searchable[NYAA] = [batch]
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    web.qbit.hide_added = True
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
+    assert body["started"] == 3 and len(web.qbit.calls_named("add_torrent")) == 1
+    web.qbit.reveal()
+    await web.runtime.engine.run(lambda ctx: downloads.settle(ctx))
+    assert [web.episode(body["show_id"], n).status for n in (1, 2, 3)] == [EpisodeStatus.DOWNLOADING] * 3
+    assert len(web.qbit.calls_named("add_torrent")) == 1
+
+
+async def test_a_batch_longer_than_the_season_is_another_seasons_and_not_offered(web, tmp_path):
+    _user(web, tmp_path / "Anime")
+    _finished(web, episodes=12)
+    web.feeds.searchable[NYAA] = [article("[Grp] Sousou no Frieren (01-28) [1080p] [Batch]", START - timedelta(days=300))]
+    web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert preview["feeds"] == []
+
+
+async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path):
+    _user(web, tmp_path / "Anime")
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], status="FINISHED", list_status="COMPLETED", total_episodes=3))
+    web.feeds.searchable[NYAA] = [
+        article("[Grp] Sousou no Frieren S01 [1080p] [Batch]", START - timedelta(days=300)),
+        article("[Grp] Sousou no Frieren [1080p] [Batch]", START - timedelta(days=300)),
+        article("[Grp] Sousou no Frieren S2 [1080p] [Batch]", START - timedelta(days=30)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert [b["title"] for b in preview["feeds"][0]["batches"]] == ["[Grp] Sousou no Frieren S2 [1080p] [Batch]"]
