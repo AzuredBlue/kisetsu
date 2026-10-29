@@ -362,6 +362,9 @@ class Qbit:
         if tags:
             self._hash_call("torrents_remove_tags", hashes, tags=tags)
 
+    def default_save_path(self) -> str:
+        return self._call(lambda c: str(c.app_default_save_path() or ""))
+
     def tags(self) -> List[str]:
         return self._call(lambda c: [str(tag) for tag in c.torrents_tags()])
 

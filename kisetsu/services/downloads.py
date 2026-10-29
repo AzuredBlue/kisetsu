@@ -1,6 +1,7 @@
 """Adding torrents for episodes and following them in qBittorrent until they are done."""
 
 import logging
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -23,7 +24,7 @@ from kisetsu.db.schema import (
     Show,
 )
 from kisetsu.domain.parsing import is_batch, same_release
-from kisetsu.domain.patterns import resolve_save_path
+from kisetsu.domain.patterns import resolve_save_path, sanitize_folder_name
 from kisetsu.services import events, feeds, tags
 from kisetsu.services.context import Context
 from kisetsu.services.feeds import Evidence
@@ -262,10 +263,16 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     dl.next_retry_at = None
     dl.last_error = None
     dl.updated_at = ctx.now
-    save_path = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
+    title = show.title(settings.title_language)
+    save_path = resolve_save_path(settings.base_dir, title, show.save_folder)
     show_tag = tags.series_tag(ctx, show)
     ctx.checkpoint()
     try:
+        if not save_path:
+            # Blank "Save to": the show still gets its own folder under qBittorrent's default.
+            default = ctx.qbit.default_save_path()
+            if default:
+                save_path = os.path.join(default, sanitize_folder_name(title))
         ctx.qbit.add_torrent(
             dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag, show_tag],
             paused=paused, ratio_limit=ratio,

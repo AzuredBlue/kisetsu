@@ -237,6 +237,10 @@ class FakeQbit:
             if t.tags & frozenset(tags):
                 self._update(h, tags=t.tags - frozenset(tags))
 
+    def default_save_path(self) -> str:
+        self._enter("default_save_path")
+        return ""
+
     def ensure_category(self, category: str) -> None:
         self._enter("ensure_category", category, write=True)
         if category.strip():
