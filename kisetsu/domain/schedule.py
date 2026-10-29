@@ -78,7 +78,9 @@ def latest_aired(show: ShowFacts, now: datetime, horizon: datetime) -> Optional[
     """The number of the newest episode that has aired, or None when none has.
 
     Stored air times decide. Without any, AniList's pointer does: its next episode
-    has aired once its air time has passed, otherwise the one before it has.
+    has aired once its air time has passed, otherwise the one before it has. A show
+    that finished airing with no air times at all (an old show AniList has no schedule
+    for) has aired every episode.
     """
     known = [e.number for e in show.episodes if e.air_at is not None and e.air_at <= horizon]
     if known:
@@ -87,6 +89,8 @@ def latest_aired(show: ShowFacts, now: datetime, horizon: datetime) -> Optional[
         if show.next_airing_at <= horizon:
             return show.next_airing_episode
         return max(0, show.next_airing_episode - 1) or None
+    if show.anilist_status == "FINISHED" and show.episodes and all(e.air_at is None for e in show.episodes):
+        return max(e.number for e in show.episodes)
     return None
 
 

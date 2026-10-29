@@ -171,6 +171,12 @@ def test_the_tolerance_only_widens_the_horizon_of_a_premiere():
     assert air_horizon(show(), NOW, 6) == NOW
 
 
+def test_a_finished_show_with_no_air_times_has_aired_every_episode():
+    old = show(anilist_status="FINISHED", episodes=(ep(1), ep(2), ep(3)))
+    assert latest_aired(old, NOW, NOW) == 3
+    assert latest_aired(show(episodes=(ep(1), ep(2))), NOW, NOW) is None
+
+
 def test_latest_aired_prefers_stored_air_times_over_the_pointer():
     s = show(next_airing_episode=9, next_airing_at=NOW + timedelta(days=1), episodes=(ep(7, C, NOW - timedelta(days=9)), ep(8, W, NOW - timedelta(days=2))))
     assert latest_aired(s, NOW, NOW) == 8
