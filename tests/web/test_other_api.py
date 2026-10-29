@@ -218,3 +218,14 @@ async def test_telling_the_server_to_stop_ends_open_streams(web):
     for hook in list(web_app.shutdown_hooks):
         hook()
     assert [chunk async for chunk in stream] == []
+
+
+async def test_the_countdown_is_to_the_next_real_read_not_the_hunts_recheck(web):
+    from datetime import timedelta
+
+    jobs = web.runtime.jobs
+    web.runtime.scheduler.add("refresh_feeds", jobs.refresh_feeds, interval=None, first=6 * 3600.0)
+    web.runtime.scheduler.add("hunt", jobs.hunt, interval=None, first=3600.0)
+    assert 6 * 3600 - 5 <= (await web.client.get("/api/status")).json()["next_feed_read_in"] <= 6 * 3600
+    jobs.hunt_read_at = web.clock() + timedelta(hours=2)
+    assert (await web.client.get("/api/status")).json()["next_feed_read_in"] == 2 * 3600

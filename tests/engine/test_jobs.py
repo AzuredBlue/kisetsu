@@ -6,6 +6,7 @@ from sqlmodel import select
 
 from kisetsu.clients.anilist import AniListDeferred, AniListError
 from kisetsu.clients.qbittorrent import QbitUnavailable
+from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS
 from kisetsu.db.schema import AppState, Download, DownloadState, Event, EventKind, Feed, FeedItem, FeedState, Show
 from kisetsu.engine.jobs import SETUP_WAIT
 from tests.fakes import START, anilist_show
@@ -328,3 +329,27 @@ def test_a_routine_read_skips_an_idle_feed_but_startup_and_a_manual_refresh_read
 
     assert run(env, go) == (1, 1, 2, False)
     assert "refresh_feeds" in env.pokes
+
+
+def test_with_nothing_missing_the_routine_read_sleeps_until_a_feed_is_idle_and_the_hunt_reports_no_read(env):
+    env.add_feed()
+
+    async def go():
+        await env.jobs.startup()
+        return await env.jobs.refresh_feeds(), await env.jobs.hunt(), env.jobs.hunt_read_at
+
+    refresh, hunt, hunt_read_at = run(env, go)
+    assert refresh == 6 * 3600.0 and hunt is not None and hunt_read_at is None
+
+
+def test_the_hunt_reports_when_it_will_next_read_even_past_its_hourly_recheck(env):
+    env.anilist.shows.append(anilist_show(1, "Sousou no Frieren", total_episodes=12, next_airing_episode=1, next_airing_at=START + timedelta(days=3)))
+    env.add_feed()
+
+    async def go():
+        await env.jobs.startup()
+        return await env.jobs.hunt(), env.jobs.hunt_read_at
+
+    hunt, hunt_read_at = run(env, go)
+    # A premiere is looked for early by the early-air setting.
+    assert hunt == 3600.0 and hunt_read_at == START + timedelta(days=3) - timedelta(hours=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)

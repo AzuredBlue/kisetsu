@@ -1,9 +1,10 @@
 """Reading the feeds: what a read does to the stored items and the feeds' health."""
 
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import Dict, List, Set, Union
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Set, Union
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from kisetsu.clients.rss import FeedArticle
@@ -71,6 +72,31 @@ def _needed(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
         else:
             return {f.id for f in all_feeds}
     return needed
+
+
+def next_read_at(ctx: Context, interval: timedelta) -> Optional[datetime]:
+    """When the routine read next has a feed to read: after ``interval`` while a show needs one,
+    else when the first feed has been idle long enough or the next wanted episode airs (None: no feeds).
+    """
+    all_feeds = list(ctx.session.exec(select(Feed)).all())
+    if not all_feeds:
+        return None
+    if _needed(ctx, all_feeds):
+        return ctx.now + interval
+    times = [ctx.now if f.last_fetch_at is None else f.last_fetch_at + IDLE_FEED_REFRESH for f in all_feeds]
+    airs = ctx.session.exec(
+        select(func.min(Episode.air_at))
+        .join(Show, Show.id == Episode.show_id)
+        .where(
+            Show.completed == False,  # noqa: E712
+            Show.paused == False,  # noqa: E712
+            Episode.status.in_((EpisodeStatus.WANTED, EpisodeStatus.MISSED)),
+            Episode.air_at > ctx.now,
+        )
+    ).first()
+    if airs is not None:
+        times.append(airs)
+    return max(ctx.now, min(times))
 
 
 def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:

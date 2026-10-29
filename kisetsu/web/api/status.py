@@ -30,13 +30,17 @@ def _clear_history(ctx):
 def _live(request: Request):
     rt = runtime(request)
     now = rt.scheduler.clock()
-    dues = [job.due for job in (rt.scheduler.jobs.get("refresh_feeds"), rt.scheduler.jobs.get("hunt")) if job is not None and job.due is not None]
+    # The routine read wakes only when it has a feed to read; the hunt's own wake-ups are rechecks, so its next real read counts.
+    refresh = rt.scheduler.jobs.get("refresh_feeds")
+    dues = [refresh.due - now] if refresh is not None and refresh.due is not None else []
+    if rt.jobs.hunt_read_at is not None:
+        dues.append((rt.jobs.hunt_read_at - rt.engine.clock()).total_seconds())
     blocked_until = rate_limit_status()["blocked_until"]
     return {
         "ready": rt.jobs.ready.is_set(),
         "sandbox": rt.sandbox,
         "running": sorted(name for name, job in rt.scheduler.jobs.items() if job.running),
-        "next_feed_read_in": max(0, int(min(dues) - now)) if dues else None,
+        "next_feed_read_in": max(0, int(min(dues))) if dues else None,
         "qbit_error": rt.jobs.health.get("qbit"),
         "anilist_error": rt.jobs.health.get("anilist"),
         "anilist_blocked_until": None if not blocked_until else datetime.fromtimestamp(blocked_until, tz=timezone.utc).isoformat(),

@@ -111,3 +111,15 @@ def test_a_caught_up_paused_or_unaired_show_needs_no_feed(world):
     world.commit()
     _read(world, top)
     assert _planned(world) == []
+
+
+def test_the_next_read_waits_for_the_first_idle_feed_or_the_next_episode_to_air(world):
+    top = world.feed("Top", URL, 1)
+    interval = timedelta(minutes=15)
+    assert feedsync.next_read_at(world.ctx(), interval) == START
+    _read(world, top)
+    assert feedsync.next_read_at(world.ctx(), interval) == START + feedsync.IDLE_FEED_REFRESH
+    world.show(episodes=1, first_air=START + timedelta(hours=2), feed=top, feed_state=FeedState.LOCKED)
+    assert feedsync.next_read_at(world.ctx(), interval) == START + timedelta(hours=2)
+    world.clock.advance(hours=3)
+    assert feedsync.next_read_at(world.ctx(), interval) == world.clock() + interval

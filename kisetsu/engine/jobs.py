@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timedelta
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
 
 import httpx2
@@ -64,6 +65,8 @@ class Jobs:
         self.backfill_requests: Set[int] = set()
         self.backfill_all = False
         self.refresh_all = False
+        # When the hunt will next read a feed (None: nothing is due to air), for the UI's countdown.
+        self.hunt_read_at: Optional[datetime] = None
         self.health: Dict[str, Any] = {"qbit": None, "anilist": None, "anilist_retry_in": None}
 
     # -- wiring -------------------------------------------------------------
@@ -133,7 +136,7 @@ class Jobs:
         self.engine.bus.publish(["status"])
         for name in ("grab", "settle", "hunt", "palette"):
             self.poke(name)
-        self.scheduler.delay("refresh_feeds", await self._feed_interval())
+        self.scheduler.delay("refresh_feeds", await self._next_read())
         self.scheduler.delay("backfill", BACKFILL_INTERVAL)
         return None
 
@@ -205,10 +208,15 @@ class Jobs:
         results = await self._read_feeds(refs)
         if results:
             await self._apply(results)
-        return await self._feed_interval()
+        return await self._next_read()
 
-    async def _feed_interval(self) -> float:
-        return await self.engine.read(lambda ctx: ctx.settings.feed_refresh_minutes * 60.0)
+    async def _next_read(self) -> float:
+        """Seconds until the routine read has a feed to read; never sooner than its interval, as that is how often it looks."""
+        interval = await self.engine.read(lambda ctx: ctx.settings.feed_refresh_minutes * 60.0)
+        at = await self.engine.read(feedsync.next_read_at, timedelta(seconds=interval))
+        if at is None:
+            return interval
+        return max(interval, (at - self.engine.clock()).total_seconds())
 
     async def hunt(self) -> Optional[float]:
         """While shows are in their hunting window, fetch the feeds they may use more often."""
@@ -219,8 +227,10 @@ class Jobs:
             results = await self._read_feeds(info.feeds)
             if results:
                 await self._apply(results)
+            self.hunt_read_at = self.engine.clock() + timedelta(minutes=info.interval_minutes)
             return info.interval_minutes * 60.0
         start = info.plan.next_start
+        self.hunt_read_at = start
         if start is None:
             return HUNT_IDLE_MAX
         return max(5.0, min((start - self.engine.clock()).total_seconds(), HUNT_IDLE_MAX))
