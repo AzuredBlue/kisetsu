@@ -289,6 +289,8 @@ def test_history_records_what_a_failed_replacement_did_exactly_once(env):
         env.qbit.finish(torrent.hash)
         await env.jobs.settle()
         env.feeds.post(TOP, "[Grp] Sousou no Frieren - 01v2 (1080p).mkv", first)
+        # Nothing is missing, so the feed is read again only once it has been idle long enough.
+        env.clock.advance(hours=6)
         await env.jobs.refresh_feeds()
         await env.jobs.grab()
         v2 = next(t for t in env.qbit.truth.values() if t.hash != torrent.hash)
@@ -310,3 +312,19 @@ def test_a_show_added_by_hand_gets_its_colours(env):
 
     run(env, go)
     assert "palette" in env.pokes
+
+
+def test_a_routine_read_skips_an_idle_feed_but_startup_and_a_manual_refresh_read_it(env):
+    env.add_feed()
+
+    async def go():
+        assert await env.jobs.startup() is None
+        once = env.feeds.fetched.count(TOP)
+        await env.jobs.refresh_feeds()
+        idle = env.feeds.fetched.count(TOP)
+        env.jobs.request_refresh()
+        await env.jobs.refresh_feeds()
+        return once, idle, env.feeds.fetched.count(TOP), env.jobs.refresh_all
+
+    assert run(env, go) == (1, 1, 2, False)
+    assert "refresh_feeds" in env.pokes

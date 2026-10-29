@@ -1,18 +1,24 @@
 """Reading the feeds: what a read does to the stored items and the feeds' health."""
 
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Dict, List, Set, Union
 
 from sqlmodel import select
 
 from kisetsu.clients.rss import FeedArticle
-from kisetsu.db.schema import Feed, FeedState, Show
+from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
 from kisetsu.domain.schedule import HuntPlan, hunt_plan
 from kisetsu.services import ingest
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
 
 FetchResult = Union[List[FeedArticle], str]
+
+# A feed no show needs is still read this often, for v2s, batches and releases ahead of their air time.
+IDLE_FEED_REFRESH = timedelta(hours=6)
+# An aired episode still missing keeps its show's feeds on every routine read this long; then only the idle read looks.
+MISSING_FOR = timedelta(days=3)
 
 
 @dataclass(frozen=True)
@@ -43,9 +49,40 @@ def _ref(feed: Feed) -> FeedRef:
     return FeedRef(feed.id, feed.name, feed.url)
 
 
-def plan_fetch(ctx: Context) -> List[FeedRef]:
-    """Every feed, in priority order: Kisetsu fetches them all itself."""
-    return [_ref(feed) for feed in ctx.session.exec(select(Feed).order_by(Feed.priority, Feed.id)).all()]
+def _needed(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
+    """The feeds a show with a recently aired, still missing episode reads: its own, or every feed while it has none."""
+    rows = ctx.session.exec(
+        select(Show.feed_id, Show.feed_state)
+        .join(Episode, Episode.show_id == Show.id)
+        .where(
+            Show.completed == False,  # noqa: E712
+            Show.paused == False,  # noqa: E712
+            Episode.status.in_((EpisodeStatus.WANTED, EpisodeStatus.MISSED)),
+            Episode.air_at.is_not(None),
+            Episode.air_at <= ctx.now,
+            Episode.air_at >= ctx.now - MISSING_FOR,
+        )
+        .distinct()
+    ).all()
+    needed: Set[int] = set()
+    for feed_id, state in rows:
+        if state in (FeedState.LOCKED, FeedState.PINNED, FeedState.ASSIGNED) and feed_id is not None:
+            needed.add(feed_id)
+        else:
+            return {f.id for f in all_feeds}
+    return needed
+
+
+def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:
+    """The feeds to read now, in priority order: those a show needs, and the rest once they have been idle long enough."""
+    all_feeds = list(ctx.session.exec(select(Feed).order_by(Feed.priority, Feed.id)).all())
+    if everything:
+        return [_ref(feed) for feed in all_feeds]
+    needed = _needed(ctx, all_feeds)
+    return [
+        _ref(feed) for feed in all_feeds
+        if feed.id in needed or feed.last_fetch_at is None or ctx.now - feed.last_fetch_at >= IDLE_FEED_REFRESH
+    ]
 
 
 def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:

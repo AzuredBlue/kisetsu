@@ -81,6 +81,8 @@ def edit_feed(ctx: Context, feed: Feed, *, name: Optional[str] = None, url: Opti
         feed.url = url
         feed.failing_since = None
         feed.last_error = None
+        # Not read at its new address yet, so the next pass reads it.
+        feed.last_fetch_at = None
     if name is not None and name != feed.name:
         feed.name = name
     ctx.session.add(feed)

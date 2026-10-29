@@ -68,7 +68,7 @@ async def clear_history(request: Request):
 @router.post("/refresh")
 async def refresh(request: Request):
     jobs = runtime(request).jobs
-    jobs.poke("refresh_feeds")
+    jobs.request_refresh()
     jobs.poke("sync_anilist")
     return {"status": "queued"}
 

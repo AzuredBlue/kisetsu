@@ -37,6 +37,7 @@ async def test_editing_a_feed_url_rereads_it(web):
     web.pokes.clear()
     assert (await web.client.patch(f"/api/feeds/{feed}", json={"url": "https://new/rss"})).status_code == 200
     assert web.load(Feed, feed).url == "https://new/rss" and "refresh_feeds" in web.pokes
+    assert web.load(Feed, feed).last_fetch_at is None
 
 
 async def test_importing_feeds_from_qbittorrent(web):
@@ -173,7 +174,7 @@ async def test_logs_are_returned_newest_last(web):
 
 async def test_a_manual_refresh_pokes_the_feed_read_and_the_anilist_sync(web):
     await web.client.post("/api/refresh")
-    assert {"refresh_feeds", "sync_anilist"} <= set(web.pokes)
+    assert {"refresh_feeds", "sync_anilist"} <= set(web.pokes) and web.runtime.jobs.refresh_all
 
 
 async def test_the_event_stream_starts_with_a_refetch_then_reports_changes_and_ends_on_shutdown(web):

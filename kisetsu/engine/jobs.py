@@ -63,6 +63,7 @@ class Jobs:
         self.backoff = rss.Backoff()
         self.backfill_requests: Set[int] = set()
         self.backfill_all = False
+        self.refresh_all = False
         self.health: Dict[str, Any] = {"qbit": None, "anilist": None, "anilist_retry_in": None}
 
     # -- wiring -------------------------------------------------------------
@@ -122,7 +123,7 @@ class Jobs:
             return self._qbit_failed(e)
         self._set_health(qbit=None)
         await self.sync_anilist(startup=True)
-        await self.refresh_feeds()
+        await self.refresh_feeds(everything=True)
         await self.engine.run(adoption.adopt_existing)
         await self.backfill()
         await self.engine.run(adoption.reattribute)
@@ -149,7 +150,7 @@ class Jobs:
 
     async def on_new_shows(self, show_ids: List[int]) -> None:
         """Fill the stores for shows that were only just added, so the same pass can discover their feed."""
-        await self.refresh_feeds()
+        await self.refresh_feeds(everything=True)
         await self.engine.run(adoption.adopt_existing)
         for show_id in show_ids:
             await self._backfill_show(show_id, force=True)
@@ -190,11 +191,17 @@ class Jobs:
             self.poke("backfill", 5.0)
         return outcome
 
-    async def refresh_feeds(self) -> Optional[float]:
-        """Fetch every feed and store what is new."""
+    def request_refresh(self) -> None:
+        """Read every feed on the next pass, needed or not."""
+        self.refresh_all = True
+        self.poke("refresh_feeds")
+
+    async def refresh_feeds(self, everything: bool = False) -> Optional[float]:
+        """Fetch the feeds a show needs, or all of them, and store what is new."""
         if not await self._configured():
             return None
-        refs = await self.engine.run(feedsync.plan_fetch)
+        everything, self.refresh_all = everything or self.refresh_all, False
+        refs = await self.engine.run(feedsync.plan_fetch, everything)
         results = await self._read_feeds(refs)
         if results:
             await self._apply(results)
