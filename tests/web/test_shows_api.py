@@ -33,6 +33,20 @@ async def test_the_shows_list_gives_each_show_a_status_label_and_progress(web):
     assert cards["Plain"]["status_label"] == "Testing" and cards["Plain"]["progress"]["total"] is None
 
 
+async def test_a_show_that_finished_airing_is_in_the_completed_section_while_it_still_downloads(web):
+    finished = web.show(1, "Finished", total_episodes=3)
+    web.show(2, "Airing")
+
+    def finish(session):
+        session.get(Show, finished).anilist_status = "FINISHED"
+        session.commit()
+
+    web.query(finish)
+    cards = {c["title"]: c for c in (await web.client.get("/api/shows")).json()}
+    assert cards["Finished"]["section"] == "completed" and not cards["Finished"]["completed"]
+    assert cards["Airing"]["section"] == "releasing"
+
+
 async def test_only_what_needs_attention_is_listed_in_plain_words(web):
     show = web.show(1, "Frieren")
 

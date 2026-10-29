@@ -111,6 +111,13 @@ def attention(counts: Dict[EpisodeStatus, int], feed: Optional[Feed]) -> List[st
     return notes
 
 
+def show_section(show: Show, released: bool) -> str:
+    """The Shows page section: Completed once it finished airing, even while episodes are still downloading."""
+    if show.completed or show.anilist_status == "FINISHED":
+        return "completed"
+    return "releasing" if released else "planned"
+
+
 def show_card(
     ctx: Context,
     show: Show,
@@ -140,6 +147,7 @@ def show_card(
         "status": status.value,
         "status_label": STATUS_LABELS[status],
         "released": released,
+        "section": show_section(show, released),
         "last_done": last_done,
         "paused": show.paused,
         "paused_by": show.paused_by.value if show.paused_by else None,

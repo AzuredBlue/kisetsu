@@ -50,12 +50,11 @@ export function Shows() {
   const minute = Math.floor(now / 60000);
   const groups = useMemo(() => {
     const list = data || [];
-    const active = list.filter(s => s.status !== 'completed');
     const at = minute * 60000;
     return {
-      releasing: sortShows(active.filter(s => s.released), sort, at),
-      planned: sortShows(active.filter(s => !s.released), sort, at),
-      completed: sortShows(list.filter(s => s.status === 'completed'), sort, at),
+      releasing: sortShows(list.filter(s => s.section === 'releasing'), sort, at),
+      planned: sortShows(list.filter(s => s.section === 'planned'), sort, at),
+      completed: sortShows(list.filter(s => s.section === 'completed'), sort, at),
     };
   }, [data, sort, minute]);
   if (loading) return html`<div class="page"></div>`;
