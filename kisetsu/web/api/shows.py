@@ -82,6 +82,14 @@ def _delete(ctx, show_id: int, delete_torrents: bool, delete_files: bool):
     return name, removed, hashes, folder, ctx.settings.base_dir
 
 
+def _want(ctx, show_id: int, episode_id: int):
+    show = show_or_404(ctx, show_id)
+    episode = ctx.session.get(Episode, episode_id)
+    if episode is None or episode.show_id != show.id:
+        raise NotFound("Episode not found.")
+    return shows.want_episode(ctx, show, episode)
+
+
 def _download(ctx, show_id: int, body: Download):
     return manual.manual_grab(ctx, show_or_404(ctx, show_id), body.title, fuzzy=body.fuzzy, expect_episode=body.expect_episode)
 
@@ -169,6 +177,13 @@ async def download(show_id: int, body: Download, request: Request):
 @router.post("/{show_id}/episodes/{episode_id}/restore")
 async def restore(show_id: int, episode_id: int, request: Request):
     return {"message": await write(request, _restore, show_id, episode_id)}
+
+
+@router.post("/{show_id}/episodes/{episode_id}/want")
+async def want(show_id: int, episode_id: int, request: Request):
+    message = await write(request, _want, show_id, episode_id)
+    runtime(request).jobs.request_backfill([show_id])
+    return {"message": message}
 
 
 @router.get("/{show_id}/delete-preview")

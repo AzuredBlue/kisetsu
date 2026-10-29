@@ -76,8 +76,8 @@ def ensure_episodes(ctx: Context, show: Show) -> List[Episode]:
 def final_episode_accounted(ctx: Context, show: Show) -> bool:
     """Whether every episode of a finished season is accounted for.
 
-    Every episode up to the season length must be completed or missed (no longer
-    retrievable), and at least one completed. A finale that was only just given up on keeps
+    Every episode up to the season length must be completed, skipped by the user or missed
+    (no longer retrievable), and at least one completed. A finale that was only just given up on keeps
     the season open for as long as the grabber keeps looking for it.
     """
     if not show.total_episodes or show.total_episodes <= 0 or show.id is None:
@@ -93,7 +93,7 @@ def final_episode_accounted(ctx: Context, show: Show) -> bool:
         return False
 
     def accounted(episode: Episode) -> bool:
-        if episode.status == EpisodeStatus.COMPLETED:
+        if episode.status in (EpisodeStatus.COMPLETED, EpisodeStatus.SKIPPED):
             return True
         if episode.status != EpisodeStatus.MISSED:
             return False
@@ -158,6 +158,28 @@ def _update_existing(ctx: Context, show: Show, data: Dict[str, Any], logs: List[
     return updated
 
 
+def show_from_entry(data: Dict[str, Any], paused_all: bool = False) -> Show:
+    """A new, unsaved show for one AniList list entry."""
+    show = Show(
+        anilist_id=data.get("anilist_id") or data.get("id"),
+        title_romaji=data.get("title_romaji"),
+        title_english=data.get("title_english"),
+        total_episodes=data.get("total_episodes"),
+        next_airing_episode=data.get("next_airing_episode"),
+        next_airing_at=data.get("next_airing_at"),
+        cover_image=data.get("cover_image"),
+        banner_image=data.get("banner_image"),
+        season_name=data.get("season"),
+        season_year=data.get("season_year"),
+        anilist_status=data.get("status") or None,
+        list_status=data.get("list_status") or None,
+        paused=paused_all,
+        paused_by=PausedBy.ALL if paused_all else None,
+    )
+    show.aliases = list(data.get("aliases", []))
+    return show
+
+
 def apply_anilist(ctx: Context, seasonal_list: List[Dict[str, Any]], existing: Optional[Dict[int, Show]] = None) -> ApplyResult:
     """Update the followed shows from AniList's list and add the new ones."""
     result = ApplyResult()
@@ -183,23 +205,7 @@ def apply_anilist(ctx: Context, seasonal_list: List[Dict[str, Any]], existing: O
             session.flush()
             ensure_episodes(ctx, show)
             continue
-        show = Show(
-            anilist_id=anilist_id,
-            title_romaji=data.get("title_romaji"),
-            title_english=data.get("title_english"),
-            total_episodes=data.get("total_episodes"),
-            next_airing_episode=data.get("next_airing_episode"),
-            next_airing_at=data.get("next_airing_at"),
-            cover_image=data.get("cover_image"),
-            banner_image=data.get("banner_image"),
-            season_name=data.get("season"),
-            season_year=data.get("season_year"),
-            anilist_status=data.get("status") or None,
-            list_status=data.get("list_status") or None,
-            paused=paused_all,
-            paused_by=PausedBy.ALL if paused_all else None,
-        )
-        show.aliases = list(data.get("aliases", []))
+        show = show_from_entry(data, paused_all)
         session.add(show)
         session.flush()
         legacy.apply_pending(ctx, show)
@@ -254,6 +260,19 @@ def delete_show(
     ctx.caches.matchers = None
     ctx.emit("shows", "history")
     return len(hashes)
+
+
+def want_episode(ctx: Context, show: Show, episode: Episode) -> str:
+    """Take back the user's choice to skip an episode, so it is grabbed like any other."""
+    if episode.status != EpisodeStatus.SKIPPED:
+        raise ValueError(f"Episode {episode.number} is not skipped.")
+    episode.status = EpisodeStatus.WANTED
+    ctx.session.add(episode)
+    if show.completed:
+        show.completed = False
+        ctx.session.add(show)
+    ctx.emit("shows", f"show:{show.id}")
+    return f"Episode {episode.number} will be downloaded."
 
 
 # -- schedules ----------------------------------------------------------------

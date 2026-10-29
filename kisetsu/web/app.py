@@ -27,7 +27,7 @@ from kisetsu.engine.jobs import Jobs
 from kisetsu.engine.runner import Engine
 from kisetsu.engine.scheduler import Scheduler
 from kisetsu.web import security
-from kisetsu.web.api import feeds, settings, setup, shows, status
+from kisetsu.web.api import add, feeds, settings, setup, shows, status
 from kisetsu.web.deps import Runtime, install_errors
 from kisetsu.web.logs import LogRing
 
@@ -135,7 +135,7 @@ def create_app(
     extra_hosts = {name.strip().lower() for name in os.environ.get("KISETSU_ALLOWED_HOSTS", "").split(",") if name.strip()}
     security.install(app, sandbox=sandbox, extra_hosts=extra_hosts)
     install_errors(app)
-    for module in (shows, feeds, settings, setup, status):
+    for module in (add, shows, feeds, settings, setup, status):
         app.include_router(module.router)
     if static_dir.is_dir():
         app.mount("/static", HashedStatic(directory=static_dir), name="static")

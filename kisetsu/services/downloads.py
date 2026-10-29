@@ -86,7 +86,7 @@ def recompute_episode(ctx: Context, episode: Episode) -> None:
     """Set the episode's status from the release it currently has."""
     cur = current(ctx, episode)
     if cur is None:
-        if episode.status not in (EpisodeStatus.WANTED, EpisodeStatus.MISSED):
+        if episode.status not in (EpisodeStatus.WANTED, EpisodeStatus.MISSED, EpisodeStatus.SKIPPED):
             episode.status = EpisodeStatus.WANTED
         episode.attempts = 0
     elif cur.state in (DownloadState.ADDING, *PRESENT_STATES):

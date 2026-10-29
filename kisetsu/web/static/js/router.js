@@ -1,8 +1,8 @@
-// Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings and #show/<id>.
+// Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings, #add and #show/<id>.
 import { useEffect, useState } from './ui.js';
 import { feedMatches, showPage } from './data.js';
 
-export const TABS = ['shows', 'calendar', 'history', 'feeds', 'logs', 'settings'];
+export const TABS = ['shows', 'calendar', 'history', 'feeds', 'logs', 'settings', 'add'];
 
 export function parseHash(hash = window.location.hash) {
   const value = hash.replace(/^#\/?/, '');

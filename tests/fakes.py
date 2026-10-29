@@ -332,6 +332,8 @@ class FakeAniList:
         self.calls: List[Tuple[str, Any]] = []
         self.last_sync_at: Optional[datetime] = None
         self.due = True
+        self.user_list: List[Dict[str, Any]] = []
+        self.user_list_at: Optional[datetime] = None
 
     def _enter(self, name: str, detail: Any = None) -> None:
         self.calls.append((name, detail))
@@ -347,8 +349,16 @@ class FakeAniList:
         self._enter("user_exists", username)
         return username in self.users
 
+    async def fetch_user_list(self, username: str) -> List[Dict[str, Any]]:
+        self._enter("fetch_user_list", username)
+        self.user_list = [dict(show) for show in self.shows]
+        self.user_list_at = datetime.now(timezone.utc)
+        return list(self.user_list)
+
     async def fetch_user_seasonal_anime(self, username: str, monitored_anilist_ids: Optional[Iterable[int]] = None) -> List[Dict[str, Any]]:
         self._enter("fetch_user_seasonal_anime", username)
+        self.user_list = [dict(show) for show in self.shows]
+        self.user_list_at = datetime.now(timezone.utc)
         return [dict(show) for show in self.shows]
 
     async def fetch_media_airing_schedules(self, media_ids: List[int]) -> Dict[int, List[Dict[str, Any]]]:

@@ -14,7 +14,7 @@ from kisetsu.config import DEFAULT_FEED_REFRESH_MINUTES
 from kisetsu.db.schema import Show
 from kisetsu.engine.runner import Engine
 from kisetsu.engine.scheduler import Scheduler
-from kisetsu.services import adoption, backfill, cycle, feedsync, tags
+from kisetsu.services import addshow, adoption, backfill, cycle, feedsync, tags
 from kisetsu.services.context import setup_completed
 from kisetsu.services.shows import SCHEDULE_FULL_LOOKBACK, SCHEDULE_REFRESH_LOOKBACK
 
@@ -358,6 +358,30 @@ class Jobs:
                 logger.warning(f"Past-release search stopped: {found.stopped}")
                 break
         return added
+
+    async def search_new_show(self, entry: Dict[str, Any]) -> Dict[str, Any]:
+        """Search the feeds' sites for a show the user is adding, then preview what each feed carries for it."""
+        plan = await self.engine.run(addshow.search_plan, entry)
+        stopped = None
+        if plan.terms and plan.feeds:
+            total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
+            due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
+            found = await backfill.search(self.http, due, addshow.matcher_for(entry), self.engine.clock(), pause=self.pause, searcher=self.searcher)
+            stopped = found.stopped
+            if found.articles:
+                await self.engine.run(addshow.store_found, found.articles)
+        result = await self.engine.read(addshow.preview, entry, plan.unsearchable)
+        result["stopped"] = stopped
+        return result
+
+    async def after_manual_add(self) -> None:
+        """Date the episodes of a show the user just added, then let the grab and settle passes follow it."""
+        try:
+            await self.refresh_schedules()
+        except Exception as e:
+            logger.warning(f"Could not date the new show's episodes: {e}")
+        for name in ("grab", "settle", "hunt"):
+            self.poke(name)
 
     # -- upkeep -------------------------------------------------------------
 

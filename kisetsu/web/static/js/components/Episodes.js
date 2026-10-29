@@ -6,7 +6,7 @@ import { Icon, Spinner } from './Icon.js';
 import { toast } from './Toast.js';
 
 const ROLE_LABELS = { locked: 'Locked', picked: 'Picked', assigned: 'Assigned', other: 'Not used by this show' };
-const GROUPS = [['attention', 'Needs attention'], ['active', 'Downloading'], ['done', 'Completed'], ['waiting', 'Waiting']];
+const GROUPS = [['attention', 'Needs attention'], ['active', 'Downloading'], ['done', 'Completed'], ['waiting', 'Waiting'], ['skipped', 'Not downloading']];
 
 const version = (v) => (v > 1 ? ` v${v}` : '');
 
@@ -32,11 +32,13 @@ export function describe(ep, { paused, now }) {
   if (ep.status === 'completed') { label = ep.release && ep.release.completed_at ? relativeTime(ep.release.completed_at, now) : 'completed'; tone = 'ok'; }
   else if (ep.status === 'failed') { label = 'failed'; tone = 'bad'; }
   else if (ep.status === 'missed') { label = 'missed'; tone = 'warn'; }
+  else if (ep.status === 'skipped') label = 'skipped';
   else if (retrying) { label = `retry ${localTime(ep.retry_after)}`; tone = 'warn'; }
   else if (aired) { label = paused ? 'aired, paused' : 'aired, searching'; tone = paused ? '' : 'info'; }
   else if (ep.status === 'downloading') { label = ep.replacing ? 'replacing' : 'downloading'; tone = 'info'; }
   else label = airsLabel(ep, now) || ep.status;
   const group = ep.status === 'completed' ? 'done'
+    : ep.status === 'skipped' ? 'skipped'
     : ep.status === 'failed' || ep.status === 'missed' || retrying ? 'attention'
     : ep.status === 'downloading' ? 'active' : 'waiting';
   return { label, tone, group };
@@ -62,7 +64,7 @@ export function useRowAction(showId, done) {
       setPending(set => { const next = new Set(set); next.delete(key); return next; });
     }
   };
-  return { pending, download: (title) => run(title, `/api/shows/${showId}/download`, { title }, 'Download started.'), restore: (episodeId) => run(`restore:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/restore`, undefined, 'Restored.') };
+  return { pending, download: (title) => run(title, `/api/shows/${showId}/download`, { title }, 'Download started.'), restore: (episodeId) => run(`restore:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/restore`, undefined, 'Restored.'), want: (episodeId) => run(`want:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/want`, undefined, 'It will be downloaded.') };
 }
 
 export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, searching }) {
@@ -89,6 +91,7 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
           <span class="row-end">
             <span class=${`state ${tone}`} title=${ep.last_error || undefined}>${label}${unmanaged ? ', unmanaged' : ''}</span>
             ${retry ? html`<${RowButton} pending=${actions.pending.has(retry.title)} onClick=${() => actions.download(retry.title)} title="Try this release again" />` : null}
+            ${ep.status === 'skipped' ? html`<${RowButton} pending=${actions.pending.has(`want:${ep.id}`)} onClick=${() => actions.want(ep.id)} title="Download this episode after all" />` : null}
             ${unmanaged ? html`<${RowButton} pending=${actions.pending.has(`restore:${ep.id}`)} onClick=${() => actions.restore(ep.id)} title="Restore: find this torrent in qBittorrent and manage it, or add it again from the feed." />` : null}
             ${swap ? html`<${RowButton} icon="swap" pending=${actions.pending.has(swap.title)} onClick=${() => actions.download(swap.title)} title=${`Replace Ep ${ep.number} with this release. The current copy${release.feed ? ` from ${release.feed}` : ''} is deleted with its files once this one is seeding.`} />` : null}
           </span>

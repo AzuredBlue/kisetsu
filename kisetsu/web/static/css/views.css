@@ -297,3 +297,16 @@ section + section { margin-top: .5rem; }
   & button:not(:first-child):not(:last-child), & .pager-gap { width: 2.5rem; padding-inline: 0; text-align: center; font-variant-numeric: tabular-nums; }
   & .pager-gap { color: rgb(var(--text-4)); }
 }
+
+/* Adding a show by hand */
+.add-search { display: flex; align-items: center; gap: .625rem; & > .icon { flex: none; color: rgb(var(--text-3)); } & .field { flex: 1; min-width: 0; } }
+.add-entry, .add-picked { & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: .25rem; } & .no-art { font-size: .75rem; } } & .grow { flex: 1; min-width: 0; } }
+.add-entry { gap: .875rem; padding: .5rem 0; }
+.add-entry-title { font-size: .8125rem; font-weight: 500; color: rgb(var(--text-2)); }
+.add-picked { display: flex; align-items: center; gap: .875rem; & .sr-poster { width: 3rem; } }
+.add-check { display: flex; align-items: center; gap: .625rem; min-width: 0; cursor: pointer; & input { flex: none; accent-color: rgb(var(--ac-strong)); } }
+.add-feed-head .add-check { font-weight: 500; color: rgb(var(--text-2)); }
+.add-note { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; color: rgb(var(--text-2)); & .icon { flex: none; margin-top: .125rem; color: rgb(var(--info)); } &.warn .icon { color: rgb(var(--warn)); } }
+.add-bar { position: sticky; bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem;
+  background: rgb(var(--raised)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: 0 8px 24px rgb(0 0 0 / .3); font-size: .8125rem; }
+.add-check.grow { flex: 1; }

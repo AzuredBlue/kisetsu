@@ -85,6 +85,8 @@ class EpisodeStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     MISSED = "missed"
+    # The user chose not to download it; nothing grabs it until they want it again.
+    SKIPPED = "skipped"
 
 
 class DownloadState(str, Enum):

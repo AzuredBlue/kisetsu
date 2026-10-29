@@ -10,6 +10,7 @@ import { ModalHost } from './components/Modal.js';
 import { toast, Toasts } from './components/Toast.js';
 import { Shows } from './views/Shows.js';
 import { Show } from './views/Show.js';
+import { Add } from './views/Add.js';
 import { Calendar, buildWeek } from './views/Calendar.js';
 import { History } from './views/History.js';
 import { Feeds } from './views/Feeds.js';
@@ -25,7 +26,7 @@ const NAV = [
   ['logs', 'Logs', 'logs'],
   ['settings', 'Settings', 'settings'],
 ];
-const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), calendar: 'Weekly Calendar', history: 'Match History' };
+const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), calendar: 'Weekly Calendar', history: 'Match History', add: 'Add show' };
 const CHECK_JOBS = ['startup', 'refresh_feeds', 'sync_anilist', 'backfill'];
 
 function Notes({ info }) {
@@ -90,7 +91,7 @@ function Sidebar({ route, open, onClose, info, at }) {
         </button>
       </div>
       <nav>
-        ${NAV.map(([id, label, icon]) => html`<button type="button" class="nav-item" key=${id} aria-current=${route.name === id || (id === 'shows' && route.name === 'show') ? 'page' : undefined} onClick=${() => { go(id); onClose(); }}>
+        ${NAV.map(([id, label, icon]) => html`<button type="button" class="nav-item" key=${id} aria-current=${route.name === id || (id === 'shows' && (route.name === 'show' || route.name === 'add')) ? 'page' : undefined} onClick=${() => { go(id); onClose(); }}>
           <${Icon} name=${icon} /><span>${label}</span>
           ${badge(id) !== null && badge(id) !== undefined ? html`<span class="badge">${badge(id)}</span>` : null}
         </button>`)}
@@ -121,7 +122,7 @@ function Shell() {
   useEffect(() => {
     if (online.data) applyUserAccent(online.data.accent_color, online.data.accent_tint);
   }, [online.data && online.data.accent_color, online.data && online.data.accent_tint]);
-  const View = { shows: Shows, show: Show, calendar: Calendar, history: History, feeds: Feeds, logs: Logs, settings: Settings }[route.name];
+  const View = { shows: Shows, show: Show, add: Add, calendar: Calendar, history: History, feeds: Feeds, logs: Logs, settings: Settings }[route.name];
   const title = route.name === 'show' ? 'Shows' : TITLES[route.name];
   return html`
     <${Sidebar} route=${route} open=${menu} onClose=${() => setMenu(false)} info=${info} at=${live.at} />
