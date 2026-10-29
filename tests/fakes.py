@@ -139,10 +139,11 @@ class FakeQbit:
         tags: Iterable[str] = (),
         paused: bool = False,
         ratio_limit: Optional[float] = None,
+        content_layout: Optional[str] = None,
     ) -> None:
         self._enter("add_torrent", {
             "url": url, "save_path": save_path, "category": category, "tags": list(tags),
-            "paused": paused, "ratio_limit": ratio_limit,
+            "paused": paused, "ratio_limit": ratio_limit, "content_layout": content_layout,
         }, write=True)
         if self.reject_adds is not None:
             raise self.reject_adds
@@ -159,7 +160,7 @@ class FakeQbit:
             amount_left=size,
             size=size,
             save_path=save_path,
-            content_path=f"{save_path}/{name}" if save_path else name,
+            content_path=save_path if content_layout == "NoSubfolder" and save_path else f"{save_path}/{name}" if save_path else name,
             category=category,
             tags=frozenset(tags),
             added_on=self.clock(),

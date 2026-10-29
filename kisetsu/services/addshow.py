@@ -8,14 +8,15 @@ the grabber can never pick a feed or start a download for it on its own meanwhil
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import select
 
 from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle
-from kisetsu.db.schema import DismissedShow, EpisodeStatus, Feed, Show
+from kisetsu.db.schema import DismissedShow, Episode, EpisodeStatus, Feed, FeedItem, Show
 from kisetsu.domain.matcher import build_matcher, decide
+from kisetsu.domain.parsing import batch_range, is_batch, parse_release_title, strip_batch
 from kisetsu.domain.patterns import sanitize_folder_name
 from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows
 from kisetsu.services.context import Context
@@ -153,8 +154,64 @@ def _releases(ctx: Context, show: Show, feed: Feed) -> Dict[int, Any]:
     return best
 
 
+@dataclass
+class Batch:
+    item: FeedItem
+    numbers: List[int]
+
+
+def _covered(span: Optional[Tuple[int, int]], target: int) -> List[int]:
+    """The show's episodes a batch holds: its range, read as the season's own numbers when they fit."""
+    if span is None:
+        return list(range(1, target + 1))
+    first, last = span
+    if last <= target:
+        return list(range(first, last + 1))
+    if last - first + 1 == target:
+        # Numbered from the series' start: the batch is this whole season.
+        return list(range(1, target + 1))
+    return list(range(first, target + 1)) if first <= target else []
+
+
+def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
+    """The feed's batches of the show, the ones holding most episodes first."""
+    matcher = build_matcher(show.effective_aliases, None)
+    cache: Dict[str, dict] = {}
+    target = show.total_episodes or len(shows.ensure_episodes(ctx, show))
+    found: List[Batch] = []
+    for item in ctx.session.exec(select(FeedItem).where(FeedItem.feed_id == feed.id)).all():
+        if not item.torrent_url or not is_batch(item.title) or not decide(matcher, strip_batch(item.title), cache)[0]:
+            continue
+        numbers = _covered(batch_range(item.title), target)
+        if numbers:
+            found.append(Batch(item, numbers))
+    found.sort(key=lambda b: (-len(b.numbers), -(b.item.published_at or b.item.first_seen_at).timestamp()))
+    return found
+
+
+def _group_of(name: str) -> Optional[str]:
+    group = parse_release_title(name).get("release_group")
+    return group.casefold() if group else None
+
+
+def _feed_from_files(ctx: Context, show: Show, files: List[str]) -> Optional[Feed]:
+    """The feed the files on disk came from.
+
+    Files a batch put there name no release of the feed; their release group then points at
+    the one feed with a batch from that group.
+    """
+    found = adoption._feed_from_saved_files(ctx, show, files, [])
+    if found is not None:
+        return found[0]
+    groups = {g for g in (_group_of(name) for name in files) if g}
+    if not groups:
+        return None
+    carriers = [f for f in feeds.ranked(ctx) if any(_group_of(b.item.title) in groups for b in _batches(ctx, show, f))]
+    return carriers[0] if len(carriers) == 1 else None
+
+
 def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str]] = None) -> Dict[str, Any]:
-    """What each feed carries for the entry, episode by episode, and the feed its files on disk came from.
+    """What each feed carries for the entry, episode by episode and in batches, and the feed its files on disk came from.
 
     Meant for ``Engine.read``: the show it builds to number the releases exactly as the grabber
     will is rolled back with the rest of the read.
@@ -166,19 +223,31 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
     on_disk_feed: Optional[Feed] = None
     note = None
     if folder is not None:
-        found = adoption._feed_from_saved_files(ctx, show, folder["files"], [])
-        on_disk_feed = found[0] if found else None
+        on_disk_feed = _feed_from_files(ctx, show, folder["files"])
         if on_disk_feed is None:
             note = f"Found {len(folder['files'])} file(s) in {folder['path']}, but no feed matches their naming. Pick the feed yourself."
-    disk_keys = {library_key(name) for name in (folder["files"] if folder else [])}
+    files = folder["files"] if folder else []
+    disk_keys = {library_key(name) for name in files}
+    disk_numbers = {parse_release_title(name).get("episode") for name in files}
     groups = []
     for feed in feeds.ranked(ctx):
         releases = _releases(ctx, show, feed)
-        if not releases:
+        batches = _batches(ctx, show, feed)
+        if not releases and not batches:
             continue
         groups.append({
             "feed_id": feed.id,
             "feed_name": feed.name,
+            "batches": [
+                {
+                    "item_id": b.item.id,
+                    "title": b.item.title,
+                    "numbers": b.numbers,
+                    "published_at": b.item.published_at.isoformat() if b.item.published_at else None,
+                    "on_disk": len(disk_numbers & set(b.numbers)),
+                }
+                for b in batches
+            ],
             "episodes": [
                 {
                     "number": number,
@@ -236,11 +305,23 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
         if found is not None and found[0].id == feed.id:
             # The user kept the feed the files on disk came from: that is the evidence a lock needs.
             feeds.lock(ctx, show, feed, Evidence.SAVED_FILES_UNIQUE, learned_name=found[2], learned_group=found[1])
-    releases = _releases(ctx, show, feed)
     chosen = set(item_ids)
-    picked = {number: r for number, r in releases.items() if r.item.id in chosen}
+    releases = _releases(ctx, show, feed)
+    batches = _batches(ctx, show, feed)
+    # Each episode comes from one release: a chosen batch holds its episodes, singles fill in the rest.
+    picked: Dict[int, Tuple[Episode, FeedItem]] = {}
+    by_number = {e.number: e for e in episodes}
+    for batch in batches:
+        if batch.item.id in chosen:
+            for number in batch.numbers:
+                if number in by_number:
+                    picked.setdefault(number, (by_number[number], batch.item))
+    for number, release in releases.items():
+        if release.item.id in chosen:
+            picked.setdefault(number, (release.episode, release.item))
+    offered = set(releases) | {n for b in batches for n in b.numbers}
     for episode in episodes:
-        if episode.number in releases and episode.number not in picked:
+        if episode.number in offered and episode.number not in picked:
             episode.status = EpisodeStatus.SKIPPED
             ctx.session.add(episode)
     ctx.session.flush()
@@ -253,12 +334,11 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     ctx.checkpoint()
     # Torrents already in qBittorrent are taken over rather than added twice.
     adoption.adopt_existing(ctx)
-    for number, release in sorted(picked.items()):
-        episode = release.episode
+    for number, (episode, item) in sorted(picked.items()):
         ctx.session.refresh(episode)
         if episode.status not in (EpisodeStatus.WANTED, EpisodeStatus.MISSED):
             continue
-        dl = downloads.start_download(ctx, show, feed, episode, release.item)
+        dl = downloads.start_download(ctx, show, feed, episode, item)
         if dl is None:
             result["errors"].append(f"Ep {number}: {episode.last_error or 'could not start the download'}")
         else:

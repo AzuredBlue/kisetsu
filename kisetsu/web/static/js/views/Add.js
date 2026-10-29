@@ -82,21 +82,56 @@ function Notes({ result }) {
   return html`<div class="stack-sm">${notes.map(([tone, text], i) => html`<p key=${i} class=${`add-note ${tone}`}><${Icon} name=${tone === 'warn' ? 'alert' : 'info'} small /><span>${text}</span></p>`)}</div>`;
 }
 
+// The episodes the feed offers, and those the ticked releases cover; a ticked batch covers its singles.
+function coverage(group, picked) {
+  const offered = new Set([...group.episodes.map(e => e.number), ...(group.batches || []).flatMap(b => b.numbers)]);
+  const inBatch = new Set((group.batches || []).filter(b => picked.has(b.item_id)).flatMap(b => b.numbers));
+  const covered = new Set([...inBatch, ...group.episodes.filter(e => picked.has(e.item_id)).map(e => e.number)]);
+  return { offered, inBatch, covered };
+}
+
+// Picking a feed takes its batches when it has any (the largest first, then those that add episodes), else every single episode.
+function defaultPick(group) {
+  const batches = group.batches || [];
+  if (!batches.length) return new Set(group.episodes.map(e => e.item_id));
+  const taken = new Set();
+  const ids = new Set();
+  batches.forEach(b => {
+    if (b.numbers.some(n => taken.has(n))) return;
+    ids.add(b.item_id);
+    b.numbers.forEach(n => taken.add(n));
+  });
+  return ids;
+}
+
+const span = (numbers) => (numbers.length > 1 ? `Ep ${numbers[0]}–${numbers[numbers.length - 1]}` : `Ep ${numbers[0]}`);
+
 function FeedGroup({ group, active, picked, onFeed, onToggle }) {
-  const all = group.episodes.length;
-  const count = active ? group.episodes.filter(e => picked.has(e.item_id)).length : 0;
+  const { offered, inBatch, covered } = coverage(group, active ? picked : new Set());
+  const all = offered.size;
   return html`<li class="list-head add-feed-head" key=${`h:${group.feed_id}`}>
       <label class="add-check"><input type="radio" name="add-feed" checked=${active} onChange=${() => onFeed(group)} /><span class="truncate">${group.feed_name}</span></label>
-      <span class="push muted tabular">${active ? `${count} of ${all}` : `${all} episode${all === 1 ? '' : 's'}`}</span>
+      <span class="push muted tabular">${active ? `${covered.size} of ${all}` : `${all} episode${all === 1 ? '' : 's'}`}</span>
     </li>
-    ${group.episodes.map(ep => html`<li class="list-row" key=${`e:${group.feed_id}:${ep.item_id}`}>
+    ${(group.batches || []).map(batch => html`<li class="list-row" key=${`b:${group.feed_id}:${batch.item_id}`}>
       <label class="add-check grow">
-        <input type="checkbox" checked=${active && picked.has(ep.item_id)} onChange=${() => onToggle(group, ep)} />
+        <input type="checkbox" checked=${active && picked.has(batch.item_id)} onChange=${() => onToggle(group, batch)} />
+        <span class="ep-no">${span(batch.numbers)}</span>
+        <span class="release-name mono truncate" title=${batch.title}>${batch.title}</span>
+      </label>
+      <span class="row-end">${batch.on_disk ? html`<span class="state ok">${batch.on_disk} on disk</span>` : null}<span class="pill pill-info">Batch</span></span>
+    </li>`)}
+    ${group.episodes.map(ep => {
+      const held = active && inBatch.has(ep.number);
+      return html`<li class="list-row" key=${`e:${group.feed_id}:${ep.item_id}`}>
+      <label class=${`add-check grow${held ? ' held' : ''}`} title=${held ? 'Comes with the ticked batch' : undefined}>
+        <input type="checkbox" checked=${active && picked.has(ep.item_id) && !held} disabled=${held} onChange=${() => onToggle(group, ep)} />
         <span class="ep-no">Ep ${ep.number}${version(ep.version)}</span>
         <span class="release-name mono truncate" title=${ep.title}>${ep.title}</span>
       </label>
-      <span class="row-end">${ep.on_disk ? html`<span class="state ok">on disk</span>` : null}</span>
-    </li>`)}`;
+      <span class="row-end">${held ? html`<span class="muted">in batch</span>` : ep.on_disk ? html`<span class="state ok">on disk</span>` : null}</span>
+    </li>`;
+    })}`;
 }
 
 function PickReleases({ entry, onBack }) {
@@ -105,7 +140,7 @@ function PickReleases({ entry, onBack }) {
   const [feedId, setFeedId] = useState(null);
   const [picked, setPicked] = useState(new Set());
   const [adding, setAdding] = useState(false);
-  const choose = (group) => { setFeedId(group.feed_id); setPicked(new Set(group.episodes.map(e => e.item_id))); };
+  const choose = (group) => { setFeedId(group.feed_id); setPicked(defaultPick(group)); };
   useEffect(() => {
     let live = true;
     apiFetch('/api/add/search', { method: 'POST', json: { anilist_id: entry.anilist_id }, quiet: true })
@@ -118,12 +153,13 @@ function PickReleases({ entry, onBack }) {
       .catch(err => { if (live) setError(err.message); });
     return () => { live = false; };
   }, [entry.anilist_id]);
-  const toggle = (group, ep) => {
+  const toggle = (group, release) => {
     // Episodes come from one feed: ticking one from another feed moves the whole selection there.
     if (group.feed_id !== feedId) { choose(group); return; }
-    setPicked(set => { const next = new Set(set); if (next.has(ep.item_id)) next.delete(ep.item_id); else next.add(ep.item_id); return next; });
+    setPicked(set => { const next = new Set(set); if (next.has(release.item_id)) next.delete(release.item_id); else next.add(release.item_id); return next; });
   };
   const group = result && result.feeds.find(g => g.feed_id === feedId);
+  const counts = group ? coverage(group, picked) : null;
   const add = async () => {
     setAdding(true);
     try {
@@ -150,7 +186,7 @@ function PickReleases({ entry, onBack }) {
     ${result ? html`
       <${Notes} result=${result} />
       <div class="card list-card stack-sm">
-        <p class="field-hint">Pick the feed to download from: all of its episodes are selected, and you can untick the ones you don't want. Future episodes come from the same feed.</p>
+        <p class="field-hint">Pick the feed to download from: its batch is selected when it has one, otherwise all of its episodes, and you can untick what you don't want. A batch is downloaded whole. Future episodes come from the same feed.</p>
         <ul class="list">
           ${result.feeds.length
             ? result.feeds.map(g => html`<${FeedGroup} key=${g.feed_id} group=${g} active=${g.feed_id === feedId} picked=${picked} onFeed=${choose} onToggle=${toggle} />`)
@@ -158,7 +194,7 @@ function PickReleases({ entry, onBack }) {
         </ul>
       </div>
       <div class="add-bar">
-        <span class="muted">${group ? `${picked.size} of ${group.episodes.length} episode${group.episodes.length === 1 ? '' : 's'} from ${group.feed_name}` : 'No feed selected'}</span>
+        <span class="muted">${group ? `${counts.covered.size} of ${counts.offered.size} episode${counts.offered.size === 1 ? '' : 's'} from ${group.feed_name}` : 'No feed selected'}</span>
         <button type="button" class="btn primary" disabled=${!group || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
       </div>` : null}
   </div>`;

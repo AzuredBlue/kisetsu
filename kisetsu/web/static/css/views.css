@@ -310,3 +310,4 @@ section + section { margin-top: .5rem; }
 .add-bar { position: sticky; bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem;
   background: rgb(var(--raised)); border: 1px solid rgb(var(--line)); border-radius: var(--radius-card); box-shadow: 0 8px 24px rgb(0 0 0 / .3); font-size: .8125rem; }
 .add-check.grow { flex: 1; }
+.add-check.held { opacity: .55; cursor: default; }

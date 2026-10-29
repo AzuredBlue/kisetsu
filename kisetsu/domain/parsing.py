@@ -307,6 +307,39 @@ BATCH_REGEX: re.Pattern[str] = re.compile(
 )
 
 
+# An episode range: "(01-12)", "[01 ~ 24]", "01~12", or a bare "01-12" set apart by spaces.
+_RANGE_REGEXES = (
+    re.compile(r"[\[(]\s*(?:EP?\s*)?(\d{1,4})\s*[-~]\s*(?:EP?\s*)?(\d{1,4})\s*[\])]", re.IGNORECASE),
+    re.compile(r"\b(\d{1,4})\s*~\s*(\d{1,4})\b"),
+    re.compile(r"(?:^|\s)(?:EP?)?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)", re.IGNORECASE),
+)
+_BATCH_WORDS = re.compile(r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?|collection)\b\s*[\])]?", re.IGNORECASE)
+
+
+def batch_range(raw_title: str) -> Optional[Tuple[int, int]]:
+    """The first and last episode a batch title names, or None when it names no range."""
+    for regex in _RANGE_REGEXES:
+        found = regex.search(raw_title)
+        if found:
+            first, last = int(found.group(1)), int(found.group(2))
+            if 0 < first < last:
+                return first, last
+    return None
+
+
+def is_batch(raw_title: str) -> bool:
+    """Whether a release holds several episodes in one torrent."""
+    return bool(BATCH_REGEX.search(raw_title)) or batch_range(raw_title) is not None
+
+
+def strip_batch(raw_title: str) -> str:
+    """The title without its batch markers and episode range, so it can be matched to a show like a single release."""
+    text = _BATCH_WORDS.sub(" ", raw_title)
+    for regex in _RANGE_REGEXES:
+        text = regex.sub(" ", text)
+    return " ".join(text.split())
+
+
 def is_valid_release(raw_title: str) -> bool:
     """Reject batches and unwanted lower-resolution releases."""
     if UNWANTED_RESOLUTION_REGEX.search(raw_title):

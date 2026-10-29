@@ -129,3 +129,73 @@ async def test_a_skipped_episode_can_be_wanted_again(web):
     assert web.episode(show, 1).status == EpisodeStatus.WANTED and not web.load(Show, show).completed
     assert (await web.client.post(f"/api/shows/{show}/episodes/{episode}/want")).status_code == 400
     assert web.query(lambda s: s.exec(select(Download)).all()) == []
+
+
+async def test_a_batch_is_offered_and_its_episodes_share_one_torrent_without_its_own_folder(web, tmp_path):
+    _user(web, tmp_path / "Anime")
+    _finished(web)
+    _releases(web)
+    batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
+    web.feeds.searchable[NYAA].append(batch)
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    batches = preview["feeds"][0]["batches"]
+    assert [(b["title"], b["numbers"]) for b in batches] == [(batch.title, [1, 2, 3])]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [batches[0]["item_id"]]})).json()
+    assert body["started"] == 3 and body["skipped"] == 0
+    hashes = web.query(lambda s: {d.info_hash for d in s.exec(select(Download)).all()})
+    assert hashes == {batch.info_hash} and list(web.qbit.truth) == [batch.info_hash]
+    layouts = {call["content_layout"] for call in web.qbit.calls_named("add_torrent")}
+    assert layouts == {"NoSubfolder"}
+
+
+async def test_an_episode_from_a_batch_is_never_replaced_by_a_later_version(web, tmp_path):
+    from kisetsu.services import grab, manual
+
+    _user(web, tmp_path / "Anime")
+    _finished(web)
+    batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
+    web.feeds.searchable[NYAA] = [batch]
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    show_id = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()["show_id"]
+    web.qbit.finish(batch.info_hash)
+    v2 = "[Grp] Sousou no Frieren - 02v2 (1080p).mkv"
+    web.feeds.post(NYAA, v2, START)
+    await web.runtime.jobs.refresh_feeds()
+
+    def regrab(ctx):
+        from kisetsu.services import downloads
+        downloads.settle(ctx)
+        grab.grab_pass(ctx)
+        show = ctx.session.get(Show, show_id)
+        try:
+            manual.manual_grab(ctx, show, v2)
+        except ValueError as e:
+            return str(e)
+
+    refusal = await web.runtime.engine.run(regrab)
+    assert "came in a batch" in refusal
+    assert len(web.qbit.truth) == 1 and web.episode(show_id, 2).status == EpisodeStatus.COMPLETED
+
+
+async def test_single_episodes_after_a_batch_are_still_grabbed_from_the_feed(web, tmp_path):
+    from kisetsu.services import grab
+
+    _user(web, tmp_path / "Anime")
+    _finished(web)
+    batch = article("[Grp] Sousou no Frieren S01 (01-02) [1080p] [Batch]", START - timedelta(days=300))
+    web.feeds.searchable[NYAA] = [batch]
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
+    show_id = body["show_id"]
+    assert web.load(Show, show_id).learned_name is None
+    web.qbit.finish(batch.info_hash)
+    web.feeds.post(NYAA, "[Grp] Sousou no Frieren - 03 (1080p).mkv", START)
+    await web.runtime.jobs.refresh_feeds()
+    await web.runtime.engine.run(lambda ctx: grab.grab_pass(ctx))
+    assert web.episode(show_id, 3).status == EpisodeStatus.DOWNLOADING

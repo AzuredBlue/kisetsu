@@ -304,10 +304,13 @@ class Qbit:
         tags: Iterable[str] = (),
         paused: bool = False,
         ratio_limit: Optional[float] = None,
+        content_layout: Optional[str] = None,
     ) -> None:
         """Add a torrent by URL to an explicit path.
 
         A ``ratio_limit`` of 0 means seed forever; None leaves qBittorrent's own limit alone.
+        ``content_layout`` ("Original", "Subfolder" or "NoSubfolder") overrides qBittorrent's
+        own setting for this torrent.
         """
         kwargs: Dict[str, Any] = {
             "urls": url,
@@ -318,6 +321,8 @@ class Qbit:
             "use_auto_torrent_management": False,
             "share_limit_action": "Stop",
         }
+        if content_layout:
+            kwargs["content_layout"] = content_layout
         tag_text = ",".join(str(tag) for tag in tags)
         if tag_text:
             kwargs["tags"] = tag_text

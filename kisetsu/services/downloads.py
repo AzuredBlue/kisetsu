@@ -22,7 +22,7 @@ from kisetsu.db.schema import (
     FeedItem,
     Show,
 )
-from kisetsu.domain.parsing import same_release
+from kisetsu.domain.parsing import is_batch, same_release
 from kisetsu.domain.patterns import resolve_save_path
 from kisetsu.services import events, feeds, tags
 from kisetsu.services.context import Context
@@ -225,6 +225,8 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
         ctx.qbit.add_torrent(
             dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag, show_tag],
             paused=paused, ratio_limit=ratio,
+            # A batch carries its own top folder; its files go straight into the show's folder instead.
+            content_layout="NoSubfolder" if is_batch(dl.title) else None,
         )
     except QbitUnavailable as e:
         _retry(ctx, dl, episode, str(e), ADD_RETRY)
@@ -246,7 +248,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     if dl.feed_id is not None:
         feed = ctx.session.get(Feed, dl.feed_id)
         if feed is not None:
-            feeds.lock(ctx, show, feed, Evidence.GRAB, learned_name=dl.parsed_title or dl.title, learned_group=dl.release_group)
+            feeds.lock(ctx, show, feed, Evidence.GRAB, learned_name=_learned_name(dl), learned_group=dl.release_group)
     dl.state = DownloadState.ADDING
     ctx.session.add(dl)
     ctx.checkpoint()
@@ -262,6 +264,13 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
         recompute_episode(ctx, episode)
         return
     _exposed(ctx, dl, episode, torrent)
+
+
+def _learned_name(dl: Download) -> Optional[str]:
+    """The name a show's feed is learned by from this download; a batch's name ("... S01 (01-12)") fits no single release."""
+    if is_batch(dl.title):
+        return None
+    return dl.parsed_title or dl.title
 
 
 def _existing(ctx: Context, dl: Download) -> Optional[Torrent]:
@@ -312,7 +321,7 @@ def _exposed(ctx: Context, dl: Download, episode: Episode, torrent: Torrent) -> 
     if show is not None and dl.feed_id is not None and not dl.adopted and show.feed_state not in FIXED_FEED_STATES:
         feed = ctx.session.get(Feed, dl.feed_id)
         if feed is not None:
-            feeds.lock(ctx, show, feed, Evidence.GRAB, learned_name=dl.parsed_title or dl.title, learned_group=dl.release_group)
+            feeds.lock(ctx, show, feed, Evidence.GRAB, learned_name=_learned_name(dl), learned_group=dl.release_group)
     if dl.supersedes_id is not None:
         # Added paused so the old release stays until this one is checked and has finished.
         try:

@@ -171,3 +171,15 @@ class TestMatching(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_batches_are_told_from_single_episodes_and_their_range_is_read():
+    from kisetsu.domain.parsing import batch_range, is_batch, strip_batch
+
+    assert batch_range("[Grp] Sousou no Frieren (01-28) [1080p] [Batch]") == (1, 28)
+    assert batch_range("[Grp] Sousou no Frieren - 01 ~ 12 (1080p)") == (1, 12)
+    assert batch_range("[Grp] Sousou no Frieren - 01-12 [1080p]") == (1, 12)
+    assert is_batch("[Grp] Sousou no Frieren S01 [BD 1080p] [Batch]") and batch_range("[Grp] Sousou no Frieren S01 [BD 1080p] [Batch]") is None
+    assert not is_batch("[Grp] Sousou no Frieren 2 - 05 (1080p).mkv")
+    assert not is_batch("[Grp] Show [x264-10bit] - 03")
+    assert strip_batch("[Grp] Sousou no Frieren (01-28) [1080p] [Batch]") == "[Grp] Sousou no Frieren [1080p]"
