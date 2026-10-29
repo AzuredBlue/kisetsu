@@ -199,6 +199,7 @@ def start_download(
     events.record(
         ctx, EventKind.GRABBED, f"Added {item.title}", show=show, episode=episode.number, feed_id=feed.id, title=item.title,
     )
+    logger.info(f"'{show.title(ctx.settings.title_language)}' Ep {episode.number}: started from {feed.name}.")
     return dl
 
 
@@ -234,6 +235,7 @@ def follow_download(ctx: Context, show: Show, feed: Feed, episode: Episode, item
     else:
         recompute_episode(ctx, episode)
     events.record(ctx, EventKind.GRABBED, f"Added {item.title}", show=show, episode=episode.number, feed_id=feed.id, title=item.title)
+    logger.info(f"'{show.title(ctx.settings.title_language)}' Ep {episode.number}: started from {feed.name}.")
     return dl
 
 
@@ -396,6 +398,7 @@ def _complete(ctx: Context, dl: Download, episode: Episode) -> None:
         return
     if dl.supersedes_id is None:
         events.record(ctx, EventKind.DONE, "Downloaded", show=show, episode=episode.number, feed_id=dl.feed_id, title=dl.title)
+        logger.info(f"'{show.title(ctx.settings.title_language)}' Ep {episode.number}: downloaded.")
         if ctx.settings.desktop_notifications and ctx.notify is not None:
             ctx.notify(f"{show.title(ctx.settings.title_language)} - Episode {episode.number}", "Download finished", show.cover_image)
 
