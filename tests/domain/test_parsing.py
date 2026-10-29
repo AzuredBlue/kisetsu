@@ -21,6 +21,11 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(parsed["episode"], 8)
         self.assertIn("sousou no frieren", parsed["title"].lower())
 
+    def test_final_episode_marker_after_the_number(self):
+        parsed = parse_release_title("[Erai-raws] Ahiru no Sora - 50 END [1080p][Multiple Subtitle].mkv")
+        self.assertEqual(parsed["episode"], 50)
+        self.assertEqual(parsed["title"], "Ahiru no Sora")
+
     def test_release_versions(self):
         self.assertEqual(extract_release_version("[Group] Show - 01 (1080p).mkv"), 1)
         self.assertEqual(extract_release_version("[Group] Show - 01v2 (1080p).mkv"), 2)

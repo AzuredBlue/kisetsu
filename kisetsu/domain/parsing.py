@@ -168,7 +168,7 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
             else:
                 # Exclude 4-digit years from standalone episode matching unless prefixed by EP/E/#
                 ep_matches = list(re.finditer(
-                    r"(?:\s*-\s*|\s+)(?:EP?|#)?(\d{1,4})(?:\s*\(|\s*\[|\s*\.|\s*$)",
+                    r"(?:\s*-\s*|\s+)(?:EP?|#)?(\d{1,4})(?:\s+(?:END|FINAL))?(?:\s*\(|\s*\[|\s*\.|\s*$)",
                     primary_segment,
                     re.IGNORECASE,
                 ))
