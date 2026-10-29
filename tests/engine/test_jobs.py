@@ -302,3 +302,11 @@ def test_history_records_what_a_failed_replacement_did_exactly_once(env):
     assert delays[-1] == 300.0
     assert env.query(lambda s: [d.state for d in s.exec(select(Download)).all()]).count(DownloadState.FAILED) == 1
     assert env.query(lambda s: s.exec(select(Show)).one()).anilist_id == 1
+
+
+def test_a_show_added_by_hand_gets_its_colours(env):
+    async def go():
+        await env.jobs.after_manual_add()
+
+    run(env, go)
+    assert "palette" in env.pokes

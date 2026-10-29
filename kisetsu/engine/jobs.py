@@ -380,7 +380,7 @@ class Jobs:
             await self.refresh_schedules()
         except Exception as e:
             logger.warning(f"Could not date the new show's episodes: {e}")
-        for name in ("grab", "settle", "hunt"):
+        for name in ("grab", "settle", "hunt", "palette"):
             self.poke(name)
 
     # -- upkeep -------------------------------------------------------------
