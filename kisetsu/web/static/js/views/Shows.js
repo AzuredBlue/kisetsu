@@ -82,7 +82,7 @@ export function Shows() {
   </div>`;
   return html`<div class="page full">
     <${Section} title="Releasing" tone="" count=${groups.releasing.length} list=${groups.releasing} view=${view} swap=${swap} now=${now} empty="No currently releasing anime." tools=${tools} />
-    ${groups.planned.length ? html`<${Section} title="Planned" tone="info" count=${groups.planned.length} list=${groups.planned} view=${view} swap=${swap} now=${now} />` : null}
     ${groups.completed.length ? html`<${Section} title="Completed" tone="done" count=${groups.completed.length} list=${groups.completed} view=${view} swap=${swap} now=${now} />` : null}
+    ${groups.planned.length ? html`<${Section} title="Planned" tone="info" count=${groups.planned.length} list=${groups.planned} view=${view} swap=${swap} now=${now} />` : null}
   </div>`;
 }
