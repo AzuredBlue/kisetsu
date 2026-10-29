@@ -75,7 +75,7 @@ export function Shows() {
     } catch (err) { /* shown by apiFetch */ }
   };
   const tools = html`<div class="row wrap">
-    <button type="button" class="btn sm primary" onClick=${() => go('add')} title="Add a show from your AniList list and pick the feed to download it from"><${Icon} name="plus" small /><span>Add show</span></button>
+    <button type="button" class="btn sm" onClick=${() => go('add')} title="Add a show from your AniList list and pick the feed to download it from"><${Icon} name="plus" small /><span>Add show</span></button>
     <button type="button" class="btn sm" onClick=${autoDiscover} title="Reset every show to auto-discover. Hand-picked feeds are cleared; shows locked to a feed they downloaded from are kept.">Auto-discover</button>
     <${Seg} small label="Sort" value=${sort} onChange=${changeSort} options=${[['airing', 'Airing', 'clock', 'Soonest airing first'], ['title', 'A-Z', 'az', 'A to Z'], ['default', 'Default', 'list', 'Order added']]} />
     <${Seg} small icons label="View" value=${view} onChange=${changeView} options=${[['grid', 'Grid view', 'grid', 'Poster grid'], ['list', 'List view', 'list', 'Compact list']]} />
