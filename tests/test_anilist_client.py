@@ -345,3 +345,23 @@ async def test_user_exists_raises_when_anilist_misbehaves(monkeypatch):
     monkeypatch.setattr("httpx2.AsyncClient.post", AsyncMock(return_value=answer(429)))
     with pytest.raises(AniListError):
         await AniListClient().user_exists("alvaro")
+
+
+@pytest.mark.asyncio
+async def test_paused_and_dropped_entries_only_update_followed_shows_and_the_whole_list_is_kept():
+    client = AniListClient()
+    airing = {"status": "RELEASING", "season": "FALL", "seasonYear": 2026, "episodes": 12}
+    payload = {"MediaListCollection": {"lists": [{"entries": [
+        {"status": "PAUSED", "media": {"id": 1, "title": {"romaji": "Paused Airing"}, **airing}},
+        {"status": "DROPPED", "media": {"id": 2, "title": {"romaji": "Dropped Airing"}, **airing}},
+        {"status": "CURRENT", "media": {"id": 3, "title": {"romaji": "Old Backlog"}, "status": "FINISHED", "season": "FALL", "seasonYear": 2015, "synonyms": ["Backlog"]}},
+    ]}]}}
+    with patch.object(client, "_post_query", new_callable=AsyncMock) as mock_post, \
+         patch("kisetsu.clients.anilist.get_current_and_next_season", return_value=(("FALL", 2026), ("WINTER", 2027))):
+        mock_post.return_value = payload
+        assert await client.fetch_user_seasonal_anime("TestUser") == []
+        shows = await client.fetch_user_seasonal_anime("TestUser", monitored_anilist_ids={1, 3})
+    assert {s["anilist_id"] for s in shows} == {1, 3}
+    assert {e["anilist_id"]: e["list_status"] for e in client.user_list} == {1: "PAUSED", 2: "DROPPED", 3: "CURRENT"}
+    assert "Backlog" in next(e for e in client.user_list if e["anilist_id"] == 3)["aliases"]
+    assert client.user_list_at is not None

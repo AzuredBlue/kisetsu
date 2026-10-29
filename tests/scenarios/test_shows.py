@@ -45,12 +45,10 @@ def test_shows_added_while_everything_is_paused_start_paused_by_the_bulk_action(
     assert show.paused and show.paused_by == PausedBy.ALL
 
 
-def test_a_show_completed_by_the_list_status_reopens_when_the_status_goes_back_to_current(world):
+def test_finishing_a_show_on_the_list_keeps_it_downloading(world):
     show = apply(world, entry()).added[0]
-    apply(world, entry(list_status="COMPLETED"))
-    assert show.completed and show.next_airing_episode is None
-    apply(world, entry(list_status="CURRENT", next_airing_episode=5, next_airing_at=START + timedelta(days=7)))
-    assert not show.completed and show.next_airing_episode == 5 and show.next_airing_at is not None
+    apply(world, entry(list_status="COMPLETED", next_airing_episode=5, next_airing_at=START + timedelta(days=7)))
+    assert not show.completed and show.next_airing_episode == 5 and show.list_status == "COMPLETED"
 
 
 def test_the_sync_refreshes_aliases_but_never_absorbs_or_removes_hand_written_ones(world):
@@ -80,12 +78,10 @@ def test_a_deleted_show_stays_out_until_it_leaves_the_list_and_returns(world):
     assert len(apply(world, entry()).added) == 1
 
 
-def test_a_show_marked_completed_on_the_list_is_completed_even_with_episodes_left(world):
-    show = apply(world, entry()).added[0]
-    apply(world, entry(list_status="COMPLETED"))
-    assert show.completed and show.next_airing_episode is None
-    apply(world, entry(list_status="COMPLETED", next_airing_episode=5))
-    assert show.completed
+def test_a_show_marked_completed_on_the_list_is_not_completed_while_episodes_are_left(world):
+    show = apply(world, entry(status="FINISHED", total_episodes=2, next_airing_episode=None, next_airing_at=None)).added[0]
+    apply(world, entry(list_status="COMPLETED", status="FINISHED", total_episodes=2, next_airing_episode=None, next_airing_at=None))
+    assert not show.completed
 
 
 def test_a_finished_show_completes_only_when_every_episode_is_accounted_for(world):
@@ -128,16 +124,13 @@ def test_a_show_completed_on_downloads_alone_reopens_when_that_evidence_goes(wor
     assert not show.completed and show.schedule_synced_at is None
 
 
-def test_a_show_that_left_the_list_is_removed_but_an_empty_list_is_a_bad_read(world):
-    first = apply(world, entry(1), entry(2, "Other")).added
-    existing = {s.anilist_id: s for s in first}
-    ctx = world.ctx()
-    assert "empty list" in shows.remove_off_list(ctx, [], existing)[0]
-    assert len(world.session.exec(select(Show)).all()) == 2
-    logs = shows.remove_off_list(ctx, [entry(1)], existing)
+def test_a_show_that_left_the_list_stays_until_the_user_deletes_it(world):
+    from kisetsu.services import cycle
+
+    apply(world, entry(1), entry(2, "Other"))
+    cycle.apply_sync(world.ctx(), [entry(1)])
     world.commit()
-    assert logs == ["Removed 'Other': no longer on your AniList list."]
-    assert [s.anilist_id for s in world.session.exec(select(Show)).all()] == [1]
+    assert {s.anilist_id for s in world.session.exec(select(Show)).all()} == {1, 2}
 
 
 def test_deleting_a_show_cancels_what_it_has_in_flight_and_can_remove_its_torrents(world):
@@ -215,19 +208,15 @@ def test_an_overdue_episode_is_recorded_as_aired_and_a_final_one_completes_the_s
     assert finale.completed and "finished" in logs[0]
 
 
-def test_only_completed_past_season_shows_with_everything_downloaded_are_pruned(world):
-    old = dict(season_name="SUMMER", season_year=2025)
-    done = world.show(1, "Done", episodes=1, total_episodes=1, completed=True, **old)
+def test_housekeeping_never_removes_a_finished_past_season_show(world):
+    from kisetsu.services import cycle
+
+    done = world.show(1, "Done", episodes=1, total_episodes=1, completed=True, season_name="SUMMER", season_year=2025)
     world.episode(done, 1).status = EpisodeStatus.COMPLETED
-    movie = world.show(2, "Movie", episodes=1, total_episodes=1, **old)
-    gap = world.show(3, "Gap", episodes=1, total_episodes=1, completed=True, **old)
-    current = world.show(4, "Current", episodes=1, total_episodes=1, completed=True, season_name="FALL", season_year=2026)
-    world.episode(current, 1).status = EpisodeStatus.COMPLETED
     world.commit()
-    logs = shows.prune_past_seasons(world.ctx())
+    cycle.housekeeping(world.ctx())
     world.commit()
-    assert logs == ["Removed finished show 'Done' (SUMMER 2025)."]
-    assert {s.id for s in world.session.exec(select(Show)).all()} == {movie.id, gap.id, current.id}
+    assert [s.id for s in world.session.exec(select(Show)).all()] == [done.id]
 
 
 def test_pausing_cancels_unadded_grabs_but_never_touches_added_torrents(world):

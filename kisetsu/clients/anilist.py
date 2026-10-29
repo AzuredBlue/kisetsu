@@ -28,6 +28,8 @@ PASS_BUDGET_SECONDS = 30.0
 PASS_RESUME_SECONDS = 30.0
 # Shows asked about in one batched schedule query.
 UPCOMING_CHUNK = 40
+# List statuses whose entries only update shows already followed; the sync never adds them as new.
+FOLLOWED_ONLY_LIST_STATUSES = ("COMPLETED", "PAUSED", "DROPPED", "REPEATING")
 
 USER_EXISTS_QUERY = """
 query ($name: String) {
@@ -37,7 +39,7 @@ query ($name: String) {
 
 USER_SEASONAL_QUERY = """
 query ($userName: String) {
-  MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING, COMPLETED]) {
+  MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]) {
     lists {
       entries {
         status
@@ -99,6 +101,41 @@ query ($ids: [Int], $page: Int, $after: Int) {
   }
 }
 """
+
+
+def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, Any]:
+    """One list entry in the shape the rest of Kisetsu reads: titles, aliases and broadcast state."""
+    media_id = media["id"]
+    titles = media.get("title") or {}
+    aliases = set()
+    for key in ["romaji", "english", "native", "userPreferred"]:
+        val = titles.get(key)
+        if val and isinstance(val, str) and val.strip():
+            aliases.add(val.strip())
+    for syn in media.get("synonyms") or []:
+        if syn and isinstance(syn, str) and syn.strip():
+            aliases.add(syn.strip())
+    next_airing = media.get("nextAiringEpisode")
+    next_airing_at = None
+    if next_airing and next_airing.get("airingAt"):
+        next_airing_at = datetime.fromtimestamp(next_airing["airingAt"], tz=timezone.utc)
+    return {
+        "anilist_id": media_id,
+        "display_name": titles.get("userPreferred") or titles.get("english") or titles.get("romaji") or f"Anime_{media_id}",
+        "title_romaji": titles.get("romaji") or "",
+        "title_english": titles.get("english") or "",
+        "aliases": list(aliases),
+        # The user's own list status (CURRENT/PLANNING/COMPLETED/...), distinct from the broadcast "status".
+        "list_status": list_status or "",
+        "status": media.get("status") or "UNKNOWN",
+        "total_episodes": media.get("episodes"),
+        "next_airing_episode": next_airing.get("episode") if next_airing else None,
+        "next_airing_at": next_airing_at,
+        "season": media.get("season"),
+        "season_year": media.get("seasonYear"),
+        "cover_image": (media.get("coverImage") or {}).get("large") or "",
+        "banner_image": media.get("bannerImage") or "",
+    }
 
 
 class AniListError(Exception):
@@ -266,6 +303,8 @@ class AniListClient:
     def __init__(self, timeout: float = 15.0):
         self.timeout = timeout
         self.last_sync_at: Optional[datetime] = None
+        self.user_list: List[Dict[str, Any]] = []
+        self.user_list_at: Optional[datetime] = None
 
     def seconds_since_last_sync(self, now: Optional[datetime] = None) -> Optional[float]:
         """Seconds since the last successful query, or None if there has not been one."""
@@ -372,6 +411,26 @@ class AniListClient:
             raise AniListError("AniList returned an unreadable answer.") from e
         return bool((data.get("data") or {}).get("User"))
 
+    async def fetch_user_list(self, username: str) -> List[Dict[str, Any]]:
+        """Every entry on the user's list in the statuses Kisetsu reads, unfiltered.
+
+        The answer is kept as ``user_list`` (with ``user_list_at``) so the add-show search
+        can look through it without asking AniList again.
+        """
+        if not username.strip():
+            return []
+        data = await self._post_query(USER_SEASONAL_QUERY, {"userName": username.strip()})
+        self.last_sync_at = datetime.now(timezone.utc)
+        entries: Dict[int, Dict[str, Any]] = {}
+        for l in (data.get("MediaListCollection") or {}).get("lists", []):
+            for entry in l.get("entries", []):
+                media = entry.get("media")
+                if media and media["id"] not in entries:
+                    entries[media["id"]] = _list_entry(entry.get("status"), media)
+        self.user_list = list(entries.values())
+        self.user_list_at = self.last_sync_at
+        return list(self.user_list)
+
     async def fetch_user_seasonal_anime(
         self, username: str, monitored_anilist_ids: Optional[Set[int]] = None
     ) -> List[Dict[str, Any]]:
@@ -380,108 +439,32 @@ class AniListClient:
         1. Currently releasing anime
         2. Upcoming anime planned for next season (or current season if not yet released)
         3. Finished anime from the current season (or extending cour monitored shows)
-        4. Already-monitored anime the user has marked COMPLETED on their list
+        4. Already-monitored anime, whatever their list status
 
-        Each returned dict carries the entry's own list status as "list_status", so
-        the caller can treat "I finished watching this" as a completion signal.
+        Each returned dict carries the entry's own list status as "list_status".
         """
-        if not username.strip():
-            return []
-
-        data = await self._post_query(USER_SEASONAL_QUERY, {"userName": username.strip()})
-        self.last_sync_at = datetime.now(timezone.utc)
-        collection = data.get("MediaListCollection") or {}
-        lists = collection.get("lists", [])
-
+        entries = await self.fetch_user_list(username)
         (cur_season, cur_year), (next_season, next_year) = get_current_and_next_season()
-
-        anime_dict: Dict[int, Dict[str, Any]] = {}
-        for l in lists:
-            for entry in l.get("entries", []):
-                media = entry.get("media")
-                if not media:
-                    continue
-
-                media_id = media["id"]
-                if media_id in anime_dict:
-                    continue
-
-                # The user's own list status (CURRENT/PLANNING/COMPLETED), distinct
-                # from media["status"] which is the show's broadcast state.
-                list_status = entry.get("status")
-
-                status = media.get("status")
-                season = media.get("season")
-                season_year = media.get("seasonYear")
-                next_airing = media.get("nextAiringEpisode")
-
-                is_currently_releasing = (status == "RELEASING")
-                is_current_or_next_season_planned = (
-                    (season == next_season and season_year == next_year) or
-                    (season == cur_season and season_year == cur_year and status == "NOT_YET_RELEASED")
-                )
-                is_current_season_finished = (
-                    season == cur_season and season_year == cur_year and status == "FINISHED"
-                )
-                is_monitored = bool(monitored_anilist_ids and media_id in monitored_anilist_ids)
-
-                # A list-completed entry means the user has finished watching, so it
-                # must never be introduced as a new show - the broadcast-state clauses
-                # below can match an old finished show from a current season and would
-                # otherwise have us arm a download rule for something already watched.
-                # Monitored shows still fall through, because the caller has to see
-                # them in order to stand their existing rule down.
-                if list_status == "COMPLETED" and not is_monitored:
-                    continue
-
-                # is_monitored also carries list-completed entries through: a show the
-                # user finished watching is no longer CURRENT/PLANNING, so none of the
-                # broadcast-state clauses would match, but we still need to see it in
-                # order to mark it COMPLETED. The rest of the completed backlog falls
-                # out here.
-                if not (is_currently_releasing or is_current_or_next_season_planned or is_current_season_finished or is_monitored):
-                    continue
-
-                titles = media.get("title", {})
-                aliases = set()
-                for key in ["romaji", "english", "native", "userPreferred"]:
-                    val = titles.get(key)
-                    if val and isinstance(val, str) and val.strip():
-                        aliases.add(val.strip())
-                for syn in media.get("synonyms", []):
-                    if syn and isinstance(syn, str) and syn.strip():
-                        aliases.add(syn.strip())
-
-                next_airing_episode = next_airing.get("episode") if next_airing else None
-                next_airing_at = None
-                if next_airing and next_airing.get("airingAt"):
-                    next_airing_at = datetime.fromtimestamp(next_airing["airingAt"], tz=timezone.utc)
-
-                preferred_title = (
-                    titles.get("userPreferred")
-                    or titles.get("english")
-                    or titles.get("romaji")
-                    or f"Anime_{media_id}"
-                )
-
-                anime_dict[media_id] = {
-                    "anilist_id": media_id,
-                    "display_name": preferred_title,
-                    "title_romaji": titles.get("romaji") or "",
-                    "title_english": titles.get("english") or "",
-                    "aliases": list(aliases),
-                    "list_status": list_status or "",
-                    "status": status or "UNKNOWN",
-                    "total_episodes": media.get("episodes"),
-                    "next_airing_episode": next_airing_episode,
-                    "next_airing_at": next_airing_at,
-                    "season": season,
-                    "season_year": season_year,
-                    "cover_image": (media.get("coverImage") or {}).get("large") or "",
-                    "banner_image": media.get("bannerImage") or "",
-                }
-
-        return list(anime_dict.values())
+        result = []
+        for item in entries:
+            status, season, season_year = item["status"], item["season"], item["season_year"]
+            is_monitored = bool(monitored_anilist_ids and item["anilist_id"] in monitored_anilist_ids)
+            # Only Watching and Planning entries are introduced as new shows; finished, paused or
+            # dropped ones come through only for shows already followed, so they stay up to date.
+            if item["list_status"] in FOLLOWED_ONLY_LIST_STATUSES and not is_monitored:
+                continue
+            is_currently_releasing = (status == "RELEASING")
+            is_current_or_next_season_planned = (
+                (season == next_season and season_year == next_year) or
+                (season == cur_season and season_year == cur_year and status == "NOT_YET_RELEASED")
+            )
+            is_current_season_finished = (
+                season == cur_season and season_year == cur_year and status == "FINISHED"
+            )
+            if not (is_currently_releasing or is_current_or_next_season_planned or is_current_season_finished or is_monitored):
+                continue
+            result.append(dict(item))
+        return result
 
     async def fetch_media_airing_schedules(
         self,

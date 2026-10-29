@@ -68,11 +68,10 @@ def sync_input(ctx: Context) -> SyncInput:
 
 
 def apply_sync(ctx: Context, seasonal: List[Dict[str, Any]]) -> SyncApplied:
-    """Take AniList's list in: update, add and remove shows, then settle what the new air times imply."""
+    """Take AniList's list in: update and add shows, then settle what the new air times imply."""
     existing = {s.anilist_id: s for s in ctx.session.exec(select(Show)).all()}
     applied = shows.apply_anilist(ctx, seasonal, existing)
     logs = list(applied.logs)
-    logs.extend(shows.remove_off_list(ctx, seasonal, existing))
     logs.extend(shows.rollover(ctx))
     _say(logs)
     set_state(ctx, LAST_SYNC_KEY, ctx.now.isoformat())
@@ -157,12 +156,9 @@ def release_hold(ctx: Context, show_ids: List[int]) -> None:
 
 
 def housekeeping(ctx: Context) -> Dict[str, int]:
-    pruned = shows.prune_past_seasons(ctx)
-    _say(pruned)
     removed = {
         "items": ingest.prune(ctx),
         "tags": downloads.sweep_tags(ctx) if ctx.qbit is not None else 0,
-        "shows": len(pruned),
     }
     tags.sync_tags(ctx)
     tags.sweep_retired(ctx)

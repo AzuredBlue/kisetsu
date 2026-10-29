@@ -1,4 +1,7 @@
-"""The shows Kisetsu follows: taking AniList's list and schedules in, completion, pausing, editing and deleting."""
+"""The shows Kisetsu follows: taking AniList's list and schedules in, completion, pausing, editing and deleting.
+
+A show is never deleted on its own: it stays until the user deletes it.
+"""
 
 import logging
 from dataclasses import dataclass, field
@@ -7,7 +10,6 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlmodel import select
 
-from kisetsu.clients.anilist import get_current_and_next_season
 from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.db.schema import (
@@ -36,11 +38,7 @@ SCHEDULE_REFRESH_LOOKBACK = timedelta(days=3)
 SCHEDULE_FULL_LOOKBACK = timedelta(days=180)
 # A finished show keeps its season open this long after the finale aired if it was missed.
 FINALE_GRACE = timedelta(days=HUNTING_RECENT_DAYS)
-# A past-season show is pruned only this long after its last air time.
-PRUNE_GRACE = timedelta(days=7)
 ALL_PAUSED_KEY = "all_paused"
-
-_SEASON_ORDER = {"WINTER": 1, "SPRING": 2, "SUMMER": 3, "FALL": 4}
 
 
 @dataclass
@@ -134,16 +132,16 @@ def _update_existing(ctx: Context, show: Show, data: Dict[str, Any], logs: List[
         updated = True
 
     name = show.title(ctx.settings.title_language)
-    marked_complete = data.get("list_status") == "COMPLETED"
+    # The user's own list status never completes a show: a show finished watching keeps downloading what it lacks.
     finished = data.get("status") == "FINISHED" and data.get("next_airing_episode") is None
-    if marked_complete or finished:
-        if marked_complete or final_episode_accounted(ctx, show):
+    if finished:
+        if final_episode_accounted(ctx, show):
             updated |= _set_if(show, "next_airing_episode", None)
             updated |= _set_if(show, "next_airing_at", None)
             if not show.completed:
                 show.completed = True
                 updated = True
-                logs.append(f"'{name}' finished on AniList." if marked_complete else f"'{name}' finished ({show.total_episodes}/{show.total_episodes} episodes).")
+                logs.append(f"'{name}' finished ({show.total_episodes}/{show.total_episodes} episodes).")
         else:
             final_ep = show.total_episodes or show.next_airing_episode
             if final_ep:
@@ -152,9 +150,8 @@ def _update_existing(ctx: Context, show: Show, data: Dict[str, Any], logs: List[
         updated |= _set_if(show, "next_airing_episode", data.get("next_airing_episode"))
         updated |= _set_if(show, "next_airing_at", data.get("next_airing_at"))
 
-    # A show completed on download evidence alone is reopened if that evidence was wrong.
-    # A completion the user asked for on AniList is deliberate and stands.
-    if show.completed and not marked_complete and not final_episode_accounted(ctx, show):
+    # A show completed on download evidence is reopened if that evidence was wrong.
+    if show.completed and not final_episode_accounted(ctx, show):
         show.completed = False
         show.schedule_synced_at = None
         updated = True
@@ -213,27 +210,6 @@ def apply_anilist(ctx: Context, seasonal_list: List[Dict[str, Any]], existing: O
         result.logs.append(f"Added {len(result.added)} new show(s) from AniList.")
         ctx.emit("shows")
     return result
-
-
-def remove_off_list(ctx: Context, seasonal_list: List[Dict[str, Any]], existing: Dict[int, Show]) -> List[str]:
-    """Delete followed shows that are no longer on the user's AniList list.
-
-    Every monitored show on a Watching, Planning or Completed entry comes back from the
-    fetch, so a missing one was dropped. An empty response while shows are followed is
-    treated as a bad read, not as the user emptying their list.
-    """
-    returned = {data.get("anilist_id") or data.get("id") for data in seasonal_list}
-    gone = [show for anilist_id, show in existing.items() if anilist_id not in returned]
-    if not gone:
-        return []
-    if not seasonal_list:
-        return [f"AniList returned an empty list; kept all {len(gone)} show(s)."]
-    logs = []
-    for show in gone:
-        name = show.title(ctx.settings.title_language)
-        delete_show(ctx, show, reason="Show left the AniList Watching/Planning list.")
-        logs.append(f"Removed '{name}': no longer on your AniList list.")
-    return logs
 
 
 def delete_show(
@@ -368,33 +344,6 @@ def rollover(ctx: Context) -> List[str]:
         ctx.session.add(episode)
     if logs:
         ctx.emit("shows")
-    return logs
-
-
-def prune_past_seasons(ctx: Context) -> List[str]:
-    """Remove completed shows from past seasons when the next season begins.
-
-    Continuing cours that extend into the current or a future season are kept, and so is
-    any show that is not completed: a film waiting months for its release stays.
-    """
-    logs: List[str] = []
-    (current_season, current_year), _ = get_current_and_next_season(ctx.now)
-    current_index = current_year * 10 + _SEASON_ORDER.get(current_season.upper(), 0)
-    for show in ctx.session.exec(select(Show)).all():
-        if not show.season_year or not show.season_name or not show.completed:
-            continue
-        if show.season_year * 10 + _SEASON_ORDER.get(show.season_name.upper(), 0) >= current_index:
-            continue
-        if show.next_airing_at and show.next_airing_at > ctx.now - PRUNE_GRACE:
-            continue
-        episodes = ctx.session.exec(
-            select(Episode).where(Episode.show_id == show.id, Episode.number <= (show.total_episodes or 9999))
-        ).all()
-        if any(e.status != EpisodeStatus.COMPLETED for e in episodes):
-            continue
-        name = show.title(ctx.settings.title_language)
-        delete_show(ctx, show, reason="Show pruned at season change.")
-        logs.append(f"Removed finished show '{name}' ({show.season_name} {show.season_year}).")
     return logs
 
 
