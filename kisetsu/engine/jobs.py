@@ -51,7 +51,6 @@ class Jobs:
         fetcher: Optional[Fetcher] = None,
         searcher: Callable[..., Awaitable[Any]] = sites.search_feed,
         fetch_hues: Callable[..., Awaitable[Any]] = palette_client.fetch_hues,
-        pause: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self.engine = engine
         self.scheduler = scheduler
@@ -60,7 +59,6 @@ class Jobs:
         self._fetcher = fetcher
         self.searcher = searcher
         self.fetch_hues = fetch_hues
-        self.pause = pause
         self.ready = asyncio.Event()
         self.backoff = rss.Backoff()
         self.backfill_requests: Set[int] = set()
@@ -348,11 +346,9 @@ class Jobs:
 
     async def _search(self, due: "List[backfill.Due]") -> int:
         added = 0
-        for position, item in enumerate(due):
-            if position:
-                await self.pause(sites.REQUEST_GAP_SECONDS)
+        for item in due:
             matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i)))
-            found = await backfill.search(self.http, item, matcher, self.engine.clock(), pause=self.pause, searcher=self.searcher)
+            found = await backfill.search(self.http, item, matcher, self.engine.clock(), searcher=self.searcher)
             added += await self.engine.run(backfill.apply, item, found)
             if found.stopped:
                 logger.warning(f"Past-release search stopped: {found.stopped}")
@@ -366,7 +362,7 @@ class Jobs:
         if plan.terms and plan.feeds:
             total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
             due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
-            found = await backfill.search(self.http, due, addshow.matcher_for(entry), self.engine.clock(), pause=self.pause, searcher=self.searcher)
+            found = await backfill.search(self.http, due, addshow.matcher_for(entry), self.engine.clock(), searcher=self.searcher)
             stopped = found.stopped
             if found.articles:
                 await self.engine.run(addshow.store_found, found.articles)

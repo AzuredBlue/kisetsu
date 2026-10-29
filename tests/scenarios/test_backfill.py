@@ -22,14 +22,10 @@ def run_search(world, item, show):
     async def fake(client, url, term, now=None):
         return await world.feeds.search(url, term)
 
-    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), pause=_no_pause, searcher=fake))
+    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=fake))
     added = backfill.apply(world.ctx(), item, found)
     world.commit()
     return found, added
-
-
-async def _no_pause(seconds):
-    return None
 
 
 def test_a_show_with_an_aired_episode_no_item_supplies_is_due_for_a_search(world):
@@ -106,7 +102,7 @@ def test_a_rate_limited_site_stops_the_search_and_it_is_tried_again(world):
     async def limited(client, url, term, now=None):
         raise FeedFetchError("nyaa.si is rate limiting requests")
 
-    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), pause=_no_pause, searcher=limited))
+    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=limited))
     backfill.apply(world.ctx(), item, found)
     assert found.stopped and len(backfill.due(world.ctx())) == 1
 
@@ -134,7 +130,7 @@ def test_search_results_are_matched_only_to_the_show_that_was_searched(world):
         return list(both)
 
     [item] = [i for i in backfill.due(world.ctx()) if i.show_id == show.id]
-    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), pause=_no_pause, searcher=everything))
+    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=everything))
     backfill.apply(world.ctx(), item, found)
     world.commit()
     assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {show.id}

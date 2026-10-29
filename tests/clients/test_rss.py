@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 import httpx2
 import pytest
 
+from kisetsu.clients import rss
 from kisetsu.clients.rss import (
     Backoff,
     FeedFetchError,
+    HostGate,
     fetch_feed,
     normalize_info_hash,
     parse_date,
@@ -132,3 +134,75 @@ def test_backoff_doubles_up_to_its_cap_and_resets():
     backoff.succeeded("f")
     assert backoff.ready("f", now)
     assert backoff.failed("f", now) == now + timedelta(minutes=1)
+
+
+class _Clock:
+    """A monotonic clock that a wait moves forward instead of sleeping."""
+
+    def __init__(self):
+        self.now = 0.0
+        self.slept = []
+
+    def __call__(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.slept.append(seconds)
+        self.now += seconds
+
+
+def _gate(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(rss, "_host_gate", HostGate(sleep=clock.sleep, clock=clock))
+    return clock
+
+
+def _answers(*responses):
+    calls = []
+
+    def handler(request):
+        calls.append(request.url)
+        return responses[min(len(calls), len(responses)) - 1]
+
+    return handler, calls
+
+
+def test_requests_to_one_host_are_not_spaced_apart(monkeypatch):
+    clock = _gate(monkeypatch)
+    for _ in range(3):
+        _fetch(lambda request: httpx2.Response(200, content=NYAA))
+    assert clock.slept == []
+
+
+def test_a_429_is_waited_out_for_as_long_as_the_site_asks_then_retried(monkeypatch):
+    clock = _gate(monkeypatch)
+    handler, calls = _answers(httpx2.Response(429, headers={"Retry-After": "3"}), httpx2.Response(200, content=NYAA))
+    assert len(_fetch(handler)) == 1
+    assert clock.slept == [3.0] and len(calls) == 2
+
+
+def test_a_429_naming_no_wait_waits_the_default(monkeypatch):
+    clock = _gate(monkeypatch)
+    handler, _ = _answers(httpx2.Response(429), httpx2.Response(200, content=NYAA))
+    _fetch(handler)
+    assert clock.slept == [rss.RATE_LIMIT_WAIT_SECONDS]
+
+
+def test_a_site_that_keeps_rate_limiting_is_given_up_on(monkeypatch):
+    _gate(monkeypatch)
+    handler, calls = _answers(httpx2.Response(429, headers={"Retry-After": "1"}))
+    with pytest.raises(FeedFetchError, match="rate limiting"):
+        _fetch(handler)
+    assert len(calls) == rss.RATE_LIMIT_RETRIES + 1
+
+
+def test_a_long_rate_limit_fails_at_once_and_holds_back_the_hosts_next_requests(monkeypatch):
+    clock = _gate(monkeypatch)
+    handler, calls = _answers(httpx2.Response(429, headers={"Retry-After": "600"}), httpx2.Response(200, content=NYAA))
+    with pytest.raises(FeedFetchError, match="rate limiting"):
+        _fetch(handler)
+    with pytest.raises(FeedFetchError, match="rate limiting"):
+        _fetch(handler)
+    assert len(calls) == 1 and clock.slept == []
+    clock.now += 600
+    assert len(_fetch(handler)) == 1

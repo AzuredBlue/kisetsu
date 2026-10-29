@@ -15,8 +15,6 @@ import httpx2
 
 from kisetsu.clients.rss import FeedArticle, fetch_bytes, magnet_parts, normalize_info_hash, parse_date, parse_feed
 
-# Seconds between two requests to the same site.
-REQUEST_GAP_SECONDS = 1.5
 # Search terms per show.
 MAX_TERMS = 3
 

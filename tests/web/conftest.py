@@ -34,16 +34,13 @@ class Web:
         scheduler = Scheduler()
         scheduler.poke = lambda name, delay=0.0: self.pokes.append(name)
 
-        async def pause(seconds):
-            return None
-
         async def search(client, url, term, now=None):
             return await self.feeds.search(url, term)
 
         async def hues(*urls):
             return True, None
 
-        jobs = Jobs(engine, scheduler, anilist=self.anilist, fetcher=self.feeds.fetch, searcher=search, fetch_hues=hues, pause=pause)
+        jobs = Jobs(engine, scheduler, anilist=self.anilist, fetcher=self.feeds.fetch, searcher=search, fetch_hues=hues)
         self.probe_result = {"app_version": "v5.3.0", "api_version": "2.16.2"}
 
         def probe(host, username, password):

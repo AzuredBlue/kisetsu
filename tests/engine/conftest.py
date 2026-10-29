@@ -22,10 +22,6 @@ class Env:
         self.feeds = FakeFeeds()
         self.engine = Engine(self.db, clock=self.clock, qbit_factory=lambda *a, **k: self.qbit)
         self.scheduler = Scheduler()
-        self.paused = []
-
-        async def pause(seconds):
-            self.paused.append(seconds)
 
         async def search(client, url, term, now=None):
             return await self.feeds.search(url, term)
@@ -35,7 +31,7 @@ class Env:
 
         self.jobs = Jobs(
             self.engine, self.scheduler, anilist=self.anilist, fetcher=self.feeds.fetch,
-            searcher=search, fetch_hues=hues, pause=pause,
+            searcher=search, fetch_hues=hues,
         )
         self.pokes = []
         self.scheduler.poke = lambda name, delay=0.0: self.pokes.append(name)

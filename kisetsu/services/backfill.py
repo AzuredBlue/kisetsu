@@ -144,23 +144,18 @@ async def _search_site(
     site_feeds: List[Feed],
     show_matcher,
     now: datetime,
-    pause,
     searcher,
 ) -> Searched:
-    """Search one site's feeds for the show, spacing the requests apart.
+    """Search one site's feeds for the show, one request after another.
 
     A feed's remaining terms are skipped once its results already cover every missing
     episode; until then the next term may still reach releases the earlier ones did not.
     """
     found = Searched()
     cache: Dict[str, dict] = {}
-    requests = 0
     for feed in site_feeds:
         covered: set = set()
         for term in item.terms:
-            if requests:
-                await pause(sites.REQUEST_GAP_SECONDS)
-            requests += 1
             try:
                 articles = await searcher(client, feed.url, term, now=now)
             except FeedFetchError as e:
@@ -185,14 +180,13 @@ async def search(
     item: Due,
     show_matcher,
     now: datetime,
-    pause=asyncio.sleep,
     searcher=sites.search_feed,
 ) -> Searched:
-    """Run the searches for one show: sites in parallel, each site paced."""
+    """Run the searches for one show: sites in parallel, each site's requests in turn."""
     by_site: Dict[Optional[str], List[Feed]] = {}
     for feed in item.feeds:
         by_site.setdefault(sites.site_of(feed.url), []).append(feed)
-    results = await asyncio.gather(*(_search_site(client, item, group, show_matcher, now, pause, searcher) for group in by_site.values()))
+    results = await asyncio.gather(*(_search_site(client, item, group, show_matcher, now, searcher) for group in by_site.values()))
     merged = Searched()
     for result in results:
         for feed_id, articles in result.articles.items():

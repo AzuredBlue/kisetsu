@@ -10,6 +10,10 @@ def no_desktop_notifications(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_same_host_delay(monkeypatch):
-    """Tests fetch from the same fake host over and over and must not wait between requests."""
-    monkeypatch.setattr(rss, "_host_delay", rss.HostDelay(0.0))
+def no_rate_limit_wait(monkeypatch):
+    """A fake host's 429 must never make a test sleep, nor carry over to the next test."""
+
+    async def sleep(seconds):
+        return None
+
+    monkeypatch.setattr(rss, "_host_gate", rss.HostGate(sleep=sleep))

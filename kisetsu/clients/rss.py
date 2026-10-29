@@ -18,8 +18,11 @@ USER_AGENT = "Kisetsu (feed reader)"
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 10.0
 MAX_BODY_BYTES = 8 * 1024 * 1024
-# Minimum gap between two requests to the same host, as in qBittorrent's RSS settings.
-SAME_HOST_DELAY_SECONDS = 2.0
+# Requests are not spaced apart; a 429 is honoured instead. A 429 naming no wait leaves the host
+# alone this long, it is retried this many times, and a wait longer than the most is not sat out.
+RATE_LIMIT_WAIT_SECONDS = 10.0
+RATE_LIMIT_RETRIES = 2
+MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
 
 _HEX_HASH = re.compile(r"^[0-9a-fA-F]{40}$")
 _BASE32_HASH = re.compile(r"^[A-Za-z2-7]{32}$")
@@ -106,36 +109,60 @@ def parse_feed(body: bytes) -> List[FeedArticle]:
     return articles
 
 
-class HostDelay:
-    """Spaces out requests to one host, however many are waiting at once."""
+class HostGate:
+    """Holds back every request to a host that answered 429 until the wait it asked for is over."""
 
-    def __init__(self, seconds: float = SAME_HOST_DELAY_SECONDS):
-        self.seconds = seconds
-        self._next_slot: Dict[str, float] = {}
+    def __init__(self, sleep=asyncio.sleep, clock=time.monotonic):
+        self._sleep = sleep
+        self._clock = clock
+        self._open_at: Dict[str, float] = {}
 
     async def wait(self, host: str) -> None:
-        now = time.monotonic()
-        slot = max(now, self._next_slot.get(host, now))
-        self._next_slot[host] = slot + self.seconds
-        if slot > now:
-            await asyncio.sleep(slot - now)
+        remaining = self._open_at.get(host, 0.0) - self._clock()
+        if remaining > MAX_RATE_LIMIT_WAIT_SECONDS:
+            raise FeedFetchError(f"{host} is rate limiting requests; it can be asked again in {remaining:.0f}s")
+        if remaining > 0:
+            await self._sleep(remaining)
+
+    def close(self, host: str, seconds: float) -> None:
+        self._open_at[host] = max(self._open_at.get(host, 0.0), self._clock() + seconds)
 
 
-_host_delay = HostDelay()
+_host_gate = HostGate()
+
+
+def _retry_after(response: httpx2.Response) -> float:
+    """The seconds a 429 asks to wait: its Retry-After, in seconds or as a date, else the default."""
+    value = (response.headers.get("Retry-After") or "").strip()
+    if value:
+        try:
+            return max(0.0, float(value))
+        except ValueError:
+            pass
+        try:
+            return max(0.0, (parsedate_to_datetime(value) - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError):
+            pass
+    return RATE_LIMIT_WAIT_SECONDS
 
 
 async def fetch_bytes(client: httpx2.AsyncClient, url: str) -> bytes:
-    """GET ``url``, at most one request per SAME_HOST_DELAY_SECONDS to its host. Every failure becomes a FeedFetchError."""
+    """GET ``url``, waiting out and retrying a 429 as long as its host asks. Every failure becomes a FeedFetchError."""
     host = urlparse(url).hostname or url
-    await _host_delay.wait(host)
-    try:
-        response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
-    except httpx2.TimeoutException as e:
-        raise FeedFetchError(f"{host} did not answer in time") from e
-    except httpx2.RequestError as e:
-        raise FeedFetchError(f"{host} could not be reached ({e})") from e
-    if response.status_code == 429:
-        raise FeedFetchError(f"{host} is rate limiting requests")
+    for attempt in range(RATE_LIMIT_RETRIES + 1):
+        await _host_gate.wait(host)
+        try:
+            response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
+        except httpx2.TimeoutException as e:
+            raise FeedFetchError(f"{host} did not answer in time") from e
+        except httpx2.RequestError as e:
+            raise FeedFetchError(f"{host} could not be reached ({e})") from e
+        if response.status_code != 429:
+            break
+        wait = _retry_after(response)
+        _host_gate.close(host, wait)
+        if attempt == RATE_LIMIT_RETRIES or wait > MAX_RATE_LIMIT_WAIT_SECONDS:
+            raise FeedFetchError(f"{host} is rate limiting requests")
     if response.status_code >= 400:
         raise FeedFetchError(f"{host} answered HTTP {response.status_code}")
     body = response.content
