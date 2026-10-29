@@ -62,7 +62,7 @@ function PickEntry({ onPick }) {
         ${refreshing ? html`<${Spinner} small />` : html`<${Icon} name="refresh" small />`}<span>Refresh list</span>
       </button>
     </div>
-    <p class="field-hint">Only your own AniList list is searched: entries you are watching, rewatching, have completed, paused or dropped. To add something else, put it on your list on AniList first.</p>
+    <p class="field-hint">Only your own AniList list is searched: entries you are watching, rewatching, paused or dropped. Entries marked Completed are left out. To add something else, put it on your list on AniList first.</p>
     ${error ? html`<p class="error-text">${error}</p>` : null}
     <ul class="list">
       ${!list && !error ? html`<li class="list-empty"><${Spinner} small /> Reading your list…</li>` : null}

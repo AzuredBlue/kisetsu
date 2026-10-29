@@ -24,9 +24,9 @@ from kisetsu.services.feeds import Evidence
 
 logger = logging.getLogger("kisetsu.services.addshow")
 
-# The list statuses offered for adding: what the user watches, watched, paused or dropped.
-LIST_STATUSES = ("CURRENT", "REPEATING", "COMPLETED", "PAUSED", "DROPPED")
-LIST_LABELS = {"CURRENT": "Watching", "REPEATING": "Rewatching", "COMPLETED": "Completed", "PAUSED": "Paused", "DROPPED": "Dropped"}
+# The list statuses offered for adding: what the user watches, paused or dropped. Completed ones are left out.
+LIST_STATUSES = ("CURRENT", "REPEATING", "PAUSED", "DROPPED")
+LIST_LABELS = {"CURRENT": "Watching", "REPEATING": "Rewatching", "PAUSED": "Paused", "DROPPED": "Dropped"}
 
 
 @dataclass

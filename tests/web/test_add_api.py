@@ -20,7 +20,7 @@ def _user(web, base_dir=None):
     web.query(set_user)
 
 
-def _finished(web, anilist_id=7, title="Sousou no Frieren", episodes=3, list_status="COMPLETED"):
+def _finished(web, anilist_id=7, title="Sousou no Frieren", episodes=3, list_status="CURRENT"):
     web.anilist.shows.append(anilist_show(anilist_id, title, status="FINISHED", list_status=list_status, total_episodes=episodes, season="FALL", season_year=2023))
 
 
@@ -41,6 +41,15 @@ async def test_the_list_offers_the_users_entries_and_fetches_once(web):
     await web.client.get("/api/add/list")
     await web.client.get("/api/add/list", params={"refresh": "true"})
     assert [name for name, _ in web.anilist.calls].count("fetch_user_list") == 1
+
+
+async def test_an_entry_marked_completed_is_not_offered(web):
+    _user(web)
+    _finished(web, 7)
+    _finished(web, 8, "Done Show", list_status="COMPLETED")
+    body = (await web.client.get("/api/add/list")).json()
+    assert [e["anilist_id"] for e in body["entries"]] == [7]
+    assert (await web.client.post("/api/add/search", json={"anilist_id": 8})).status_code == 404
 
 
 async def test_the_list_needs_an_anilist_user(web):
@@ -85,7 +94,7 @@ async def test_files_already_on_disk_preselect_their_feed_and_use_their_folder(w
     folder.mkdir(parents=True)
     (folder / "[Grp] Sousou no Frieren - 01 (1080p).mkv").write_bytes(b"x")
     _user(web, base)
-    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren", aliases=["Frieren"], status="FINISHED", list_status="COMPLETED", total_episodes=3))
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren", aliases=["Frieren"], status="FINISHED", list_status="CURRENT", total_episodes=3))
     _releases(web)
     web.feed("Other", "https://other/rss", 1)
     nyaa = web.feed("Nyaa", NYAA, 2)
@@ -232,7 +241,7 @@ async def test_a_batch_longer_than_the_season_is_another_seasons_and_not_offered
 
 async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path):
     _user(web, tmp_path / "Anime")
-    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], status="FINISHED", list_status="COMPLETED", total_episodes=3))
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], status="FINISHED", list_status="CURRENT", total_episodes=3))
     web.feeds.searchable[NYAA] = [
         article("[Grp] Sousou no Frieren S01 [1080p] [Batch]", START - timedelta(days=300)),
         article("[Grp] Sousou no Frieren [1080p] [Batch]", START - timedelta(days=300)),
