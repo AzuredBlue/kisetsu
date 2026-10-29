@@ -133,6 +133,11 @@ class Engine:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, partial(self._read, fn, *args, **kwargs))
 
+    async def dry_run(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        """Like ``read``, on the engine thread: ``fn`` may write, since everything is rolled back, without racing the engine for the database."""
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self._executor, partial(self._read, fn, *args, **kwargs))
+
     def _read(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         with Session(self.db, expire_on_commit=False) as session:
             try:

@@ -370,7 +370,7 @@ class Jobs:
             stopped = found.stopped
             if found.articles:
                 await self.engine.run(addshow.store_found, found.articles)
-        result = await self.engine.read(addshow.preview, entry, plan.unsearchable)
+        result = await self.engine.dry_run(addshow.preview, entry, plan.unsearchable)
         result["stopped"] = stopped
         return result
 
