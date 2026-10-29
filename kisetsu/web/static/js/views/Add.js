@@ -32,18 +32,9 @@ function PickEntry({ onPick }) {
   const [list, setList] = useState(null);
   const [error, setError] = useState(null);
   const [text, setText] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
-  const load = async (refresh = false) => {
-    setRefreshing(refresh);
-    try {
-      const body = await apiFetch(`/api/add/list${refresh ? '?refresh=true' : ''}`, { quiet: true });
-      setList(body);
-      setError(null);
-      if (body.notice) toast(body.notice, 'info');
-    } catch (err) { setError(err.message); }
-    setRefreshing(false);
-  };
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    apiFetch('/api/add/list', { quiet: true }).then(setList).catch(err => setError(err.message));
+  }, []);
   const shown = useMemo(() => {
     if (!list) return [];
     const words = fold(text).split(/\s+/).filter(Boolean);
@@ -53,16 +44,12 @@ function PickEntry({ onPick }) {
       return words.every(w => hay.includes(w));
     });
   }, [list, text]);
-  const wait = list ? Math.ceil(list.refresh_in || 0) : 0;
   return html`<div class="card list-card stack-sm">
     <div class="add-search">
       <${Icon} name="search" small />
       <input class="field" type="search" placeholder="Search your AniList list" value=${text} onInput=${(e) => setText(e.target.value)} autofocus aria-label="Search your AniList list" />
-      <button type="button" class="btn sm" onClick=${() => load(true)} disabled=${refreshing || wait > 0} title=${wait > 0 ? `The list was read from AniList ${list && list.fetched_at ? relativeTime(list.fetched_at, Date.now()) : 'just now'}. It can be read again in ${wait}s.` : 'Read your list from AniList again'}>
-        ${refreshing ? html`<${Spinner} small />` : html`<${Icon} name="refresh" small />`}<span>Refresh list</span>
-      </button>
     </div>
-    <p class="field-hint">Only your own AniList list is searched: entries you are watching, rewatching, paused or dropped. Entries marked Completed are left out. To add something else, put it on your list on AniList first.</p>
+    <p class="field-hint">Only your own AniList list is searched: entries you are watching, rewatching, paused or dropped. Entries marked Completed are left out. To add something else, put it on your list on AniList first.${list && list.fetched_at ? ` Your list was read from AniList ${relativeTime(list.fetched_at, Date.now())}; press Sync Now to read it again.` : ''}</p>
     ${error ? html`<p class="error-text">${error}</p>` : null}
     <ul class="list">
       ${!list && !error ? html`<li class="list-empty"><${Spinner} small /> Reading your list…</li>` : null}

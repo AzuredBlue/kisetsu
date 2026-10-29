@@ -30,23 +30,30 @@ def _releases(web, title="Sousou no Frieren", group="Grp", count=3):
     ]
 
 
-async def test_the_list_offers_the_users_entries_and_fetches_once(web):
+async def test_the_list_offers_the_users_entries_from_the_last_sync_and_never_asks_anilist(web):
     _user(web)
     _finished(web)
     web.anilist.shows.append(anilist_show(8, "Planned Only", list_status="PLANNING"))
     web.show(9, "Followed")
     web.anilist.shows.append(anilist_show(9, "Followed", list_status="CURRENT"))
+    await web.anilist.fetch_user_list("user")
     body = (await web.client.get("/api/add/list")).json()
     assert {e["anilist_id"]: e["followed"] for e in body["entries"]} == {7: False, 9: True}
-    await web.client.get("/api/add/list")
-    await web.client.get("/api/add/list", params={"refresh": "true"})
     assert [name for name, _ in web.anilist.calls].count("fetch_user_list") == 1
+
+
+async def test_the_list_asks_for_a_sync_when_none_has_been_read_yet(web):
+    _user(web)
+    response = await web.client.get("/api/add/list")
+    assert response.status_code == 400 and "Sync Now" in response.json()["detail"]
+    assert web.anilist.calls == []
 
 
 async def test_an_entry_marked_completed_is_not_offered(web):
     _user(web)
     _finished(web, 7)
     _finished(web, 8, "Done Show", list_status="COMPLETED")
+    await web.anilist.fetch_user_list("user")
     body = (await web.client.get("/api/add/list")).json()
     assert [e["anilist_id"] for e in body["entries"]] == [7]
     assert (await web.client.post("/api/add/search", json={"anilist_id": 8})).status_code == 404
@@ -61,7 +68,7 @@ async def test_searching_shows_each_feed_episode_by_episode_and_saves_no_show(we
     _finished(web)
     _releases(web)
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     body = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert [g["feed_id"] for g in body["feeds"]] == [feed]
     assert [e["number"] for e in body["feeds"][0]["episodes"]] == [1, 2, 3]
@@ -74,7 +81,7 @@ async def test_confirming_follows_the_feed_grabs_the_ticked_episodes_and_skips_t
     _finished(web)
     _releases(web)
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     items = {e["number"]: e["item_id"] for e in preview["feeds"][0]["episodes"]}
     body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [items[1], items[2]]})).json()
@@ -98,7 +105,7 @@ async def test_files_already_on_disk_preselect_their_feed_and_use_their_folder(w
     _releases(web)
     web.feed("Other", "https://other/rss", 1)
     nyaa = web.feed("Nyaa", NYAA, 2)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert preview["preselect"] == nyaa and preview["folder"]["files"] == 1 and preview["note"] is None
     assert [e["on_disk"] for e in preview["feeds"][0]["episodes"]] == [True, False, False]
@@ -118,7 +125,7 @@ async def test_files_no_feed_accounts_for_are_reported_and_nothing_is_preselecte
     _finished(web)
     _releases(web)
     web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert preview["preselect"] is None and "no feed matches" in preview["note"]
 
@@ -147,7 +154,7 @@ async def test_a_batch_is_offered_and_its_episodes_share_one_torrent_without_its
     batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
     web.feeds.searchable[NYAA].append(batch)
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     batches = preview["feeds"][0]["batches"]
     assert [(b["title"], b["numbers"]) for b in batches] == [(batch.title, [1, 2, 3])]
@@ -167,7 +174,7 @@ async def test_an_episode_from_a_batch_is_never_replaced_by_a_later_version(web,
     batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
     web.feeds.searchable[NYAA] = [batch]
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     show_id = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()["show_id"]
     web.qbit.finish(batch.info_hash)
@@ -198,7 +205,7 @@ async def test_single_episodes_after_a_batch_are_still_grabbed_from_the_feed(web
     batch = article("[Grp] Sousou no Frieren S01 (01-02) [1080p] [Batch]", START - timedelta(days=300))
     web.feeds.searchable[NYAA] = [batch]
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
     show_id = body["show_id"]
@@ -218,7 +225,7 @@ async def test_a_batch_is_added_once_even_before_qbittorrent_shows_it(web, tmp_p
     batch = article("[Grp] Sousou no Frieren (01-03) [1080p] [Batch]", START - timedelta(days=300))
     web.feeds.searchable[NYAA] = [batch]
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     web.qbit.hide_added = True
     body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
@@ -234,7 +241,7 @@ async def test_a_batch_longer_than_the_season_is_another_seasons_and_not_offered
     _finished(web, episodes=12)
     web.feeds.searchable[NYAA] = [article("[Grp] Sousou no Frieren (01-28) [1080p] [Batch]", START - timedelta(days=300))]
     web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert preview["feeds"] == []
 
@@ -248,7 +255,7 @@ async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path
         article("[Grp] Sousou no Frieren S2 [1080p] [Batch]", START - timedelta(days=30)),
     ]
     web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert [b["title"] for b in preview["feeds"][0]["batches"]] == ["[Grp] Sousou no Frieren S2 [1080p] [Batch]"]
 
@@ -266,7 +273,7 @@ async def test_a_release_from_long_before_the_shows_season_is_not_offered(web):
         article("[Commie] Ghost in the Shell SAC_2045 2", datetime(2022, 6, 13, tzinfo=timezone.utc)),
     ]
     web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
     assert [e["title"] for e in preview["feeds"][0]["episodes"]] == ["[Erai-raws] Koukaku Kidoutai (2026) - 01 [1080p]"]
 
@@ -288,7 +295,7 @@ def _ghost(web):
 async def test_an_unmarked_release_without_an_episode_number_is_offered_as_a_season_batch(web):
     _ghost(web)
     web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
     batches = preview["feeds"][0]["batches"]
     assert [(b["title"], b["numbers"], b["ranged"]) for b in batches] == [("[Commie] The Ghost in the Shell", list(range(1, 11)), False)]
@@ -298,7 +305,7 @@ async def test_confirming_an_unmarked_season_batch_adds_it_once_and_flags_its_do
     season = _ghost(web)
     _user(web, tmp_path / "Anime")
     feed = web.feed("Nyaa", NYAA, 1)
-    await web.client.get("/api/add/list")
+    await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
     item = preview["feeds"][0]["batches"][0]["item_id"]
     body = (await web.client.post("/api/add/confirm", json={"anilist_id": 9, "feed_id": feed, "item_ids": [item]})).json()
