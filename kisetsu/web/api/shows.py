@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
+from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.db.schema import Episode
 from kisetsu.services import feeds as feeds_service, library, manual, shows
 from kisetsu.web import views
@@ -199,11 +200,17 @@ async def delete(show_id: int, request: Request, delete_torrents: bool = False, 
         error = plan["reason"]
         if plan["remove"]:
             # qBittorrent removes the files in the background; the folder goes once it lists none of the torrents.
+            error = None
             for _ in range(GONE_CHECKS):
-                if await write(request, library.torrents_gone, hashes):
+                try:
+                    if await write(request, library.torrents_gone, hashes):
+                        break
+                except QbitError as e:
+                    error = f"qBittorrent could not confirm the torrents are gone ({e}), so the folder was kept."
                     break
                 await asyncio.sleep(0.5)
-            error = await asyncio.to_thread(library.remove_folder, plan["path"], base_dir)
+            if error is None:
+                error = await asyncio.to_thread(library.remove_folder, plan["path"], base_dir)
         folder = {"path": plan["path"], "removed": plan["remove"] and error is None, "reason": error}
         if folder["removed"]:
             logger.info(f"Deleted '{name}' and its folder {plan['path']}.")
