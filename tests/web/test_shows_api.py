@@ -126,7 +126,7 @@ async def test_editing_the_save_folder_and_aliases(web):
 async def test_deleting_a_show_dismisses_it_and_reports_the_torrents(web):
     show = web.show()
     response = await web.client.delete(f"/api/shows/{show}")
-    assert response.status_code == 200 and response.json() == {"deleted_torrents": 0}
+    assert response.status_code == 200 and response.json() == {"deleted_torrents": 0, "folder": None}
     assert web.load(Show, show) is None
     assert (await web.client.delete(f"/api/shows/{show}")).status_code == 404
 
@@ -422,3 +422,77 @@ async def test_restore_says_so_when_the_release_is_nowhere_to_be_found(web):
     response = await web.client.post(f"/api/shows/{show}/episodes/{episode_id}/restore")
     assert response.status_code == 400 and response.json()["detail"].startswith("Not in qBittorrent.")
     assert web.qbit.calls_named("add_torrent") == []
+
+
+def _library(web, tmp_path, title="Sousou no Frieren"):
+    """A download folder holding the show's folder with one tracked torrent's file and a stray subtitle."""
+    base = tmp_path / "Anime"
+    folder = base / title
+    folder.mkdir(parents=True)
+    (folder / "[Grp] Sousou no Frieren - 01.mkv").write_bytes(b"x")
+    (folder / "extra.ass").write_text("subs")
+    web.query(lambda s: (setattr(s.get(Settings, 1), "base_dir", str(base)), setattr(s.get(Settings, 1), "title_language", "romaji"), s.commit()))
+    show = web.show(1, title, episodes=1)
+    torrent = web.qbit.seed("[Grp] Sousou no Frieren - 01.mkv", save_path=str(folder))
+
+    def track(session):
+        episode = session.exec(select(Episode).where(Episode.show_id == show)).one()
+        row = Download(episode_id=episode.id, title=torrent.name, state=DownloadState.DONE, info_hash=torrent.hash)
+        session.add(row)
+        session.flush()
+        episode.current_download_id, episode.status = row.id, EpisodeStatus.COMPLETED
+        session.commit()
+
+    web.query(track)
+    return show, folder, torrent
+
+
+async def test_the_delete_preview_lists_the_folder_and_the_files_no_torrent_owns(web, tmp_path):
+    show, folder, torrent = _library(web, tmp_path)
+    preview = (await web.client.get(f"/api/shows/{show}/delete-preview")).json()
+    assert [t["hash"] for t in preview["torrents"]] == [torrent.hash]
+    assert preview["folder"]["remove"] and preview["folder"]["leftovers"] == ["extra.ass"]
+
+
+async def test_deleting_a_show_removes_its_torrents_files_and_folder(web, tmp_path):
+    show, folder, torrent = _library(web, tmp_path)
+    response = await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "true"})
+    body = response.json()
+    assert response.status_code == 200 and body["deleted_torrents"] == 1 and body["folder"]["removed"]
+    assert web.qbit.deleted_with_files == [torrent.hash]
+    assert not folder.exists() and folder.parent.exists()
+
+
+async def test_keeping_the_files_keeps_the_folder(web, tmp_path):
+    show, folder, torrent = _library(web, tmp_path)
+    body = (await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "false"})).json()
+    assert body["deleted_torrents"] == 1 and body["folder"] is None
+    assert web.qbit.deleted_with_files == [] and folder.exists()
+
+
+async def test_a_folder_holding_a_torrent_of_no_show_is_kept(web, tmp_path):
+    show, folder, torrent = _library(web, tmp_path)
+    web.qbit.seed("[Grp] Sousou no Frieren S0 - 01.mkv", save_path=str(folder))
+    body = (await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "true"})).json()
+    assert not body["folder"]["removed"] and "no show" in body["folder"]["reason"]
+    assert folder.exists() and web.qbit.deleted_with_files == [torrent.hash]
+
+
+async def test_a_folder_another_show_saves_to_is_kept(web, tmp_path):
+    show, folder, _ = _library(web, tmp_path)
+    web.show(2, "Other", episodes=0, save_folder=str(folder))
+    body = (await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "true"})).json()
+    assert not body["folder"]["removed"] and "Another show" in body["folder"]["reason"]
+    assert folder.exists()
+
+
+def test_a_folder_outside_the_download_folder_is_never_removed(tmp_path):
+    from kisetsu.services import library
+
+    base, outside = tmp_path / "Anime", tmp_path / "Elsewhere"
+    base.mkdir()
+    outside.mkdir()
+    assert library.remove_folder(str(outside), str(base), pause=lambda s: None) is not None
+    assert library.remove_folder(str(base), str(base), pause=lambda s: None) is not None
+    assert library.remove_folder(str(base), "", pause=lambda s: None) is not None
+    assert outside.exists() and base.exists()

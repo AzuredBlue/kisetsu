@@ -6,8 +6,12 @@ so the feed is read from it before anything is guessed.
 
 import logging
 import os
+import shutil
+import stat
+import sys
+import time
 from datetime import timedelta
-from typing import Any, Callable, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import select
 
@@ -194,3 +198,112 @@ def relocate_torrents(ctx: Context, plan: List[Dict[str, Any]]) -> Tuple[List[st
             continue
         logs.append(f"Moved {len(item['hashes'])} downloads of {name} to {item['new']}")
     return logs, failed
+
+
+# -- deleting a show's folder ---------------------------------------------------
+
+# Leftover file names listed in the delete dialog; the rest are only counted.
+LEFTOVERS_LISTED = 20
+
+
+def _norm(path: Any) -> str:
+    return os.path.normcase(os.path.abspath(os.path.expanduser(str(path))))
+
+
+def _within(child: Any, parent: Any) -> bool:
+    """Whether ``child`` is ``parent`` or somewhere under it, however either is spelled."""
+    c, p = _norm(child), _norm(parent)
+    return c == p or c.startswith(p.rstrip(os.sep) + os.sep)
+
+
+def base_root(base_dir: str) -> str:
+    """The folder every show's own folder sits in, or "" when no download folder is set."""
+    base = (base_dir or "").strip()
+    if "{name}" in base:
+        base = base.split("{name}", 1)[0]
+    base = base.rstrip("/\\")
+    return _norm(base) if base else ""
+
+
+def folder_plan(ctx: Context, show: Show, hashes: List[str]) -> Dict[str, Any]:
+    """What deleting a show does to its save folder, judged before its torrents go.
+
+    ``remove`` is set only for a folder strictly inside the download folder that no other
+    show saves to and that holds no torrent but the show's own (``hashes``); otherwise
+    ``reason`` says why it is kept. ``leftovers`` are the files no torrent of the show owns.
+    """
+    settings = ctx.settings
+    path = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
+    plan: Dict[str, Any] = {"path": path, "exists": False, "remove": False, "reason": None, "leftovers": [], "leftover_count": 0}
+    if not path or not os.path.isdir(path):
+        return plan
+    plan["exists"] = True
+    view = ctx.qbit.torrents
+    own = [view[h] for h in hashes if h in view]
+    names: List[str] = []
+    try:
+        for top, _dirs, files in os.walk(path):
+            for name in files:
+                full = os.path.join(top, name)
+                if not any(_within(full, t.content_path) for t in own if t.content_path):
+                    names.append(os.path.relpath(full, path))
+    except OSError as e:
+        logger.debug(f"Could not read the folder of '{show.title()}': {e}")
+    plan["leftovers"], plan["leftover_count"] = sorted(names)[:LEFTOVERS_LISTED], len(names)
+    root = base_root(settings.base_dir)
+    if not root:
+        plan["reason"] = "No download folder is set in Settings, so Kisetsu never deletes folders."
+    elif not _within(path, root) or _norm(path) == root:
+        plan["reason"] = "The folder is not inside your download folder."
+    elif any(
+        (other_path := resolve_save_path(settings.base_dir, other.title(settings.title_language), other.save_folder))
+        and (_within(other_path, path) or _within(path, other_path))
+        for other in ctx.session.exec(select(Show).where(Show.id != show.id)).all()
+    ):
+        plan["reason"] = "Another show saves to this folder."
+    elif any(
+        t.hash not in hashes and ((t.content_path and _within(t.content_path, path)) or (t.save_path and _within(t.save_path, path)))
+        for t in view.values()
+    ):
+        plan["reason"] = "It holds torrents that belong to no show in Kisetsu."
+    else:
+        plan["remove"] = True
+    return plan
+
+
+def torrents_gone(ctx: Context, hashes: List[str]) -> bool:
+    """Whether qBittorrent no longer lists any of ``hashes``."""
+    ctx.qbit.sync()
+    return not any(h in ctx.qbit.torrents for h in hashes)
+
+
+def remove_folder(path: str, base_dir: str, *, attempts: int = 5, pause: Callable[[float], None] = time.sleep) -> Optional[str]:
+    """Delete a show's folder and everything left in it; returns the error, or None once it is gone.
+
+    The folder is checked again against the download folder right before it goes. A file
+    Windows still holds open is retried a few times.
+    """
+    root = base_root(base_dir)
+    if not root or not _within(path, root) or _norm(path) == root:
+        return "The folder is not inside your download folder."
+
+    def writable(fn, target, _exc):
+        # A read-only file stops rmtree on Windows; clear the flag and try once more.
+        os.chmod(target, stat.S_IWRITE)
+        fn(target)
+
+    error: Optional[str] = None
+    for attempt in range(attempts):
+        if not os.path.exists(path):
+            return None
+        try:
+            if sys.version_info >= (3, 12):
+                shutil.rmtree(path, onexc=writable)
+            else:
+                shutil.rmtree(path, onerror=lambda fn, target, info: writable(fn, target, info[1]))
+            return None
+        except OSError as e:
+            error = str(e)
+            if attempt < attempts - 1:
+                pause(1.0)
+    return error

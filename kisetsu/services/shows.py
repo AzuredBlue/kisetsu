@@ -220,13 +220,18 @@ def delete_show(
     dismiss: bool = False,
     delete_torrents: bool = False,
     delete_files: bool = False,
+    hashes: Optional[List[str]] = None,
 ) -> int:
     """Remove a show and its history; returns how many torrents were deleted from qBittorrent.
 
     A user's delete is remembered (``dismiss``) so the next sync does not add the show back
-    while it is still on the AniList list.
+    while it is still on the AniList list. ``hashes`` are the torrents to delete when the
+    caller already looked them up.
     """
-    hashes = library.find_show_torrents(ctx, show) if delete_torrents else []
+    if not delete_torrents:
+        hashes = []
+    elif hashes is None:
+        hashes = library.find_show_torrents(ctx, show)
     # Only a tag Kisetsu put on this show's torrents is its own to clear.
     show_tag = show.qbit_tag
     for episode in ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all():

@@ -79,32 +79,45 @@ export async function togglePause(show) {
   } catch (err) { /* shown by apiFetch */ }
 }
 
-function torrentList(preview) {
-  if (!Array.isArray(preview)) return html`<p class="field-hint">The list of torrents is not available.</p>`;
-  if (!preview.length) return html`<p class="field-hint">No torrents in qBittorrent belong to this show.</p>`;
-  return html`<ul class="torrent-list">${preview.map(t => html`<li key=${t.hash}>
+function torrentList(torrents) {
+  if (!Array.isArray(torrents)) return html`<p class="field-hint">The list of torrents is not available.</p>`;
+  if (!torrents.length) return html`<p class="field-hint">No torrents in qBittorrent belong to this show.</p>`;
+  return html`<ul class="torrent-list">${torrents.map(t => html`<li key=${t.hash}>
     <span class="mono truncate" title=${t.name || t.hash}>${t.name || t.hash}</span>${t.tracked ? null : html`<span class="muted">found in its folder</span>`}
   </li>`)}</ul>`;
+}
+
+function folderNote(folder) {
+  if (!folder || !folder.exists) return null;
+  if (!folder.remove) return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>`;
+  const more = folder.leftover_count - folder.leftovers.length;
+  return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is deleted too${folder.leftover_count ? ', with these files no torrent owns:' : '.'}</p>
+    ${folder.leftover_count ? html`<ul class="torrent-list">${folder.leftovers.map(name => html`<li key=${name}><span class="mono truncate" title=${name}>${name}</span></li>`)}
+      ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
 }
 
 // Returns true when the show was deleted.
 export async function deleteShow(show) {
   let preview = null;
   try { preview = await apiFetch(`/api/shows/${show.id}/delete-preview`, { quiet: true }); } catch (err) { /* the dialog says it is unavailable */ }
-  const files = { checked: false };
+  const keep = { checked: false };
+  const torrents = preview ? preview.torrents : null;
   const confirmed = await confirmDialog({
     title: `Delete '${show.title}'?`,
     danger: true,
     confirm: 'Delete',
-    body: html`<p class="field-hint">Removes the show and the torrents listed below, whether they are downloading or seeding.</p>
-      ${torrentList(preview)}
-      <label class="check-row"><input type="checkbox" onChange=${(e) => { files.checked = e.target.checked; }} />
-        ${Array.isArray(preview) && preview.length ? `Also delete the downloaded files of ${preview.length === 1 ? 'this torrent' : `these ${preview.length} torrents`}` : 'Also delete the downloaded files'}</label>`,
+    body: html`<p class="field-hint">Removes the show, the torrents listed below whether they are downloading or seeding, their files and the show's tag.</p>
+      ${torrentList(torrents)}
+      ${folderNote(preview && preview.folder)}
+      <label class="check-row"><input type="checkbox" onChange=${(e) => { keep.checked = e.target.checked; }} />
+        Keep files on disk (only remove the torrents from qBittorrent)</label>`,
   });
   if (!confirmed) return false;
   try {
-    await apiFetch(`/api/shows/${show.id}?delete_torrents=true&delete_files=${files.checked}`, { method: 'DELETE' });
-    toast(`Deleted ${show.title}.`, 'success');
+    const result = await apiFetch(`/api/shows/${show.id}?delete_torrents=true&delete_files=${!keep.checked}`, { method: 'DELETE' });
+    const folder = result && result.folder;
+    if (folder && !folder.removed) toast(`Deleted ${show.title}. Its folder was kept: ${folder.reason}`, 'info');
+    else toast(`Deleted ${show.title}.`, 'success');
     return true;
   } catch (err) { return false; }
 }

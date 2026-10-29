@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Request
@@ -8,7 +10,12 @@ from kisetsu.services import feeds as feeds_service, library, manual, shows
 from kisetsu.web import views
 from kisetsu.web.deps import NotFound, read, runtime, show_or_404, write
 
+logger = logging.getLogger("kisetsu.web.api.shows")
+
 router = APIRouter(prefix="/api/shows")
+
+# How often, half a second apart, a delete asks qBittorrent whether the torrents are gone before removing the folder.
+GONE_CHECKS = 20
 
 
 class EditShow(BaseModel):
@@ -58,12 +65,21 @@ def _rediscover(ctx, show_id: int):
 
 
 def _preview(ctx, show_id: int):
-    return library.show_torrent_preview(ctx, show_or_404(ctx, show_id))
+    show = show_or_404(ctx, show_id)
+    torrents = library.show_torrent_preview(ctx, show)
+    return {"torrents": torrents, "folder": library.folder_plan(ctx, show, [t["hash"] for t in torrents])}
 
 
 def _delete(ctx, show_id: int, delete_torrents: bool, delete_files: bool):
     show = show_or_404(ctx, show_id)
-    return shows.delete_show(ctx, show, reason="Show deleted by user.", dismiss=True, delete_torrents=delete_torrents, delete_files=delete_files)
+    name = show.title(ctx.settings.title_language)
+    hashes = library.find_show_torrents(ctx, show) if delete_torrents else []
+    # The folder goes only with its files: keeping the files keeps the folder.
+    folder = library.folder_plan(ctx, show, hashes) if delete_torrents and delete_files else None
+    removed = shows.delete_show(
+        ctx, show, reason="Show deleted by user.", dismiss=True, delete_torrents=delete_torrents, delete_files=delete_files, hashes=hashes,
+    )
+    return name, removed, hashes, folder, ctx.settings.base_dir
 
 
 def _download(ctx, show_id: int, body: Download):
@@ -162,5 +178,20 @@ async def delete_preview(show_id: int, request: Request):
 
 @router.delete("/{show_id}")
 async def delete(show_id: int, request: Request, delete_torrents: bool = False, delete_files: bool = False):
-    removed = await write(request, _delete, show_id, delete_torrents, delete_files)
-    return {"deleted_torrents": removed}
+    name, removed, hashes, plan, base_dir = await write(request, _delete, show_id, delete_torrents, delete_files)
+    folder = None
+    if plan and plan["exists"]:
+        error = plan["reason"]
+        if plan["remove"]:
+            # qBittorrent removes the files in the background; the folder goes once it lists none of the torrents.
+            for _ in range(GONE_CHECKS):
+                if await write(request, library.torrents_gone, hashes):
+                    break
+                await asyncio.sleep(0.5)
+            error = await asyncio.to_thread(library.remove_folder, plan["path"], base_dir)
+        folder = {"path": plan["path"], "removed": plan["remove"] and error is None, "reason": error}
+        if folder["removed"]:
+            logger.info(f"Deleted '{name}' and its folder {plan['path']}.")
+        else:
+            logger.warning(f"Deleted '{name}' but kept its folder {plan['path']}: {error}")
+    return {"deleted_torrents": removed, "folder": folder}
