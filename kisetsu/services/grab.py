@@ -24,7 +24,6 @@ from kisetsu.db.schema import (
     Show,
 )
 from kisetsu.domain import matcher as matching
-from kisetsu.domain.parsing import is_batch
 from kisetsu.domain.numbering import LedgerRow, inferred_offset, map_episode, rebase_plan
 from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
@@ -128,7 +127,7 @@ def _matcher_for(ctx: Context, state: ShowState, feed: Feed) -> matching.Matcher
         and episode.status in RELEASE_HOLDING
         and cur.feed_id in (None, feed.id)
         # A batch names its season its own way ("S01"), which says nothing of how the feed names single episodes.
-        and not is_batch(cur.title)
+        and not downloads.is_batch_download(cur)
     ]
     return matching.narrow_to_feed(base, show.learned_name, held)
 
@@ -407,7 +406,7 @@ def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dic
     held = state.held_version(episode)
     upgrade = version > held
     cur = state.current.get(episode.id)
-    if upgrade and cur is not None and is_batch(cur.title) and episode.status in RELEASE_HOLDING:
+    if upgrade and cur is not None and downloads.is_batch_download(cur) and episode.status in RELEASE_HOLDING:
         # An episode that came in a batch keeps it: replacing it would delete the whole batch with its files.
         return False
     air_at = episode.air_at

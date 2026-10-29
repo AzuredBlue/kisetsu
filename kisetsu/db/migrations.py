@@ -33,12 +33,19 @@ def _v3(engine: Engine) -> None:
             conn.exec_driver_sql("ALTER TABLE shows ADD COLUMN qbit_tag VARCHAR")
 
 
+def _v4(engine: Engine) -> None:
+    if "batch" not in {c["name"] for c in inspect(engine).get_columns("downloads")}:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("ALTER TABLE downloads ADD COLUMN batch BOOLEAN NOT NULL DEFAULT 0")
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (1, _v1),
     (2, _v2),
     (3, _v3),
+    (4, _v4),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 

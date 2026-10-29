@@ -11,7 +11,7 @@ from kisetsu.db.schema import (
     FeedState,
     Show,
 )
-from kisetsu.domain.parsing import is_batch, same_release
+from kisetsu.domain.parsing import same_release
 from kisetsu.domain.schedule import RELEASE_HOLDING
 from kisetsu.services import downloads, feeds, grab, tags
 from kisetsu.services.context import Context
@@ -51,7 +51,7 @@ def _refusal(ctx: Context, episode: Episode, version: int, other_source: bool = 
         return None
     cur = downloads.current(ctx, episode)
     held = cur.version if cur is not None else 1
-    if cur is not None and is_batch(cur.title) and episode.status in RELEASE_HOLDING:
+    if cur is not None and downloads.is_batch_download(cur) and episode.status in RELEASE_HOLDING:
         return f"Episode {episode.number} came in a batch; a single release won't replace it."
     if other_source:
         if episode.status == EpisodeStatus.COMPLETED and version < held:

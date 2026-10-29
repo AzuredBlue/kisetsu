@@ -203,7 +203,9 @@ def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
     """The feed's batches of the show, the ones holding most episodes first.
 
     A batch names its season more often than single releases do, so it must name the same
-    season as the show's titles; naming none counts as the first.
+    season as the show's titles; naming none counts as the first. A release with neither a batch
+    marker nor an episode number is one too when the season has several episodes: a whole season
+    posted under its plain name. It covers every episode, as a batch with no range does.
     """
     matcher = build_matcher(show.effective_aliases, None)
     cache: Dict[str, dict] = {}
@@ -211,7 +213,9 @@ def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
     season = max((n for n in (release_season(a) for a in show.effective_aliases) if n), default=1)
     found: List[Batch] = []
     for item in ctx.session.exec(select(FeedItem).where(FeedItem.feed_id == feed.id)).all():
-        if not item.torrent_url or not is_batch(item.title) or _too_old(show, item):
+        if not item.torrent_url or _too_old(show, item):
+            continue
+        if not is_batch(item.title) and (target <= 1 or parse_release_title(item.title).get("episode") is not None):
             continue
         name = strip_batch(item.title)
         if (release_season(name) or 1) != season or not decide(matcher, name, cache)[0]:
@@ -343,6 +347,7 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     chosen = set(item_ids)
     releases = _releases(ctx, show, feed)
     batches = _batches(ctx, show, feed)
+    batch_ids = {b.item.id for b in batches}
     # Each episode comes from one release: a chosen batch holds its episodes, singles fill in the rest.
     picked: Dict[int, Tuple[Episode, FeedItem]] = {}
     by_number = {e.number: e for e in episodes}
@@ -378,8 +383,8 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
             # The rest of a batch already in qBittorrent follow that torrent; adding it again would fetch it again.
             dl = downloads.follow_download(ctx, show, feed, episode, item, added[item.id])
         else:
-            dl = downloads.start_download(ctx, show, feed, episode, item)
-            if dl is not None and is_batch(item.title) and (dl.info_hash or item.info_hash):
+            dl = downloads.start_download(ctx, show, feed, episode, item, batch=item.id in batch_ids)
+            if dl is not None and item.id in batch_ids and (dl.info_hash or item.info_hash):
                 added[item.id] = dl.info_hash or item.info_hash
         if dl is None:
             result["errors"].append(f"Ep {number}: {episode.last_error or 'could not start the download'}")

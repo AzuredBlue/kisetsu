@@ -324,6 +324,8 @@ class Download(Base, table=True):
     state: DownloadState = Field(default=DownloadState.ADDING, index=True)
     supersedes_id: Optional[int] = Field(default=None, foreign_key="downloads.id", ondelete="SET NULL", nullable=True, index=True)
     adopted: bool = Field(default=False)
+    # Whether the torrent is a whole-season batch, which a title without a batch marker can still be.
+    batch: bool = Field(default=False)
     attempts: int = Field(default=1)
     next_retry_at: Optional[datetime] = _timestamp(default=None, nullable=True)
     last_error: Optional[str] = Field(default=None, nullable=True)

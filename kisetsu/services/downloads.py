@@ -129,6 +129,11 @@ def _by_name(ctx: Context, title: str) -> Optional[Torrent]:
     return matches[0] if len(matches) == 1 else None
 
 
+def is_batch_download(dl: Download) -> bool:
+    """Whether the download is a batch: flagged when added, or named like one."""
+    return dl.batch or is_batch(dl.title)
+
+
 def start_download(
     ctx: Context,
     show: Show,
@@ -137,6 +142,7 @@ def start_download(
     item: FeedItem,
     *,
     switch_source: bool = False,
+    batch: bool = False,
 ) -> Optional[Download]:
     """Add the torrent of a feed item for an episode.
 
@@ -175,6 +181,7 @@ def start_download(
         torrent_url=item.torrent_url,
         info_hash=item.info_hash,
         tag=_tag(),
+        batch=batch,
         state=DownloadState.ADDING,
         supersedes_id=supersedes.id if supersedes else None,
         attempts=0,
@@ -208,6 +215,7 @@ def follow_download(ctx: Context, show: Show, feed: Feed, episode: Episode, item
         source_episode=item.episode_raw,
         torrent_url=item.torrent_url,
         info_hash=info_hash,
+        batch=True,
         state=DownloadState.ADDING,
         attempts=1,
         created_at=ctx.now,
@@ -260,7 +268,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
             dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag, show_tag],
             paused=paused, ratio_limit=ratio,
             # A batch carries its own top folder; its files go straight into the show's folder instead.
-            content_layout="NoSubfolder" if is_batch(dl.title) else None,
+            content_layout="NoSubfolder" if is_batch_download(dl) else None,
         )
     except QbitUnavailable as e:
         _retry(ctx, dl, episode, str(e), ADD_RETRY)
@@ -302,7 +310,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
 
 def _learned_name(dl: Download) -> Optional[str]:
     """The name a show's feed is learned by from this download; a batch's name ("... S01 (01-12)") fits no single release."""
-    if is_batch(dl.title):
+    if is_batch_download(dl):
         return None
     return dl.parsed_title or dl.title
 

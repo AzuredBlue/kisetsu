@@ -269,3 +269,42 @@ async def test_a_release_from_long_before_the_shows_season_is_not_offered(web):
     await web.client.get("/api/add/list")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
     assert [e["title"] for e in preview["feeds"][0]["episodes"]] == ["[Erai-raws] Koukaku Kidoutai (2026) - 01 [1080p]"]
+
+
+def _ghost(web):
+    from datetime import datetime, timezone
+
+    _user(web)
+    web.anilist.shows.append(anilist_show(
+        9, "THE GHOST IN THE SHELL", aliases=["The Ghost in the Shell", "Ghost in the Shell"],
+        status="FINISHED", list_status="CURRENT", total_episodes=10, season="SUMMER", season_year=2026,
+    ))
+    season = article("[Commie] The Ghost in the Shell", datetime(2026, 9, 16, tzinfo=timezone.utc))
+    old = article("[Commie] Ghost in the Shell Arise [BD 1080p AAC]", datetime(2020, 5, 1, tzinfo=timezone.utc))
+    web.feeds.searchable[NYAA] = [season, old]
+    return season
+
+
+async def test_an_unmarked_release_without_an_episode_number_is_offered_as_a_season_batch(web):
+    _ghost(web)
+    web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
+    batches = preview["feeds"][0]["batches"]
+    assert [(b["title"], b["numbers"], b["ranged"]) for b in batches] == [("[Commie] The Ghost in the Shell", list(range(1, 11)), False)]
+
+
+async def test_confirming_an_unmarked_season_batch_adds_it_once_and_flags_its_downloads(web, tmp_path):
+    season = _ghost(web)
+    _user(web, tmp_path / "Anime")
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
+    item = preview["feeds"][0]["batches"][0]["item_id"]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 9, "feed_id": feed, "item_ids": [item]})).json()
+    assert body["started"] == 10 and body["errors"] == []
+    calls = web.qbit.calls_named("add_torrent")
+    assert len(calls) == 1 and calls[0]["content_layout"] == "NoSubfolder"
+    downloads = web.query(lambda s: s.exec(select(Download)).all())
+    assert len(downloads) == 10 and all(d.batch and d.info_hash == season.info_hash for d in downloads)
+    assert web.load(Show, body["show_id"]).learned_name is None
