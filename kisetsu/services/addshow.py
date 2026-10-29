@@ -8,6 +8,7 @@ the grabber can never pick a feed or start a download for it on its own meanwhil
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlmodel import select
@@ -27,6 +28,11 @@ logger = logging.getLogger("kisetsu.services.addshow")
 # The list statuses offered for adding: what the user watches, paused or dropped. Completed ones are left out.
 LIST_STATUSES = ("CURRENT", "REPEATING", "PAUSED", "DROPPED")
 LIST_LABELS = {"CURRENT": "Watching", "REPEATING": "Rewatching", "PAUSED": "Paused", "DROPPED": "Dropped"}
+
+SEASON_MONTHS = {"WINTER": 1, "SPRING": 4, "SUMMER": 7, "FALL": 10}
+# Releases older than the season start by more than this are not the show's: a season's
+# first episodes can air in the weeks before AniList's nominal start (a FALL show in late September).
+SEASON_SLACK = timedelta(days=30)
 
 
 @dataclass
@@ -143,10 +149,29 @@ def _draft(ctx: Context, entry: Dict[str, Any], folder: Optional[Dict[str, Any]]
     return show
 
 
+def _season_start(show: Show) -> Optional[datetime]:
+    """The first day of the show's AniList season, or None when it names none."""
+    month = SEASON_MONTHS.get((show.season_name or "").upper())
+    if month is None or not show.season_year:
+        return None
+    return datetime(show.season_year, month, 1, tzinfo=timezone.utc)
+
+
+def _too_old(show: Show, item: FeedItem) -> bool:
+    """Whether the item was published long before the show's season, so it is some older show's.
+
+    The engine's own air-time check cannot tell yet: the show has no air times until it is confirmed.
+    """
+    start = _season_start(show)
+    return start is not None and item.published_at is not None and item.published_at < start - SEASON_SLACK
+
+
 def _releases(ctx: Context, show: Show, feed: Feed) -> Dict[int, Any]:
     """The release the feed offers for each episode: the highest version, then the newest."""
     best: Dict[int, Any] = {}
     for _, entry in manual.candidates(ctx, show, [feed]):
+        if _too_old(show, entry.item):
+            continue
         held = best.get(entry.number)
         key = (entry.version, entry.item.published_at or entry.item.first_seen_at)
         if held is None or key > (held.version, held.item.published_at or held.item.first_seen_at):
@@ -186,7 +211,7 @@ def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
     season = max((n for n in (release_season(a) for a in show.effective_aliases) if n), default=1)
     found: List[Batch] = []
     for item in ctx.session.exec(select(FeedItem).where(FeedItem.feed_id == feed.id)).all():
-        if not item.torrent_url or not is_batch(item.title):
+        if not item.torrent_url or not is_batch(item.title) or _too_old(show, item):
             continue
         name = strip_batch(item.title)
         if (release_season(name) or 1) != season or not decide(matcher, name, cache)[0]:

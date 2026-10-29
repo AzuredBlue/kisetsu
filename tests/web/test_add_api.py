@@ -94,7 +94,7 @@ async def test_files_already_on_disk_preselect_their_feed_and_use_their_folder(w
     folder.mkdir(parents=True)
     (folder / "[Grp] Sousou no Frieren - 01 (1080p).mkv").write_bytes(b"x")
     _user(web, base)
-    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren", aliases=["Frieren"], status="FINISHED", list_status="CURRENT", total_episodes=3))
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren", aliases=["Frieren"], status="FINISHED", list_status="CURRENT", total_episodes=3, season="FALL", season_year=2023))
     _releases(web)
     web.feed("Other", "https://other/rss", 1)
     nyaa = web.feed("Nyaa", NYAA, 2)
@@ -241,7 +241,7 @@ async def test_a_batch_longer_than_the_season_is_another_seasons_and_not_offered
 
 async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path):
     _user(web, tmp_path / "Anime")
-    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], status="FINISHED", list_status="CURRENT", total_episodes=3))
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], status="FINISHED", list_status="CURRENT", total_episodes=3, season="FALL", season_year=2023))
     web.feeds.searchable[NYAA] = [
         article("[Grp] Sousou no Frieren S01 [1080p] [Batch]", START - timedelta(days=300)),
         article("[Grp] Sousou no Frieren [1080p] [Batch]", START - timedelta(days=300)),
@@ -251,3 +251,21 @@ async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path
     await web.client.get("/api/add/list")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert [b["title"] for b in preview["feeds"][0]["batches"]] == ["[Grp] Sousou no Frieren S2 [1080p] [Batch]"]
+
+
+async def test_a_release_from_long_before_the_shows_season_is_not_offered(web):
+    from datetime import datetime, timezone
+
+    _user(web)
+    web.anilist.shows.append(anilist_show(
+        9, "THE GHOST IN THE SHELL", aliases=["The Ghost in the Shell", "Ghost in the Shell", "Koukaku Kidoutai"],
+        status="FINISHED", list_status="CURRENT", total_episodes=10, season="SUMMER", season_year=2026,
+    ))
+    web.feeds.searchable[NYAA] = [
+        article("[Erai-raws] Koukaku Kidoutai (2026) - 01 [1080p]", datetime(2026, 7, 10, tzinfo=timezone.utc)),
+        article("[Commie] Ghost in the Shell SAC_2045 2", datetime(2022, 6, 13, tzinfo=timezone.utc)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    await web.client.get("/api/add/list")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
+    assert [e["title"] for e in preview["feeds"][0]["episodes"]] == ["[Erai-raws] Koukaku Kidoutai (2026) - 01 [1080p]"]
