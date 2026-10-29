@@ -81,7 +81,7 @@ def build_runtime(*, sandbox: bool) -> Runtime:
     logs.on_line = lambda: engine.bus.publish(["logs"])
     logging.getLogger("kisetsu").addHandler(logs)
     scheduler = Scheduler()
-    anilist = AniListClient()
+    anilist = AniListClient(cache_path=Path(str(config.DB_PATH) + ".userlist.json"))
     http = rss.new_client()
     jobs = Jobs(engine, scheduler, anilist=anilist, http=http)
     return Runtime(engine=engine, scheduler=scheduler, jobs=jobs, anilist=anilist, logs=logs, sandbox=sandbox)

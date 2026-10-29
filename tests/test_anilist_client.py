@@ -365,3 +365,25 @@ async def test_paused_and_dropped_entries_only_update_followed_shows_and_the_who
     assert {e["anilist_id"]: e["list_status"] for e in client.user_list} == {1: "PAUSED", 2: "DROPPED", 3: "CURRENT"}
     assert "Backlog" in next(e for e in client.user_list if e["anilist_id"] == 3)["aliases"]
     assert client.user_list_at is not None
+
+
+@pytest.mark.asyncio
+async def test_the_fetched_list_survives_a_restart(tmp_path):
+    path = tmp_path / "list.json"
+    client = AniListClient(cache_path=path)
+    payload = {"MediaListCollection": {"lists": [{"entries": [
+        {"status": "CURRENT", "media": {"id": 1, "title": {"romaji": "Airing"}, "status": "RELEASING", "nextAiringEpisode": {"episode": 4, "airingAt": 1_800_000_000}}},
+    ]}]}}
+    with patch.object(client, "_post_query", new_callable=AsyncMock, return_value=payload):
+        await client.fetch_user_list("TestUser")
+    restarted = AniListClient(cache_path=path)
+    assert restarted.user_list == client.user_list
+    assert restarted.user_list_at == client.user_list_at
+    assert restarted.user_list[0]["next_airing_at"] == datetime.fromtimestamp(1_800_000_000, tz=timezone.utc)
+
+
+def test_an_unreadable_saved_list_is_ignored(tmp_path):
+    path = tmp_path / "list.json"
+    path.write_text("{not json", encoding="utf-8")
+    client = AniListClient(cache_path=path)
+    assert client.user_list == [] and client.user_list_at is None

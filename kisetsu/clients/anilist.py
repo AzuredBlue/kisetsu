@@ -1,6 +1,8 @@
 import asyncio
 from datetime import datetime, timezone
+import json
 import logging
+from pathlib import Path
 import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 import httpx2
@@ -300,11 +302,40 @@ def get_current_and_next_season(dt: Optional[datetime] = None):
 
 
 class AniListClient:
-    def __init__(self, timeout: float = 15.0):
+    def __init__(self, timeout: float = 15.0, cache_path: Optional[Path] = None):
         self.timeout = timeout
+        self.cache_path = cache_path
         self.last_sync_at: Optional[datetime] = None
         self.user_list: List[Dict[str, Any]] = []
         self.user_list_at: Optional[datetime] = None
+        self._load_user_list()
+
+    def _load_user_list(self) -> None:
+        """Pick up the list kept on disk, so a restart does not leave the add-show search with nothing."""
+        if self.cache_path is None:
+            return
+        try:
+            saved = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            entries = saved["entries"]
+            for entry in entries:
+                if entry.get("next_airing_at"):
+                    entry["next_airing_at"] = datetime.fromisoformat(entry["next_airing_at"])
+            self.user_list_at = datetime.fromisoformat(saved["fetched_at"])
+            self.user_list = entries
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+            logger.warning(f"Ignoring the saved AniList list: {e}")
+            self.user_list, self.user_list_at = [], None
+
+    def _save_user_list(self) -> None:
+        if self.cache_path is None or self.user_list_at is None:
+            return
+        saved = {"fetched_at": self.user_list_at.isoformat(), "entries": self.user_list}
+        try:
+            self.cache_path.write_text(json.dumps(saved, default=lambda v: v.isoformat()), encoding="utf-8")
+        except OSError as e:
+            logger.warning(f"Could not save the AniList list: {e}")
 
     def seconds_since_last_sync(self, now: Optional[datetime] = None) -> Optional[float]:
         """Seconds since the last successful query, or None if there has not been one."""
@@ -429,6 +460,7 @@ class AniListClient:
                     entries[media["id"]] = _list_entry(entry.get("status"), media)
         self.user_list = list(entries.values())
         self.user_list_at = self.last_sync_at
+        self._save_user_list()
         return list(self.user_list)
 
     async def fetch_user_seasonal_anime(
