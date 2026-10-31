@@ -1,7 +1,7 @@
 // The pieces every place that shows a show is built from: poster, progress, air line, tags and problems.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { paletteFromHues, posterTextColor } from '../color.js';
+import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
 import { airTime, countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
@@ -140,11 +140,11 @@ export async function deleteShow(show) {
   } catch (err) { return false; }
 }
 
-function Actions({ show, small = false }) {
+function RowActions({ show }) {
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
-  return html`<div class=${small ? 'row-actions' : 'card-actions'}>
-    ${show.status !== 'completed' ? html`<button type="button" class="icon-btn" onClick=${stop(() => togglePause(show))} title=${show.paused ? 'Resume monitoring' : 'Pause monitoring'} aria-label=${show.paused ? 'Resume monitoring' : 'Pause monitoring'}><${Icon} name=${show.paused ? 'play' : 'pause'} small /></button>` : null}
-    <button type="button" class="icon-btn danger" onClick=${stop(() => deleteShow(show))} title="Remove show" aria-label="Remove show"><${Icon} name="trash" small /></button>
+  return html`<div class="row-actions">
+    ${show.status !== 'completed' ? html`<button type="button" class="btn plain icon-only sm" onClick=${stop(() => togglePause(show))} title=${show.paused ? 'Resume monitoring' : 'Pause monitoring'} aria-label=${show.paused ? 'Resume monitoring' : 'Pause monitoring'}><${Icon} name=${show.paused ? 'play' : 'pause'} small /></button>` : null}
+    <button type="button" class="btn plain icon-only sm" onClick=${stop(() => deleteShow(show))} title="Remove show" aria-label="Remove show"><${Icon} name="trash" small /></button>
   </div>`;
 }
 
@@ -155,12 +155,14 @@ export function ShowCard({ show, now }) {
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
   const hasAir = !!(air.ep || air.info);
   const { resolved } = useTheme();
-  const text = posterTextColor(show.cover_color, resolved);
-  return html`<div class="show-card" role="link" tabindex="0" style=${text ? `--show-text:${text}` : undefined} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
+  // The poster's own bottom edge colours the card; AniList's cover colour only stands in until it is read.
+  const edge = posterEdgeColors(show.cover_edge, resolved);
+  const text = edge ? edge.text : posterTextColor(show.cover_color, resolved);
+  const vars = [text && `--show-text:${text}`, edge && edge.panel && `--show-panel:${edge.panel}`].filter(Boolean).join(';');
+  return html`<div class="show-card" role="link" tabindex="0" style=${vars || undefined} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
     <div class="poster-frame">
       <${Poster} show=${show} />
-      <div class="tag-slot"><${StatusTag} show=${show} /></div>
-      <${Actions} show=${show} />
+      ${show.status !== 'waiting' ? html`<div class="tag-slot"><${StatusTag} show=${show} /></div>` : null}
     </div>
     <div class="show-text">
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
@@ -186,6 +188,6 @@ export function ShowRow({ show, now }) {
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
     <div class="sr-progress" title=${`${countText(show)} downloaded`}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
-    <${Actions} show=${show} small />
+    <${RowActions} show=${show} />
   </div>`;
 }

@@ -52,6 +52,7 @@ class Jobs:
         fetcher: Optional[Fetcher] = None,
         searcher: Callable[..., Awaitable[Any]] = sites.search_feed,
         fetch_hues: Callable[..., Awaitable[Any]] = palette_client.fetch_hues,
+        fetch_edge: Callable[..., Awaitable[Any]] = palette_client.fetch_edge,
     ) -> None:
         self.engine = engine
         self.scheduler = scheduler
@@ -60,6 +61,7 @@ class Jobs:
         self._fetcher = fetcher
         self.searcher = searcher
         self.fetch_hues = fetch_hues
+        self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
         self.backoff = rss.Backoff()
         self.backfill_requests: Set[int] = set()
@@ -404,6 +406,10 @@ class Jobs:
             # A failed download is not remembered, so it is tried again next time.
             if ok:
                 await self.engine.run(cycle.store_palette, show_id, key, hues)
+        for show_id, key, cover in await self.engine.run(cycle.edge_targets):
+            ok, color = await self.fetch_edge(cover)
+            if ok:
+                await self.engine.run(cycle.store_edge, show_id, key, color)
         return None
 
     async def housekeeping(self) -> Optional[float]:

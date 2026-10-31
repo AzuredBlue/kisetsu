@@ -226,6 +226,9 @@ class Show(Base, table=True):
     banner_image: Optional[str] = Field(default=None, nullable=True)
     accent_hues: Optional[str] = Field(default=None, nullable=True)
     accent_src: Optional[str] = Field(default=None, nullable=True)
+    # The colour along the cover's bottom edge, "#rrggbb" ("" when it has none), and the cover it was read from.
+    cover_edge: Optional[str] = Field(default=None, nullable=True)
+    cover_edge_src: Optional[str] = Field(default=None, nullable=True)
 
     season_name: Optional[str] = Field(default=None, nullable=True)
     season_year: Optional[int] = Field(default=None, nullable=True)

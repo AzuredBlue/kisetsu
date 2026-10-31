@@ -29,9 +29,12 @@ class Env:
         async def hues(*urls):
             return True, None
 
+        async def edge(url):
+            return True, None
+
         self.jobs = Jobs(
             self.engine, self.scheduler, anilist=self.anilist, fetcher=self.feeds.fetch,
-            searcher=search, fetch_hues=hues,
+            searcher=search, fetch_hues=hues, fetch_edge=edge,
         )
         self.pokes = []
         self.scheduler.poke = lambda name, delay=0.0: self.pokes.append(name)

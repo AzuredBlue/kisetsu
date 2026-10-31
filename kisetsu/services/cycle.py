@@ -17,6 +17,7 @@ logger = logging.getLogger("kisetsu.services.cycle")
 LAST_SYNC_KEY = "last_anilist_sync_at"
 # Version of the colour extraction; a stored result from another version is recomputed.
 ACCENT_VERSION = 2
+EDGE_VERSION = 1
 EVENTS_KEEP = timedelta(days=90)
 
 
@@ -184,5 +185,25 @@ def store_palette(ctx: Context, show_id: int, key: str, hues: Optional[Tuple[int
         return
     show.accent_src = key
     show.accent_hues = "" if hues is None else f"{hues[0]},{hues[1]:.3f},{hues[2]},{hues[3]},{hues[4]:.3f}"
+    ctx.session.add(show)
+    ctx.emit("shows", f"show:{show_id}")
+
+
+def edge_targets(ctx: Context) -> List[Tuple[int, str, str]]:
+    """Shows whose cover's edge colour is not read for their current cover: (id, key, cover)."""
+    targets = []
+    for show in ctx.session.exec(select(Show)).all():
+        key = f"{show.cover_image}#{EDGE_VERSION}" if show.cover_image else ""
+        if key and not (show.cover_edge_src == key and show.cover_edge is not None):
+            targets.append((show.id, key, show.cover_image))
+    return targets
+
+
+def store_edge(ctx: Context, show_id: int, key: str, color: Optional[str]) -> None:
+    show = ctx.session.get(Show, show_id)
+    if show is None:
+        return
+    show.cover_edge_src = key
+    show.cover_edge = color or ""
     ctx.session.add(show)
     ctx.emit("shows", f"show:{show_id}")

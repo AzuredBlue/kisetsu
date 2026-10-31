@@ -148,6 +148,19 @@ def test_a_version_3_database_gains_the_download_batch_column():
         assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
 
 
+def test_a_version_5_database_gains_the_cover_edge_columns():
+    engine = make_engine()
+    migrate(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE shows DROP COLUMN cover_edge")
+        conn.exec_driver_sql("ALTER TABLE shows DROP COLUMN cover_edge_src")
+        conn.exec_driver_sql("PRAGMA user_version = 5")
+    migrate(engine)
+    with engine.connect() as conn:
+        assert {"cover_edge", "cover_edge_src"} <= {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(shows)")}
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
+
+
 def test_the_schema_has_the_new_tables_only():
     from kisetsu.db.schema import Base
 

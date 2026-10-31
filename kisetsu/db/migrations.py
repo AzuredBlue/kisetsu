@@ -45,6 +45,14 @@ def _v5(engine: Engine) -> None:
             conn.exec_driver_sql("ALTER TABLE shows ADD COLUMN cover_color VARCHAR")
 
 
+def _v6(engine: Engine) -> None:
+    columns = {c["name"] for c in inspect(engine).get_columns("shows")}
+    with engine.begin() as conn:
+        for name in ("cover_edge", "cover_edge_src"):
+            if name not in columns:
+                conn.exec_driver_sql(f"ALTER TABLE shows ADD COLUMN {name} VARCHAR")
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -53,6 +61,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (3, _v3),
     (4, _v4),
     (5, _v5),
+    (6, _v6),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 

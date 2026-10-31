@@ -141,6 +141,7 @@ def show_card(
         "title_english": show.title_english,
         "cover": show.cover_image,
         "cover_color": show.cover_color,
+        "cover_edge": show.cover_edge or None,
         "banner": show.banner_image,
         "accent_hues": _hues(show),
         "season": " ".join(part for part in (show.season_name and show.season_name.title(), str(show.season_year or "") or None) if part) or None,

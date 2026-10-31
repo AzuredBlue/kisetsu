@@ -2,7 +2,7 @@ import asyncio
 import logging
 from datetime import timedelta
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from kisetsu.clients.anilist import AniListDeferred, AniListError
 from kisetsu.clients.qbittorrent import QbitUnavailable
@@ -276,6 +276,37 @@ def test_housekeeping_and_palette_run_without_a_qbit_or_images(env):
         return await env.jobs.palette()
 
     assert run(env, go) is None
+
+
+def test_the_palette_reads_a_cover_edge_once_and_again_when_the_cover_changes(env):
+    airing(env)
+    read = []
+
+    async def edge(url):
+        read.append(url)
+        return True, "#336699"
+
+    env.jobs.fetch_edge = edge
+
+    def set_cover(url):
+        with Session(env.db) as session:
+            show = session.exec(select(Show)).one()
+            show.cover_image = url
+            session.add(show)
+            session.commit()
+
+    async def go():
+        await env.jobs.sync_anilist()
+        set_cover("https://s4.anilist.co/a.jpg")
+        await env.jobs.palette()
+        await env.jobs.palette()
+        set_cover("https://s4.anilist.co/b.jpg")
+        await env.jobs.palette()
+
+    run(env, go)
+    assert read == ["https://s4.anilist.co/a.jpg", "https://s4.anilist.co/b.jpg"]
+    with Session(env.db) as session:
+        assert session.exec(select(Show)).one().cover_edge == "#336699"
 
 
 def test_history_records_what_a_failed_replacement_did_exactly_once(env):
