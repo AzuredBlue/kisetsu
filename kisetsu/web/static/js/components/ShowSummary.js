@@ -82,9 +82,12 @@ export async function togglePause(show) {
 function torrentList(torrents) {
   if (!Array.isArray(torrents)) return html`<p class="field-hint">The list of torrents is not available.</p>`;
   if (!torrents.length) return html`<p class="field-hint">No torrents in qBittorrent belong to this show.</p>`;
-  return html`<ul class="torrent-list">${torrents.map(t => html`<li key=${t.hash}>
-    <span class="mono truncate" title=${t.name || t.hash}>${t.name || t.hash}</span>${t.tracked ? null : html`<span class="muted">found in its folder</span>`}
-  </li>`)}</ul>`;
+  return html`<div>
+    <div class="field-label">Torrents <span class="count-badge">${torrents.length}</span></div>
+    <ul class="torrent-list">${torrents.map(t => html`<li key=${t.hash}>
+      <span class="mono truncate" title=${t.name || t.hash}>${t.name || t.hash}</span>${t.tracked ? null : html`<span class="muted">found in its folder</span>`}
+    </li>`)}</ul>
+  </div>`;
 }
 
 function folderNote(folder) {
@@ -96,21 +99,28 @@ function folderNote(folder) {
       ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
 }
 
+// The body re-renders on the switch; `keep` is what the caller reads once the dialog closes.
+function DeleteBody({ preview, keep }) {
+  const [kept, setKept] = useState(false);
+  return html`<p class="field-hint" style="margin:0">${kept ? 'Removes the show and its torrents. The files stay on disk.' : 'Removes the show, its torrents and their files.'}</p>
+    ${torrentList(preview ? preview.torrents : null)}
+    ${kept ? null : folderNote(preview && preview.folder)}
+    <label class="switch-row"><span>Keep files</span>
+      <input type="checkbox" class="sr-only" checked=${kept} onChange=${(e) => { keep.checked = e.target.checked; setKept(e.target.checked); }} />
+      <span class="switch" aria-hidden="true"></span></label>`;
+}
+
 // Returns true when the show was deleted.
 export async function deleteShow(show) {
   let preview = null;
   try { preview = await apiFetch(`/api/shows/${show.id}/delete-preview`, { quiet: true }); } catch (err) { /* the dialog says it is unavailable */ }
   const keep = { checked: false };
-  const torrents = preview ? preview.torrents : null;
   const confirmed = await confirmDialog({
     title: `Delete '${show.title}'?`,
+    icon: 'trash',
     danger: true,
     confirm: 'Delete',
-    body: html`<p class="field-hint">Removes the show, the torrents listed below whether they are downloading or seeding, their files and the show's tag.</p>
-      ${torrentList(torrents)}
-      ${folderNote(preview && preview.folder)}
-      <label class="check-row"><input type="checkbox" onChange=${(e) => { keep.checked = e.target.checked; }} />
-        Keep files on disk (only remove the torrents from qBittorrent)</label>`,
+    body: html`<${DeleteBody} preview=${preview} keep=${keep} />`,
   });
   if (!confirmed) return false;
   try {

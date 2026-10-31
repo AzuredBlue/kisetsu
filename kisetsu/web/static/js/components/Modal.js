@@ -1,4 +1,5 @@
 import { html, useEffect, useRef, useState } from '../ui.js';
+import { Icon } from './Icon.js';
 
 let open = () => {};
 
@@ -7,9 +8,9 @@ export function showModal(build, { wide = false } = {}) {
   return new Promise(resolve => open({ build, wide, resolve }));
 }
 
-export function confirmDialog({ title, body, confirm = 'Confirm', danger = false, cancel = 'Cancel' }) {
+export function confirmDialog({ title, body, confirm = 'Confirm', danger = false, cancel = 'Cancel', icon = null }) {
   return showModal((close) => html`
-    <h2>${title}</h2>
+    ${icon ? html`<div class="modal-head"><span class=${`modal-badge${danger ? ' danger' : ''}`}><${Icon} name=${icon} /></span><h2>${title}</h2></div>` : html`<h2>${title}</h2>`}
     <div class="body">${body}</div>
     <div class="actions">
       <button class="btn" onClick=${() => close(false)}>${cancel}</button>
