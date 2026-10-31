@@ -1,8 +1,10 @@
 // The pieces every place that shows a show is built from: poster, progress, air line, tags and problems.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
+import { paletteFromHues } from '../color.js';
 import { airTime, countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
+import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
 import { confirmDialog } from './Modal.js';
 import { toast } from './Toast.js';
@@ -52,11 +54,15 @@ export function Poster({ show, zoom = false, dim: dimmedOverride }) {
   return html`<div class="poster on-art" data-poster-id=${show.id}>${zoom ? html`<div class="poster-zoom">${art}</div>` : art}</div>`;
 }
 
+// Filled with the accent the show's own page uses (its --ac-art), or the user's when its colours are not computed yet.
 export function ProgressBar({ show }) {
-  const { done, aired, total } = show.progress;
+  const { done, total } = show.progress;
+  const { resolved } = useTheme();
   const known = total > 0 || done > 0 || !!show.next_airing;
   const pct = known ? Math.round(progressFraction(show.progress) * 100) : 0;
-  return html`<div class="bar" title=${`${done}/${total || '?'} downloaded`}><div class=${dimmed(show) ? 'dim' : ''} style=${`width:${pct}%`}></div></div>`;
+  const hues = show.accent_hues;
+  const color = hues && hues.length >= 4 ? paletteFromHues(hues, resolved).ac : null;
+  return html`<div class="bar" title=${`${done}/${total || '?'} downloaded`} style=${color ? `--bar:${color}` : undefined}><div class=${dimmed(show) ? 'dim' : ''} style=${`width:${pct}%`}></div></div>`;
 }
 
 export function countText(show) {
@@ -153,7 +159,6 @@ export function ShowCard({ show, now }) {
       <${Poster} show=${show} zoom />
       <div class="tag-slot"><${StatusTag} show=${show} /></div>
       <${Actions} show=${show} />
-      <${ProgressBar} show=${show} />
     </div>
     <div class="show-text">
       <h3 class="truncate" title=${show.title}>${show.title}</h3>

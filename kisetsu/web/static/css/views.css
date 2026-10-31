@@ -9,7 +9,7 @@
 .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
 
-/* A poster with its progress bar flush underneath, and the text below. */
+/* A poster, and the text below. */
 .show-card { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
 .poster-frame {
   position: relative; overflow: hidden; border-radius: var(--r-sm); border: 1px solid rgb(var(--line)); background: #18181b;
@@ -27,7 +27,8 @@
   color: rgb(var(--ac-soft)); background: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--sunken)));
 }
 .tag-slot { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
-.bar { height: 5px; background: rgb(var(--line-soft)); overflow: hidden; & > div { height: 100%; background: rgb(var(--ac-art)); &.dim { background: rgb(113 113 122); } } }
+/* The fill takes --bar, the show's own art colour, when its colours are known. */
+.bar { height: 5px; background: rgb(var(--line-soft)); overflow: hidden; & > div { height: 100%; border-radius: inherit; background: rgb(var(--bar, var(--ac-art))); &.dim { background: rgb(113 113 122); } } }
 .show-text { display: flex; flex-direction: column; gap: .125rem; padding: .625rem .125rem 0; min-width: 0; }
 .show-text h3 { font-size: .875rem; font-weight: 500; line-height: 1.4; color: rgb(var(--text-2)); }
 .meta { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; min-width: 0; font-size: .75rem; line-height: 1rem; color: rgb(var(--text-3)); }
