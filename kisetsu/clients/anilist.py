@@ -63,6 +63,7 @@ query ($userName: String) {
           season
           seasonYear
           coverImage {
+            extraLarge
             large
           }
           bannerImage
@@ -109,6 +110,7 @@ def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, 
     """One list entry in the shape the rest of Kisetsu reads: titles, aliases and broadcast state."""
     media_id = media["id"]
     titles = media.get("title") or {}
+    cover = media.get("coverImage") or {}
     aliases = set()
     for key in ["romaji", "english", "native", "userPreferred"]:
         val = titles.get(key)
@@ -135,7 +137,7 @@ def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, 
         "next_airing_at": next_airing_at,
         "season": media.get("season"),
         "season_year": media.get("seasonYear"),
-        "cover_image": (media.get("coverImage") or {}).get("large") or "",
+        "cover_image": cover.get("extraLarge") or cover.get("large") or "",
         "banner_image": media.get("bannerImage") or "",
     }
 

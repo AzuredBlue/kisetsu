@@ -1,7 +1,7 @@
 // The episode ledger and the releases the feeds carry, as two lists of the show page.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { relativeTime, localTime } from '../format.js';
+import { airTime, relativeTime, localTime } from '../format.js';
 import { Icon, Spinner } from './Icon.js';
 import { toast } from './Toast.js';
 
@@ -10,16 +10,10 @@ const GROUPS = [['attention', 'Needs attention'], ['active', 'Downloading'], ['d
 
 const version = (v) => (v > 1 ? ` v${v}` : '');
 
-// "airs Sat 5:00 PM" for an episode still to come, with the date once it is a week or more away.
+// "airs Sat 16:30" for an episode still to come, with the date once it is a week or more away.
 function airsLabel(ep, now) {
-  if (ep.status !== 'wanted' || !ep.air_at) return '';
-  const at = new Date(ep.air_at);
-  const ahead = at - now;
-  if (isNaN(ahead) || ahead <= 0) return '';
-  const when = ahead >= 6 * 86400000
-    ? at.toLocaleDateString([], { month: 'short', day: 'numeric' })
-    : at.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
-  return `airs ${when}`;
+  if (ep.status !== 'wanted' || !ep.air_at || new Date(ep.air_at) <= now) return '';
+  return `airs ${airTime(ep.air_at, now)}`;
 }
 
 // What an episode row says and which group it belongs to.

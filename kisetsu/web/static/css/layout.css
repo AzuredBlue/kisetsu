@@ -34,7 +34,7 @@ main { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: h
 @media (min-width: 768px) { .topbar { padding: 0 2rem; } }
 .content { flex: 1; overflow-y: auto; padding: 1.25rem 1rem 1.5rem; }
 @media (min-width: 768px) { .content { padding: 1.25rem 2rem 2rem; } }
-.page { display: grid; gap: 1.25rem; align-content: start; }
+.page { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-content: start; }
 .page.narrow { max-width: 56rem; }
 .page.medium { max-width: 48rem; }
 .page.wide { max-width: 72rem; }

@@ -1,7 +1,7 @@
 // The pieces every place that shows a show is built from: poster, progress, air line, tags and problems.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
+import { airTime, countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { Icon } from './Icon.js';
 import { confirmDialog } from './Modal.js';
@@ -24,7 +24,9 @@ export function airSummary(show, now) {
     if (cd === 'Aired' && show.last_done && show.last_done >= next.episode) {
       return { ep: `Ep ${show.last_done}`, info: 'Downloaded', tone: 'ok', at: null };
     }
-    return { ep: `Ep ${next.episode}`, info: cd === 'Aired' ? 'Aired' : `in ${cd}`, tone: cd === 'Aired' && show.status !== 'waiting' ? 'warn' : '', at: next.at };
+    // A countdown inside the last day, then the day and time, which is how a weekly broadcast is planned around.
+    const soon = Date.parse(next.at) - now < 86400000;
+    return { ep: `Ep ${next.episode}`, info: cd === 'Aired' ? 'Aired' : soon ? `in ${cd}` : airTime(next.at, now), tone: cd === 'Aired' && show.status !== 'waiting' ? 'warn' : '', at: next.at };
   }
   if (show.last_done) return { ep: `Ep ${show.last_done}`, info: '', tone: '', at: null };
   return { ep: '', info: '', tone: '', at: null };
@@ -160,7 +162,7 @@ export function ShowCard({ show, now }) {
         ${hasCount ? html`<span class="count" title=${`${countText(show)} downloaded`}>${countText(show)}</span>` : null}
       </div>` : null}
       ${hasAir ? html`<${Problems} show=${show} />` : hasCount ? null : html`<${Problems} show=${show} />`}
-      <div class="meta feed-line" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
+      ${show.feed && show.feed.failing ? html`<div class="meta warn truncate" title=${`${show.feed.name} is failing`}>${show.feed.name} is failing</div>` : null}
     </div>
   </div>`;
 }

@@ -41,6 +41,14 @@ export function countdown(iso, now = Date.now()) {
   return `${Math.max(1, minutes)}m`;
 }
 
+// "Sat 16:30" for a time up to a week out, "Feb 18" beyond that; empty without a time.
+export function airTime(iso, now = Date.now()) {
+  const d = toDate(iso);
+  if (!d) return '';
+  if (d.getTime() - now >= 6 * 86400000) return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return d.toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+}
+
 export function relativeTime(iso, now = Date.now()) {
   const d = toDate(iso);
   if (!d) return '';

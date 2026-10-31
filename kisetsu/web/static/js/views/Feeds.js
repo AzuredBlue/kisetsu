@@ -1,13 +1,29 @@
 import { html, useEffect, useState } from '../ui.js';
+import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { feeds as feedsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
 import { FeedItems } from '../components/FeedItems.js';
 import { FeedsTable, importFromQbit, openFeedDialog } from '../components/FeedsTable.js';
+import { confirmDialog } from '../components/Modal.js';
+import { toast } from '../components/Toast.js';
 
 const KEY = 'kisetsu.feeds.releases';
 const saved = () => { try { return localStorage.getItem(KEY) === '1'; } catch (err) { return false; } };
 const save = (on) => { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (err) { /* only a convenience */ } };
+
+const autoDiscover = async () => {
+  const ok = await confirmDialog({
+    title: 'Reset every show to auto-discover?',
+    body: html`<p>Hand-picked feeds are cleared. Shows locked to a feed they already downloaded from, and completed shows, are kept.</p>`,
+    confirm: 'Reset',
+  });
+  if (!ok) return;
+  try {
+    const { released } = await apiFetch('/api/shows/auto-discover-all', { method: 'POST' });
+    toast(released ? `${released} show${released === 1 ? '' : 's'} set to auto-discover.` : 'No show had a hand-picked feed.', 'success');
+  } catch (err) { /* shown by apiFetch */ }
+};
 
 export function Feeds() {
   const { data } = useResource(feedsData);
@@ -40,6 +56,7 @@ export function Feeds() {
         <div class="feeds-tools">
           <button type="button" class="btn sm" onClick=${() => openFeedDialog()}>Add feed</button>
           <button type="button" class="btn sm" onClick=${importFromQbit} title="Add the feeds qBittorrent has that Kisetsu does not">Import from qBittorrent</button>
+          <button type="button" class="btn sm plain" onClick=${autoDiscover} title="Clear the hand-picked feed of every show and let Kisetsu find it again. Shows locked to a feed they downloaded from are kept.">Reset hand-picked feeds…</button>
           <button type="button" class="btn sm feeds-toggle" aria-expanded=${String(visible)} onClick=${() => show(!open)} title=${visible ? 'Hide the releases the feeds carry' : 'Show the releases the feeds carry'}>
             <span>Releases</span><${Icon} name="down" small class="chev" />
           </button>

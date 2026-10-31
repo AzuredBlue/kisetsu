@@ -2,8 +2,10 @@ import { html, useMemo } from '../ui.js';
 import { useResource } from '../store.js';
 import { go, prefetch, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
+import { Icon } from '../components/Icon.js';
 import { Poster, StatusTag } from '../components/ShowSummary.js';
 
+const WEEK = 7 * 86400000;
 const time = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 // The week Monday to Sunday: a released show repeats on its air day, an unreleased one appears once on its premiere date.
@@ -28,7 +30,11 @@ export function buildWeek(shows, today) {
       }
       if (!at) return;
       const minutes = base.getHours() * 60 + base.getMinutes();
-      entries.push({ show, minutes, at, passed: d < dayIndex || (d === dayIndex && minutes <= nowMinutes) });
+      const passed = d < dayIndex || (d === dayIndex && minutes <= nowMinutes);
+      // `next_airing` is the next episode to air, so a slot that already aired this week was the one before it.
+      const behind = passed && show.released ? Math.max(0, Math.round((base - at) / WEEK)) : 0;
+      const episode = Math.max(1, (show.next_airing.episode || (show.last_done || 0) + 1) - behind);
+      entries.push({ show, minutes, at, passed, episode });
     });
     entries.sort((a, b) => a.minutes - b.minutes);
     const slots = [];
@@ -51,11 +57,11 @@ function Slot({ slot }) {
   return html`<div class="cal-slot">
     <div class=${`cal-time${slot.passed ? ' passed' : ''}`}>${slot.label}</div>
     <div class="cal-items">
-      ${slot.items.map(({ show, passed }) => html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : passed ? ' passed' : ''}`} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
+      ${slot.items.map(({ show, passed, episode }) => html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : passed ? ' passed' : ''}`} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
         <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} /></div>
         <div class="cal-info">
           <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
-          <div class="row wrap"><span class="ep">Ep ${show.next_airing.episode || show.last_done || 1}</span><${StatusTag} show=${show} /></div>
+          <div class="row wrap"><span class="ep">Ep ${episode}</span>${passed && show.last_done >= episode ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>` : null}<${StatusTag} show=${show} /></div>
         </div>
       </button>`)}
     </div>
