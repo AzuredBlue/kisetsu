@@ -145,7 +145,7 @@ def test_a_version_3_database_gains_the_download_batch_column():
     migrate(engine)
     with engine.connect() as conn:
         assert "batch" in {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(downloads)")}
-        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION == 4
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
 
 
 def test_the_schema_has_the_new_tables_only():

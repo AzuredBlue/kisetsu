@@ -1,7 +1,7 @@
 // The pieces every place that shows a show is built from: poster, progress, air line, tags and problems.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { paletteFromHues } from '../color.js';
+import { paletteFromHues, posterTextColor } from '../color.js';
 import { airTime, countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
@@ -45,13 +45,13 @@ export function StatusTag({ show }) {
 }
 
 // The cover, or the show's initials when it has none or it does not load.
-export function Poster({ show, zoom = false, dim: dimmedOverride }) {
+export function Poster({ show, dim: dimmedOverride }) {
   const [broken, setBroken] = useState(false);
   const dim = (dimmedOverride === undefined ? dimmed(show) : dimmedOverride) ? ' dim' : '';
   const art = show.cover && !broken
     ? html`<img src=${show.cover} alt=${show.title} loading="lazy" class=${dim.trim()} onError=${() => setBroken(true)} />`
     : html`<div class=${`no-art${dim}`}>${initials(show.title)}</div>`;
-  return html`<div class="poster on-art" data-poster-id=${show.id}>${zoom ? html`<div class="poster-zoom">${art}</div>` : art}</div>`;
+  return html`<div class="poster on-art" data-poster-id=${show.id}>${art}</div>`;
 }
 
 // Filled with the accent the show's own page uses (its --ac-art), or the user's when its colours are not computed yet.
@@ -154,9 +154,11 @@ export function ShowCard({ show, now }) {
   const air = airSummary(show, now);
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
   const hasAir = !!(air.ep || air.info);
-  return html`<div class="show-card" role="link" tabindex="0" onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
-    <div class=${`poster-frame${dimmed(show) ? ' dim' : ''}`}>
-      <${Poster} show=${show} zoom />
+  const { resolved } = useTheme();
+  const text = posterTextColor(show.cover_color, resolved);
+  return html`<div class="show-card" role="link" tabindex="0" style=${text ? `--show-text:${text}` : undefined} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
+    <div class="poster-frame">
+      <${Poster} show=${show} />
       <div class="tag-slot"><${StatusTag} show=${show} /></div>
       <${Actions} show=${show} />
     </div>

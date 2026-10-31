@@ -11,17 +11,18 @@
 
 /* A poster, and the text below. */
 .show-card { display: flex; flex-direction: column; min-width: 0; cursor: pointer; }
+/* A resting shadow instead of a border lifts the poster off the page; light mode needs far less of it. */
 .poster-frame {
-  position: relative; overflow: hidden; border-radius: var(--r-sm); border: 1px solid rgb(var(--line)); background: #18181b;
-  transition: border-color .15s;
-  &.dim { border-color: rgb(var(--line-soft)); }
+  position: relative; overflow: hidden; border-radius: var(--r-sm); background: #18181b;
+  box-shadow: 0 10px 24px rgb(0 0 0 / .4), 0 2px 4px rgb(0 0 0 / .25);
 }
-.show-card:hover .poster-frame { border-color: rgb(var(--line-hover)); }
+:root[data-theme="light"] .poster-frame { box-shadow: 0 12px 28px rgb(20 40 38 / .16), 0 3px 4px rgb(20 40 38 / .06); }
+/* Hover colours the title in the poster's own colour (--show-text, from AniList's cover colour); nothing moves. */
+.show-card h3 { transition: color .2s ease; }
+.show-card:hover h3 { color: rgb(var(--show-text, var(--ac-soft))); }
 .poster { position: relative; width: 100%; aspect-ratio: 2 / 3; overflow: hidden; background: #18181b; }
 .poster img, .poster .no-art { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .poster .dim { opacity: .8; filter: grayscale(35%); }
-.poster-zoom { position: absolute; inset: -1px; transition: transform .3s var(--ease); backface-visibility: hidden; }
-.show-card:hover .poster-zoom { transform: scale(1.03); }
 .no-art {
   display: flex; align-items: center; justify-content: center; padding: .5rem; text-align: center; font-weight: 600; font-size: 1.5rem; letter-spacing: -0.02em;
   color: rgb(var(--ac-soft)); background: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--sunken)));

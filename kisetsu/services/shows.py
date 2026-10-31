@@ -118,7 +118,7 @@ def _update_existing(ctx: Context, show: Show, data: Dict[str, Any], logs: List[
     updated = False
     for attr, key in (
         ("title_romaji", "title_romaji"), ("title_english", "title_english"), ("cover_image", "cover_image"),
-        ("banner_image", "banner_image"), ("season_name", "season"), ("season_year", "season_year"),
+        ("cover_color", "cover_color"), ("banner_image", "banner_image"), ("season_name", "season"), ("season_year", "season_year"),
     ):
         if data.get(key):
             updated |= _set_if(show, attr, data[key])
@@ -168,6 +168,7 @@ def show_from_entry(data: Dict[str, Any], paused_all: bool = False) -> Show:
         next_airing_episode=data.get("next_airing_episode"),
         next_airing_at=data.get("next_airing_at"),
         cover_image=data.get("cover_image"),
+        cover_color=data.get("cover_color") or None,
         banner_image=data.get("banner_image"),
         season_name=data.get("season"),
         season_year=data.get("season_year"),

@@ -163,6 +163,16 @@ function brightEnough(h, s, lightness) {
   return rgb;
 }
 
+// A poster's AniList colour as title text: its hue at one OKLCH lightness per theme, so every hue
+// reads equally bright (above 5:1 on the page). Near-grey posters have no hue to show and get null.
+export function posterTextColor(hex, mode = 'dark') {
+  if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return null;
+  const [, C, h] = rgbToOklch(hexToRgb(hex));
+  if (C < 0.03) return null;
+  const L = mode === 'light' ? 0.45 : 0.8;
+  return oklchToRgb(L, fitChroma(L, Math.min(0.17, Math.max(0.08, C)), h), h).join(' ');
+}
+
 // The user's accent as one rule per theme; the light one is more specific, so it wins in light mode.
 export function userAccentCss(color, tint) {
   const tintSat = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;

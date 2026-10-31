@@ -221,6 +221,8 @@ class Show(Base, table=True):
     aliases_json: str = Field(default="[]")
     custom_aliases_json: str = Field(default="[]")
     cover_image: Optional[str] = Field(default=None, nullable=True)
+    # AniList's own colour for the cover, as "#rrggbb".
+    cover_color: Optional[str] = Field(default=None, nullable=True)
     banner_image: Optional[str] = Field(default=None, nullable=True)
     accent_hues: Optional[str] = Field(default=None, nullable=True)
     accent_src: Optional[str] = Field(default=None, nullable=True)

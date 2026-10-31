@@ -65,6 +65,7 @@ query ($userName: String) {
           coverImage {
             extraLarge
             large
+            color
           }
           bannerImage
         }
@@ -138,6 +139,7 @@ def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, 
         "season": media.get("season"),
         "season_year": media.get("seasonYear"),
         "cover_image": cover.get("extraLarge") or cover.get("large") or "",
+        "cover_color": cover.get("color") or "",
         "banner_image": media.get("bannerImage") or "",
     }
 
