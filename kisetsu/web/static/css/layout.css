@@ -14,7 +14,7 @@
 @media (min-width: 768px) { .sidebar { position: static; transform: none; } .backdrop, .menu-btn { display: none; } }
 
 .nav-item {
-  display: flex; align-items: center; gap: .625rem; width: 100%; padding: .4rem .65rem; border-radius: 999px;
+  display: flex; align-items: center; gap: .625rem; width: 100%; padding: .4rem .65rem; border-radius: var(--r-md);
   font-size: .875rem; font-weight: 500; color: rgb(var(--text-3)); transition: background-color .15s, color .15s;
   &:hover { background: rgb(var(--raised)); color: rgb(var(--text)); }
   &[aria-current="page"] { background: var(--tonal); color: rgb(var(--text)); & .icon { color: rgb(var(--ac)); } }

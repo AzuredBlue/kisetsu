@@ -35,7 +35,9 @@
   --tonal-h: color-mix(in srgb, rgb(var(--ac)) 24%, rgb(var(--surface)));
   --on-tonal: rgb(var(--ac-soft));
 
-  --radius-card: 1.25rem; --radius-field: .75rem; --ease: cubic-bezier(.2, .8, .2, 1);
+  /* Shape: pills are for values (tags, chips, switches, bars). Things you press or that hold things are rectangles. */
+  --r-xs: .25rem; --r-sm: .375rem; --r-md: .625rem; --r-lg: 1rem; --r-full: 999px;
+  --ease: cubic-bezier(.2, .8, .2, 1);
 }
 
 :root[data-theme="light"] {
@@ -58,7 +60,7 @@
 }
 
 /* Tonal pills: a muted hue container with a lighter text on it. */
-.pill { display: inline-flex; align-items: center; padding: .125rem .5rem; border-radius: 999px; font-size: .75rem; font-weight: 500; line-height: 1.25rem; white-space: nowrap; }
+.pill { display: inline-flex; align-items: center; padding: .125rem .5rem; border-radius: var(--r-full); font-size: .75rem; font-weight: 500; line-height: 1.25rem; white-space: nowrap; }
 .pill-ok { background: rgb(26 61 48); color: rgb(168 230 200); }
 .pill-warn { background: rgb(66 52 18); color: rgb(246 214 130); }
 .pill-info { background: rgb(28 52 84); color: rgb(179 211 250); }
