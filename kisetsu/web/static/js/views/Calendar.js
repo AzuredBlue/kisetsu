@@ -3,9 +3,11 @@ import { useResource } from '../store.js';
 import { go, prefetch, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
-import { Poster, StatusTag } from '../components/ShowSummary.js';
+import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
+import { useTheme } from '../theme.js';
 
 const WEEK = 7 * 86400000;
+const SEASON_WEEKS = 4;
 const time = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 
 const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
@@ -14,7 +16,7 @@ const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.g
 // Past the last known date (or with none at all) a still-airing show is assumed weekly, up to its last episode.
 function airingsBetween(show, from, to) {
   const total = show.progress && show.progress.total;
-  const known = (show.airings || []).map(a => ({ episode: a.episode, at: new Date(a.at), done: a.done })).filter(a => !isNaN(a.at));
+  const known = (show.airings || []).map(a => ({ episode: a.episode, at: new Date(a.at), done: a.done, status: a.status })).filter(a => !isNaN(a.at));
   const found = known.filter(a => a.at >= from && a.at <= to);
   if (!show.next_airing) return found;
   let anchor = known[known.length - 1];
@@ -44,10 +46,14 @@ export function buildWeek(shows, today, offset = 0) {
   const sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6, 23, 59, 59, 999);
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const airing = shows.flatMap(show => airingsBetween(show, monday, sunday).map(a => ({
-    show, at: a.at, episode: a.episode, passed: a.at <= today,
+    show, at: a.at, episode: a.episode, passed: a.at <= today, status: a.status,
     done: a.done ?? (show.last_done || 0) >= a.episode,
     minutes: a.at.getHours() * 60 + a.at.getMinutes(),
   })));
+  // Weekdays something airs on this season, from the weeks around this one, so a quiet day can take less room
+  // without the columns shifting from week to week.
+  const busy = new Set(shows.flatMap(show => airingsBetween(show, weeksAfter(monday, -SEASON_WEEKS), weeksAfter(sunday, SEASON_WEEKS)))
+    .map(a => (a.at.getDay() + 6) % 7));
   const days = [];
   for (let d = 0; d < 7; d++) {
     const date = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + d);
@@ -61,25 +67,47 @@ export function buildWeek(shows, today, offset = 0) {
     });
     days.push({
       date, slots, today: date.getTime() === startOfToday.getTime(), past: date < startOfToday,
+      quiet: !slots.length && busy.size > 0 && !busy.has(d),
       name: date.toLocaleDateString('en-US', { weekday: 'short' }),
       label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
     });
   }
-  const range = `${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sunday.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
+  const sameMonth = monday.getMonth() === sunday.getMonth();
+  const range = `${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sunday.toLocaleDateString('en-US', sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' })}, ${sunday.getFullYear()}`;
   return { days, range };
 }
 
+// Where an aired episode stands, in the words the show cards use. One on disk is settled: it dims and gets a check.
+// One still being looked for stays bright, since it is the one worth a look.
+function outcome({ show, passed, done, status }) {
+  if (!passed) return null;
+  if (done) return { settled: true };
+  if (status === 'downloading') return { text: 'Downloading', tone: 'info' };
+  if (status === 'failed') return { text: 'Failed', tone: 'bad' };
+  return { text: 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
+}
+
+const weekName = (offset) => offset === 0 ? 'This week' : offset === 1 ? 'Next week' : offset === -1 ? 'Last week'
+  : offset > 0 ? `In ${offset} weeks` : `${-offset} weeks ago`;
+
 function Slot({ slot }) {
+  const { resolved } = useTheme();
   return html`<div class="cal-slot">
     <div class=${`cal-time${slot.passed ? ' passed' : ''}`}>${slot.label}</div>
     <div class="cal-items">
-      ${slot.items.map(({ show, passed, episode, done }) => html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : passed ? ' passed' : ''}`} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
-        <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} /></div>
-        <div class="cal-info">
-          <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
-          <div class="row wrap"><span class="ep">Ep ${episode}</span>${passed && done ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>` : null}<${StatusTag} show=${show} /></div>
-        </div>
-      </button>`)}
+      ${slot.items.map(entry => {
+        const { show, episode } = entry;
+        const state = outcome(entry);
+        return html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : state && state.settled ? ' settled' : ''}`} style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
+          <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} /></div>
+          <div class="cal-info">
+            <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
+            <div class="row wrap"><span class="ep">Ep ${episode}</span>${!state ? null : state.settled
+              ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>`
+              : html`<span class=${`when ${state.tone}`}>${state.text}</span>`}<${StatusTag} show=${show} /></div>
+          </div>
+        </button>`;
+      })}
     </div>
   </div>`;
 }
@@ -90,17 +118,21 @@ export function Calendar() {
   const minute = Math.floor(now / 60000);
   const [offset, setOffset] = useState(0);
   const week = useMemo(() => buildWeek(data || [], new Date(minute * 60000), offset), [data, minute, offset]);
-  const nowLine = html`<div class="cal-now">Now</div>`;
+  const nowLine = html`<div class="cal-now" key="now">Now</div>`;
+  // Quiet days get half a column; the grid only applies it when the week is laid out side by side.
+  const cols = week.days.map(day => day.quiet ? '.5fr' : '1fr').join(' ');
   return html`<div class="page full">
     <div class="cal-nav">
       <button type="button" class="btn plain icon-only sm" onClick=${() => setOffset(offset - 1)} aria-label="Previous week" title="Previous week"><${Icon} name="back" /></button>
-      <button type="button" class="cal-range page-sub" onClick=${() => setOffset(0)} disabled=${offset === 0} title=${offset === 0 ? null : 'Back to this week'}>${week.range}</button>
       <button type="button" class="btn plain icon-only sm" onClick=${() => setOffset(offset + 1)} aria-label="Next week" title="Next week"><${Icon} name="forward" /></button>
+      <h2 class="section-title cal-range" aria-live="polite">${week.range}</h2>
+      <span class="page-sub">${weekName(offset)}</span>
+      ${offset !== 0 ? html`<button type="button" class="btn sm" onClick=${() => setOffset(0)}>Today</button>` : null}
     </div>
-    <div class="cal-grid">
+    <div class="cal-wrap"><div class="cal-grid" style=${`--cols: ${cols}`}>
       ${week.days.map(day => {
         let drawn = false;
-        const parts = [];
+        const parts = day.slots.length ? [] : [html`<div class="cal-none" key="none">Nothing airs</div>`];
         day.slots.forEach(slot => {
           if (day.today && !drawn && !slot.passed) { parts.push(nowLine); drawn = true; }
           parts.push(html`<${Slot} slot=${slot} key=${slot.minutes} />`);
@@ -111,6 +143,6 @@ export function Calendar() {
           <div class=${`cal-rail${day.today ? ' today' : ''}`}>${parts}</div>
         </div>`;
       })}
-    </div>
+    </div></div>
   </div>`;
 }

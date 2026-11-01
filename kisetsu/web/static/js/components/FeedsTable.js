@@ -14,6 +14,12 @@ export function feedHealth(feed) {
   return html`<span class="bad" title=${feed.last_error || `This feed has not been readable since ${since.toLocaleString()}`}>Failing since ${when}</span>`;
 }
 
+// The URL as a person reads it: no scheme, the search terms decoded. The raw one stays in the tooltip.
+function readableUrl(url) {
+  const bare = url.replace(/^https?:\/\//, '');
+  try { return decodeURIComponent(bare.replace(/\+/g, ' ')); } catch (err) { return bare; }
+}
+
 function FeedForm({ feed, close }) {
   const [name, setName] = useState(feed ? feed.name : '');
   const [url, setUrl] = useState(feed ? feed.url : '');
@@ -88,6 +94,8 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
     try { await apiFetch('/api/feeds/reorder', { method: 'POST', json: { ids } }); } catch (err) { /* shown by apiFetch */ }
   };
   if (!feeds.length) return html`<div class="empty">No feeds yet. Add one, or import the ones qBittorrent already has.</div>`;
+  // Before any show follows a feed (the setup wizard) "No shows" on every row says nothing.
+  const inUse = feeds.some(feed => feed.shows > 0);
   return html`<ul class="feed-list">
     ${feeds.map((feed, index) => html`<li key=${feed.id} draggable=${editable} class=${`feed-row${drag.over === index ? ' over' : ''}${drag.from === index ? ' dragging' : ''}${selected === feed.id ? ' selected' : ''}`}
       onDragStart=${(e) => { setDrag({ from: index, over: null }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); }}
@@ -95,17 +103,21 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
       onDragEnd=${() => setDrag({ from: null, over: null })}
       onDrop=${(e) => { e.preventDefault(); const from = drag.from; setDrag({ from: null, over: null }); if (from !== null) move(from, index); }}>
       ${editable ? html`<span class="grip" aria-hidden="true"><${Icon} name="grip" /></span>` : null}
-      <span class="prio tabular">#${feed.priority}
-        ${editable ? html`<span class="prio-move">
-          <button type="button" disabled=${index === 0} onClick=${() => move(index, index - 1)} aria-label="Move up" title="Move up"><${Icon} name="up" small /></button>
-          <button type="button" disabled=${index === feeds.length - 1} onClick=${() => move(index, index + 1)} aria-label="Move down" title="Move down"><${Icon} name="down" small /></button>
-        </span>` : null}</span>
+      <span class="prio tabular" title="Priority">${feed.priority}</span>
       <div class=${`feed-main${onSelect ? ' pickable' : ''}`} onClick=${onSelect ? () => onSelect(selected === feed.id ? null : feed.id) : undefined}>
-        <div class="row"><span class="feed-name">${feed.name}</span>${feedHealth(feed)}</div>
-        <div class="feed-url mono truncate" title=${feed.url}>${feed.url}</div>
+        <div class="row">
+          <span class="feed-name truncate">${feed.name}</span>${feedHealth(feed)}
+          ${inUse ? html`<span class=${`feed-use tabular${feed.shows > 0 ? '' : ' none'}`}>${feed.shows > 0
+            ? `${feed.shows} show${feed.shows === 1 ? '' : 's'}${feed.locked > 0 ? ` · ${feed.locked} locked` : ''}`
+            : 'No shows'}</span>` : null}
+        </div>
+        <div class="feed-url mono truncate" title=${feed.url}>${readableUrl(feed.url)}</div>
       </div>
-      <div class="feed-use tabular">${feed.shows > 0 ? html`<div>${feed.shows} show${feed.shows === 1 ? '' : 's'}</div>${feed.locked > 0 ? html`<div>${feed.locked} locked</div>` : null}` : null}</div>
       ${editable ? html`<div class="feed-actions">
+        <span class="feed-move">
+          <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === 0} onClick=${() => move(index, index - 1)} aria-label="Move up" title="Move up"><${Icon} name="up" small /></button>
+          <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === feeds.length - 1} onClick=${() => move(index, index + 1)} aria-label="Move down" title="Move down"><${Icon} name="down" small /></button>
+        </span>
         <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${async () => { await openFeedDialog(feed); }} title="Edit feed" aria-label="Edit feed"><${Icon} name="edit" small /></button>
         <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${() => deleteFeed(feed)} title="Delete feed" aria-label="Delete feed"><${Icon} name="trash" small /></button>
       </div>` : null}

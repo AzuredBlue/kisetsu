@@ -46,6 +46,8 @@
 .when.muted { color: rgb(var(--text-2)); }
 .when.ok { color: rgb(var(--ok)); }
 .when.warn { color: rgb(var(--warn)); }
+.when.info { color: rgb(var(--info)); }
+.when.bad { color: rgb(var(--bad)); }
 .count { flex: none; font-variant-numeric: tabular-nums; color: rgb(var(--text-3)); }
 .problems { display: flex; flex-wrap: wrap; gap: 0 .625rem; font-size: .75rem; line-height: 1rem; }
 .bad { color: rgb(var(--bad)); }
@@ -171,52 +173,86 @@
 
 /* ---- Calendar ------------------------------------------------------------------------------- */
 
-.cal-nav { display: flex; align-items: center; gap: .25rem; }
-.cal-range { min-width: 11rem; padding: .25rem .5rem; border-radius: var(--r-sm); text-align: center; font-variant-numeric: tabular-nums; &:not(:disabled):hover { color: rgb(var(--text)); background: rgb(var(--raised2)); } &:disabled { cursor: default; } }
-.cal-grid { display: grid; gap: 1rem; align-items: start; grid-template-columns: 1fr; user-select: none; }
-@media (min-width: 640px) { .cal-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 768px) { .cal-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1024px) { .cal-grid { grid-template-columns: repeat(4, 1fr); } }
-@media (min-width: 1280px) { .cal-grid { grid-template-columns: repeat(7, 1fr); } }
-.cal-day { display: flex; flex-direction: column; min-height: 20rem; &.past { opacity: .85; } }
-.cal-head { display: flex; align-items: baseline; gap: .375rem; padding-bottom: .5rem; margin-bottom: .5rem; border-bottom: 1px solid rgb(var(--line)); font-size: .75rem; & .section-title { color: rgb(var(--text)); } &.today { border-color: rgb(var(--ac) / .6); & .section-title { color: rgb(var(--ac-soft)); } } }
-.cal-day.past .cal-head { border-color: rgb(var(--line-soft)); & .section-title { color: rgb(var(--text-3)); } }
-.cal-rail { flex: 1; padding-left: .875rem; border-left: 1.5px solid rgb(var(--raised2)); &.today { border-left-color: rgb(var(--ac) / .5); } }
-.cal-slot { padding: .5rem 0; }
+.cal-nav { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; & .btn + .btn { margin-left: -.5rem; } }
+.cal-range { font-variant-numeric: tabular-nums; }
+/* Narrow, the week is an agenda: one row per day, its airings side by side. From 60rem of room it is seven columns,
+   where a weekday nothing airs on this season (--cols, set by the view) takes half a column. */
+.cal-wrap { container-type: inline-size; }
+.cal-grid { display: grid; grid-template-columns: minmax(0, 1fr); user-select: none; }
+.cal-day { display: grid; grid-template-columns: 5.5rem minmax(0, 1fr); column-gap: 1rem; padding: .5rem 0; & + .cal-day { border-top: 1px solid rgb(var(--line-soft)); } }
+.cal-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 .375rem; padding-top: .5rem; font-size: .75rem; & .section-title { color: rgb(var(--text)); } &.today .section-title { color: rgb(var(--ac-soft)); } }
+.cal-day.past .cal-head .section-title { color: rgb(var(--text-3)); }
+.cal-rail { display: flex; flex-wrap: wrap; column-gap: 1.5rem; padding-left: .875rem; border-left: 1.5px solid rgb(var(--raised2)); &.today { border-left-color: rgb(var(--ac) / .5); } }
+.cal-slot { flex: 0 1 16rem; min-width: 12rem; padding: .5rem 0; }
+.cal-none { padding: .5rem 0; font-size: .75rem; line-height: 1.25rem; color: rgb(var(--text-4)); }
+/* On a phone the day's name sits over its date, so the label column stays narrow. */
+@container (max-width: 30rem) {
+  .cal-day { grid-template-columns: 3rem minmax(0, 1fr); column-gap: .75rem; }
+  .cal-head { flex-direction: column; align-items: flex-start; line-height: 1.25rem; }
+  .cal-slot { min-width: 0; }
+}
+@container (min-width: 60rem) {
+  .cal-grid { grid-template-columns: var(--cols, repeat(7, 1fr)); gap: 1rem; }
+  .cal-day { display: flex; flex-direction: column; min-height: 12rem; padding: 0; & + .cal-day { border-top: 0; } }
+  .cal-head { padding: 0 0 .5rem; margin-bottom: .5rem; border-bottom: 1px solid rgb(var(--line)); &.today { border-color: rgb(var(--ac) / .6); } }
+  .cal-day.past .cal-head { border-color: rgb(var(--line-soft)); }
+  .cal-rail { display: block; flex: 1; }
+  .cal-slot { min-width: 0; }
+  .cal-none { display: none; }
+}
 .cal-time { margin-bottom: .375rem; font-size: .875rem; line-height: 1.25rem; font-weight: 500; font-variant-numeric: tabular-nums; &.passed { color: rgb(var(--text-3)); } }
 .cal-items { display: grid; gap: .75rem; }
 .cal-item {
-  display: flex; align-items: flex-start; gap: .75rem; width: 100%; text-align: left; transition: opacity .15s;
-  &:hover { opacity: .9; } &.passed { opacity: .8; &:hover { opacity: 1; } } &.paused { filter: grayscale(1); opacity: .5; &:hover { opacity: .8; } }
+  position: relative; isolation: isolate; display: flex; align-items: flex-start; gap: .75rem; width: 100%; text-align: left; transition: opacity .15s;
+  /* Hover puts the poster's edge colour behind the item, as on a grid card. It reaches past the item, so nothing moves. */
+  &::before { content: ''; position: absolute; inset: -.375rem; z-index: -1; border-radius: var(--r-md); transition: background-color .2s ease; }
+  &.settled .cal-poster { opacity: .7; transition: opacity .15s; } &.settled:hover .cal-poster { opacity: 1; } &.paused { filter: grayscale(1); opacity: .5; &:hover { opacity: .8; } }
   & .cal-poster { flex: none; width: 4rem; border-radius: var(--r-sm); overflow: hidden; }
   & .no-art { font-size: 1rem; }
   & .cal-info { flex: 1; min-width: 0; padding-top: .125rem; }
   & h4 { font-size: .875rem; font-weight: 500; line-height: 1.35; color: rgb(var(--text)); transition: color .15s; }
-  &:hover h4 { color: rgb(var(--ac-soft)); }
-  & .ep { font-size: .75rem; font-weight: 500; font-variant-numeric: tabular-nums; color: rgb(var(--text-3)); &.ok { color: rgb(var(--ok)); } }
-  &.paused h4, &.passed h4 { color: rgb(var(--text-3)); }
+  & .ep { font-size: .75rem; font-weight: 500; font-variant-numeric: tabular-nums; color: rgb(var(--text-3)); transition: color .2s ease; &.ok { color: rgb(var(--ok)); } }
+  & .when { font-size: .75rem; }
+  &.paused h4, &.settled h4 { color: rgb(var(--text-3)); }
+  @media (hover: hover) {
+    &:hover::before { background: rgb(var(--show-panel, var(--raised))); }
+    &:hover h4 { color: rgb(var(--show-text, var(--ac-soft))); }
+    &:hover .ep:not(.ok) { color: rgb(var(--text-2)); }
+  }
 }
-.cal-now { display: flex; align-items: center; gap: .5rem; margin: .5rem 0 .5rem -.875rem; padding-left: .875rem; font-size: .75rem; font-weight: 500; color: rgb(var(--ac-soft)); &::after { content: ""; flex: 1; height: 1px; background: rgb(var(--ac) / .5); } }
+/* Between the airings that are past and those to come: a vertical mark in the agenda, a line across a column. */
+.cal-now {
+  display: flex; flex-direction: column; align-items: center; gap: .25rem; padding: .5rem 0;
+  font-size: .75rem; line-height: 1.25rem; font-weight: 500; color: rgb(var(--ac-soft));
+  &::after { content: ""; flex: 1; width: 1px; background: rgb(var(--ac) / .5); }
+}
+@container (min-width: 60rem) {
+  .cal-now { flex-direction: row; gap: .5rem; margin: .5rem 0 .5rem -.875rem; padding: 0 0 0 .875rem; &::after { width: auto; height: 1px; } }
+}
 
 /* ---- Feeds, History, Logs ------------------------------------------------------------------- */
 
 .feed-list > li + li { border-top: 1px solid rgb(var(--line-soft)); }
-.feed-row { display: flex; align-items: center; gap: .75rem; padding: .75rem .75rem; cursor: grab; transition: background-color .15s; user-select: none;
+.feed-row { display: flex; align-items: center; gap: .875rem; padding: 1rem 1.25rem; cursor: grab; transition: background-color .15s; user-select: none;
   &:hover { background: rgb(var(--raised) / .6); } &.dragging { opacity: .4; background: rgb(var(--raised)); } &.over { box-shadow: inset 0 2px 0 rgb(var(--info)); background: rgb(var(--surface)); }
-  & .grip { color: rgb(var(--text-4)); opacity: .6; } &:hover .grip { opacity: 1; color: rgb(var(--text-2)); }
-  & .prio { display: flex; align-items: center; gap: .375rem; width: 4rem; color: rgb(var(--ac-soft)); font-size: .875rem; font-weight: 500; }
-  & .prio-move { display: flex; flex-direction: column; color: rgb(var(--text-3)); opacity: 0; transition: opacity .15s; & button:hover { color: rgb(var(--text)); } & button:disabled { opacity: .2; } }
-  &:hover .prio-move, & .prio-move:focus-within { opacity: 1; }
+  /* The grip and the ordinal sit on the name's line, not the middle of the row. */
+  & .grip { align-self: flex-start; margin-top: .15rem; color: rgb(var(--text-4)); opacity: .6; } &:hover .grip { opacity: 1; color: rgb(var(--text-2)); }
+  & .prio { flex: none; align-self: flex-start; width: 1rem; text-align: right; color: rgb(var(--text-3)); font-size: .875rem; line-height: 1.5; font-weight: 500; }
+  & .grip + .prio { margin-left: -.5rem; }
   & .feed-main { flex: 1; min-width: 0; &.pickable { cursor: pointer; } }
   &.selected { background: rgb(var(--raised) / .6); box-shadow: inset 3px 0 0 rgb(var(--ac)); }
-  & .feed-name { font-size: .875rem; font-weight: 500; color: rgb(var(--text)); }
-  & .feed-main .row { align-items: baseline; gap: .75rem; font-size: .75rem; }
-  & .feed-url { margin-top: .125rem; font-size: .75rem; color: rgb(var(--text-3)); }
-  & .feed-use { flex: none; text-align: right; font-size: .75rem; color: rgb(var(--text-3)); white-space: nowrap; }
+  & .feed-name { flex: 0 1 auto; min-width: 0; font-size: .875rem; line-height: 1.5; font-weight: 500; color: rgb(var(--text)); }
+  & .feed-main .row { align-items: baseline; gap: .75rem; font-size: .75rem; & > :not(.feed-name) { flex: none; white-space: nowrap; } }
+  & .feed-url { margin-top: .25rem; font-size: .75rem; color: rgb(var(--text-3)); }
+  /* Usage ends the name line, so the counts line up from row to row. */
+  & .feed-use { margin-left: auto; padding-left: 1rem; color: rgb(var(--text-2)); &.none { color: rgb(var(--text-4)); } }
   & .feed-actions { flex: none; display: flex; gap: .25rem; opacity: 0; transition: opacity .15s; }
   &:hover .feed-actions, & .feed-actions:focus-within { opacity: 1; }
+  /* Moving by one is for the keyboard; a pointer drags. It shows once one of its buttons has focus. */
+  & .feed-move { display: flex; gap: .25rem; width: 0; overflow: hidden; &:focus-within { width: auto; overflow: visible; } }
 }
-@media (hover: none) { .feed-row .prio-move, .feed-row .feed-actions { opacity: 1; } }
+/* Touch screens can't drag, so there the arrows are the way to reorder. */
+@media (hover: none) { .feed-row .feed-actions { opacity: 1; } .feed-row .feed-move { width: auto; overflow: visible; } }
 
 .history { container-type: inline-size; --release: var(--text-3); --queued: var(--ac-soft); --tint: 1; }
 :root[data-theme="light"] .history { --release: var(--text-4); --queued: var(--ac-strong); --tint: .8; }
@@ -261,13 +297,17 @@
 .verb { color: rgb(var(--ac-soft)); &.done { color: rgb(var(--ok)); } &.replaced, &.busy { color: rgb(var(--info)); } }
 section + section { margin-top: .5rem; }
 
-.feeds-page:not(.with-side) { max-width: 56rem; }
+/* The feed list is the same width with the releases open or closed, so it and the Releases toggle never move. */
 .feeds-toggle { margin-left: auto; & .chev { transition: transform .3s var(--ease); } &[aria-expanded="true"] .chev { transform: rotate(180deg); } }
-.feeds-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+.feeds-layout { display: grid; grid-template-columns: minmax(0, 40rem); gap: 2rem; align-items: start; }
 .feeds-side { min-width: 0; display: flex; flex-direction: column; opacity: 0; transition: opacity .25s; }
 .feeds-page.open .feeds-side { opacity: 1; }
-.feeds-col, .feed-items { display: flex; flex-direction: column; gap: .75rem; min-width: 0; }
+/* The controls stand apart; the line that describes a list stays close to it. */
+.feeds-col, .feed-items { display: flex; flex-direction: column; gap: 1.25rem; min-width: 0; }
+.feeds-hint + .feeds-card, .feed-sub + .item-list { margin-top: -.75rem; }
+.item-list + .pager { margin-top: -.5rem; }
 .feeds-tools, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem; min-height: 2rem; }
+.feeds-tools { gap: .5rem; }
 .feeds-hint, .feed-sub { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem 1rem; min-height: 1.75rem; margin: 0; }
 .chip {
   padding: .2rem .625rem; border-radius: var(--r-full); font-size: .8125rem; background: rgb(var(--field)); border: 1px solid rgb(var(--line));
@@ -275,11 +315,12 @@ section + section { margin-top: .5rem; }
   &:hover { color: rgb(var(--text-btn)); }
   &[aria-pressed="true"] { background: var(--tonal-h); border-color: transparent; color: var(--on-tonal); font-weight: 600; }
 }
-/* Wide: the feed list keeps its width and the panel takes the room beside it. With the panel mounted the page is
-   exactly one screen tall, so the release list shows what fits and pages instead of scrolling. */
-@media (min-width: 1100px) {
-  .feeds-layout { grid-template-columns: minmax(0, 56rem); align-items: stretch; }
-  .feeds-page.with-side .feeds-layout { grid-template-columns: minmax(0, 56rem) minmax(20rem, 1fr); grid-template-rows: minmax(0, 1fr); column-gap: 1.25rem; flex: 1; min-height: 0; }
+/* Wide: the panel takes the room beside the list. 85rem is the sidebar, the padding, the list, the gap and a 26rem
+   panel, so the list never has to give up width to it (WIDE in FeedItems.js matches). With the panel mounted the page
+   is exactly one screen tall, so the release list shows what fits and pages instead of scrolling. */
+@media (min-width: 85rem) {
+  .feeds-layout { align-items: stretch; }
+  .feeds-page.with-side .feeds-layout { grid-template-columns: 40rem minmax(26rem, 1fr); grid-template-rows: minmax(0, 1fr); flex: 1; min-height: 0; }
   .feeds-page.with-side { display: flex; flex-direction: column; height: 100%; }
   .feeds-side { overflow: hidden; min-height: 0; }
   .feed-items { flex: 1; }
@@ -290,10 +331,18 @@ section + section { margin-top: .5rem; }
 }
 @media (prefers-reduced-motion: reduce) { .feeds-side, .feeds-toggle .chev { transition: none !important; } }
 .feed-status { gap: .75rem; font-size: .75rem; }
-.item-row { display: flex; align-items: center; gap: 1rem; min-height: 3.5rem; padding: 0 1rem; & .grow { flex: 1; min-width: 0; } }
+/* The panel's own title row, level with the toolbar. Beside the feed list, picking a row there is the filter, so the
+   chips only show when the panel sits below the list. */
+.feed-items-head { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem; min-height: 2rem; & .seg { margin-left: auto; } }
+.feed-filter { display: inline-flex; align-items: center; gap: .25rem; min-width: 0; }
+.feed-filter-hint { display: none; min-width: 0; }
+@media (min-width: 85rem) { .feed-items .chips { display: none; } .feed-filter-hint { display: block; flex: 0 1 auto; } }
+.item-row { display: flex; align-items: center; gap: 1.5rem; min-height: 3.75rem; padding: 0 1.25rem; & .grow { flex: 1; min-width: 0; } }
 .item-row .release-name { font-size: .75rem; color: rgb(var(--text)); user-select: all; }
-.item-meta { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; margin-top: .125rem; font-size: .75rem; min-width: 0; }
-.item-show { color: rgb(var(--text-2)); &:hover { text-decoration: underline; } }
+/* One line, so every row is the same height: the show title gives way first, then the feed name. */
+.item-meta { display: flex; align-items: baseline; gap: .75rem; margin-top: .25rem; font-size: .75rem; min-width: 0; }
+.item-show { flex: 0 1 auto; min-width: 0; color: rgb(var(--text-2)); &:hover { text-decoration: underline; } }
+.item-feed { flex: 0 1 auto; min-width: 4rem; max-width: 40%; }
 .item-when { flex: none; display: flex; flex-direction: column; align-items: flex-end; font-size: .75rem; }
 
 .log-pane { display: flex; flex-direction: column; height: calc(100dvh - 13rem); min-height: 20rem; overflow: hidden; background: rgb(var(--sunken)); border: 1px solid rgb(var(--line-soft)); border-radius: var(--r-lg); }
@@ -338,6 +387,7 @@ section + section { margin-top: .5rem; }
     &[aria-current="page"] { background: var(--tonal-h); color: var(--on-tonal); font-weight: 600; } }
   & button:not(:first-child):not(:last-child), & .pager-gap { width: 2.5rem; padding-inline: 0; text-align: center; font-variant-numeric: tabular-nums; }
   & .pager-gap { color: rgb(var(--text-4)); }
+  & .pager-step { display: grid; place-items: center; align-self: stretch; padding-inline: 0; }
 }
 
 /* Adding a show by hand */

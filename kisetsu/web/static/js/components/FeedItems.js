@@ -5,11 +5,13 @@ import { useNow } from '../router.js';
 import { feedItems } from '../data.js';
 import { relativeTime } from '../format.js';
 import { Seg } from './Controls.js';
+import { Icon } from './Icon.js';
 import { feedHealth } from './FeedsTable.js';
 
 const STACKED_PAGE = 10;
-const FALLBACK_ROW = 57;
-const WIDE = '(min-width: 1100px)';
+// .item-row's min-height (3.75rem) plus its border, for measuring before the first rows have loaded.
+const FALLBACK_ROW = 61;
+const WIDE = '(min-width: 85rem)';
 const KEY = 'kisetsu.feedItems.mine';
 const saved = () => { try { return localStorage.getItem(KEY) !== '0'; } catch (err) { return true; } };
 const save = (on) => { try { localStorage.setItem(KEY, on ? '1' : '0'); } catch (err) { /* only a convenience */ } };
@@ -41,7 +43,7 @@ function Row({ item, now, showFeed }) {
       <div class="release-name mono truncate" title=${item.title}>${item.title}</div>
       <div class="item-meta">
         ${item.shows.map(show => html`<a key=${show.id} class="item-show truncate" href=${`#show/${show.id}`}>${show.title}</a>`)}
-        ${showFeed ? html`<span class="muted truncate">from ${item.feed}</span>` : null}
+        ${showFeed ? html`<span class="item-feed muted truncate" title=${item.feed}>from ${item.feed}</span>` : null}
       </div>
     </div>
     <div class="item-when">
@@ -63,11 +65,11 @@ function slots(page, pages) {
 
 function Pager({ page, pages, onPage }) {
   return html`<nav class="pager" aria-label="Pages">
-    <button type="button" disabled=${page === 0} onClick=${() => onPage(page - 1)}>Previous</button>
+    <button type="button" class="pager-step" disabled=${page === 0} onClick=${() => onPage(page - 1)} aria-label="Previous page" title="Previous page"><${Icon} name="back" small /></button>
     ${slots(page, pages).map((slot, at) => typeof slot === 'string'
       ? html`<span class="pager-gap" key=${at}>…</span>`
       : html`<button type="button" key=${at} aria-current=${slot === page ? 'page' : undefined} onClick=${() => onPage(slot)}>${slot + 1}</button>`)}
-    <button type="button" disabled=${page >= pages - 1} onClick=${() => onPage(page + 1)}>Next</button>
+    <button type="button" class="pager-step" disabled=${page >= pages - 1} onClick=${() => onPage(page + 1)} aria-label="Next page" title="Next page"><${Icon} name="forward" small /></button>
   </nav>`;
 }
 
@@ -107,10 +109,17 @@ export function FeedItems({ feeds, selected, onSelect }) {
   const shown = data || last.current;
   const pages = shown ? Math.max(1, Math.ceil(shown.total / size)) : 1;
   const go = (n) => setAt({ key, page: Math.min(Math.max(n, 0), pages - 1) });
+  const feed = selected === null ? null : feeds.find(f => f.id === selected);
   return html`<div class="feed-items">
+    <div class="feed-items-head">
+      <h2 class="section-title">Releases</h2>
+      ${feed
+        ? html`<button type="button" class="chip feed-filter" aria-pressed="true" onClick=${() => onSelect(null)} title="Show every feed's releases">${feed.name}<${Icon} name="x" small /></button>`
+        : html`<span class="page-sub feed-filter-hint truncate">All feeds · pick one on the left to filter</span>`}
+      <${Seg} small label="Which releases" value=${mine ? 'mine' : 'all'} onChange=${(v) => { setMine(v === 'mine'); save(v === 'mine'); }} options=${[['mine', 'For my shows'], ['all', 'Everything']]} />
+    </div>
     <${FeedPills} feeds=${feeds} selected=${selected} onSelect=${onSelect} />
     <div class="feed-sub">
-      <${Seg} small label="Which releases" value=${mine ? 'mine' : 'all'} onChange=${(v) => { setMine(v === 'mine'); save(v === 'mine'); }} options=${[['mine', 'For my shows'], ['all', 'Everything']]} />
       <${Status} feeds=${feeds} selected=${selected} recent=${shown ? shown.new_recent : 0} />
     </div>
     <div class="card card-divided item-list" ref=${list}>
