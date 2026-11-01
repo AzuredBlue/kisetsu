@@ -2,7 +2,7 @@
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
-import { airTime, countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
+import { countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
@@ -34,9 +34,7 @@ export function airSummary(show, now) {
     if (cd === 'Aired' && show.last_done && show.last_done >= next.episode) {
       return { ep: `Ep ${show.last_done}`, info: 'Downloaded', tone: 'ok', at: null };
     }
-    // A countdown inside the last day, then the day and time, which is how a weekly broadcast is planned around.
-    const soon = Date.parse(next.at) - now < 86400000;
-    return { ep: `Ep ${next.episode}`, info: cd === 'Aired' ? 'Aired' : soon ? `in ${cd}` : airTime(next.at, now), tone: cd === 'Aired' && show.status !== 'waiting' ? 'warn' : '', at: next.at };
+    return { ep: `Ep ${next.episode}`, info: cd === 'Aired' ? 'Aired' : `in ${cd}`, tone: cd === 'Aired' && show.status !== 'waiting' ? 'warn' : '', at: next.at };
   }
   if (show.last_done) return { ep: `Ep ${show.last_done}`, info: '', tone: '', at: null };
   return { ep: '', info: '', tone: '', at: null };
