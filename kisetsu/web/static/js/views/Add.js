@@ -79,11 +79,10 @@ function coverage(group, picked) {
   return { offered, inBatch, covered };
 }
 
-// Picking a feed takes its batches when it has any (the largest first, then those that add episodes), else every single episode.
+// Picking a feed takes all it offers: its batches (the largest first, then those that add episodes), and singles for the rest.
 // A batch that names its episodes is trusted over one that only says "Batch".
-function defaultPick(group) {
+function pickAll(group) {
   const batches = group.batches || [];
-  if (!batches.length) return new Set(group.episodes.map(e => e.item_id));
   const ranged = batches.filter(b => b.ranged);
   const taken = new Set();
   const ids = new Set();
@@ -92,14 +91,7 @@ function defaultPick(group) {
     ids.add(b.item_id);
     b.numbers.forEach(n => taken.add(n));
   });
-  return ids;
-}
-
-// Every release the feed needs to cover all it offers: the default pick, plus the singles its batches leave out.
-function pickAll(group) {
-  const ids = defaultPick(group);
-  const { covered } = coverage(group, ids);
-  group.episodes.filter(e => !covered.has(e.number)).forEach(e => ids.add(e.item_id));
+  group.episodes.filter(e => !taken.has(e.number)).forEach(e => ids.add(e.item_id));
   return ids;
 }
 
@@ -157,7 +149,7 @@ function PickReleases({ entry, onBack }) {
   const [feedId, setFeedId] = useState(null);
   const [picked, setPicked] = useState(new Set());
   const [adding, setAdding] = useState(false);
-  const choose = (group) => { setFeedId(group.feed_id); setPicked(defaultPick(group)); };
+  const choose = (group) => { setFeedId(group.feed_id); setPicked(pickAll(group)); };
   useEffect(() => {
     let live = true;
     apiFetch('/api/add/search', { method: 'POST', json: { anilist_id: entry.anilist_id }, quiet: true })

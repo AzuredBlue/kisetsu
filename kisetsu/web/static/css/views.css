@@ -233,14 +233,15 @@
 /* ---- Feeds, History, Logs ------------------------------------------------------------------- */
 
 .feed-list > li + li { border-top: 1px solid rgb(var(--line-soft)); }
-.feed-row { display: flex; align-items: center; gap: .875rem; padding: 1rem 1.25rem; cursor: grab; transition: background-color .15s; user-select: none;
+.feed-row { position: relative; display: flex; align-items: center; gap: .875rem; padding: 1rem 1.25rem; cursor: grab; transition: background-color .15s; user-select: none;
   &:hover { background: rgb(var(--raised) / .6); } &.dragging { opacity: .4; background: rgb(var(--raised)); } &.over { box-shadow: inset 0 2px 0 rgb(var(--info)); background: rgb(var(--surface)); }
   /* The grip and the ordinal sit on the name's line, not the middle of the row. */
   & .grip { align-self: flex-start; margin-top: .15rem; color: rgb(var(--text-4)); opacity: .6; } &:hover .grip { opacity: 1; color: rgb(var(--text-2)); }
   & .prio { flex: none; align-self: flex-start; width: 1rem; text-align: right; color: rgb(var(--text-3)); font-size: .875rem; line-height: 1.5; font-weight: 500; }
   & .grip + .prio { margin-left: -.5rem; }
   & .feed-main { flex: 1; min-width: 0; &.pickable { cursor: pointer; } }
-  &.selected { background: rgb(var(--raised) / .6); box-shadow: inset 3px 0 0 rgb(var(--ac)); }
+  /* The bar stops short of the row's ends, so the card's rounded corners never cut it. */
+  &.selected { background: rgb(var(--raised) / .6); &::before { content: ''; position: absolute; inset: .75rem auto .75rem 0; width: 3px; border-radius: 0 var(--r-full) var(--r-full) 0; background: rgb(var(--ac)); } }
   & .feed-name { flex: 0 1 auto; min-width: 0; font-size: .875rem; line-height: 1.5; font-weight: 500; color: rgb(var(--text)); }
   & .feed-main .row { align-items: baseline; gap: .75rem; font-size: .75rem; & > :not(.feed-name) { flex: none; white-space: nowrap; } }
   & .feed-url { margin-top: .25rem; font-size: .75rem; color: rgb(var(--text-3)); }
