@@ -361,6 +361,13 @@ section + section { margin-top: .5rem; }
 .test-wait { color: rgb(var(--text-3)); font-size: .75rem; }
 .danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; }
 .page.medium { & .adv { display: block; } }
+.backup-compare { width: 100%; border-collapse: collapse; font-size: .8125rem;
+  & th, & td { padding: .3125rem .5rem; text-align: left; vertical-align: top; font-weight: 400; }
+  & thead th { color: rgb(var(--text-3)); font-size: .75rem; }
+  & tbody th { color: rgb(var(--text-3)); white-space: nowrap; }
+  & tbody td:nth-child(2) { color: rgb(var(--text)); }
+  & tbody tr { border-top: 1px solid rgb(var(--line-soft)); }
+}
 
 /* ---- Setup ---------------------------------------------------------------------------------- */
 

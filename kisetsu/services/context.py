@@ -32,6 +32,9 @@ class Caches:
     # Past-release searches already run: show id -> (what was searched for, when).
     searched: Dict[int, Tuple[int, datetime]] = field(default_factory=dict)
 
+    def clear(self) -> None:
+        self.__init__()
+
     def parsed_cache(self) -> Dict[str, Dict[str, Any]]:
         if len(self.parsed) > PARSED_CACHE_LIMIT:
             self.parsed.clear()

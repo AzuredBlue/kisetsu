@@ -62,6 +62,10 @@ class Scheduler:
             job.due = self.clock() + seconds
             job.wake.set()
 
+    @property
+    def running(self) -> bool:
+        return bool(self._tasks)
+
     def start(self) -> None:
         self._stopping = False
         self._tasks = [asyncio.create_task(self._loop(job), name=f"job-{job.name}") for job in self.jobs.values()]

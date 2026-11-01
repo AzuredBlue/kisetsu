@@ -3,6 +3,7 @@ import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { settings as settingsData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
+import { exportBackup, restoreBackup } from '../components/Backup.js';
 import { Seg, SaveBar, SetRow, Swatches } from '../components/Controls.js';
 import { confirmDialog } from '../components/Modal.js';
 import { toast } from '../components/Toast.js';
@@ -30,6 +31,8 @@ export function Settings() {
   const form = useDraft(initial, 'settings');
   const [saving, setSaving] = useState(false);
   const [test, setTest] = useState({ state: '', text: '' });
+  const [exporting, setExporting] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   if (!data) return html`<div class="page medium"></div>`;
   const bind = (key) => form.bind(key);
 
@@ -92,6 +95,12 @@ export function Settings() {
     try { const r = await apiFetch('/api/settings/clear-all', { method: 'POST' }); toast(r.message, 'success'); } catch (err) { /* shown by apiFetch */ }
   };
 
+  const runExport = async () => {
+    setExporting(true);
+    try { await exportBackup(); } catch (err) { /* shown by apiDownload */ }
+    setExporting(false);
+  };
+
   const accent = currentAccent();
   return html`<div class="page medium">
     <section>
@@ -144,6 +153,14 @@ export function Settings() {
         <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Default for shows that don't set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
       </div>
     </details>
+
+    <section>
+      <h3 class="section-title section-gap">Backup</h3>
+      <div class="card card-divided">
+        <${SetRow} name="Export" hint="One file with your settings, shows, feeds and history. It leaves out your qBittorrent password. Feed addresses are included as they are, so treat the file as private if yours contain keys."><button type="button" class="btn sm" onClick=${runExport} disabled=${exporting}>${exporting ? 'Exporting…' : 'Export backup'}</button><//>
+        <${SetRow} name="Restore" hint="Replaces everything here with a backup, after showing you what's in it. What's here now is saved first. Torrents and files in qBittorrent are not touched."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
+      </div>
+    </section>
 
     <div class="card danger-zone">
       <div><h3 class="section-title">Clear all shows</h3><p class="field-hint" style="margin-top:.125rem">Removes every show and the history. Downloads are kept.</p></div>

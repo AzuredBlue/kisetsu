@@ -2,8 +2,9 @@
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Set
+from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Set
 
 import httpx2
 
@@ -87,6 +88,24 @@ class Jobs:
 
     def poke(self, name: str, delay: float = 0.0) -> None:
         self.scheduler.poke(name, delay)
+
+    @asynccontextmanager
+    async def stopped(self) -> AsyncIterator[None]:
+        """Hold every job while the database is replaced, since a job keeps ids between its steps, then start them over as after a restart."""
+        running = self.scheduler.running
+        await self.scheduler.stop()
+        try:
+            yield
+        finally:
+            self.ready.clear()
+            self.backoff = rss.Backoff()
+            self.backfill_requests, self.backfill_all, self.refresh_all = set(), False, False
+            self.hunt_read_at = None
+            self.health.update(qbit=None, anilist=None, anilist_retry_in=None)
+            if running:
+                self.register()
+                self.scheduler.start()
+            self.engine.bus.publish(["status"])
 
     async def _fetch(self, url: str) -> List[rss.FeedArticle]:
         if self._fetcher is not None:

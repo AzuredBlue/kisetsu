@@ -3,6 +3,7 @@ import { apiFetch, ApiError } from '../api.js';
 import { useResource } from '../store.js';
 import { feeds as feedsData, settings as settingsData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
+import { restoreBackup } from '../components/Backup.js';
 import { Seg, SetRow, Swatches } from '../components/Controls.js';
 import { FeedsTable, importFromQbit, openFeedDialog } from '../components/FeedsTable.js';
 import { useDraft } from '../components/useDraft.js';
@@ -128,6 +129,7 @@ export function Setup({ sandbox, done, setDone }) {
       <div class="setup-foot">
         <div class="setup-dots" aria-label=${`Step ${step + 1} of ${STEPS.length}`}>${STEPS.map((s, i) => html`<span key=${s} class=${i === step ? 'on' : ''}></span>`)}</div>
         <div class="row">
+          ${name === 'welcome' && !sandbox ? html`<button type="button" class="btn" onClick=${() => restoreBackup(setBusy)} disabled=${busy}>Restore a backup</button>` : null}
           ${step > 0 ? html`<button type="button" class="btn" onClick=${() => setStep(step - 1)} disabled=${busy}>Back</button>` : null}
           <button type="button" class="btn primary" onClick=${next} disabled=${busy || blocked}>${busy ? 'Working…' : name === 'welcome' ? 'Get started' : name === 'anilist' ? 'Finish' : 'Next'}</button>
         </div>

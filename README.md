@@ -23,6 +23,7 @@ The WebUI is available at `http://localhost:8085`.
 - **Direct Downloads**: Adds each new episode to qBittorrent itself and replaces a release when a v2 appears (see [How it downloads](#how-it-downloads)).
 - **Windows and Linux**: Runs on both; settings and the database live in `%APPDATA%\kisetsu` on Windows and `~/.config/kisetsu` on Linux.
 - **Calendar**: Creates a calendar for your seasonal anime.
+- **Backup and Restore**: Export your settings, shows, feeds and history to one file from Settings, and restore it there or in the first-run setup on another machine. Your qBittorrent password stays out of the file, so you type it again when moving to a different qBittorrent.
 
 ---
 
