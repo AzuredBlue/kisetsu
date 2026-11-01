@@ -3,26 +3,56 @@ import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { useNow } from '../router.js';
 import { history as historyData } from '../data.js';
-import { dayLabel, relativeTime } from '../format.js';
+import { dayLabel, localTime, relativeTime } from '../format.js';
+import { Icon } from '../components/Icon.js';
 import { confirmDialog } from '../components/Modal.js';
+import { Poster, posterVars } from '../components/ShowSummary.js';
+import { useTheme } from '../theme.js';
 import { toast } from '../components/Toast.js';
 import { go } from '../router.js';
 
-const VERBS = { grabbed: ['Queued', 'queued'], done: ['Downloaded', 'done'], replaced: ['Replaced', 'replaced'] };
+// A finished download is the normal case, so its word stays quiet and only its icon carries the colour.
+const KINDS = { grabbed: ['Queued', null], done: ['Downloaded', 'check'], replaced: ['Replaced', 'swap'] };
+
+// Episodes added as one batch come from one release, so they share a row: only the number differs.
+function collapseBatches(items) {
+  const out = [];
+  items.forEach(item => {
+    const last = out[out.length - 1];
+    if (last && item.episode && last.episodes.length && last.show_id === item.show_id && last.kind === item.kind && last.feed === item.feed && last.title === item.title) last.episodes.push(item.episode);
+    else out.push({ ...item, episodes: item.episode ? [item.episode] : [] });
+  });
+  return out;
+}
+
+// [10, 9, 8, 3] -> "3, 8–10"
+function episodeLabel(numbers) {
+  const runs = [];
+  [...numbers].sort((a, b) => a - b).forEach(n => {
+    const run = runs[runs.length - 1];
+    if (run && run[1] === n - 1) run[1] = n; else runs.push([n, n]);
+  });
+  return runs.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(', ');
+}
 
 function Row({ item, now }) {
-  const [verb, tone] = VERBS[item.kind] || [item.kind, ''];
-  return html`<div class="history-row">
-    <div class="grow">
-      <div class="row" style="align-items:baseline;min-width:0">
-        ${item.show_id ? html`<a class="history-show truncate" href=${`#show/${item.show_id}`}>${item.show || item.title}</a>` : html`<span class="history-show truncate">${item.show || item.title}</span>`}
-        ${item.episode ? html`<span class="ep tabular">Ep ${item.episode}</span>` : null}
+  const [verb, icon] = KINDS[item.kind] || [item.kind, null];
+  const title = item.show || item.title;
+  const { resolved } = useTheme();
+  const poster = html`<div class="sr-poster"><${Poster} show=${{ id: item.show_id, title, cover: item.cover }} dim=${false} /></div>`;
+  return html`<div class="history-row" style=${posterVars(item, resolved)}>
+    ${item.show_id ? html`<a href=${`#show/${item.show_id}`} tabindex="-1" aria-hidden="true">${poster}</a>` : poster}
+    <div class="history-main">
+      <div class="history-title">
+        ${item.show_id ? html`<a class="history-show" href=${`#show/${item.show_id}`} title=${title}>${title}</a>` : html`<span class="history-show" title=${title}>${title}</span>`}
+        ${item.episodes.length ? html`<span class="ep tabular">Ep ${episodeLabel(item.episodes)}</span>` : null}
       </div>
-      <div class="release-name mono truncate" title=${item.title}>${item.title}</div>
+      <div class="release-name mono clamp-2" title=${item.title}>${item.title}</div>
     </div>
-    <div class="history-when">
-      <div class="muted" title=${item.at ? new Date(item.at).toLocaleString() : ''}>${relativeTime(item.at, now)}</div>
-      <div class="muted truncate"><span class=${`verb ${tone}`}>${verb}</span>${item.feed ? ` from ${item.feed}` : ''}</div>
+    <div class="history-meta">
+      <span class=${`history-status ${item.kind}`}>${icon ? html`<${Icon} name=${icon} small />` : null}${verb}</span>
+      <span class="history-feed truncate" title=${item.feed}>${item.feed}</span>
+      <span class="history-time tabular" title=${item.at ? `${new Date(item.at).toLocaleString()} (${relativeTime(item.at, now)})` : ''}>${localTime(item.at)}</span>
     </div>
   </div>`;
 }
@@ -38,25 +68,22 @@ export function History() {
       const last = out[out.length - 1];
       if (last && last.label === label) last.items.push(item); else out.push({ label, items: [item] });
     });
-    return out;
+    return out.map(group => ({ ...group, items: collapseBatches(group.items) }));
   }, [data, minute]);
   const clear = async () => {
     if (!(await confirmDialog({ title: 'Clear the history?', body: html`<p>The list of downloads is emptied. Downloads and shows are not touched.</p>`, confirm: 'Clear', danger: true }))) return;
     try { await apiFetch('/api/history', { method: 'DELETE' }); toast('History cleared.', 'success'); } catch (err) { /* shown by apiFetch */ }
   };
-  return html`<div class="page narrow">
+  return html`<div class="page narrow history">
     <div class="page-head">
       <p class="page-sub">Episodes Kisetsu has queued, downloaded or replaced.</p>
-      <div class="row">
-        <button type="button" class="btn sm" onClick=${() => historyData.load()}>Refresh</button>
-        <button type="button" class="btn sm" onClick=${clear} disabled=${!data || !data.length}>Clear</button>
-      </div>
+      <button type="button" class="btn sm plain" onClick=${clear} disabled=${!data || !data.length}>Clear</button>
     </div>
     ${!data ? null : !data.length
       ? html`<div class="card empty"><div>Nothing here yet</div><p class="field-hint">Episodes show up here once Kisetsu queues them.</p></div>`
       : groups.map(group => html`<section key=${group.label}>
-          <div class="history-day">${group.label}</div>
-          <div class="card card-divided">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} />`)}</div>
+          <div class="section-title history-day">${group.label}</div>
+          <div class="card card-divided history-card">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} />`)}</div>
         </section>`)}
   </div>`;
 }

@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from sqlalchemy import func
 from sqlmodel import select
@@ -343,15 +343,41 @@ def feed_items_view(ctx: Context, feed_id: Optional[int], matched: bool, limit: 
     }
 
 
+def _superseded_grabs(ctx: Context) -> Set[int]:
+    """Grabs that aren't queued any more: something else has happened to the episode since, like another release, an adoption or a failure."""
+    newest_at: Dict[Tuple[int, int], datetime] = {}
+    for show_id, episode, at in ctx.session.exec(
+        select(Event.show_id, Event.episode, func.max(Event.at))
+        .where(Event.kind != EventKind.GRABBED, Event.show_id.is_not(None), Event.episode.is_not(None))
+        .group_by(Event.show_id, Event.episode)
+    ).all():
+        newest_at[(show_id, episode)] = at
+    grabs = ctx.session.exec(
+        select(Event.id, Event.show_id, Event.episode, Event.at)
+        .where(Event.kind == EventKind.GRABBED, Event.show_id.is_not(None), Event.episode.is_not(None))
+        .order_by(Event.id.desc())
+    ).all()
+    latest = set()
+    superseded = set()
+    for id_, show_id, episode, at in grabs:
+        key = (show_id, episode)
+        settled = newest_at.get(key)
+        if key in latest or (settled is not None and settled >= at):
+            superseded.add(id_)
+        latest.add(key)
+    return superseded
+
+
 def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
     rows = ctx.session.exec(
         select(Event).where(Event.kind.in_(HISTORY_KINDS)).order_by(Event.at.desc(), Event.id.desc()).limit(limit * 3)
     ).all()
+    superseded = _superseded_grabs(ctx)
     seen = set()
     events = []
     for e in rows:
         key = (e.show_id, e.episode, e.title)
-        if key not in seen:
+        if e.id not in superseded and key not in seen:
             seen.add(key)
             events.append(e)
     events = events[:limit]
@@ -364,6 +390,9 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
             "kind": e.kind.value,
             "show_id": e.show_id,
             "show": shows[e.show_id].title(ctx.settings.title_language) if e.show_id in shows else None,
+            "cover": shows[e.show_id].cover_image if e.show_id in shows else None,
+            "cover_edge": (shows[e.show_id].cover_edge or None) if e.show_id in shows else None,
+            "cover_color": shows[e.show_id].cover_color if e.show_id in shows else None,
             "episode": e.episode,
             "feed": feeds.get(e.feed_id),
             "title": e.title,

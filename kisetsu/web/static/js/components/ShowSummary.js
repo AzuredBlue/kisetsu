@@ -158,16 +158,19 @@ function RowActions({ show }) {
 
 const feedName = (show) => (show.feed ? show.feed.name : 'No feed');
 
+// The poster's own bottom edge colours what it sits on; AniList's cover colour only stands in until it is read.
+export function posterVars({ cover_edge, cover_color }, mode) {
+  const edge = posterEdgeColors(cover_edge, mode);
+  const text = edge ? edge.text : posterTextColor(cover_color, mode);
+  return [text && `--show-text:${text}`, edge && edge.panel && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
+}
+
 export function ShowCard({ show, now }) {
   const air = airSummary(show, now);
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
   const hasAir = !!(air.ep || air.info);
   const { resolved } = useTheme();
-  // The poster's own bottom edge colours the card; AniList's cover colour only stands in until it is read.
-  const edge = posterEdgeColors(show.cover_edge, resolved);
-  const text = edge ? edge.text : posterTextColor(show.cover_color, resolved);
-  const vars = [text && `--show-text:${text}`, edge && edge.panel && `--show-panel:${edge.panel}`].filter(Boolean).join(';');
-  return html`<div class="show-card" role="link" tabindex="0" style=${vars || undefined} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
+  return html`<div class="show-card" role="link" tabindex="0" style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
     <div class="poster-frame">
       <${Poster} show=${show} />
       ${show.status !== 'waiting' ? html`<div class="tag-slot"><${StatusTag} show=${show} /></div>` : null}

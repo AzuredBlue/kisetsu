@@ -68,7 +68,7 @@ export function dayLabel(iso, now = new Date()) {
   const days = Math.round((startOf(now) - startOf(d)) / 86400000);
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
-  return d.toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  return d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
 }
 
 // "in 4m 12s" for a wait of `seconds`.

@@ -167,6 +167,51 @@ async def test_a_release_that_was_queued_and_finished_is_one_history_row(web):
     assert [(r["episode"], r["kind"]) for r in rows] == [(2, "grabbed"), (1, "done")]
 
 
+async def test_a_grab_stops_showing_as_queued_once_something_else_happens_to_the_episode(web):
+    show = web.show()
+    later = START + timedelta(minutes=5)
+
+    def add(session):
+        grab = dict(kind=EventKind.GRABBED, show_id=show, message="Queued")
+        # Another release finished instead.
+        session.add(Event(at=START, episode=1, title="Varyg - 01", **grab))
+        session.add(Event(at=later, episode=1, title="SubsPlease - 01", **grab))
+        session.add(Event(at=later, kind=EventKind.DONE, show_id=show, episode=1, title="SubsPlease - 01", message="Done"))
+        # Adopted from qBittorrent, or failed: neither is a History row of its own.
+        session.add(Event(at=START, episode=2, title="Varyg - 02", **grab))
+        session.add(Event(at=later, kind=EventKind.ADOPTED, show_id=show, episode=2, title="Other - 02", message="Found"))
+        session.add(Event(at=START, episode=3, title="Varyg - 03", **grab))
+        session.add(Event(at=later, kind=EventKind.FAILED, show_id=show, episode=3, title="Varyg - 03", message="Failed"))
+        # Recorded in one transaction, the finish first.
+        session.add(Event(at=START, kind=EventKind.DONE, show_id=show, episode=4, title="Varyg - 04", message="Done"))
+        session.add(Event(at=START, episode=4, title="Varyg - 04", **grab))
+        # Still waiting, on two releases: only the newest is queued.
+        session.add(Event(at=START, episode=5, title="Varyg - 05", **grab))
+        session.add(Event(at=later, episode=5, title="SubsPlease - 05", **grab))
+        session.commit()
+
+    web.query(add)
+    rows = (await web.client.get("/api/history")).json()
+    assert sorted((r["episode"], r["kind"], r["title"]) for r in rows) == [
+        (1, "done", "SubsPlease - 01"),
+        (4, "done", "Varyg - 04"),
+        (5, "grabbed", "SubsPlease - 05"),
+    ]
+
+
+async def test_a_replacement_stays_queued_after_the_release_it_replaces_finished(web):
+    show = web.show()
+
+    def add(session):
+        session.add(Event(at=START, kind=EventKind.DONE, show_id=show, episode=1, title="Frieren - 01", message="Done"))
+        session.add(Event(at=START + timedelta(minutes=5), kind=EventKind.GRABBED, show_id=show, episode=1, title="Frieren - 01v2", message="Queued"))
+        session.commit()
+
+    web.query(add)
+    rows = (await web.client.get("/api/history")).json()
+    assert [(r["kind"], r["title"]) for r in rows] == [("grabbed", "Frieren - 01v2"), ("done", "Frieren - 01")]
+
+
 async def test_feed_items_list_newest_first_with_their_shows_and_what_became_of_them(web):
     top, low = web.feed("Top", "https://top/rss", 1), web.feed("Low", "https://low/rss", 2)
     show = web.show()
