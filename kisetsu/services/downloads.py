@@ -5,7 +5,7 @@ import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import Dict, List, Optional
 from uuid import uuid4
 
 from sqlmodel import select
@@ -37,10 +37,10 @@ TAG_PREFIX = "kisetsu-op-"
 _OPERATION_TAG = re.compile(r"^kisetsu-op-[0-9a-f]{32}$")
 
 MAX_ATTEMPTS = 8
-# A plain grab that gave up is tried again after these many hours (its 1st, 2nd and 3rd give-up); the next one fails it.
+# A version of an episode that gave up is tried again after these many hours (its 1st, 2nd and 3rd give-up); the next one fails it.
 GIVE_UP_RETRY_HOURS = (2, 6, 12)
 GAVE_UP_PREFIX = "Gave up after"
-# A replacement that has not finished by then is dropped and the previous release kept.
+# A replacement that has not finished by then gives up: it is dropped and the previous release kept.
 REPLACEMENT_GIVE_UP = timedelta(hours=48)
 # An add that qBittorrent never showed is treated as lost after this long.
 ADDING_STUCK = timedelta(minutes=15)
@@ -265,7 +265,8 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     dl.updated_at = ctx.now
     title = show.title(settings.title_language)
     save_path = resolve_save_path(settings.base_dir, title, show.save_folder)
-    show_tag = tags.series_tag(ctx, show)
+    # Following a batch, or added again after its tag was released, a download has no operation tag.
+    labels = [tag for tag in (MANAGED_TAG, dl.tag, tags.series_tag(ctx, show)) if tag]
     ctx.checkpoint()
     try:
         if not save_path:
@@ -274,7 +275,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
             if default:
                 save_path = os.path.join(default, sanitize_folder_name(title))
         ctx.qbit.add_torrent(
-            dl.torrent_url, save_path=save_path, category=category, tags=[MANAGED_TAG, dl.tag, show_tag],
+            dl.torrent_url, save_path=save_path, category=category, tags=labels,
             paused=paused, ratio_limit=ratio,
             # A batch carries its own top folder; its files go straight into the show's folder instead.
             content_layout="NoSubfolder" if is_batch_download(dl) else None,
@@ -289,7 +290,7 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
             _retry(ctx, dl, episode, str(e), AMBIGUOUS_RETRY)
             return
         try:
-            ctx.qbit.add_tags([existing.hash], [MANAGED_TAG, dl.tag, show_tag])
+            ctx.qbit.add_tags([existing.hash], labels)
         except QbitError as tag_error:
             _retry(ctx, dl, episode, str(tag_error), AMBIGUOUS_RETRY)
             return
@@ -406,8 +407,19 @@ def _complete(ctx: Context, dl: Download, episode: Episode) -> None:
     if dl.supersedes_id is None:
         events.record(ctx, EventKind.DONE, "Downloaded", show=show, episode=episode.number, feed_id=dl.feed_id, title=dl.title)
         logger.info(f"'{show.title(ctx.settings.title_language)}' Ep {episode.number}: downloaded.")
-        if ctx.settings.desktop_notifications and ctx.notify is not None:
-            ctx.notify(f"{show.title(ctx.settings.title_language)} - Episode {episode.number}", "Download finished", show.cover_image)
+        _notify_done(ctx, show, dl, episode)
+
+
+def _notify_done(ctx: Context, show: Show, dl: Download, episode: Episode) -> None:
+    if not ctx.settings.desktop_notifications or ctx.notify is None:
+        return
+    name = show.title(ctx.settings.title_language)
+    if not dl.batch:
+        ctx.notify(f"{name} - Episode {episode.number}", "Download finished", show.cover_image)
+    elif dl.info_hash not in ctx.caches.announced_batches:
+        # One torrent is one notification, however many episodes finish with it.
+        ctx.caches.announced_batches.add(dl.info_hash)
+        ctx.notify(f"{name} - Batch", "Download finished", show.cover_image)
 
 
 def _fail(ctx: Context, dl: Download, episode: Episode, error: str) -> None:
@@ -438,11 +450,10 @@ def _cancel(ctx: Context, dl: Download, episode: Episode, reason: str) -> None:
 
 
 def _give_up_hours(ctx: Context, dl: Download) -> Optional[int]:
-    if dl.supersedes_id is not None:
-        return None
     earlier = ctx.session.exec(
         select(Download.id).where(
             Download.episode_id == dl.episode_id,
+            Download.version == dl.version,
             Download.state == DownloadState.CANCELED,
             Download.last_error.like(f"{GAVE_UP_PREFIX}%"),
         )
@@ -450,10 +461,12 @@ def _give_up_hours(ctx: Context, dl: Download) -> Optional[int]:
     return GIVE_UP_RETRY_HOURS[len(earlier)] if len(earlier) < len(GIVE_UP_RETRY_HOURS) else None
 
 
-def _give_up(ctx: Context, dl: Download, episode: Episode, show: Optional[Show]) -> None:
-    error = f"{GAVE_UP_PREFIX} {dl.attempts} attempts: {dl.last_error or 'qBittorrent never showed the torrent.'}"
+def _give_up(ctx: Context, dl: Download, episode: Episode, show: Optional[Show], error: Optional[str] = None) -> None:
+    error = error or f"{GAVE_UP_PREFIX} {dl.attempts} attempts: {dl.last_error or 'qBittorrent never showed the torrent.'}"
     hours = _give_up_hours(ctx, dl)
     if hours is None:
+        # The hash came from the feed and qBittorrent never had it; followed, it would read as a removed torrent and be tried again.
+        dl.info_hash = None
         _fail(ctx, dl, episode, error)
     else:
         _cancel(ctx, dl, episode, error)
@@ -545,14 +558,19 @@ def cancel_from_other_feeds(ctx: Context, show: Show, keep_feed_id: Optional[int
     return reset
 
 
-def _missing(ctx: Context, info_hash: str) -> bool:
-    """Whether a tracked torrent is really gone: missing on consecutive passes while the list did not grow."""
+def _missing(ctx: Context, info_hash: str, judged: Dict[str, bool]) -> bool:
+    """Whether a tracked torrent is really gone: missing on consecutive passes while the list did not grow.
+
+    The episodes of a batch share one torrent, so ``judged`` makes a pass count it once.
+    """
     if info_hash in ctx.qbit.torrents:
         ctx.caches.absent.pop(info_hash, None)
         return False
-    count = ctx.caches.absent.get(info_hash, 0) + 1
-    ctx.caches.absent[info_hash] = count
-    return count >= ABSENT_PASSES
+    if info_hash not in judged:
+        count = ctx.caches.absent.get(info_hash, 0) + 1
+        ctx.caches.absent[info_hash] = count
+        judged[info_hash] = count >= ABSENT_PASSES
+    return judged[info_hash]
 
 
 def settle(ctx: Context) -> Settled:
@@ -571,12 +589,13 @@ def settle(ctx: Context) -> Settled:
     ).all()
     missing = [d for d in tracked if d.info_hash and d.info_hash not in ctx.qbit.torrents]
     loading = len(missing) >= LOADING_GUESS and listed == 0
+    judged: Dict[str, bool] = {}
     for dl in tracked:
         episode = ctx.session.get(Episode, dl.episode_id)
         if episode is None:
             continue
         before = (dl.state, dl.info_hash)
-        _advance(ctx, dl, episode, result, loading)
+        _advance(ctx, dl, episode, judged, loading)
         if (dl.state, dl.info_hash) != before:
             result.changed = True
         if dl.state in ACTIVE_DOWNLOAD_STATES:
@@ -594,7 +613,7 @@ def settle(ctx: Context) -> Settled:
     return result
 
 
-def _advance(ctx: Context, dl: Download, episode: Episode, result: Settled, loading: bool) -> None:
+def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, bool], loading: bool) -> None:
     if dl.state in (DownloadState.SUPERSEDED, DownloadState.CANCELED):
         return
     show = ctx.session.get(Show, episode.show_id)
@@ -621,7 +640,7 @@ def _advance(ctx: Context, dl: Download, episode: Episode, result: Settled, load
         return
     torrent = ctx.qbit.torrents.get(dl.info_hash)
     if torrent is None:
-        if loading or not _missing(ctx, dl.info_hash):
+        if loading or not _missing(ctx, dl.info_hash, judged):
             return
         _forget(ctx, dl, episode, show)
         return
@@ -683,7 +702,8 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
             _delete(ctx, dl.info_hash, keep_files_of=old.info_hash if old else None)
         except QbitError:
             pass
-        _fail(ctx, dl, episode, "Replacement did not finish in time and was removed; the previous release was kept.")
+        hours = int(REPLACEMENT_GIVE_UP.total_seconds() // 3600)
+        _give_up(ctx, dl, episode, None, f"{GAVE_UP_PREFIX} {hours} hours: the replacement did not finish and was removed; the previous release was kept.")
         return
     if torrent.errored:
         dl.last_error = f"Replacement torrent state: {torrent.state}"

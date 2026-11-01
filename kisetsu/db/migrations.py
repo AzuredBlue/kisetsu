@@ -53,6 +53,15 @@ def _v6(engine: Engine) -> None:
                 conn.exec_driver_sql(f"ALTER TABLE shows ADD COLUMN {name} VARCHAR")
 
 
+def _v7(engine: Engine) -> None:
+    # A replacement that gave up used to fail for good, which keeps its version from being tried again.
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "UPDATE downloads SET state = 'CANCELED' WHERE state = 'FAILED' AND supersedes_id IS NOT NULL "
+            "AND (last_error LIKE 'Gave up after%' OR last_error LIKE 'Replacement did not finish%')"
+        )
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -62,6 +71,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (4, _v4),
     (5, _v5),
     (6, _v6),
+    (7, _v7),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 

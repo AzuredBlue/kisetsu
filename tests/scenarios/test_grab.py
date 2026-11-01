@@ -2,8 +2,9 @@ from datetime import timedelta
 
 from sqlmodel import select
 
+from kisetsu.clients.qbittorrent import QbitRejected
 from kisetsu.db.schema import Download, DownloadState, EpisodeOffset, EpisodeStatus, FeedState, OffsetSource
-from kisetsu.services import grab, ingest, library
+from kisetsu.services import downloads, grab, ingest, library
 from tests.fakes import START, article
 
 
@@ -298,3 +299,76 @@ def test_a_show_held_for_its_saved_files_is_not_given_a_guessed_feed(world):
     post(world, top, "[Grp] Sousou no Frieren - 03 (1080p).mkv")
     assert run(world).started == 0
     assert (show.feed_id, show.feed_state) == (None, FeedState.NONE)
+
+
+def test_a_v2_that_gave_up_is_tried_again_later_and_the_v1_stays(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    post(world, top, "[Grp] Sousou no Frieren - 03 (1080p).mkv")
+    assert run(world).started == 1
+    world.qbit.finish(next(iter(world.qbit.truth)))
+    downloads.settle(world.ctx())
+    world.commit()
+
+    def give_up():
+        for _ in range(downloads.MAX_ATTEMPTS):
+            world.clock.advance(minutes=16)
+            downloads.settle(world.ctx())
+            world.commit()
+
+    post(world, top, "[Grp] Sousou no Frieren - 03v2 (1080p).mkv")
+    world.qbit.reject_adds = QbitRejected("VPN is blocked")
+    for hours in (2, 6, 12):
+        assert run(world).started == 1
+        give_up()
+        episode = world.episode(show, 3)
+        assert episode.status == EpisodeStatus.COMPLETED and episode.retry_after == world.clock() + timedelta(hours=hours)
+        assert run(world).started == 0
+        world.clock.advance(hours=hours)
+    assert run(world).started == 1
+    give_up()
+    world.clock.advance(days=7)
+    assert run(world).started == 0
+    assert world.episode(show, 3).status == EpisodeStatus.COMPLETED
+    assert (3, 2, DownloadState.FAILED) in downloaded(world, show) and (3, 1, DownloadState.DONE) in downloaded(world, show)
+
+
+def test_a_v2_gets_its_own_retries_after_the_v1_gave_up_before_finishing(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    post(world, top, "[Grp] Sousou no Frieren - 03 (1080p).mkv")
+    world.qbit.reject_adds = QbitRejected("VPN is blocked")
+    for hours in (2, 6, 12):
+        assert run(world).started == 1
+        for _ in range(downloads.MAX_ATTEMPTS):
+            world.clock.advance(minutes=16)
+            downloads.settle(world.ctx())
+            world.commit()
+        world.clock.advance(hours=hours)
+    world.qbit.reject_adds = None
+    assert run(world).started == 1
+    world.qbit.finish(next(iter(world.qbit.truth)))
+    downloads.settle(world.ctx())
+    world.commit()
+    post(world, top, "[Grp] Sousou no Frieren - 03v2 (1080p).mkv")
+    world.qbit.reject_adds = QbitRejected("VPN is blocked")
+    assert run(world).started == 1
+    for _ in range(downloads.MAX_ATTEMPTS):
+        world.clock.advance(minutes=16)
+        downloads.settle(world.ctx())
+        world.commit()
+    assert world.episode(show, 3).retry_after == world.clock() + timedelta(hours=2)
+
+
+def test_a_skipped_episode_of_a_pinned_show_is_not_grabbed(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, feed=top, feed_state=FeedState.PINNED)
+    skipped = world.episode(show, 1)
+    skipped.status = EpisodeStatus.SKIPPED
+    world.session.add(skipped)
+    world.commit()
+    post(world, top, "[Grp] Sousou no Frieren - 01 (1080p).mkv", START - timedelta(days=14))
+    post(world, top, "[Grp] Sousou no Frieren - 03 (1080p).mkv")
+    assert run(world).started == 1
+    assert world.episode(show, 1).status == EpisodeStatus.SKIPPED
+    assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

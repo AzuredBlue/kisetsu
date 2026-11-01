@@ -130,8 +130,11 @@ def test_a_replacement_that_never_finishes_is_dropped_after_48_hours(world):
     settle(world)
     v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
     settle(world, minutes=49 * 60)
-    assert v2.state == DownloadState.FAILED and row2.info_hash not in world.qbit.truth
+    assert v2.state == DownloadState.CANCELED and v2.last_error.startswith("Gave up after 48 hours")
+    assert row2.info_hash not in world.qbit.truth
     assert v1.state == DownloadState.DONE and row1.info_hash in world.qbit.truth
+    episode = world.episode(show, 1)
+    assert episode.status == EpisodeStatus.COMPLETED and episode.retry_after == world.clock() + timedelta(hours=2)
 
 
 def test_a_torrent_qbit_has_not_shown_yet_is_found_on_a_later_pass(world):
@@ -210,6 +213,53 @@ def test_a_grab_that_keeps_failing_gives_up_for_hours_then_fails_for_good(world)
     for _ in range(downloads.MAX_ATTEMPTS):
         settle(world, minutes=16)
     assert dl.state == DownloadState.FAILED and world.episode(show, 1).status == EpisodeStatus.FAILED
+    # qBittorrent never had the torrent, so it must not read as removed there and be queued again.
+    settle(world, minutes=1)
+    settle(world, minutes=1)
+    assert dl.state == DownloadState.FAILED and world.episode(show, 1).status == EpisodeStatus.FAILED
+
+
+def batch(world, episodes=3):
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=episodes, first_air=START - timedelta(days=30))
+    row = item(world, feed, "[Grp] Frieren (01-03) [Batch]")
+    first = downloads.start_download(world.ctx(), show, feed, world.episode(show, 1), row, batch=True)
+    for number in range(2, episodes + 1):
+        downloads.follow_download(world.ctx(), show, feed, world.episode(show, number), row, first.info_hash or row.info_hash)
+    world.commit()
+    return show, row
+
+
+def test_a_batch_removed_in_qbittorrent_is_forgotten_only_after_two_passes(world):
+    # Something else stays listed, or an empty list reads as qBittorrent still loading.
+    world.qbit.seed("Other", save_path="/other")
+    show, row = batch(world)
+    world.qbit.finish(row.torrent_url)
+    settle(world)
+    world.qbit.remove(row.torrent_url)
+    settle(world)
+    held = world.session.exec(select(Download)).all()
+    assert all(d.info_hash == row.info_hash for d in held)
+    settle(world)
+    assert all(d.info_hash is None for d in held)
+
+
+def test_a_finished_batch_notifies_once(world):
+    world.ctx().settings.desktop_notifications = True
+    show, row = batch(world)
+    world.qbit.finish(row.torrent_url)
+    settle(world)
+    assert [e.status for e in (world.episode(show, n) for n in (1, 2, 3))] == [EpisodeStatus.COMPLETED] * 3
+    assert [n[0] for n in world.notifications] == ["Sousou no Frieren - Batch"]
+
+
+def test_a_batch_added_again_carries_no_empty_tag(world):
+    world.qbit.hide_added = True
+    batch(world)
+    settle(world, minutes=16)
+    settle(world)
+    added = world.qbit.calls_named("add_torrent")
+    assert len(added) > 1 and all(None not in call["tags"] for call in added)
 
 
 def test_canceling_the_only_grab_deletes_the_torrent_and_releases_the_lock(world):

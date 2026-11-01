@@ -114,6 +114,24 @@ def test_a_new_alias_finds_the_releases_already_stored(world):
     assert len(matches(world)) == 1
 
 
+def test_a_show_that_completes_keeps_its_matches_through_a_rematch(world):
+    feed = world.feed("A", "https://a/rss", 1)
+    show = world.show(1, "Sousou no Frieren", episodes=1, first_air=START)
+    run_ingest(world, feed, ["[SubsPlease] Sousou no Frieren - 01 (1080p).mkv"])
+    show.completed = True
+    world.session.add(show)
+    world.commit()
+    ingest.rematch(world.ctx())
+    world.commit()
+    assert len(matches(world)) == 1
+    show.completed = False
+    world.session.add(show)
+    world.commit()
+    ingest.rematch(world.ctx())
+    world.commit()
+    assert len(matches(world)) == 1
+
+
 def test_matches_are_redone_when_the_followed_shows_changed_since_they_were_made(world):
     feed = world.feed("A", "https://a/rss", 1)
     world.show(1, "Sousou no Frieren", episodes=1, first_air=START)

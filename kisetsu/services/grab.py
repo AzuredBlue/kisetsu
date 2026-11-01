@@ -401,6 +401,9 @@ def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolve
 
 def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dict[int, int], newest_wanted: Optional[int]) -> bool:
     episode, version, item = entry.episode, entry.version, entry.item
+    # The user chose to go without this one: only taking that back, or grabbing it by hand, gets it.
+    if episode.status == EpisodeStatus.SKIPPED:
+        return False
     if version < best.get(entry.number, version):
         return False
     held = state.held_version(episode)

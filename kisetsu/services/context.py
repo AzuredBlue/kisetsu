@@ -29,6 +29,8 @@ class Caches:
     refused: Set[str] = field(default_factory=set)
     # Shows already told that qBittorrent keeps their torrents outside the folder it was given.
     misplaced: Set[int] = field(default_factory=set)
+    # Batch torrents whose finish the desktop notification already told of.
+    announced_batches: Set[str] = field(default_factory=set)
     # Past-release searches already run: show id -> (what was searched for, when).
     searched: Dict[int, Tuple[int, datetime]] = field(default_factory=dict)
 

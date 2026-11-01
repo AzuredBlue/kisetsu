@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 from kisetsu.db.migrations import LATEST_VERSION, SchemaError, migrate
 from kisetsu.db.schema import (
     Download,
+    DownloadState,
     Episode,
     EpisodeStatus,
     Feed,
@@ -159,6 +160,45 @@ def test_a_version_5_database_gains_the_cover_edge_columns():
     with engine.connect() as conn:
         assert {"cover_edge", "cover_edge_src"} <= {row[1] for row in conn.exec_driver_sql("PRAGMA table_info(shows)")}
         assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
+
+
+def test_a_version_6_database_frees_only_the_replacements_that_gave_up():
+    engine = make_engine()
+    migrate(engine)
+    now = datetime.now(timezone.utc)
+    with Session(engine) as session:
+        show = Show(anilist_id=1)
+        session.add(show)
+        session.flush()
+        episode = Episode(show_id=show.id, number=1)
+        session.add(episode)
+        session.flush()
+        kept = Download(episode_id=episode.id, title="v1", state=DownloadState.DONE, created_at=now, updated_at=now)
+        session.add(kept)
+        session.flush()
+        for title, supersedes, error in (
+            ("gave up", kept.id, "Gave up after 8 attempts: qBittorrent has not shown the torrent."),
+            ("timed out", kept.id, "Replacement did not finish in time and was removed; the previous release was kept."),
+            ("removed by the user", kept.id, "Replacement torrent is no longer present in qBittorrent; the previous release was kept."),
+            ("plain", None, "Gave up after 8 attempts: qBittorrent has not shown the torrent."),
+        ):
+            session.add(Download(
+                episode_id=episode.id, title=title, version=2, supersedes_id=supersedes, state=DownloadState.FAILED,
+                last_error=error, created_at=now, updated_at=now,
+            ))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA user_version = 6")
+    migrate(engine)
+    with Session(engine) as session:
+        states = {d.title: d.state for d in session.exec(select(Download)).all()}
+    assert states == {
+        "v1": DownloadState.DONE,
+        "gave up": DownloadState.CANCELED,
+        "timed out": DownloadState.CANCELED,
+        "removed by the user": DownloadState.FAILED,
+        "plain": DownloadState.FAILED,
+    }
 
 
 def test_the_schema_has_the_new_tables_only():

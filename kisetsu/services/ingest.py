@@ -110,7 +110,9 @@ def rematch(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> int:
     only = None if show_ids is None else set(show_ids)
     signature, matchers = _matchers(ctx)
     if only is None:
-        ctx.session.execute(delete(FeedItemMatch))
+        # A completed show is not matched any more, so its Releases tab lives on what it has until ``prune`` ages that out.
+        completed = select(Show.id).where(Show.completed == True)  # noqa: E712
+        ctx.session.execute(delete(FeedItemMatch).where(FeedItemMatch.show_id.not_in(completed)))
     elif only:
         ctx.session.execute(delete(FeedItemMatch).where(FeedItemMatch.show_id.in_(only)))
     else:
