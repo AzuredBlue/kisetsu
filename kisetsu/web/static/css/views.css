@@ -18,11 +18,16 @@
 }
 :root[data-theme="light"] .poster-frame { box-shadow: 0 12px 28px rgb(20 40 38 / .16), 0 3px 4px rgb(20 40 38 / .06); }
 /* Hover carries the poster's bottom edge on into the panel behind the text (--show-panel) and colours the title
-   with it (--show-text); nothing moves. The panel starts under the poster so its rounded corners leave no notch. */
+   with it (--show-text), and the poster alone lifts a little; the art's own colours stay as they are. The panel starts
+   under the poster, past the lift, so its rounded corners leave no notch. */
 .show-card .poster-frame { z-index: 1; }
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .show-card .poster-frame { transition: transform .25s ease-in-out; }
+  .show-card:hover .poster-frame { transform: translateY(-2px); }
+}
 .show-card h3 { transition: color .2s ease; }
 .show-card:hover h3 { color: rgb(var(--show-text, var(--ac-soft))); }
-.show-text::before { content: ''; position: absolute; inset: calc(-1 * var(--r-sm)) 0 0; z-index: -1; border-radius: inherit; transition: background-color .2s ease; }
+.show-text::before { content: ''; position: absolute; inset: calc(-1 * var(--r-sm) - 2px) 0 0; z-index: -1; border-radius: inherit; transition: background-color .2s ease; }
 .show-card:hover .show-text::before { background: rgb(var(--show-panel, var(--raised))); }
 /* The muted count is too dim on the dark panel, so it brightens with it. */
 .show-card .count { transition: color .2s ease; }
