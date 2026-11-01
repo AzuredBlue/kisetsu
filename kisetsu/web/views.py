@@ -99,6 +99,17 @@ def _aired(ctx: Context) -> Dict[int, int]:
     return dict(rows.all())
 
 
+def _airings(ctx: Context, show_id: Optional[int] = None) -> Dict[int, List[Dict[str, Any]]]:
+    """Each show's known episode air times, for the calendar: breaks between episodes are real gaps, not every week."""
+    query = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status).where(Episode.air_at.is_not(None))
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    airings: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+    for sid, number, air_at, status in ctx.session.exec(query.order_by(Episode.number)).all():
+        airings[sid].append({"episode": number, "at": iso(air_at), "status": status.value, "done": status == EpisodeStatus.COMPLETED})
+    return airings
+
+
 def attention(counts: Dict[EpisodeStatus, int], feed: Optional[Feed]) -> List[str]:
     """Only what needs the user's eye, in plain words."""
     notes = []
@@ -129,6 +140,7 @@ def show_card(
     aired: int = 0,
     last_done: Optional[int] = None,
     released: bool = True,
+    airings: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     language = ctx.settings.title_language
     title = show.title(language)
@@ -172,6 +184,7 @@ def show_card(
         },
         "attention": attention(counts, feed),
         "next_airing": None if not show.next_airing_at else {"episode": show.next_airing_episode, "at": iso(show.next_airing_at)},
+        "airings": airings or [],
         "save_folder": show.save_folder,
         "save_path": compress_home_path(resolve_save_path(ctx.settings.base_dir, title, show.save_folder)),
         "category": show.category,
@@ -187,11 +200,12 @@ def shows_view(ctx: Context) -> List[Dict[str, Any]]:
     feeds = {feed.id: feed for feed in ctx.session.exec(select(Feed)).all()}
     facts = facts_for(ctx, shows)
     counts, replacing, aired, last = _episode_counts(ctx), _replacing(ctx), _aired(ctx), _last_done(ctx)
+    airings = _airings(ctx)
     return [
         show_card(
             ctx, show, show_status(facts[show.id], ctx.now), counts.get(show.id, {}), feeds.get(show.feed_id),
             replacing=replacing.get(show.id, 0), aired=aired.get(show.id, 0), last_done=last.get(show.id),
-            released=not is_unreleased(facts[show.id], ctx.now),
+            released=not is_unreleased(facts[show.id], ctx.now), airings=airings.get(show.id),
         )
         for show in shows
     ]
@@ -247,7 +261,7 @@ def card_for(ctx: Context, show: Show) -> Dict[str, Any]:
     return show_card(
         ctx, show, show_status(facts, ctx.now), counts, feed,
         replacing=_replacing(ctx).get(show.id, 0), aired=_aired(ctx).get(show.id, 0), last_done=_last_done(ctx).get(show.id),
-        released=not is_unreleased(facts, ctx.now),
+        released=not is_unreleased(facts, ctx.now), airings=_airings(ctx, show.id).get(show.id),
     )
 
 

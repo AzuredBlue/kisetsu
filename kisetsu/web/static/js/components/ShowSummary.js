@@ -20,6 +20,14 @@ export function airSummary(show, now) {
   if (show.status === 'completed') {
     return { ep: show.progress.total ? `${show.progress.total} eps` : '', info: 'Completed', tone: 'muted', at: null };
   }
+  // AniList's next airing moves on as soon as an episode airs, so the newest aired one that is not on disk yet is
+  // still the one being looked for.
+  const aired = (show.airings || []).filter(a => Date.parse(a.at) <= now);
+  const newest = aired[aired.length - 1];
+  if (newest && newest.status === 'downloading') return { ep: `Ep ${newest.episode}`, info: 'Downloading', tone: '', at: null };
+  if (newest && (newest.status === 'wanted' || newest.status === 'missed')) {
+    return { ep: `Ep ${newest.episode}`, info: 'Aired', tone: show.status !== 'waiting' ? 'warn' : '', at: newest.at };
+  }
   const next = show.next_airing;
   if (next && next.at) {
     const cd = countdown(next.at, now);
