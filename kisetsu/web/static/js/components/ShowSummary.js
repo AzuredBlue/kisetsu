@@ -115,9 +115,16 @@ function folderNote(folder) {
       ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
 }
 
+// A nameless torrent is a stale hash qBittorrent no longer lists, and a folder that stays loses nothing.
+const hasFiles = ({ torrents, folder }) => torrents.some(t => t.name) || !!(folder && folder.remove && folder.leftover_count);
+
 // The body re-renders on the switch; `keep` is what the caller reads once the dialog closes.
 function DeleteBody({ preview, keep }) {
   const [kept, setKept] = useState(false);
+  if (preview && !hasFiles(preview)) {
+    return html`<p class="field-hint" style="margin:0">Removes the show. It has no torrents or files to delete.</p>
+      ${preview.folder && preview.folder.remove ? folderNote(preview.folder) : null}`;
+  }
   return html`<p class="field-hint" style="margin:0">${kept ? 'Removes the show and its torrents. The files stay on disk.' : 'Removes the show, its torrents and their files.'}</p>
     ${torrentList(preview ? preview.torrents : null)}
     ${kept ? null : folderNote(preview && preview.folder)}
