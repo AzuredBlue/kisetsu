@@ -102,6 +102,9 @@ def extract_release_version(raw_title: str) -> int:
     return 1
 
 
+_COUNTS_SOMETHING_ELSE = re.compile(r"\b(?:season|part|cour|vol(?:ume)?)\.?$", re.IGNORECASE)
+
+
 def parse_release_title(raw_title: str) -> Dict[str, Any]:
     """Parse torrent release filename/title into structured metadata."""
     if not raw_title:
@@ -177,6 +180,9 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
                     val = int(m.group(1))
                     is_prefixed = bool(re.match(r"(?:EP?|#)", m.group(0).strip(" -_")))
                     if 1950 <= val <= 2050 and not is_prefixed:
+                        continue
+                    # "Season 2", "Part 6" and "Volume 1" number something bigger than an episode.
+                    if not is_prefixed and "-" not in m.group(0) and _COUNTS_SOMETHING_ELSE.search(primary_segment[:m.start()]):
                         continue
                     valid_ep_matches.append(m)
 
@@ -301,30 +307,60 @@ def calculate_match_score(
 
 
 UNWANTED_RESOLUTION_REGEX: re.Pattern[str] = re.compile(r"\b(720p|480p|540p|360p|576p)\b", re.IGNORECASE)
+# "Collection" only counts set apart in brackets: titles contain the word ("Kantai Collection").
 BATCH_REGEX: re.Pattern[str] = re.compile(
-    r"\b(batch|complete\s+series|complete\s+season|collection)\b|\(\d+\s*[-~]\s*\d+\)|\[\d+\s*[-~]\s*\d+\]|\b\d{1,4}\s*~\s*\d{1,4}\b",
+    r"\b(?:batch|complete\s+series|complete\s+season)\b|[\[(]\s*collection\s*[\])]",
     re.IGNORECASE,
 )
 
 
-# An episode range: "(01-12)", "[01 ~ 24]", "01~12", or a bare "01-12" set apart by spaces.
+# An episode range: "S01E01-E12", "(01-12)", "[01 ~ 24]", "01~12", or a bare "E1-E12", "01-12" or "- 1-12" set apart
+# by spaces. A bare "1-2" is left out: it is part of a title as often as not ("Ranma 1-2 2024 S03E03").
 _RANGE_REGEXES = (
+    re.compile(r"\bS\d{1,2}E(\d{1,4})\s*-\s*E?(\d{1,4})\b", re.IGNORECASE),
     re.compile(r"[\[(]\s*(?:EP?\s*)?(\d{1,4})\s*[-~]\s*(?:EP?\s*)?(\d{1,4})\s*[\])]", re.IGNORECASE),
     re.compile(r"\b(\d{1,4})\s*~\s*(\d{1,4})\b"),
-    re.compile(r"(?:^|\s)(?:EP?)?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)", re.IGNORECASE),
+    re.compile(r"(?:^|\s)EP?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)", re.IGNORECASE),
+    re.compile(r"(?:^|\s)(\d{2,4})-(\d{2,4})(?=$|\s)"),
+    re.compile(r"\s-\s+(\d{1,4})-(\d{1,4})(?=$|\s)"),
 )
-_BATCH_WORDS = re.compile(r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?|collection)\b\s*[\])]?", re.IGNORECASE)
+_BATCH_WORDS = re.compile(r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?)\b\s*[\])]?|[\[(]\s*collection\s*[\])]", re.IGNORECASE)
+# A file's name, or the CRC of one: what a single file is posted under, and a batch is not.
+_SINGLE_FILE = re.compile(r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$|[\[(](?=\d*[A-Fa-f])[0-9A-Fa-f]{8}[\])]", re.IGNORECASE)
+_OTHER_FORMAT = re.compile(r"\b(?:movie|film|gekijouban|ova|oav|oads?|ona|specials?|recaps?)\b", re.IGNORECASE)
+_SEASON_WORDS = re.compile(r"\bS\d{1,2}\b|\bseason\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b", re.IGNORECASE)
+_SAME_NAME_SCORE = 85
 
 
 def batch_range(raw_title: str) -> Optional[Tuple[int, int]]:
-    """The first and last episode a batch title names, or None when it names no range."""
+    """The first and last episode a batch title names, or None when it names no range. "(2019-2021)" dates a release."""
     for regex in _RANGE_REGEXES:
-        found = regex.search(raw_title)
-        if found:
+        for found in regex.finditer(raw_title):
             first, last = int(found.group(1)), int(found.group(2))
-            if 0 < first < last:
+            if 0 < first < last and not (first >= 1900 and last <= 2100):
                 return first, last
     return None
+
+
+def is_single_file(raw_title: str) -> bool:
+    """Whether the title is one file's: a special or a movie when it carries no episode number, never a whole season."""
+    return bool(_SINGLE_FILE.search(raw_title.strip()))
+
+
+def names_something_else(raw_title: str, aliases: List[str]) -> bool:
+    """Whether a release of the show's name is really another thing: a movie or special, a " - subtitle" the show's titles
+    lack, or another show that only shares a word and a season with it ("Grand Blue S2" and "Blue Box Season 2")."""
+    title = (parse_release_title(raw_title).get("title") or "").strip(" -")
+    known = " ".join(aliases).lower()
+    if any(word.group().lower() not in known for word in _OTHER_FORMAT.finditer(title)):
+        return True
+    core = normalize_title(_SEASON_WORDS.sub(" ", title))
+    if not any(fuzz.token_set_ratio(core, normalize_title(_SEASON_WORDS.sub(" ", alias))) >= FUZZY_MATCH_THRESHOLD for alias in aliases):
+        return True
+    if " - " not in title:
+        return False
+    norm = normalize_title(title)
+    return not any(fuzz.token_sort_ratio(norm, normalize_title(alias)) >= _SAME_NAME_SCORE for alias in aliases)
 
 
 def is_batch(raw_title: str) -> bool:
@@ -344,7 +380,7 @@ def is_valid_release(raw_title: str) -> bool:
     """Reject batches and unwanted lower-resolution releases."""
     if UNWANTED_RESOLUTION_REGEX.search(raw_title):
         return False
-    if BATCH_REGEX.search(raw_title):
+    if is_batch(raw_title):
         return False
     return True
 

@@ -315,3 +315,42 @@ async def test_confirming_an_unmarked_season_batch_adds_it_once_and_flags_its_do
     downloads = web.query(lambda s: s.exec(select(Download)).all())
     assert len(downloads) == 10 and all(d.batch and d.info_hash == season.info_hash for d in downloads)
     assert web.load(Show, body["show_id"]).learned_name is None
+
+
+async def test_a_special_without_an_episode_number_is_not_offered_as_a_season_batch(web):
+    _user(web)
+    _finished(web)
+    web.feeds.searchable[NYAA] = [
+        article("[SubsPlease] Sousou no Frieren - The Gold-Star Answer (1080p) [2BC34859].mkv", START - timedelta(days=300)),
+        article("[Erai-raws] Sousou no Frieren - Hanamaru na Answer [1080p CR WEB-DL AVC AAC][83E1A7F3]", START - timedelta(days=300)),
+        article("[Grp] Sousou no Frieren - Specials (01-03) (1080p) [Batch]", START - timedelta(days=300)),
+        article("[Grp] Sousou no Frieren The Movie [BD 1080p]", START - timedelta(days=300)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert preview["feeds"] == []
+
+
+async def test_a_number_in_a_specials_subtitle_is_not_offered_as_that_episode(web):
+    _user(web)
+    _finished(web, episodes=30)
+    _releases(web)
+    web.feeds.searchable[NYAA].append(article("[Grp] Sousou no Frieren - The Counterfeit Case of Ultra 30 (1080p).mkv", START - timedelta(days=300)))
+    web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert [e["number"] for e in preview["feeds"][0]["episodes"]] == [1, 2, 3]
+
+
+async def test_no_release_without_a_range_holds_a_show_still_airing(web):
+    _user(web)
+    web.anilist.shows.append(anilist_show(7, "Sousou no Frieren", status="RELEASING", list_status="DROPPED", season="FALL", season_year=2023))
+    web.feeds.searchable[NYAA] = [
+        article("[Commie] Sousou no Frieren", START - timedelta(days=300)),
+        article("[Grp] Sousou no Frieren [1080p] [Batch]", START - timedelta(days=300)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert all(not g["batches"] for g in preview["feeds"])

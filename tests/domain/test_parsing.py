@@ -188,3 +188,66 @@ def test_batches_are_told_from_single_episodes_and_their_range_is_read():
     assert not is_batch("[Grp] Sousou no Frieren 2 - 05 (1080p).mkv")
     assert not is_batch("[Grp] Show [x264-10bit] - 03")
     assert strip_batch("[Grp] Sousou no Frieren (01-28) [1080p] [Batch]") == "[Grp] Sousou no Frieren [1080p]"
+
+
+def test_numbers_in_a_title_do_not_make_a_batch():
+    from kisetsu.domain.parsing import batch_range, is_batch, is_valid_release
+
+    single = "Ranma 1-2 2024 S03E03 Happosai Days Are Here Again 1080p NF WEB-DL DUAL AAC2.0 H.264-VARYG (Ranma 1/2 (2024) 3rd Season, Dual-Audio, Multi-Subs)"
+    assert not is_batch(single) and is_valid_release(single)
+    assert not is_batch("[Grp] Ranma 1-2 - 05 (1080p).mkv")
+    assert not is_batch("[Erai-raws] Kantai Collection - 05 [1080p]") and is_valid_release("[Erai-raws] Kantai Collection - 05 [1080p]")
+    assert not is_batch("[Grp] Show - 05 (2024-2025) [1080p]") and is_valid_release("[Grp] Show - 05 (2024-2025) [1080p]")
+    assert batch_range("[Grp] Show 2019-2021 [BD]") is None
+
+
+def test_a_range_or_a_marker_still_makes_a_batch():
+    from kisetsu.domain.parsing import batch_range, is_batch, is_valid_release
+
+    assert batch_range("[Grp] Show S01E01-E12 1080p") == (1, 12)
+    assert batch_range("Show S01E01-12 1080p WEB-DL-GRP") == (1, 12)
+    assert batch_range("[Grp] Show - 1-12 [1080p]") == (1, 12)
+    assert batch_range("[Grp] Show (2019-2021) (01-12) [BD]") == (1, 12)
+    assert is_batch("[Grp] Show [Collection] [1080p]")
+    assert is_batch("Chainsmoker Cat S01 1080p NF WEB-DL DUAL AAC2.0 H.264-VARYG (Yani Neko, Dual-Audio, Multi-Subs, Batch)")
+    assert not is_valid_release("[Grp] Show - 01-12 [1080p]")
+
+
+def test_a_single_file_is_told_by_its_extension_or_crc():
+    from kisetsu.domain.parsing import is_single_file
+
+    assert is_single_file("[SubsPlease] Detective Conan - The Gold-Star Answer (1080p) [2BC34859].mkv")
+    assert is_single_file("[Erai-raws] Detective Conan - Hanamaru na Answer [1080p CR WEB-DL AVC AAC][83E1A7F3]")
+    assert not is_single_file("[Commie] The Ghost in the Shell")
+    assert not is_single_file("[Grp] Show [BD 1080p] [20240101]")
+
+
+def test_a_release_can_name_something_besides_the_show():
+    from kisetsu.domain.parsing import names_something_else
+
+    conan = ["Detective Conan", "Meitantei Conan"]
+    assert names_something_else("[Erai-raws] Detective Conan - Hanamaru na Answer [1080p]", conan)
+    assert names_something_else("[SubsPlease] Lord of Mysteries - Specials (1080p)", ["Lord of Mysteries"])
+    assert names_something_else("[CommieRaws] Tropical-Rouge! Precure The Movie [BD 1080p AC3]", ["Tropical-Rouge! Precure"])
+    assert names_something_else("[SubsPlease] Bleach - Sennen Kessen Hen (1080p)", ["Bleach"])
+    assert names_something_else("[SubsPlease] Grand Blue S2 (1080p)", ["Blue Box Season 2", "Ao no Hako 2nd Season"])
+    assert not names_something_else("[Grp] Sousou no Frieren S2 [1080p]", ["Sousou no Frieren 2nd Season"])
+    assert not names_something_else("[Commie] Mix 2nd Season", ["MIX: MEISEI STORY 2nd Season"])
+    assert not names_something_else("[Commie] The Ghost in the Shell", ["The Ghost in the Shell"])
+    assert not names_something_else("[Erai-raws] Koukaku Kidoutai - SAC_2045 [1080p]", ["Koukaku Kidoutai: SAC_2045"])
+    assert not names_something_else("[SubsPlease] Bleach - Sennen Kessen Hen (1080p)", ["Bleach: Sennen Kessen-hen"])
+    assert not names_something_else("[Grp] Mononoke Movie [1080p]", ["Mononoke Movie"])
+
+
+def test_a_number_after_season_part_or_volume_is_not_an_episode():
+    from kisetsu.domain.parsing import parse_release_title
+
+    assert parse_release_title("[Commie] Call of the Night Season 2")["episode"] is None
+    assert parse_release_title("[Commie] Call of the Night Season 2")["season"] == 2
+    assert parse_release_title("[Commie] Lupin the Third Part 6 [BD 1080p AAC]")["episode"] is None
+    assert parse_release_title("[Commie] Mix 2nd Season - Volume 1 [BD 1080p AAC]")["episode"] is None
+    assert parse_release_title("[Grp] Show Season 2 - 05 (1080p)")["episode"] == 5
+    assert parse_release_title("[Grp] Show Part 2 - 05 (1080p)")["episode"] == 5
+    assert parse_release_title("[Grp] Show Part 2 05 (1080p)")["episode"] == 5
+    assert parse_release_title("[Grp] Show Season 2 E05 (1080p)")["episode"] == 5
+    assert parse_release_title("[Grp] Show 05 (1080p)")["episode"] == 5

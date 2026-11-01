@@ -17,7 +17,7 @@ from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import DismissedShow, Episode, EpisodeStatus, Feed, FeedItem, Show
 from kisetsu.domain.matcher import build_matcher, decide
-from kisetsu.domain.parsing import batch_range, is_batch, parse_release_title, release_season, strip_batch
+from kisetsu.domain.parsing import batch_range, is_batch, is_single_file, names_something_else, parse_release_title, release_season, strip_batch
 from kisetsu.domain.patterns import sanitize_folder_name
 from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows
 from kisetsu.services.context import Context
@@ -33,6 +33,7 @@ SEASON_MONTHS = {"WINTER": 1, "SPRING": 4, "SUMMER": 7, "FALL": 10}
 # Releases older than the season start by more than this are not the show's: a season's
 # first episodes can air in the weeks before AniList's nominal start (a FALL show in late September).
 SEASON_SLACK = timedelta(days=30)
+STILL_AIRING = ("RELEASING", "NOT_YET_RELEASED", "HIATUS")
 
 
 @dataclass
@@ -171,7 +172,8 @@ def _releases(ctx: Context, show: Show, feed: Feed) -> Dict[int, Any]:
     """The release the feed offers for each episode: the highest version, then the newest."""
     best: Dict[int, Any] = {}
     for _, entry in manual.candidates(ctx, show, [feed]):
-        if _too_old(show, entry.item):
+        # A number in a special's subtitle ("- The Case of Ultra 30") reads as an episode, and only the show's titles tell them apart.
+        if _too_old(show, entry.item) or names_something_else(entry.item.title, show.effective_aliases):
             continue
         held = best.get(entry.number)
         key = (entry.version, entry.item.published_at or entry.item.first_seen_at)
@@ -186,10 +188,18 @@ class Batch:
     numbers: List[int]
 
 
-def _covered(span: Optional[Tuple[int, int]], target: int) -> List[int]:
-    """The show's episodes a batch holds: its range, read as the season's own numbers when they fit."""
+def _whole_season_exists(show: Show) -> bool:
+    """Whether one release can hold the whole season: it has a known length and has finished airing."""
+    return bool(show.total_episodes) and show.anilist_status not in STILL_AIRING
+
+
+def _covered(span: Optional[Tuple[int, int]], target: int, whole: bool) -> List[int]:
+    """The show's episodes a batch holds: its range, read as the season's own numbers when they fit.
+
+    Without a range it holds the whole season, if there can be one yet.
+    """
     if span is None:
-        return list(range(1, target + 1))
+        return list(range(1, target + 1)) if whole else []
     first, last = span
     if last <= target:
         return list(range(first, last + 1))
@@ -205,23 +215,25 @@ def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
 
     A batch names its season more often than single releases do, so it must name the same
     season as the show's titles; naming none counts as the first. A release with neither a batch
-    marker nor an episode number is one too when the season has several episodes: a whole season
-    posted under its plain name. It covers every episode, as a batch with no range does.
+    marker nor an episode number is one too when the season has several episodes and has ended: a
+    whole season posted under its plain name. It covers every episode, as a batch with no range does.
+    One file's name or CRC rules that out, and a movie, special or subtitled release is never the show's.
     """
     matcher = build_matcher(show.effective_aliases, None)
     cache: Dict[str, dict] = {}
     target = show.total_episodes or len(shows.ensure_episodes(ctx, show))
     season = max((n for n in (release_season(a) for a in show.effective_aliases) if n), default=1)
+    whole = _whole_season_exists(show)
     found: List[Batch] = []
     for item in ctx.session.exec(select(FeedItem).where(FeedItem.feed_id == feed.id)).all():
         if not item.torrent_url or _too_old(show, item):
             continue
-        if not is_batch(item.title) and (target <= 1 or parse_release_title(item.title).get("episode") is not None):
+        if not is_batch(item.title) and (not whole or target <= 1 or is_single_file(item.title) or parse_release_title(item.title).get("episode") is not None):
             continue
         name = strip_batch(item.title)
-        if (release_season(name) or 1) != season or not decide(matcher, name, cache)[0]:
+        if (release_season(name) or 1) != season or names_something_else(name, show.effective_aliases) or not decide(matcher, name, cache)[0]:
             continue
-        numbers = _covered(batch_range(item.title), target)
+        numbers = _covered(batch_range(item.title), target, whole)
         if numbers:
             found.append(Batch(item, numbers))
     found.sort(key=lambda b: (-len(b.numbers), -(b.item.published_at or b.item.first_seen_at).timestamp()))
