@@ -242,7 +242,8 @@ def delete_show(
     # Only a tag Kisetsu put on this show's torrents is its own to clear.
     show_tag = show.qbit_tag
     for episode in ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all():
-        downloads.cancel_episode(ctx, episode, reason)
+        # What is still downloading may be finished by now, so its files only go if the user asked for that.
+        downloads.cancel_episode(ctx, episode, reason, leave_torrents=not (delete_torrents and delete_files))
     if dismiss:
         ctx.session.merge(DismissedShow(anilist_id=show.anilist_id))
     ctx.session.flush()

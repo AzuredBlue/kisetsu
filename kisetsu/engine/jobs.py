@@ -22,7 +22,6 @@ from kisetsu.services.shows import SCHEDULE_FULL_LOOKBACK, SCHEDULE_REFRESH_LOOK
 
 logger = logging.getLogger("kisetsu.engine.jobs")
 
-STARTUP_RETRY = 30.0
 QBIT_RETRY = 30.0
 ANILIST_ERROR_RETRY = 300.0
 SETTLE_BUSY = 4.0
@@ -31,6 +30,8 @@ SETTLE_IDLE = 300.0
 GRAB_FALLBACK = 15 * 60.0
 BACKFILL_INTERVAL = 6 * 3600.0
 HOUSEKEEPING_INTERVAL = 24 * 3600.0
+# Well before a whole interval, or a machine restarted every day would never get to it.
+HOUSEKEEPING_FIRST = 3600.0
 HUNT_IDLE_MAX = 3600.0
 # With no AniList user set there is nothing to sync until the settings change.
 NO_USER_WAIT = 3600.0
@@ -84,7 +85,7 @@ class Jobs:
         add("settle", self.settle, interval=SETTLE_IDLE, first=None)
         add("backfill", self.backfill, interval=BACKFILL_INTERVAL, first=None)
         add("palette", self.palette, interval=None, first=None)
-        add("housekeeping", self.housekeeping, interval=HOUSEKEEPING_INTERVAL, first=HOUSEKEEPING_INTERVAL)
+        add("housekeeping", self.housekeeping, interval=HOUSEKEEPING_INTERVAL, first=HOUSEKEEPING_FIRST)
 
     def poke(self, name: str, delay: float = 0.0) -> None:
         self.scheduler.poke(name, delay)
@@ -146,7 +147,7 @@ class Jobs:
         except QbitError as e:
             return self._qbit_failed(e)
         self._set_health(qbit=None)
-        await self.sync_anilist(startup=True)
+        next_sync = await self.sync_anilist(startup=True)
         await self.refresh_feeds(everything=True)
         await self.engine.run(adoption.adopt_existing)
         await self.backfill()
@@ -157,6 +158,7 @@ class Jobs:
         self.engine.bus.publish(["status"])
         for name in ("grab", "settle", "hunt", "palette"):
             self.poke(name)
+        self.scheduler.delay("sync_anilist", next_sync)
         self.scheduler.delay("refresh_feeds", await self._next_read())
         self.scheduler.delay("backfill", BACKFILL_INTERVAL)
         return None
@@ -265,7 +267,9 @@ class Jobs:
         interval = max(1, info.sync_minutes) * 60.0
         if startup and info.last_sync_ago is not None and info.last_sync_ago < interval and info.monitored_ids:
             await self.engine.run(cycle.rollover)
-            return max(30.0, interval - info.last_sync_ago)
+            wait = max(30.0, interval - info.last_sync_ago)
+            logger.info(f"AniList was synced {round(info.last_sync_ago / 60)} min ago. Next sync in {round(wait / 60)} min.")
+            return wait
         try:
             seasonal = await self.anilist.fetch_user_seasonal_anime(info.username, monitored_anilist_ids=info.monitored_ids)
         except AniListDeferred as e:
@@ -279,11 +283,13 @@ class Jobs:
         self._set_health(anilist=None, anilist_retry_in=None)
         applied = await self.engine.run(cycle.apply_sync, seasonal)
         retry = await self.refresh_schedules()
+        wait = max(30.0, retry) if retry else interval
+        logger.info(f"AniList synced: {len(seasonal)} shows. Next sync in {round(wait / 60)} min.")
         if applied.added_ids and self.ready.is_set():
             await self.on_new_shows(applied.added_ids)
         for name in ("grab", "hunt", "palette"):
             self.poke(name)
-        return max(30.0, retry) if retry else interval
+        return wait
 
     async def refresh_schedules(self) -> Optional[float]:
         """Date the episodes of the shows whose air times are old; returns the wait if AniList deferred part of it."""
@@ -432,6 +438,8 @@ class Jobs:
         return None
 
     async def housekeeping(self) -> Optional[float]:
+        if not await self._configured():
+            return None
         try:
             await self.engine.run(cycle.housekeeping)
         except QbitError as e:

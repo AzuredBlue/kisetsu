@@ -433,6 +433,8 @@ def _cancel(ctx: Context, dl: Download, episode: Episode, reason: str) -> None:
     if episode.current_download_id == dl.id:
         episode.current_download_id = None
     recompute_episode(ctx, episode)
+    show = ctx.session.get(Show, episode.show_id)
+    events.record(ctx, EventKind.INFO, reason, show=show, episode=episode.number, feed_id=dl.feed_id, title=dl.title)
 
 
 def _give_up_hours(ctx: Context, dl: Download) -> Optional[int]:
@@ -474,14 +476,15 @@ def _delete(ctx: Context, info_hash: Optional[str], keep_files_of: Optional[str]
     ctx.qbit.delete([info_hash], delete_files=not shares)
 
 
-def cancel_download(ctx: Context, dl: Download, reason: str) -> bool:
-    """Stop a download and delete the torrent it added; a replacement leaves the previous release as it is."""
+def cancel_download(ctx: Context, dl: Download, reason: str, *, leave_torrent: bool = False) -> bool:
+    """Stop a download and delete the torrent it added, unless ``leave_torrent``; a replacement leaves the previous release as it is."""
     episode = ctx.session.get(Episode, dl.episode_id)
     if episode is None:
         return False
     old = ctx.session.get(Download, dl.supersedes_id) if dl.supersedes_id else None
     try:
-        _delete(ctx, dl.info_hash, keep_files_of=old.info_hash if old else None)
+        if not leave_torrent:
+            _delete(ctx, dl.info_hash, keep_files_of=old.info_hash if old else None)
     except QbitError as e:
         dl.last_error = f"{reason} Cleanup failed: {e}"
         ctx.session.add(dl)
@@ -493,8 +496,8 @@ def cancel_download(ctx: Context, dl: Download, reason: str) -> bool:
     return True
 
 
-def cancel_episode(ctx: Context, episode: Episode, reason: str, *, keep_added: bool = False) -> int:
-    """Cancel the episode's unfinished downloads; with ``keep_added`` one already in qBittorrent finishes."""
+def cancel_episode(ctx: Context, episode: Episode, reason: str, *, keep_added: bool = False, leave_torrents: bool = False) -> int:
+    """Cancel the episode's unfinished downloads; with ``keep_added`` one already in qBittorrent finishes, with ``leave_torrents`` it just stops being followed."""
     canceled = 0
     downloads = ctx.session.exec(
         select(Download).where(Download.episode_id == episode.id, Download.state.in_(ACTIVE_DOWNLOAD_STATES))
@@ -504,7 +507,7 @@ def cancel_episode(ctx: Context, episode: Episode, reason: str, *, keep_added: b
             continue
         if keep_added and locate(ctx, dl) is not None:
             continue
-        if cancel_download(ctx, dl, reason):
+        if cancel_download(ctx, dl, reason, leave_torrent=leave_torrents):
             canceled += 1
     return canceled
 
@@ -515,6 +518,12 @@ def cancel_from_other_feeds(ctx: Context, show: Show, keep_feed_id: Optional[int
     A finished torrent is never touched, nor is a download whose feed is unknown. Returns the
     episode numbers that are wanted again.
     """
+    try:
+        # What finished since the last pass must count as finished, as anything else is deleted with its files.
+        ctx.qbit.sync()
+    except QbitError as e:
+        logger.warning(f"{show.title(ctx.settings.title_language)}: kept what is downloading from the old feed, as qBittorrent could not be read: {e}")
+        return []
     reset: List[int] = []
     rows = ctx.session.exec(
         select(Download, Episode)
@@ -689,15 +698,7 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
         dl.next_retry_at = None
         ctx.session.add(dl)
         return
-    if torrent.state.lower().startswith(("stopped", "paused")) and torrent.seeding_time == 0:
-        # Complete but not running and never seeded: it has not been resumed, so the old release must stay.
-        # One that already seeded was stopped by qBittorrent at its seed limit and counts as seeding.
-        try:
-            ctx.qbit.resume([torrent.hash])
-        except QbitError as e:
-            dl.last_error = str(e)
-            ctx.session.add(dl)
-        return
+    # Finished and checked, whether seeding or stopped: a seed ratio of 0 stops it before it ever seeds.
     try:
         if old is not None and old.info_hash and old.info_hash != dl.info_hash:
             _delete(ctx, old.info_hash, keep_files_of=dl.info_hash)

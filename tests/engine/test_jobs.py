@@ -384,3 +384,50 @@ def test_the_hunt_reports_when_it_will_next_read_even_past_its_hourly_recheck(en
     hunt, hunt_read_at = run(env, go)
     # A premiere is looked for early by the early-air setting.
     assert hunt == 3600.0 and hunt_read_at == START + timedelta(days=3) - timedelta(hours=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
+
+
+def test_each_anilist_sync_says_so_in_the_log_and_when_the_next_one_is(env, caplog):
+    airing(env)
+
+    async def go():
+        await env.jobs.sync_anilist()
+        await env.jobs.sync_anilist(startup=True)
+
+    with caplog.at_level(logging.INFO, logger="kisetsu.engine.jobs"):
+        run(env, go)
+    lines = [r.getMessage() for r in caplog.records if "AniList" in r.getMessage()]
+    assert any(line.startswith("AniList synced: 1 shows. Next sync in ") for line in lines)
+    assert any(line.startswith("AniList was synced 0 min ago. Next sync in ") for line in lines)
+
+
+def test_startup_books_the_next_anilist_sync_as_nothing_else_wakes_it(env):
+    airing(env)
+    env.add_feed()
+
+    async def go():
+        await env.jobs.startup()
+
+    run(env, go)
+    assert "delay:sync_anilist" in env.pokes
+
+
+def test_housekeeping_first_runs_within_a_short_uptime_and_not_before_setup(env):
+    airing(env)
+    env.jobs.register()
+    job = env.scheduler.jobs["housekeeping"]
+    assert job.due - env.scheduler.clock() <= 3600.0
+
+    def unfinished(session):
+        session.exec(select(AppState).where(AppState.key == "setup_completed")).one().value = "0"
+        session.commit()
+
+    with Session(env.db) as session:
+        unfinished(session)
+
+    async def go():
+        return await env.jobs.housekeeping()
+
+    calls = []
+    env.qbit.tags = lambda: calls.append("tags") or []
+    run(env, go)
+    assert calls == []

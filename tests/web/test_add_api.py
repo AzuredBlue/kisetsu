@@ -143,6 +143,7 @@ async def test_a_skipped_episode_can_be_wanted_again(web):
     response = await web.client.post(f"/api/shows/{show}/episodes/{episode}/want")
     assert response.status_code == 200
     assert web.episode(show, 1).status == EpisodeStatus.WANTED and not web.load(Show, show).completed
+    assert "grab" in web.pokes
     assert (await web.client.post(f"/api/shows/{show}/episodes/{episode}/want")).status_code == 400
     assert web.query(lambda s: s.exec(select(Download)).all()) == []
 

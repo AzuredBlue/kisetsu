@@ -172,18 +172,25 @@ async def search_releases(show_id: int, request: Request):
 
 @router.post("/{show_id}/download")
 async def download(show_id: int, body: Download, request: Request):
-    return {"message": await write(request, _download, show_id, body)}
+    message = await write(request, _download, show_id, body)
+    runtime(request).jobs.poke("settle")
+    return {"message": message}
 
 
 @router.post("/{show_id}/episodes/{episode_id}/restore")
 async def restore(show_id: int, episode_id: int, request: Request):
-    return {"message": await write(request, _restore, show_id, episode_id)}
+    message = await write(request, _restore, show_id, episode_id)
+    runtime(request).jobs.poke("settle")
+    return {"message": message}
 
 
 @router.post("/{show_id}/episodes/{episode_id}/want")
 async def want(show_id: int, episode_id: int, request: Request):
     message = await write(request, _want, show_id, episode_id)
-    runtime(request).jobs.request_backfill([show_id])
+    jobs = runtime(request).jobs
+    # A stored release is grabbed right away; only one no feed has left needs the search.
+    jobs.poke("grab")
+    jobs.request_backfill([show_id])
     return {"message": message}
 
 

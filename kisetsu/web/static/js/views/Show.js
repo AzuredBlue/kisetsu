@@ -239,7 +239,7 @@ export function Show({ route }) {
               </div>
               <div>
                 <label for="show-ratio" class="field-label">Seed ratio</label>
-                <input type="number" step="0.1" min="0" id="show-ratio" class="field mono" ...${form.bind('seed_ratio')} placeholder=${(settings.data && settings.data.default_seed_ratio) || 1} />
+                <input type="number" step="0.1" min="0" id="show-ratio" class="field mono" ...${form.bind('seed_ratio')} placeholder=${settings.data ? settings.data.default_seed_ratio : ''} />
               </div>
             </div>`}
         </div>

@@ -458,6 +458,7 @@ async def test_restore_adds_the_release_again_from_the_stored_items_after_it_lef
     assert web.feeds.items.get("https://top/rss", []) == []
     response = await web.client.post(f"/api/shows/{show}/episodes/{episode_id}/restore")
     assert response.status_code == 200 and len(web.qbit.calls_named("add_torrent")) == 1
+    assert "settle" in web.pokes
 
 
 async def test_restore_says_so_when_the_release_is_nowhere_to_be_found(web):

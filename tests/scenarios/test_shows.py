@@ -424,3 +424,26 @@ def test_auto_discover_all_releases_hand_pins_and_keeps_proven_feeds(world):
     assert shows.auto_discover_all(world.ctx()) == 1
     assert (pinned.feed_id, pinned.feed_state) == (None, FeedState.NONE)
     assert (locked.feed_id, locked.feed_state) == (top.id, FeedState.LOCKED)
+
+
+def _downloading(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=1, first_air=START - timedelta(days=1))
+    item = _new_item(feed, article("[Grp] Sousou no Frieren - 01 (1080p).mkv", START), START)
+    dl = downloads.start_download(world.ctx(), show, feed, world.episode(show, 1), item)
+    world.commit()
+    return show, dl
+
+
+def test_deleting_a_show_and_keeping_its_files_never_deletes_the_files_of_what_is_in_flight(world):
+    show, dl = _downloading(world)
+    removed = shows.delete_show(world.ctx(), show, reason="user", delete_torrents=True, delete_files=False)
+    world.commit()
+    assert removed == 1 and world.qbit.truth == {} and world.qbit.deleted_with_files == []
+
+
+def test_clearing_a_show_leaves_what_is_in_flight_in_qbit(world):
+    show, dl = _downloading(world)
+    assert shows.delete_show(world.ctx(), show, reason="cleared") == 0
+    world.commit()
+    assert dl.info_hash in world.qbit.truth and world.qbit.deleted_with_files == []

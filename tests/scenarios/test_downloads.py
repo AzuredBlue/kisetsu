@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitError, QbitRejected, QbitUnavailable
-from kisetsu.db.schema import Download, DownloadState, EpisodeStatus, EventKind, FeedState
+from kisetsu.db.schema import Download, DownloadState, EpisodeStatus, Event, EventKind, FeedState
 from kisetsu.services import downloads
 from kisetsu.services.ingest import _new_item
 from tests.fakes import START, article
@@ -66,7 +66,7 @@ def test_a_finished_torrent_completes_the_episode_and_notifies_once(world):
     assert len(world.notifications) == 1
 
 
-def test_a_v2_is_added_paused_rechecked_and_the_v1_stays_until_it_is_seeding(world):
+def test_a_v2_is_added_paused_rechecked_and_the_v1_stays_until_it_has_finished(world):
     feed, show, ep = setup(world)
     v1, row1 = grab(world, show, feed, ep)
     world.qbit.finish(row1.torrent_url)
@@ -380,7 +380,7 @@ def test_a_replacement_seen_first_while_checking_is_still_resumed_before_the_old
     assert v2.state == DownloadState.DONE
 
 
-def test_a_finished_but_stopped_replacement_is_resumed_and_the_old_release_waits(world):
+def test_a_replacement_qbit_stopped_before_it_ever_seeded_completes_and_the_old_release_goes(world):
     feed, show, ep = setup(world)
     v1, row1 = grab(world, show, feed, ep)
     world.qbit.finish(row1.torrent_url)
@@ -388,23 +388,22 @@ def test_a_finished_but_stopped_replacement_is_resumed_and_the_old_release_waits
     v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
     world.qbit._update(row2.info_hash, progress=1.0, amount_left=0, state="stoppedUP")
     settle(world)
-    assert row1.info_hash in world.qbit.truth and v2.state != DownloadState.DONE
-    assert world.qbit.calls_named("resume")[-1] == [row2.info_hash]
-    world.qbit._update(row2.info_hash, state="stalledUP")
-    settle(world)
     assert v2.state == DownloadState.DONE and row1.info_hash not in world.qbit.truth
+    assert world.qbit.calls_named("resume") == [[row2.info_hash]]
 
 
-def test_a_replacement_qbit_stopped_at_its_seed_limit_completes_and_the_old_release_goes(world):
+def test_a_stopped_replacement_still_being_checked_or_unfinished_keeps_the_old_release(world):
     feed, show, ep = setup(world)
     v1, row1 = grab(world, show, feed, ep)
     world.qbit.finish(row1.torrent_url)
     settle(world)
     v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
-    world.qbit._update(row2.info_hash, progress=1.0, amount_left=0, state="stoppedUP", seeding_time=371)
+    world.qbit._update(row2.info_hash, progress=1.0, amount_left=0, state="checkingUP")
     settle(world)
-    assert v2.state == DownloadState.DONE and row1.info_hash not in world.qbit.truth
-    assert world.qbit.calls_named("resume") == [[row2.info_hash]]
+    assert v2.state != DownloadState.DONE and row1.info_hash in world.qbit.truth
+    world.qbit._update(row2.info_hash, progress=0.5, amount_left=10, state="stoppedDL")
+    settle(world)
+    assert v2.state != DownloadState.DONE and row1.info_hash in world.qbit.truth
 
 
 def test_the_lock_survives_an_error_after_qbit_accepted_the_add(world):
@@ -575,3 +574,37 @@ def test_a_torrent_qbit_keeps_outside_the_requested_folder_is_reported_once_per_
     settle(world)
     notes = [e.message for e in world.session.exec(select(Event)).all() if "can see" in e.message]
     assert len(notes) == 1 and "/downloads" in notes[0] and str(Path("/home/u/Anime/Sousou no Frieren").resolve()) in notes[0]
+
+
+def test_a_canceled_grab_leaves_a_trace_so_the_history_stops_calling_it_queued(world):
+    feed, show, episode = setup(world)
+    dl, _ = grab(world, show, feed, episode)
+    world.clock.advance(minutes=1)
+    assert downloads.cancel_download(world.ctx(), dl, "Canceled: the show's feed was changed.")
+    world.commit()
+    events = world.session.exec(select(Event).where(Event.show_id == show.id, Event.episode == episode.number)).all()
+    assert [e.kind for e in events][-1] == EventKind.INFO and events[-1].message == "Canceled: the show's feed was changed."
+
+
+def test_switching_feeds_keeps_a_torrent_that_finished_since_the_last_pass(world):
+    feed, show, ep = setup(world)
+    other = world.feed("Low", "https://low/rss", 2)
+    dl, row = grab(world, show, feed, ep)
+    settle(world)
+    world.qbit.finish(row.torrent_url)
+    assert downloads.cancel_from_other_feeds(world.ctx(), show, other.id, "Feed changed") == []
+    world.commit()
+    assert row.info_hash in world.qbit.truth and world.qbit.deleted_with_files == []
+    settle(world)
+    assert dl.state == DownloadState.DONE
+
+
+def test_switching_feeds_deletes_nothing_when_qbit_cannot_say_what_finished(world):
+    feed, show, ep = setup(world)
+    other = world.feed("Low", "https://low/rss", 2)
+    dl, row = grab(world, show, feed, ep)
+    settle(world)
+    world.qbit.unavailable = QbitUnavailable("down")
+    assert downloads.cancel_from_other_feeds(world.ctx(), show, other.id, "Feed changed") == []
+    world.commit()
+    assert dl.state == DownloadState.DOWNLOADING and world.qbit.deleted_with_files == []

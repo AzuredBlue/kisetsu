@@ -87,7 +87,7 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
             ${retry ? html`<${RowButton} pending=${actions.pending.has(retry.title)} onClick=${() => actions.download(retry.title)} title="Try this release again" />` : null}
             ${ep.status === 'skipped' ? html`<${RowButton} pending=${actions.pending.has(`want:${ep.id}`)} onClick=${() => actions.want(ep.id)} title="Download this episode after all" />` : null}
             ${unmanaged ? html`<${RowButton} pending=${actions.pending.has(`restore:${ep.id}`)} onClick=${() => actions.restore(ep.id)} title="Restore: find this torrent in qBittorrent and manage it, or add it again from the feed." />` : null}
-            ${swap ? html`<${RowButton} icon="swap" pending=${actions.pending.has(swap.title)} onClick=${() => actions.download(swap.title)} title=${`Replace Ep ${ep.number} with this release. The current copy${release.feed ? ` from ${release.feed}` : ''} is deleted with its files once this one is seeding.`} />` : null}
+            ${swap ? html`<${RowButton} icon="swap" pending=${actions.pending.has(swap.title)} onClick=${() => actions.download(swap.title)} title=${`Replace Ep ${ep.number} with this release. The current copy${release.feed ? ` from ${release.feed}` : ''} is deleted with its files once this one has finished.`} />` : null}
           </span>
         </li>`;
       })}`;
@@ -111,7 +111,7 @@ export function ReleaseList({ groups, actions, loading, onUseFeed }) {
         <span class="row-end wide">
           ${m.downloadable
             ? html`<${RowButton} icon=${m.replaces ? 'swap' : 'download'} pending=${actions.pending.has(m.title)} onClick=${() => actions.download(m.title)}
-                title=${m.replaces ? `Replace Ep ${m.episode} with this release. The current copy is deleted with its files once this one is seeding.` : m.restore ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.' : 'Download this release now. It is tracked like any other episode.'} />`
+                title=${m.replaces ? `Replace Ep ${m.episode} with this release. The current copy is deleted with its files once this one has finished.` : m.restore ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.' : 'Download this release now. It is tracked like any other episode.'} />`
             : html`<span class="muted">${m.episode_status}</span>`}
         </span>
       </li>`)}`)
