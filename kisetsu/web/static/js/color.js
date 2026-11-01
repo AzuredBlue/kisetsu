@@ -175,15 +175,14 @@ export function posterTextColor(hex, mode = 'dark') {
 
 // The colours a poster's bottom edge lends its card on hover: the edge's hue at one OKLCH lightness per
 // theme, so the panel under the poster carries the art on and the title on it reads. A near-grey edge
-// has no hue worth showing, so both stay null and the card falls back to the app's own surface and accent.
+// keeps its grey panel but has no hue worth giving the title, so its text stays null.
 export function posterEdgeColors(hex, mode = 'dark') {
   if (!/^#[0-9a-f]{6}$/i.test(hex || '')) return null;
   const [, C, h] = rgbToOklch(hexToRgb(hex));
-  if (C < 0.02) return { panel: null, text: null };
   const light = mode === 'light';
   const [panelL, panelC, textL] = light ? [0.93, 0.04, 0.40] : [0.30, 0.08, 0.84];
   const color = (L, c) => oklchToRgb(L, fitChroma(L, Math.min(c, C), h), h).join(' ');
-  return { panel: color(panelL, panelC), text: color(textL, 0.14) };
+  return { panel: color(panelL, panelC), text: C < 0.02 ? null : color(textL, 0.14) };
 }
 
 // The user's accent as one rule per theme; the light one is more specific, so it wins in light mode.

@@ -163,11 +163,12 @@ function RowActions({ show }) {
 
 const feedName = (show) => (show.feed ? show.feed.name : 'No feed');
 
-// The poster's own bottom edge colours what it sits on; AniList's cover colour only stands in until it is read.
+// The poster's own bottom edge colours what it sits on; AniList's cover colour stands in for the title until
+// the edge is read, or when the edge is too grey to give it a hue.
 export function posterVars({ cover_edge, cover_color }, mode) {
   const edge = posterEdgeColors(cover_edge, mode);
-  const text = edge ? edge.text : posterTextColor(cover_color, mode);
-  return [text && `--show-text:${text}`, edge && edge.panel && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
+  const text = (edge && edge.text) || posterTextColor(cover_color, mode);
+  return [text && `--show-text:${text}`, edge && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
 }
 
 export function ShowCard({ show, now }) {
