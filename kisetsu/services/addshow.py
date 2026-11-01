@@ -46,7 +46,7 @@ class Plan:
 
 def list_view(ctx: Context, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """The user's list entries that can be added, each marked when Kisetsu already follows it."""
-    followed = set(ctx.session.exec(select(Show.anilist_id)).all())
+    followed = {anilist_id: show_id for anilist_id, show_id in ctx.session.exec(select(Show.anilist_id, Show.id)).all()}
     language = ctx.settings.title_language
     rows = []
     for entry in entries:
@@ -65,6 +65,7 @@ def list_view(ctx: Context, entries: List[Dict[str, Any]]) -> List[Dict[str, Any
             "total_episodes": entry.get("total_episodes"),
             "season": " ".join(str(p) for p in (entry.get("season") and entry["season"].title(), entry.get("season_year")) if p) or None,
             "followed": entry["anilist_id"] in followed,
+            "show_id": followed.get(entry["anilist_id"]),
         })
     rows.sort(key=lambda row: row["title"].casefold())
     return rows

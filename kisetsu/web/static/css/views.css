@@ -391,15 +391,34 @@ section + section { margin-top: .5rem; }
 }
 
 /* Adding a show by hand */
-.add-search { display: flex; align-items: center; gap: .625rem; & > .icon { flex: none; color: rgb(var(--text-3)); } & .field { flex: 1; min-width: 0; } }
+.add-search { position: relative; & > .icon { position: absolute; left: .875rem; top: 50%; transform: translateY(-50%); color: rgb(var(--text-3)); pointer-events: none; } & .field { padding-left: 2.375rem; } }
+.add-hint { margin-top: 0; }
 .add-entry, .add-picked { & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: .75rem; } } & .grow { flex: 1; min-width: 0; } }
-.add-entry { gap: .875rem; padding: .5rem 0; }
-.add-entry-title { font-size: .8125rem; font-weight: 500; color: rgb(var(--text-2)); }
-.add-picked { display: flex; align-items: center; gap: .875rem; & .sr-poster { width: 3rem; } }
-.add-check { display: flex; align-items: center; gap: .625rem; min-width: 0; cursor: pointer; & input { flex: none; accent-color: rgb(var(--ac-strong)); } }
-.add-feed-head .add-check { font-weight: 500; color: rgb(var(--text-2)); }
+.add-entry { display: flex; align-items: center; gap: .875rem; width: 100%; padding: .625rem 1.25rem; font-size: .75rem; text-align: left; transition: background-color .15s;
+  &:focus-visible { outline-offset: -2px; } &:hover { background: rgb(var(--raised) / .6); } & > .muted { flex: none; } & > .icon { flex: none; color: rgb(var(--text-4)); transition: color .15s; } &:hover > .icon { color: rgb(var(--text-2)); } }
+.add-entry-title { font-size: .875rem; line-height: 1.5; font-weight: 500; color: rgb(var(--text)); }
+.add-empty { padding: 1.5rem 1.25rem; text-align: center; font-size: .8125rem; color: rgb(var(--text-2)); }
+.add-picked { display: flex; align-items: center; gap: .875rem; & .sr-poster { width: 3rem; } & .section-title { font-size: 1.125rem; } }
 .add-note { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; color: rgb(var(--text-2)); & .icon { flex: none; margin-top: .125rem; color: rgb(var(--info)); } &.warn .icon { color: rgb(var(--warn)); } }
-.add-bar { position: sticky; bottom: 1rem; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem;
-  background: rgb(var(--raised)); border: 1px solid rgb(var(--line)); border-radius: var(--r-lg); box-shadow: 0 8px 24px rgb(0 0 0 / .3); font-size: .8125rem; }
-.add-check.grow { flex: 1; }
-.add-check.held { opacity: .55; cursor: default; }
+.add-step { grid-template-columns: minmax(0, 1fr); align-content: start;
+  /* Keeps a selected or hovered row inside the card's corners; clip, so the footer's sticky still works. */
+  & .feed-list { overflow: clip; border-radius: inherit; } & .add-releases { border-radius: var(--r-lg) var(--r-lg) 0 0; } }
+.add-back { justify-self: start; margin-left: -.7rem; }
+.add-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: .625rem; }
+.add-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; min-height: 1.75rem; font-size: .75rem; & .add-all { margin-left: auto; display: flex; gap: .25rem; } }
+.add-feed { cursor: pointer; align-items: flex-start; & input { flex: none; margin-top: .25rem; accent-color: rgb(var(--ac-strong)); } }
+.add-release { display: flex; align-items: center; gap: .75rem; min-height: 2.5rem; padding: .375rem 1.25rem; font-size: .75rem; cursor: pointer; transition: background-color .15s;
+  &:hover { background: rgb(var(--raised) / .6); } & input { flex: none; accent-color: rgb(var(--ac-strong)); } & .state, & .pill { flex: none; } }
+.add-hidden { padding: .625rem 1.25rem; font-size: .75rem; color: rgb(var(--text-3)); }
+/* Pins to the bottom of the page on a long list, and is just the card's last row on a short one. The offset cancels .content's padding, or rows would show below it. */
+.add-foot { position: sticky; bottom: -1.5rem; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1.25rem;
+  background: rgb(var(--surface)); border-radius: 0 0 var(--r-lg) var(--r-lg); & .add-summary { min-width: 0; font-size: .8125rem; color: rgb(var(--text-2)); } & .btn { flex: none; } }
+@media (min-width: 768px) { .add-foot { bottom: -2rem; } }
+.add-foot:first-child { border-radius: inherit; }
+.add-releases + .add-foot { border-top: 1px solid rgb(var(--line-soft)); }
+.add-step .empty .link { font-size: inherit; }
+/* On a phone the name needs its second line, or every row reads the same; the footer keeps only the count, since the feed row says the rest. */
+@media (max-width: 36rem) {
+  .add-summary-feed { display: none; }
+  .add-release { & .ep-no { width: 4rem; } & .release-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; } }
+}

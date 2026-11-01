@@ -1,5 +1,5 @@
 // Adding a show by hand: pick an entry of the user's AniList list, then the feed and the episodes to download.
-import { html, useEffect, useMemo, useState } from '../ui.js';
+import { html, useEffect, useLayoutEffect, useMemo, useRef, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { go } from '../router.js';
 import { Icon, Spinner } from '../components/Icon.js';
@@ -14,18 +14,15 @@ const AIR_LABELS = { RELEASING: 'Releasing', FINISHED: 'Finished', NOT_YET_RELEA
 function EntryRow({ entry, onPick }) {
   const facts = [entry.list_label, AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(' · ');
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
-  return html`<li class="list-row add-entry">
+  return html`<li><button type="button" class="add-entry" onClick=${() => (entry.followed ? go(entry.show_id) : onPick(entry))}>
     <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
     <div class="grow">
       <div class="add-entry-title truncate" title=${entry.title}>${entry.title}</div>
       <div class="muted truncate">${facts}</div>
     </div>
-    <span class="row-end">
-      ${entry.followed
-        ? html`<span class="muted">Already followed</span>`
-        : html`<button type="button" class="btn sm" onClick=${() => onPick(entry)}>Select</button>`}
-    </span>
-  </li>`;
+    ${entry.followed ? html`<span class="muted">Following</span>` : null}
+    <${Icon} name="forward" small />
+  </button></li>`;
 }
 
 function PickEntry({ onPick }) {
@@ -44,18 +41,23 @@ function PickEntry({ onPick }) {
       return words.every(w => hay.includes(w));
     });
   }, [list, text]);
-  return html`<div class="card list-card stack-sm">
-    <div class="add-search">
-      <${Icon} name="search" small />
-      <input class="field" type="search" placeholder="Search your AniList list" value=${text} onInput=${(e) => setText(e.target.value)} autofocus aria-label="Search your AniList list" />
-    </div>
-    <p class="field-hint">Only your own AniList list is searched: entries you are watching, rewatching, paused or dropped. Entries marked Completed are left out. To add something else, put it on your list on AniList first.${list && list.fetched_at ? ` Your list was read from AniList ${relativeTime(list.fetched_at, Date.now())}; press Sync Now to read it again.` : ''}</p>
+  return html`<div class="stack add-step">
+    <section class="add-section">
+      <div class="add-search">
+        <${Icon} name="search" small />
+        <input class="field" type="search" placeholder="Search your AniList list" value=${text} onInput=${(e) => setText(e.target.value)} autofocus aria-label="Search your AniList list" />
+      </div>
+      ${list && list.fetched_at ? html`<p class="field-hint add-hint">Your AniList list, read ${relativeTime(list.fetched_at, Date.now())}. Sync Now reads it again.</p>` : null}
+    </section>
     ${error ? html`<p class="error-text">${error}</p>` : null}
-    <ul class="list">
-      ${!list && !error ? html`<li class="list-empty"><${Spinner} small /> Reading your list…</li>` : null}
-      ${list && !shown.length ? html`<li class="list-empty">${text ? 'Nothing on your list matches.' : 'Your list has no entries to add.'}</li>` : null}
+    ${error ? null : html`<div class="card feeds-card"><ul class="feed-list">
+      ${!list ? html`<li class="add-empty"><${Spinner} small /> Reading your list…</li>` : null}
+      ${list && !shown.length ? html`<li class="add-empty">
+        ${text ? 'Nothing on your list matches.' : 'Your list has no entries to add.'}
+        <p class="field-hint">Entries you are watching, rewatching, paused or dropped show here, but not Completed ones. To add something else, put it on your list on AniList, then press Sync Now.</p>
+      </li>` : null}
       ${shown.map(entry => html`<${EntryRow} key=${entry.anilist_id} entry=${entry} onPick=${onPick} />`)}
-    </ul>
+    </ul></div>`}
   </div>`;
 }
 
@@ -93,34 +95,60 @@ function defaultPick(group) {
   return ids;
 }
 
-const span = (numbers) => (numbers.length > 1 ? `Ep ${numbers[0]}–${numbers[numbers.length - 1]}` : `Ep ${numbers[0]}`);
+// Every release the feed needs to cover all it offers: the default pick, plus the singles its batches leave out.
+function pickAll(group) {
+  const ids = defaultPick(group);
+  const { covered } = coverage(group, ids);
+  group.episodes.filter(e => !covered.has(e.number)).forEach(e => ids.add(e.item_id));
+  return ids;
+}
 
-function FeedGroup({ group, active, picked, onFeed, onToggle }) {
-  const { offered, inBatch, covered } = coverage(group, active ? picked : new Set());
-  const all = offered.size;
-  return html`<li class="list-head add-feed-head" key=${`h:${group.feed_id}`}>
-      <label class="add-check"><input type="radio" name="add-feed" checked=${active} onChange=${() => onFeed(group)} /><span class="truncate">${group.feed_name}</span></label>
-      <span class="push muted tabular">${active ? `${covered.size} of ${all}` : `${all} episode${all === 1 ? '' : 's'}`}</span>
-    </li>
-    ${(group.batches || []).map(batch => html`<li class="list-row" key=${`b:${group.feed_id}:${batch.item_id}`}>
-      <label class="add-check grow">
-        <input type="checkbox" checked=${active && picked.has(batch.item_id)} onChange=${() => onToggle(group, batch)} />
-        <span class="ep-no">${span(batch.numbers)}</span>
-        <span class="release-name mono truncate" title=${batch.title}>${batch.title}</span>
-      </label>
-      <span class="row-end">${batch.on_disk ? html`<span class="state ok">${batch.on_disk} on disk</span>` : null}<span class="pill pill-info">Batch</span></span>
-    </li>`)}
-    ${group.episodes.map(ep => {
-      const held = active && inBatch.has(ep.number);
-      return html`<li class="list-row" key=${`e:${group.feed_id}:${ep.item_id}`}>
-      <label class=${`add-check grow${held ? ' held' : ''}`} title=${held ? 'Comes with the ticked batch' : undefined}>
-        <input type="checkbox" checked=${active && picked.has(ep.item_id) && !held} disabled=${held} onChange=${() => onToggle(group, ep)} />
-        <span class="ep-no">Ep ${ep.number}${version(ep.version)}</span>
-        <span class="release-name mono truncate" title=${ep.title}>${ep.title}</span>
-      </label>
-      <span class="row-end">${held ? html`<span class="muted">in batch</span>` : ep.on_disk ? html`<span class="state ok">on disk</span>` : null}</span>
-    </li>`;
-    })}`;
+const span = (numbers) => (numbers.length > 1 ? `Ep ${numbers[0]}–${numbers[numbers.length - 1]}` : `Ep ${numbers[0]}`);
+const plural = (n, noun) => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+function FeedOption({ group, active, picked, onFeed }) {
+  const { offered, covered } = coverage(group, active ? picked : new Set());
+  const batches = group.batches || [];
+  const onDisk = Math.max(group.episodes.filter(e => e.on_disk).length, ...batches.map(b => b.on_disk || 0));
+  const sample = (batches[0] || group.episodes[0] || {}).title;
+  return html`<li><label class=${`feed-row add-feed${active ? ' selected' : ''}`}>
+    <input type="radio" name="add-feed" checked=${active} onChange=${() => onFeed(group)} />
+    <div class="feed-main">
+      <div class="row">
+        <span class="feed-name truncate">${group.feed_name}</span>
+        <span class="feed-use tabular">
+          ${onDisk ? html`<span class="state ok">${onDisk} on disk</span> · ` : null}${active ? `${covered.size} of ${offered.size}` : plural(offered.size, 'episode')}${batches.length ? ' · Batch' : ''}
+        </span>
+      </div>
+      <div class="feed-url mono truncate" title=${sample}>${sample}</div>
+    </div>
+  </label></li>`;
+}
+
+function ReleaseRow({ release, label, checked, onToggle, children }) {
+  return html`<li><label class="add-release">
+    <input type="checkbox" checked=${checked} onChange=${onToggle} />
+    <span class="ep-no">${label}</span>
+    <span class="release-name mono truncate" title=${release.title}>${release.title}</span>
+    ${children}
+  </label></li>`;
+}
+
+// The singles a ticked batch covers would only repeat it, so they stay out until the batch is unticked.
+function Releases({ group, picked, onToggle }) {
+  const { inBatch } = coverage(group, picked);
+  const singles = group.episodes.filter(ep => !inBatch.has(ep.number));
+  const hidden = group.episodes.length - singles.length;
+  const ticked = (group.batches || []).filter(b => picked.has(b.item_id)).length;
+  return html`<ul class="feed-list add-releases">
+    ${(group.batches || []).map(batch => html`<${ReleaseRow} key=${`b:${batch.item_id}`} release=${batch} label=${span(batch.numbers)} checked=${picked.has(batch.item_id)} onToggle=${() => onToggle(batch)}>
+      ${batch.on_disk ? html`<span class="state ok">${batch.on_disk} on disk</span>` : null}<span class="pill pill-idle">Batch</span>
+    <//>`)}
+    ${hidden ? html`<li class="add-hidden">Untick the ${ticked === 1 ? 'batch' : 'batches'} to pick from ${plural(hidden, 'single episode')}.</li>` : null}
+    ${singles.map(ep => html`<${ReleaseRow} key=${`e:${ep.item_id}`} release=${ep} label=${`Ep ${ep.number}${version(ep.version)}`} checked=${picked.has(ep.item_id)} onToggle=${() => onToggle(ep)}>
+      ${ep.on_disk ? html`<span class="state ok">on disk</span>` : null}
+    <//>`)}
+  </ul>`;
 }
 
 function PickReleases({ entry, onBack }) {
@@ -136,17 +164,19 @@ function PickReleases({ entry, onBack }) {
       .then(body => {
         if (!live) return;
         setResult(body);
-        const pre = body.preselect && body.feeds.find(g => g.feed_id === body.preselect);
+        // A lone feed is no choice to make.
+        const pre = body.feeds.length === 1 ? body.feeds[0] : body.preselect && body.feeds.find(g => g.feed_id === body.preselect);
         if (pre) choose(pre);
       })
       .catch(err => { if (live) setError(err.message); });
     return () => { live = false; };
   }, [entry.anilist_id]);
-  const toggle = (group, release) => {
-    // Episodes come from one feed: ticking one from another feed moves the whole selection there.
-    if (group.feed_id !== feedId) { choose(group); return; }
+  const toggle = (release) => {
     setPicked(set => { const next = new Set(set); if (next.has(release.item_id)) next.delete(release.item_id); else next.add(release.item_id); return next; });
   };
+  // The step never gets shorter: ticking a batch hides rows, and the clamped scroll would move the page under the pointer.
+  const step = useRef(null);
+  useLayoutEffect(() => { step.current.style.minHeight = `${step.current.offsetHeight}px`; }, [feedId, picked, result]);
   const group = result && result.feeds.find(g => g.feed_id === feedId);
   const counts = group ? coverage(group, picked) : null;
   const add = async () => {
@@ -161,9 +191,12 @@ function PickReleases({ entry, onBack }) {
     } catch (err) { setAdding(false); }
   };
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
-  return html`<div class="stack">
+  const summary = !group ? 'Pick a feed to see its releases'
+    : counts.covered.size ? `${counts.covered.size} of ${plural(counts.offered.size, 'episode')}`
+    : 'Future episodes only';
+  return html`<div class="stack add-step" ref=${step}>
+    <button type="button" class="btn plain sm add-back" onClick=${onBack}><${Icon} name="back" small /><span>Your list</span></button>
     <div class="add-picked">
-      <button type="button" class="btn plain icon-only sm" onClick=${onBack} aria-label="Pick another show" title="Pick another show"><${Icon} name="back" /></button>
       <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
       <div class="grow">
         <h2 class="section-title truncate" title=${entry.title}>${entry.title}</h2>
@@ -174,24 +207,36 @@ function PickReleases({ entry, onBack }) {
     ${!result && !error ? html`<div class="card card-pad row"><${Spinner} small /><span class="muted">Searching your feeds for this show. This takes a few seconds.</span></div>` : null}
     ${result ? html`
       <${Notes} result=${result} />
-      <div class="card list-card stack-sm">
-        <p class="field-hint">Pick the feed to download from: its batch is selected when it has one, otherwise all of its episodes, and you can untick what you don't want. A batch is downloaded whole. Future episodes come from the same feed.</p>
-        <ul class="list">
-          ${result.feeds.length
-            ? result.feeds.map(g => html`<${FeedGroup} key=${g.feed_id} group=${g} active=${g.feed_id === feedId} picked=${picked} onFeed=${choose} onToggle=${toggle} />`)
-            : html`<li class="list-empty">None of your feeds has releases for this show. Add a feed that carries it on the RSS Feeds page, then try again.</li>`}
-        </ul>
-      </div>
-      <div class="add-bar">
-        <span class="muted">${group ? `${counts.covered.size} of ${counts.offered.size} episode${counts.offered.size === 1 ? '' : 's'} from ${group.feed_name}` : 'No feed selected'}</span>
-        <button type="button" class="btn primary" disabled=${!group || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
-      </div>` : null}
+      ${result.feeds.length ? html`
+        <section class="add-section">
+          <div class="add-section-head"><h3 class="section-title">Feed</h3><span class="muted">New episodes will only come from this feed.</span></div>
+          <div class="card feeds-card"><ul class="feed-list">
+            ${result.feeds.map(g => html`<${FeedOption} key=${g.feed_id} group=${g} active=${g.feed_id === feedId} picked=${picked} onFeed=${choose} />`)}
+          </ul></div>
+        </section>
+        <section class="add-section">
+          <div class="add-section-head">
+            <h3 class="section-title">Releases</h3>
+            ${group ? html`<span class="add-all">
+              <button type="button" class="btn plain sm" disabled=${counts.covered.size === counts.offered.size} onClick=${() => setPicked(pickAll(group))}>All</button>
+              <button type="button" class="btn plain sm" disabled=${!picked.size} onClick=${() => setPicked(new Set())}>None</button>
+            </span>` : null}
+          </div>
+          <div class="card add-card">
+            ${group ? html`<${Releases} key=${group.feed_id} group=${group} picked=${picked} onToggle=${toggle} />` : null}
+            <div class="add-foot">
+              <span class="add-summary truncate">${summary}${group ? html`<span class="add-summary-feed"> · ${group.feed_name}</span>` : null}</span>
+              <button type="button" class="btn primary" disabled=${!group || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
+            </div>
+          </div>
+        </section>`
+      : html`<div class="card empty">None of your feeds has releases for this show. Add a feed that carries it on the <a class="link" href="#feeds">RSS Feeds</a> page, then try again.</div>`}` : null}
   </div>`;
 }
 
 export function Add() {
   const [entry, setEntry] = useState(null);
-  return html`<div class="page wide">
+  return html`<div class="page medium">
     ${entry ? html`<${PickReleases} key=${entry.anilist_id} entry=${entry} onBack=${() => setEntry(null)} />` : html`<${PickEntry} onPick=${setEntry} />`}
   </div>`;
 }
