@@ -236,3 +236,19 @@ def test_one_feed_item_can_match_several_shows_and_matches_go_with_either_side(e
     with Session(engine) as session:
         assert [m.show_id for m in session.exec(select(FeedItemMatch)).all()] == [2]
         assert len(session.exec(select(FeedItem)).all()) == 1
+
+
+def test_the_backup_before_a_migration_holds_what_is_still_only_in_the_wal(tmp_path):
+    from kisetsu.db.migrations import _backup
+
+    path = tmp_path / "k.db"
+    engine = make_engine(path)
+    migrate(engine, path)
+    with session_scope(engine) as session:
+        session.add(Feed(name="Only in the log", url="https://wal"))
+    # The connection is still open, so nothing has been checkpointed into the main file.
+    assert (tmp_path / "k.db-wal").stat().st_size > 0
+    _backup(path, 99)
+    [backup] = tmp_path.glob("k.db.v99.*.bak")
+    assert sqlite3.connect(backup).execute("SELECT name FROM feeds").fetchall() == [("Only in the log",)]
+    assert backup.stat().st_mode & 0o777 == 0o600

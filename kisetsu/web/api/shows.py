@@ -103,6 +103,14 @@ def _restore(ctx, show_id: int, episode_id: int):
     return manual.restore_episode(ctx, show, episode)
 
 
+def _try_another(ctx, show_id: int, episode_id: int):
+    show = show_or_404(ctx, show_id)
+    episode = ctx.session.get(Episode, episode_id)
+    if episode is None or episode.show_id != show.id:
+        raise NotFound("Episode not found.")
+    return manual.try_another(ctx, show, episode)
+
+
 @router.get("")
 async def list_shows(request: Request):
     return await read(request, views.shows_view)
@@ -180,6 +188,13 @@ async def download(show_id: int, body: Download, request: Request):
 @router.post("/{show_id}/episodes/{episode_id}/restore")
 async def restore(show_id: int, episode_id: int, request: Request):
     message = await write(request, _restore, show_id, episode_id)
+    runtime(request).jobs.poke("settle")
+    return {"message": message}
+
+
+@router.post("/{show_id}/episodes/{episode_id}/try-another")
+async def try_another(show_id: int, episode_id: int, request: Request):
+    message = await write(request, _try_another, show_id, episode_id)
     runtime(request).jobs.poke("settle")
     return {"message": message}
 

@@ -4,6 +4,7 @@ import { go, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
 import { Seg } from '../components/Controls.js';
 import { Icon } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 import { ShowCard, ShowRow } from '../components/ShowSummary.js';
 
 const read = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (err) { return fallback; } };
@@ -38,7 +39,7 @@ function Section({ title, count, tone, list, view, now, empty, tools, swap }) {
 }
 
 export function Shows() {
-  const { data, loading } = useResource(showsData);
+  const { data, loading, error, reload } = useResource(showsData);
   const [view, setView] = useState(read('show_view_mode', 'grid') === 'list' ? 'list' : 'grid');
   const [swap, setSwap] = useState(0);
   const now = useNow();
@@ -53,6 +54,7 @@ export function Shows() {
     };
   }, [data, minute]);
   if (loading) return html`<div class="page"></div>`;
+  if (!data) return html`<div class="page"><${LoadError} what="your shows" error=${error} reload=${reload} /></div>`;
 
   const changeView = (value) => { setSwap(n => n + 1); setView(value); write('show_view_mode', value); };
   const tools = html`<div class="row wrap">

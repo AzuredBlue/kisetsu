@@ -431,3 +431,74 @@ def test_housekeeping_first_runs_within_a_short_uptime_and_not_before_setup(env)
     env.qbit.tags = lambda: calls.append("tags") or []
     run(env, go)
     assert calls == []
+
+
+def _running(env):
+    """A started app with episode 3 downloading, then the flags of a restart: nothing ready yet."""
+    first = airing(env)
+    env.add_feed()
+    for n in (1, 2, 3):
+        env.feeds.post(TOP, title(n), first + timedelta(days=7 * (n - 1)))
+    return first
+
+
+def test_downloads_are_followed_as_soon_as_qbit_is_read_not_after_the_backfill(env):
+    _running(env)
+
+    async def go():
+        await env.jobs.startup()
+        await env.jobs.grab()
+        torrent = next(t for t in env.qbit.truth.values() if "- 03" in t.name)
+        env.jobs.ready.clear()
+        env.jobs.synced.clear()
+        assert await env.jobs.settle() is None
+        seen = {}
+        original = env.jobs.backfill
+
+        async def slow_backfill():
+            env.qbit.finish(torrent.hash)
+            seen["delay"] = await env.jobs.settle()
+            seen["status"] = env.statuses()[3]
+            seen["ready"] = env.jobs.ready.is_set()
+            return await original()
+
+        env.jobs.backfill = slow_backfill
+        await env.jobs.startup()
+        return seen
+
+    seen = run(env, go)
+    assert seen["status"] == "completed" and seen["ready"] is False and seen["delay"] is not None
+    assert env.jobs.ready.is_set() and env.jobs.synced.is_set()
+
+
+def test_a_retry_is_not_added_while_startup_has_not_finished_but_is_after(env):
+    from kisetsu.clients.qbittorrent import QbitRejected
+
+    _running(env)
+
+    async def go():
+        await env.jobs.startup()
+        env.qbit.reject_adds = QbitRejected("bad link")
+        await env.jobs.grab()
+        assert env.statuses()[3] == "wanted"
+        env.qbit.reject_adds = None
+        env.clock.advance(minutes=20)
+        env.jobs.ready.clear()
+        env.jobs.synced.clear()
+        before = len(env.qbit.calls_named("add_torrent"))
+        during = {}
+        original = env.jobs.backfill
+
+        async def slow_backfill():
+            await env.jobs.settle()
+            during["adds"] = len(env.qbit.calls_named("add_torrent")) - before
+            return await original()
+
+        env.jobs.backfill = slow_backfill
+        await env.jobs.startup()
+        await env.jobs.settle()
+        return during, len(env.qbit.calls_named("add_torrent")) - before
+
+    during, after = run(env, go)
+    assert during["adds"] == 0
+    assert after == 3 and env.statuses()[3] == "downloading"

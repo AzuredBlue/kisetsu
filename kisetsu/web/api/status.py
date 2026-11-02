@@ -50,7 +50,11 @@ def _live(request: Request):
 
 @router.get("/status")
 async def get_status(request: Request):
-    return {**await read(request, _totals), **_live(request)}
+    body = {**await read(request, _totals), **_live(request)}
+    if body["qbit_error"]:
+        # Adds can't be judged while qBittorrent is unreachable; that chip already says so.
+        body["stuck_adds"] = 0
+    return body
 
 
 @router.get("/logs")

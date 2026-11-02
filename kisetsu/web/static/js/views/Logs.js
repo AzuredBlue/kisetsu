@@ -3,12 +3,13 @@ import { useResource } from '../store.js';
 import { logs as logsData } from '../data.js';
 import { localTime } from '../format.js';
 import { Icon } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 import { toast } from '../components/Toast.js';
 
 const MARKS = { ERROR: ['ERROR', 'bad'], WARNING: ['WARN', 'warn'], DEBUG: ['DEBUG', 'info'] };
 
 export function Logs() {
-  const { data, reload } = useResource(logsData);
+  const { data, error, reload } = useResource(logsData);
   const box = useRef(null);
   useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [data]);
   const copy = async () => {
@@ -29,7 +30,7 @@ export function Logs() {
     <div class="log-pane">
       <div class="log-head muted">${data ? data.length : 0} entries</div>
       <div class="log-lines mono" ref=${box}>
-        ${!data || !data.length ? html`<div class="empty">No activity logged yet.</div>` : data.map((l, i) => {
+        ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<div class="empty">No activity logged yet.</div>` : data.map((l, i) => {
           const mark = MARKS[l.level];
           return html`<div class="log-line" key=${`${l.at}${i}`}>
             <span class="log-time">${localTime(l.at, true)}</span>

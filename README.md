@@ -60,6 +60,30 @@ The UI only listens on `127.0.0.1` by default. Run `kisetsu --host 0.0.0.0` to e
 
 After syncing with your AniList and making sure it can connect to qBit's WebUI, it will automatically download each new episode of your seasonal shows, picking the best release based on your RSS feed ranking.
 
+## Updating
+
+Stop Kisetsu, update it and start it again:
+
+```bash
+# Installed with pipx
+pipx upgrade kisetsu
+
+# Cloned
+git pull
+pip install -e .    # only needed when the dependencies changed
+```
+
+The database is migrated by itself the first time the new version starts. Before each migration step, a copy of it (`kisetsu.db.v<version>.<date>.bak`) is saved next to it. A database made by a newer version is refused rather than touched, so go back to that version or point Kisetsu at another database.
+
+## Command line
+
+| Command | What it does |
+|:---|:---|
+| `kisetsu [PORT]` | Starts the app. `--port` (default 8085) and `--host` (default `127.0.0.1`) change where it listens. |
+| `kisetsu --sandbox` | Runs a throwaway copy on port 8086 with a temporary database and no background work, to try the first-run setup. Your real settings and qBittorrent are not touched. |
+| `kisetsu import-legacy [FILE]` | Copies the settings, feeds, dismissed shows and per-show overrides from the database of the earlier releases (`anime.db` in the settings folder unless you give a file). It is opened read-only. |
+| `kisetsu --adopt-report [FILE]` | A dry run of the first start on a throwaway database: imports the same old data, reads AniList and the feeds, adopts what qBittorrent already holds and lists what one grab pass would add. qBittorrent is only ever read. |
+
 ## How it downloads
 
 Kisetsu fetches your RSS feeds itself (every 15 minutes by default, adjustable under **Settings**, and every few minutes for shows that are due to air) and adds each new episode to qBittorrent. To start from the feeds you already have in qBittorrent, use **Import from qBittorrent** on the RSS Feeds page; nothing is written back to qBittorrent's RSS list.

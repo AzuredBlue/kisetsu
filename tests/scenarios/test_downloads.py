@@ -658,3 +658,19 @@ def test_switching_feeds_deletes_nothing_when_qbit_cannot_say_what_finished(worl
     assert downloads.cancel_from_other_feeds(world.ctx(), show, other.id, "Feed changed") == []
     world.commit()
     assert dl.state == DownloadState.DOWNLOADING and world.qbit.deleted_with_files == []
+
+
+def test_observing_only_follows_qbit_but_forgets_deletes_and_adds_nothing(world):
+    feed, show, ep = setup(world)
+    gone, row_gone = grab(world, show, feed, ep)
+    other, row_other = grab(world, show, feed, world.episode(show, 2), "[Grp] Frieren - 02 (1080p).mkv")
+    world.qbit.remove(row_gone.torrent_url)
+    world.qbit.finish(row_other.torrent_url)
+    for _ in range(3):
+        downloads.settle(world.ctx(), observe_only=True)
+        world.commit()
+    assert gone.state == DownloadState.DOWNLOADING and other.state == DownloadState.DONE
+    assert not world.qbit.calls_named("delete")
+    settle(world)
+    settle(world)
+    assert gone.state == DownloadState.CANCELED

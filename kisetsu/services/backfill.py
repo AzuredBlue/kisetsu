@@ -12,7 +12,7 @@ from sqlmodel import select
 from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle, FeedFetchError
 from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
-from kisetsu.domain.matcher import build_matcher, decide
+from kisetsu.domain.matcher import broad_match, build_matcher, decide
 from kisetsu.domain.parsing import parse_release_title
 from kisetsu.domain.schedule import plausible_for_show
 from kisetsu.services import downloads, feeds, grab, ingest
@@ -200,17 +200,24 @@ def matcher_for(show: Show):
 
 
 def apply(ctx: Context, item: Due, found: Searched) -> int:
-    """Store what a search found: dated plausibly for the show, matched to it only. Returns the rows added."""
+    """Store what a search found: dated plausibly for the show, and titled so that it could be the show's. Returns the rows added."""
     show = ctx.session.get(Show, item.show_id)
     if show is None:
         return 0
     added = 0
+    matcher, cache = matcher_for(show), ctx.caches.parsed_cache()
     for feed_id, articles in found.articles.items():
         feed = ctx.session.get(Feed, feed_id)
-        kept = [a for a in articles if plausible_for_show(a.published_at, item.first_air, ctx.now)]
+        # Only what this show would match is stored: a stored article is marked known, so a later RSS read would skip it and a
+        # followed show it belongs to would never get it. What is kept is matched as any article is, so a title this show and
+        # another both match reaches the right one. (A completed show is not followed, hence its own matcher.)
+        kept = [
+            a for a in articles
+            if plausible_for_show(a.published_at, item.first_air, ctx.now) and broad_match(matcher, a.title, cache)
+        ]
         if feed is None or not kept:
             continue
-        added += ingest.ingest(ctx, feed, kept, only={show.id}).new
+        added += ingest.ingest(ctx, feed, kept).new
     if added and show.completed and _outstanding(ctx, show, False):
         # A finished show is not followed, so an episode it never fetched would not be grabbed.
         show.completed = False

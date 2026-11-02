@@ -1,9 +1,10 @@
 from datetime import timedelta
 
+import pytest
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitRejected
-from kisetsu.db.schema import Download, DownloadState, EpisodeOffset, EpisodeStatus, FeedState, OffsetSource
+from kisetsu.db.schema import Download, DownloadState, EpisodeOffset, EpisodeStatus, FeedItemMatch, FeedState, OffsetSource
 from kisetsu.services import downloads, grab, ingest, library
 from tests.fakes import START, article
 
@@ -372,3 +373,39 @@ def test_a_skipped_episode_of_a_pinned_show_is_not_grabbed(world):
     assert run(world).started == 1
     assert world.episode(show, 1).status == EpisodeStatus.SKIPPED
     assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+
+def _two_seasons(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    first = world.show(1, "Foo", episodes=1, first_air=START - timedelta(hours=1))
+    second = world.show(2, "Foo 2nd Season", episodes=1, first_air=START - timedelta(hours=1))
+    return feed, first, second
+
+
+@pytest.mark.parametrize("release", ["[Grp] Foo 2nd Season - 01 (1080p).mkv", "[Grp] Foo S02E01 (1080p).mkv"])
+def test_a_season_two_release_goes_to_the_season_two_show_only(world, release):
+    feed, first, second = _two_seasons(world)
+    post(world, feed, release)
+    assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {second.id}
+    assert run(world).started == 1
+    world.session.expire_all()
+    [dl] = world.session.exec(select(Download)).all()
+    assert dl.episode_id == world.episode(second, 1).id
+    assert world.episode(first, 1).status == EpisodeStatus.WANTED
+    assert len(world.qbit.calls_named("add_torrent")) == 1
+
+
+def test_a_late_season_a_show_never_names_still_matches_when_it_is_the_only_one(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    jojo = world.show(1, "JoJos Bizarre Adventure", episodes=1, first_air=START - timedelta(hours=1))
+    post(world, feed, "[Grp] JoJos Bizarre Adventure S06E01 (1080p).mkv")
+    assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {jojo.id}
+
+
+def test_two_unrelated_shows_a_title_matches_both_stay_matched(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    a = world.show(1, "Medalist Movie", episodes=1, first_air=START - timedelta(hours=1))
+    b = world.show(2, "Another Show", aliases=["Medalist Movie"], episodes=1, first_air=START - timedelta(hours=1))
+    post(world, feed, "[Grp] Medalist Movie S01E01 (1080p).mkv")
+    assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {a.id, b.id}

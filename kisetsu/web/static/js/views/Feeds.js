@@ -3,6 +3,7 @@ import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { feeds as feedsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 import { FeedItems } from '../components/FeedItems.js';
 import { FeedsTable, importFromQbit, openFeedDialog } from '../components/FeedsTable.js';
 import { confirmDialog } from '../components/Modal.js';
@@ -26,7 +27,7 @@ const autoDiscover = async () => {
 };
 
 export function Feeds() {
-  const { data } = useResource(feedsData);
+  const { data, error, reload } = useResource(feedsData);
   const [picked, setPicked] = useState(null);
   const [open, setOpen] = useState(saved);
   // The panel is mounted a frame before it is shown and stays mounted until it has faded out, so both directions animate.
@@ -62,7 +63,7 @@ export function Feeds() {
           </button>
         </div>
         <p class="page-sub feeds-hint">When several feeds carry a release, the higher one wins. Drag to reorder.</p>
-        <div class="card feeds-card">${data ? html`<${FeedsTable} feeds=${data} selected=${visible ? selected : null} onSelect=${pick} />` : null}</div>
+        <div class="card feeds-card">${data ? html`<${FeedsTable} feeds=${data} selected=${visible ? selected : null} onSelect=${pick} />` : error ? html`<${LoadError} what="the feeds" error=${error} reload=${reload} />` : null}</div>
       </div>
       ${data && mounted ? html`<div class="feeds-side"><${FeedItems} feeds=${data} selected=${selected} onSelect=${pick} /></div>` : null}
     </div>

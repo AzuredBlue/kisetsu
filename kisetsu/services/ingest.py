@@ -73,8 +73,8 @@ def _new_item(feed: Feed, article: FeedArticle, first_seen_at) -> FeedItem:
     )
 
 
-def ingest(ctx: Context, feed: Feed, articles: Sequence[FeedArticle], only: Optional[Set[int]] = None) -> IngestResult:
-    """Store the articles this feed has not shown before and match them to the followed shows (to ``only``, when given)."""
+def ingest(ctx: Context, feed: Feed, articles: Sequence[FeedArticle]) -> IngestResult:
+    """Store the articles this feed has not shown before and match them to the followed shows."""
     result = IngestResult()
     known = _known(ctx)
     signature, matchers = _matchers(ctx)
@@ -93,7 +93,7 @@ def ingest(ctx: Context, feed: Feed, articles: Sequence[FeedArticle], only: Opti
     result.new = len(fresh)
     ctx.emit("feed_items")
     for item in fresh:
-        for show_id in matching.matching_show_ids(matchers, item.title, cache, only):
+        for show_id in matching.matching_show_ids(matchers, item.title, cache):
             ctx.session.add(FeedItemMatch(item_id=item.id, show_id=show_id))
             result.show_ids.add(show_id)
             result.matched += 1

@@ -141,7 +141,7 @@ class Engine:
     def _read(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         with Session(self.db, expire_on_commit=False) as session:
             try:
-                ctx = make_context(session, _NoQbit(), self.clock(), Caches())
+                ctx = make_context(session, _NoQbit(), self.clock(), Caches(stalled=self.caches.stalled))
                 return fn(ctx, *args, **kwargs)
             finally:
                 session.rollback()

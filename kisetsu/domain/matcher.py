@@ -157,8 +157,22 @@ def matching_show_ids(
     parsed_cache: Optional[ParsedCache] = None,
     only: Optional[Iterable[int]] = None,
 ) -> List[int]:
+    matched = [(show_id, matcher) for show_id, matcher in matchers if broad_match(matcher, title, parsed_cache)]
+    if len(matched) > 1:
+        matched = _of_the_named_season(matched, title)
     wanted = None if only is None else set(only)
-    return [
-        show_id for show_id, matcher in matchers
-        if (wanted is None or show_id in wanted) and broad_match(matcher, title, parsed_cache)
-    ]
+    return [show_id for show_id, _ in matched if wanted is None or show_id in wanted]
+
+
+def _of_the_named_season(matched: List[Tuple[int, Matcher]], title: str) -> List[Tuple[int, Matcher]]:
+    """Of several shows one title matched, those whose aliases name the season the title names, when any do.
+
+    "Foo 2nd Season - 01" matches both "Foo" and "Foo 2nd Season"; it belongs to the second only. Without
+    a show that names the season the title's own claim is not trusted (a long show's aliases often omit it),
+    and nothing is dropped.
+    """
+    season = release_season(title)
+    if season is None:
+        return matched
+    naming = [(show_id, matcher) for show_id, matcher in matched if any(release_season(alias) == season for alias in matcher.aliases)]
+    return naming or matched

@@ -5,6 +5,7 @@ import { settings as settingsData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
 import { exportBackup, restoreBackup } from '../components/Backup.js';
 import { Seg, SaveBar, SetRow, Swatches } from '../components/Controls.js';
+import { LoadError } from '../components/LoadError.js';
 import { confirmDialog } from '../components/Modal.js';
 import { toast } from '../components/Toast.js';
 import { useDraft } from '../components/useDraft.js';
@@ -25,7 +26,7 @@ async function applyNow(patch, undo) {
 }
 
 export function Settings() {
-  const { data, reload } = useResource(settingsData);
+  const { data, error, reload } = useResource(settingsData);
   const theme = useTheme();
   const initial = useMemo(() => (data ? initialForm(data) : {}), [data]);
   const form = useDraft(initial, 'settings');
@@ -33,7 +34,7 @@ export function Settings() {
   const [test, setTest] = useState({ state: '', text: '' });
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  if (!data) return html`<div class="page medium"></div>`;
+  if (!data) return html`<div class="page medium">${error ? html`<${LoadError} what="the settings" error=${error} reload=${reload} />` : null}</div>`;
   const bind = (key) => form.bind(key);
 
   const save = async () => {

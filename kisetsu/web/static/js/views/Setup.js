@@ -8,6 +8,7 @@ import { Seg, SetRow, Swatches } from '../components/Controls.js';
 import { FeedsTable, importFromQbit, openFeedDialog } from '../components/FeedsTable.js';
 import { useDraft } from '../components/useDraft.js';
 import { Spinner } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 
 const STEPS = ['welcome', 'qbit', 'feeds', 'downloads', 'appearance', 'anilist'];
 
@@ -31,7 +32,7 @@ export function Setup({ sandbox, done, setDone }) {
   const form = useDraft(initial, 'setup');
   const name = STEPS[step];
   useEffect(() => { setError(''); }, [step]);
-  if (!data) return html`<div class="setup"><${Spinner} /></div>`;
+  if (!data) return html`<div class="setup">${settings.error ? html`<${LoadError} what="the settings" error=${settings.error} reload=${settings.reload} />` : html`<${Spinner} />`}</div>`;
 
   const connection = () => {
     const body = { qbit_host: form.value('qbit_host'), qbit_username: form.value('qbit_username') };
@@ -105,7 +106,7 @@ export function Setup({ sandbox, done, setDone }) {
         <h2>RSS feeds</h2>
         <p class="page-sub">Where releases are found. When one is in several feeds, the higher one wins. You can change this later.</p>
         <div class="row"><button type="button" class="btn sm" onClick=${() => openFeedDialog()}>Add feed</button><button type="button" class="btn sm" onClick=${importFromQbit}>Import from qBittorrent</button></div>
-        <div class="card" style="margin-top:.75rem">${feeds.data ? html`<${FeedsTable} feeds=${feeds.data} />` : null}</div>` : null}
+        <div class="card" style="margin-top:.75rem">${feeds.data ? html`<${FeedsTable} feeds=${feeds.data} />` : feeds.error ? html`<${LoadError} what="the feeds" error=${feeds.error} reload=${feeds.reload} />` : null}</div>` : null}
       ${name === 'downloads' ? html`
         <h2>Downloads</h2>
         <div class="card card-divided">

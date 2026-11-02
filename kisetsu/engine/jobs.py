@@ -65,6 +65,9 @@ class Jobs:
         self.fetch_hues = fetch_hues
         self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
+        # Set once the first full qBittorrent sync is in. Downloads can be followed from then on (but not added to, deleted
+        # or forgotten: see ``settle``); grabbing waits for ``ready``.
+        self.synced = asyncio.Event()
         self.backoff = rss.Backoff()
         self.backfill_requests: Set[int] = set()
         self.backfill_all = False
@@ -99,6 +102,7 @@ class Jobs:
             yield
         finally:
             self.ready.clear()
+            self.synced.clear()
             self.backoff = rss.Backoff()
             self.backfill_requests, self.backfill_all, self.refresh_all = set(), False, False
             self.hunt_read_at = None
@@ -147,6 +151,9 @@ class Jobs:
         except QbitError as e:
             return self._qbit_failed(e)
         self._set_health(qbit=None)
+        # What is downloading shows progress from here on, instead of after every backfill search has finished.
+        self.synced.set()
+        self.poke("settle")
         next_sync = await self.sync_anilist(startup=True)
         await self.refresh_feeds(everything=True)
         await self.engine.run(adoption.adopt_existing)
@@ -339,10 +346,11 @@ class Jobs:
         return result.next_candidate_in
 
     async def settle(self) -> Optional[float]:
-        if not self.ready.is_set():
+        """Follow the downloads. Until startup is done it only mirrors qBittorrent: adoption has not yet looked at what exists, so nothing is added, deleted or forgotten."""
+        if not self.synced.is_set():
             return None
         try:
-            result = await self.engine.run(cycle.settle_cycle)
+            result = await self.engine.run(cycle.settle_cycle, not self.ready.is_set())
         except QbitError as e:
             return self._qbit_failed(e)
         self._set_health(qbit=None)

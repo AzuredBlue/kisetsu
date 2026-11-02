@@ -24,7 +24,7 @@ from kisetsu.db.schema import (
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.domain.schedule import is_unreleased
 from kisetsu.domain.status import ShowStatus, show_status
-from kisetsu.services import downloads, shows as shows_service
+from kisetsu.services import downloads, manual, shows as shows_service
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
 
@@ -44,7 +44,9 @@ FEED_STATE_LABELS = {
     FeedState.LOCKED: "Working",
 }
 IN_FLIGHT = (DownloadState.ADDING, DownloadState.VERIFYING, DownloadState.DOWNLOADING, DownloadState.RETRY_WAIT)
-HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED)
+HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED, EventKind.FAILED, EventKind.MISSED)
+# An add that qBittorrent still hasn't shown after this long means qBittorrent is not picking up new torrents.
+STUCK_ADD_AFTER = timedelta(hours=1)
 ITEM_DOWNLOAD_LABELS = {
     DownloadState.ADDING: "Queued",
     DownloadState.VERIFYING: "Queued",
@@ -110,18 +112,6 @@ def _airings(ctx: Context, show_id: Optional[int] = None) -> Dict[int, List[Dict
     return airings
 
 
-def attention(counts: Dict[EpisodeStatus, int], feed: Optional[Feed]) -> List[str]:
-    """Only what needs the user's eye, in plain words."""
-    notes = []
-    if counts.get(EpisodeStatus.FAILED):
-        notes.append(f"{counts[EpisodeStatus.FAILED]} failed")
-    if counts.get(EpisodeStatus.MISSED):
-        notes.append(f"{counts[EpisodeStatus.MISSED]} missed")
-    if feed is not None and feed.failing_since is not None:
-        notes.append(f"{feed.name} is failing")
-    return notes
-
-
 def show_section(show: Show, released: bool) -> str:
     """The Shows page section: Completed once it finished airing, even while episodes are still downloading."""
     if show.completed or show.anilist_status == "FINISHED":
@@ -182,7 +172,6 @@ def show_card(
             "failed": counts.get(EpisodeStatus.FAILED, 0),
             "replacing": replacing,
         },
-        "attention": attention(counts, feed),
         "next_airing": None if not show.next_airing_at else {"episode": show.next_airing_episode, "at": iso(show.next_airing_at)},
         "airings": airings or [],
         "save_folder": show.save_folder,
@@ -211,11 +200,21 @@ def shows_view(ctx: Context) -> List[Dict[str, Any]]:
     ]
 
 
-def episode_row(ctx: Context, episode: Episode, feed_names: Dict[int, str]) -> Dict[str, Any]:
+def _stalled(ctx: Context, show: Show, episode: Episode, active: Optional[Download], memo: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Set on an episode whose active download the last settle pass found stalled; ``alternatives`` is how many other releases could replace it."""
+    if active is None or active.id not in ctx.caches.stalled:
+        return None
+    if "found" not in memo:
+        memo["found"] = manual.candidates(ctx, show)
+    return {"alternatives": len(manual.alternatives(ctx, show, episode, active, memo["found"]))}
+
+
+def episode_row(ctx: Context, episode: Episode, feed_names: Dict[int, str], show: Optional[Show] = None, memo: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     current = downloads.current(ctx, episode)
     active = downloads.active_download(ctx, episode)
     release = current or active
     return {
+        "stalled": None if show is None or memo is None else _stalled(ctx, show, episode, active, memo),
         "id": episode.id,
         "number": episode.number,
         "status": episode.status.value,
@@ -244,9 +243,10 @@ def show_view(ctx: Context, show: Show) -> Dict[str, Any]:
     feed_names = {feed.id: feed.name for feed in ctx.session.exec(select(Feed)).all()}
     episodes = ctx.session.exec(select(Episode).where(Episode.show_id == show.id).order_by(Episode.number)).all()
     offsets = ctx.session.exec(select(EpisodeOffset).where(EpisodeOffset.show_id == show.id)).all()
+    memo: Dict[str, Any] = {}
     return {
         **card,
-        "episodes": [episode_row(ctx, episode, feed_names) for episode in episodes],
+        "episodes": [episode_row(ctx, episode, feed_names, show, memo) for episode in episodes],
         "episode_offsets": [
             {"feed_id": o.feed_id, "feed": feed_names.get(o.feed_id), "offset": o.offset, "source": o.source.value, "evidence": o.evidence_count}
             for o in sorted(offsets, key=lambda o: o.feed_id)
@@ -402,6 +402,40 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
     ]
 
 
+def stuck_adds(ctx: Context) -> int:
+    """Episodes whose add qBittorrent seems to be ignoring, from the database alone (read sessions cannot reach qBittorrent).
+
+    Either an add that is still ADDING or RETRY_WAIT after STUCK_ADD_AFTER, or a give-up after repeated attempts
+    whose episode is waiting to be tried again and has not been supplied since. A replacement that gave up after
+    48 hours is a slow torrent, not a lost add, so it does not count. Paused and completed shows are left out.
+    """
+    live = (Show.paused.is_(False), Show.completed.is_(False))
+    waiting = ctx.session.exec(
+        select(Download.episode_id)
+        .join(Episode, Episode.id == Download.episode_id)
+        .join(Show, Show.id == Episode.show_id)
+        .where(
+            Download.state.in_((DownloadState.ADDING, DownloadState.RETRY_WAIT)),
+            Download.created_at < ctx.now - STUCK_ADD_AFTER,
+            Episode.status != EpisodeStatus.COMPLETED,
+            *live,
+        )
+    ).all()
+    gave_up = ctx.session.exec(
+        select(Download.episode_id)
+        .join(Episode, Episode.id == Download.episode_id)
+        .join(Show, Show.id == Episode.show_id)
+        .where(
+            Download.state == DownloadState.CANCELED,
+            Download.last_error.like(f"{downloads.GAVE_UP_PREFIX} % attempts%"),
+            Episode.retry_after > ctx.now,
+            Episode.status.not_in((EpisodeStatus.COMPLETED, EpisodeStatus.SKIPPED)),
+            *live,
+        )
+    ).all()
+    return len(set(waiting) | set(gave_up))
+
+
 def counts_view(ctx: Context) -> Dict[str, Any]:
     """The totals the header and the nav badges need."""
     shows = ctx.session.exec(select(Show)).all()
@@ -417,4 +451,5 @@ def counts_view(ctx: Context) -> Dict[str, Any]:
         "episodes": {status.value: episodes.get(status, 0) for status in EpisodeStatus},
         "failing_feeds": [f.name for f in ctx.session.exec(select(Feed).where(Feed.failing_since.is_not(None))).all()],
         "all_paused": shows_service.all_paused(ctx),
+        "stuck_adds": stuck_adds(ctx),
     }

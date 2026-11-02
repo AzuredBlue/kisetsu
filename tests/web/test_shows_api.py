@@ -47,7 +47,7 @@ async def test_a_show_that_finished_airing_is_in_the_completed_section_while_it_
     assert cards["Airing"]["section"] == "releasing"
 
 
-async def test_only_what_needs_attention_is_listed_in_plain_words(web):
+async def test_a_card_counts_the_failed_and_missed_episodes(web):
     show = web.show(1, "Frieren")
 
     def fail(session):
@@ -57,7 +57,7 @@ async def test_only_what_needs_attention_is_listed_in_plain_words(web):
 
     web.query(fail)
     card = (await web.client.get("/api/shows")).json()[0]
-    assert card["attention"] == ["1 failed", "1 missed"]
+    assert card["counts"]["failed"] == 1 and card["counts"]["missed"] == 1 and "attention" not in card
 
 
 async def test_reading_never_reaches_qbittorrent(web):
@@ -177,7 +177,7 @@ async def test_a_grab_stops_showing_as_queued_once_something_else_happens_to_the
         session.add(Event(at=START, episode=1, title="Varyg - 01", **grab))
         session.add(Event(at=later, episode=1, title="SubsPlease - 01", **grab))
         session.add(Event(at=later, kind=EventKind.DONE, show_id=show, episode=1, title="SubsPlease - 01", message="Done"))
-        # Adopted from qBittorrent, or failed: neither is a History row of its own.
+        # Adopted from qBittorrent is no History row of its own; a failure is, and it ends the grab's wait.
         session.add(Event(at=START, episode=2, title="Varyg - 02", **grab))
         session.add(Event(at=later, kind=EventKind.ADOPTED, show_id=show, episode=2, title="Other - 02", message="Found"))
         session.add(Event(at=START, episode=3, title="Varyg - 03", **grab))
@@ -194,6 +194,7 @@ async def test_a_grab_stops_showing_as_queued_once_something_else_happens_to_the
     rows = (await web.client.get("/api/history")).json()
     assert sorted((r["episode"], r["kind"], r["title"]) for r in rows) == [
         (1, "done", "SubsPlease - 01"),
+        (3, "failed", "Varyg - 03"),
         (4, "done", "Varyg - 04"),
         (5, "grabbed", "SubsPlease - 05"),
     ]

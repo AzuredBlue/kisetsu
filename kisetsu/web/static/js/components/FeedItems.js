@@ -6,6 +6,7 @@ import { feedItems } from '../data.js';
 import { relativeTime } from '../format.js';
 import { Seg } from './Controls.js';
 import { Icon } from './Icon.js';
+import { LoadError } from './LoadError.js';
 import { feedHealth } from './FeedsTable.js';
 
 const STACKED_PAGE = 10;
@@ -104,7 +105,7 @@ export function FeedItems({ feeds, selected, onSelect }) {
   const size = wide ? fit : STACKED_PAGE;
   const key = `${selected}|${mine}|${size}`;
   const page = at.key === key ? at.page : 0;
-  const { data } = useResource(feedItems(query(selected, mine, size, page)));
+  const { data, error, reload } = useResource(feedItems(query(selected, mine, size, page)));
   if (data) last.current = data;
   const shown = data || last.current;
   const pages = shown ? Math.max(1, Math.ceil(shown.total / size)) : 1;
@@ -123,7 +124,7 @@ export function FeedItems({ feeds, selected, onSelect }) {
       <${Status} feeds=${feeds} selected=${selected} recent=${shown ? shown.new_recent : 0} />
     </div>
     <div class="card card-divided item-list" ref=${list}>
-      ${!shown ? null : !shown.items.length
+      ${!shown ? (error ? html`<${LoadError} what="the releases" error=${error} reload=${reload} />` : null) : !shown.items.length
         ? html`<div class="empty"><div>${mine ? 'No releases for your shows yet' : 'Nothing read yet'}</div><p class="field-hint">${mine ? 'Releases that match a show you follow show up here.' : 'Articles show up here as soon as a feed has been read.'}</p></div>`
         : shown.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} showFeed=${selected === null} />`)}
     </div>

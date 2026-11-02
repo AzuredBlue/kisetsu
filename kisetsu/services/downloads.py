@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 from uuid import uuid4
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitError, QbitUnavailable, Torrent
@@ -55,6 +56,25 @@ ABSENT_PASSES = 2
 LOADING_GUESS = 3
 
 PRESENT_STATES = (DownloadState.VERIFYING, DownloadState.DOWNLOADING)
+
+# An unfinished torrent that has moved no data for this long is called stalled.
+STALLED_AFTER = timedelta(hours=6)
+# States in which a torrent is not expected to move: stopped by the user, waiting in qBittorrent's queue, or being checked.
+_IDLE_PREFIXES = ("paused", "stopped", "queued", "checking", "moving")
+# The reason a removed torrent is requeued with; seeing it on an earlier row of the same version is how a second removal is told.
+REMOVED_REASON = "Torrent is no longer present in qBittorrent; queued for a safe retry."
+
+
+def is_stalled(torrent: Torrent, now: datetime) -> bool:
+    """Whether an unfinished, active torrent has not moved for ``STALLED_AFTER``.
+
+    A torrent that was never active (still fetching its metadata) has no activity time, so it counts from when it was added.
+    """
+    state = torrent.state.lower()
+    if torrent.finished or torrent.errored or state.startswith(_IDLE_PREFIXES):
+        return False
+    since = torrent.last_activity or torrent.added_on
+    return since is not None and now - since >= STALLED_AFTER
 
 
 @dataclass
@@ -509,6 +529,21 @@ def cancel_download(ctx: Context, dl: Download, reason: str, *, leave_torrent: b
     return True
 
 
+def abandon_stalled(ctx: Context, dl: Download, reason: str) -> None:
+    """Drop a stalled download: delete its torrent (keeping files a previous release shares) and cancel it.
+
+    Unlike ``cancel_download`` this does not unwind the show's feed: the feed delivered a real release,
+    and the one that replaces this download comes from the same feed. A QbitError leaves everything as it was.
+    """
+    episode = ctx.session.get(Episode, dl.episode_id)
+    if episode is None:
+        return
+    old = ctx.session.get(Download, dl.supersedes_id) if dl.supersedes_id else None
+    _delete(ctx, dl.info_hash, keep_files_of=old.info_hash if old else None)
+    _cancel(ctx, dl, episode, reason)
+    ctx.caches.stalled = ctx.caches.stalled - {dl.id}
+
+
 def cancel_episode(ctx: Context, episode: Episode, reason: str, *, keep_added: bool = False, leave_torrents: bool = False) -> int:
     """Cancel the episode's unfinished downloads; with ``keep_added`` one already in qBittorrent finishes, with ``leave_torrents`` it just stops being followed."""
     canceled = 0
@@ -573,8 +608,12 @@ def _missing(ctx: Context, info_hash: str, judged: Dict[str, bool]) -> bool:
     return judged[info_hash]
 
 
-def settle(ctx: Context) -> Settled:
-    """Bring downloads up to date with qBittorrent: expose, verify, finish, replace, retry and forget."""
+def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
+    """Bring downloads up to date with qBittorrent: expose, verify, finish, replace, retry and forget.
+
+    With ``observe_only`` it only mirrors what qBittorrent shows (exposed, downloading, finished): it adds,
+    deletes and forgets nothing, which is what startup allows before adoption has looked at what exists.
+    """
     result = Settled()
     ctx.qbit.sync()
     listed = len(ctx.qbit.torrents)
@@ -595,7 +634,7 @@ def settle(ctx: Context) -> Settled:
         if episode is None:
             continue
         before = (dl.state, dl.info_hash)
-        _advance(ctx, dl, episode, judged, loading)
+        _advance(ctx, dl, episode, judged, loading, observe_only)
         if (dl.state, dl.info_hash) != before:
             result.changed = True
         if dl.state in ACTIVE_DOWNLOAD_STATES:
@@ -608,12 +647,20 @@ def settle(ctx: Context) -> Settled:
         if dl.next_retry_at is not None and dl.state in ACTIVE_DOWNLOAD_STATES:
             if result.next_due is None or dl.next_retry_at < result.next_due:
                 result.next_due = dl.next_retry_at
+    stalled = {
+        dl.id for dl in tracked
+        if dl.state in PRESENT_STATES and dl.info_hash and dl.info_hash in ctx.qbit.torrents
+        and is_stalled(ctx.qbit.torrents[dl.info_hash], ctx.now)
+    }
+    if stalled != ctx.caches.stalled:
+        ctx.caches.stalled = stalled
+        result.changed = True
     if result.changed:
         ctx.emit("shows", "history")
     return result
 
 
-def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, bool], loading: bool) -> None:
+def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, bool], loading: bool, observe_only: bool = False) -> None:
     if dl.state in (DownloadState.SUPERSEDED, DownloadState.CANCELED):
         return
     show = ctx.session.get(Show, episode.show_id)
@@ -623,7 +670,7 @@ def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, boo
         if torrent is not None:
             _exposed(ctx, dl, episode, torrent)
             return
-        if suspended:
+        if suspended or observe_only:
             return
         if dl.state == DownloadState.ADDING:
             if dl.updated_at + ADDING_STUCK <= ctx.now:
@@ -640,7 +687,7 @@ def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, boo
         return
     torrent = ctx.qbit.torrents.get(dl.info_hash)
     if torrent is None:
-        if loading or not _missing(ctx, dl.info_hash, judged):
+        if observe_only or loading or not _missing(ctx, dl.info_hash, judged):
             return
         _forget(ctx, dl, episode, show)
         return
@@ -649,7 +696,9 @@ def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, boo
     if dl.state == DownloadState.DONE:
         return
     if dl.supersedes_id is not None:
-        _advance_replacement(ctx, dl, episode, torrent)
+        # A replacement's finish deletes the release it replaces, so it waits for the full picture too.
+        if not observe_only:
+            _advance_replacement(ctx, dl, episode, torrent)
         return
     if torrent.finished:
         _complete(ctx, dl, episode)
@@ -685,7 +734,22 @@ def _forget(ctx: Context, dl: Download, episode: Episode, show: Optional[Show]) 
     if dl.supersedes_id is not None:
         _fail(ctx, dl, episode, "Replacement torrent is no longer present in qBittorrent; the previous release was kept.")
         return
-    _cancel(ctx, dl, episode, "Torrent is no longer present in qBittorrent; queued for a safe retry.")
+    removed_before = ctx.session.exec(
+        select(func.count(Download.id)).where(
+            Download.episode_id == dl.episode_id,
+            Download.version == dl.version,
+            Download.state == DownloadState.CANCELED,
+            Download.last_error == REMOVED_REASON,
+        )
+    ).one()
+    if removed_before:
+        # Removed again after one retry: someone keeps deleting it, so it is not added a third time.
+        dl.info_hash = None
+        _fail(ctx, dl, episode, "Removed from qBittorrent again after one retry; not adding it again.")
+        if show is not None:
+            feeds.unwind_unproven(ctx, show, dl.feed_id)
+        return
+    _cancel(ctx, dl, episode, REMOVED_REASON)
     episode.retry_after = ctx.now + ERROR_RETRY
     ctx.session.add(episode)
     if show is not None:

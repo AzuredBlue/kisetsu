@@ -30,6 +30,8 @@ main { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: h
   & .notes { display: flex; flex: none; align-items: center; gap: .75rem; font-size: .75rem; font-weight: 500; }
   & .note-warn { color: rgb(var(--warn)); }
   & .note-bad { color: rgb(var(--bad)); }
+  /* A chip that opens the view with the details looks the same; only the pointer and a hover underline say it is a link. */
+  & button.note-warn, & button.note-bad { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; &:hover { text-decoration: underline; text-underline-offset: 3px; } }
 }
 @media (min-width: 768px) { .topbar { padding: 0 2rem; } }
 .content { flex: 1; overflow-y: auto; padding: 1.25rem 1rem 1.5rem; }

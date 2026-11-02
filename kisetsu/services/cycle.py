@@ -131,9 +131,9 @@ def grab_cycle(ctx: Context) -> CycleResult:
     return result
 
 
-def settle_cycle(ctx: Context) -> downloads.Settled:
+def settle_cycle(ctx: Context, observe_only: bool = False) -> downloads.Settled:
     """Follow the downloads; a finished episode may complete its show, so air times are settled afterwards."""
-    result = downloads.settle(ctx)
+    result = downloads.settle(ctx, observe_only=observe_only)
     if result.changed:
         _say(shows.rollover(ctx))
     return result

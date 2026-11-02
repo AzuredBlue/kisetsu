@@ -63,6 +63,8 @@ class Torrent:
     tags: FrozenSet[str]
     added_on: Optional[datetime]
     completion_on: Optional[datetime]
+    # When data last moved; None for a torrent that has never been active (qBittorrent reports 0 or less).
+    last_activity: Optional[datetime] = None
 
     @property
     def finished(self) -> bool:
@@ -81,7 +83,7 @@ ERROR_STATES = {"error", "missingfiles", "unknown"}
 
 _NEEDED_FIELDS = (
     "name", "state", "progress", "amount_left", "size", "save_path", "content_path",
-    "category", "tags", "added_on", "completion_on",
+    "category", "tags", "added_on", "completion_on", "last_activity",
 )
 
 
@@ -109,6 +111,7 @@ def _torrent(info_hash: str, raw: Dict[str, Any]) -> Torrent:
         tags=tags,
         added_on=_timestamp(raw.get("added_on")),
         completion_on=_timestamp(raw.get("completion_on")),
+        last_activity=_timestamp(raw.get("last_activity")),
     )
 
 

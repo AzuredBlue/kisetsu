@@ -1,5 +1,6 @@
 import logging
-import shutil
+import os
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
@@ -89,7 +90,15 @@ def _set_user_version(engine: Engine, version: int) -> None:
 def _backup(path: Path, version: int) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = path.with_name(f"{path.name}.v{version}.{stamp}.bak")
-    shutil.copy2(path, target)
+    # The database runs in WAL mode, so copying the file alone would miss what has not been checkpointed yet.
+    os.close(os.open(target, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600))
+    source = sqlite3.connect(path)
+    copy = sqlite3.connect(target)
+    try:
+        source.backup(copy)
+    finally:
+        copy.close()
+        source.close()
     logger.info("Backed up %s to %s before migrating.", path.name, target.name)
 
 

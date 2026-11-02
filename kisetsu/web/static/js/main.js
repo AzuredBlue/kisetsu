@@ -6,6 +6,7 @@ import { go, useNow, useRoute } from './router.js';
 import { wait } from './format.js';
 import { history, settings, setupStatus, shows, status } from './data.js';
 import { Icon, Spinner } from './components/Icon.js';
+import { LoadError } from './components/LoadError.js';
 import { ModalHost } from './components/Modal.js';
 import { toast, Toasts } from './components/Toast.js';
 import { Shows } from './views/Shows.js';
@@ -35,12 +36,16 @@ function Notes({ info }) {
   const failed = info.episodes ? info.episodes.failed : 0;
   const testing = info.by_status ? info.by_status.testing || 0 : 0;
   const anilist = info.anilist_blocked_until && Date.parse(info.anilist_blocked_until) > Date.now();
+  const failing = info.failing_feeds || [];
+  const stuck = info.qbit_error ? 0 : info.stuck_adds || 0;
   return html`<div class="notes">
     ${offline ? html`<span class="note-bad" title="Kisetsu did not answer the last check. Trying again.">Not responding</span>` : null}
     ${info.all_paused ? html`<span class="note-warn">Paused</span>` : null}
     ${info.qbit_error ? html`<span class="note-bad" title=${info.qbit_error}>qBittorrent unreachable</span>` : null}
     ${testing ? html`<span class="note-warn" title="No release seen yet. Trying the feeds by priority.">${testing} Testing</span>` : null}
-    ${failed ? html`<span class="note-bad" title="Episodes that could not be downloaded. Open the show to see why.">${failed} Failed</span>` : null}
+    ${stuck ? html`<span class="note-bad" title=${`${stuck} episode${stuck === 1 ? ' was' : 's were'} added but qBittorrent never showed ${stuck === 1 ? 'it' : 'them'} (or kept refusing ${stuck === 1 ? 'it' : 'them'}) for over an hour, though it answers. Check that qBittorrent can download: its network or VPN, free space and the save folder. Kisetsu keeps trying.`}>qBittorrent isn't picking up new torrents</span>` : null}
+    ${failed ? html`<button type="button" class="note-bad" onClick=${() => go('history')} title="Episodes that could not be downloaded. Open the History to see why.">${failed} Failed</button>` : null}
+    ${failing.length ? html`<button type="button" class="note-warn" onClick=${() => go('feeds')} title=${`Could not read: ${failing.join(', ')}. Open the RSS Feeds to see why.`}>${failing.length} feed${failing.length === 1 ? '' : 's'} failing</button>` : null}
     ${anilist ? html`<span class="note-warn" title="AniList is limiting requests or not answering. Downloads carry on meanwhile.">AniList paused</span>` : null}
   </div>`;
 }
@@ -141,7 +146,7 @@ function Shell() {
 function App() {
   const setup = useResource(setupStatus);
   const [done, setDone] = useState(false);
-  if (!setup.data) return html`<div class="empty" style="margin:auto">${setup.error ? 'Kisetsu did not answer.' : ''}</div>`;
+  if (!setup.data) return html`<div style="margin:auto">${setup.error ? html`<${LoadError} what="the page" error=${null} reload=${setup.reload} />` : null}</div>`;
   return html`${setup.data.setup_completed && !done ? html`<${Shell} />` : html`<${Setup} sandbox=${setup.data.sandbox} done=${done} setDone=${setDone} />`}<${ModalHost} /><${Toasts} />`;
 }
 

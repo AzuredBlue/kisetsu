@@ -3,6 +3,7 @@
 from typing import Any, Dict, List, Optional, Tuple
 
 from kisetsu.db.schema import (
+    Download,
     DownloadState,
     Episode,
     EpisodeStatus,
@@ -43,9 +44,13 @@ def _other_source(ctx: Context, episode: Episode, feed: Feed, item: FeedItem) ->
     return not same_release(cur.title, item.title)
 
 
-def _refusal(ctx: Context, episode: Episode, version: int, other_source: bool = False) -> Optional[str]:
-    """Why an explicit grab of ``version`` of ``episode`` must not go ahead."""
-    if downloads.active_download(ctx, episode) is not None:
+def _refusal(ctx: Context, episode: Episode, version: int, other_source: bool = False, *, stalled: Optional[Download] = None) -> Optional[str]:
+    """Why an explicit grab of ``version`` of ``episode`` must not go ahead.
+
+    ``stalled`` is the one active download that is about to be dropped; any other still blocks the grab.
+    """
+    active = downloads.active_download(ctx, episode)
+    if active is not None and (stalled is None or active.id != stalled.id):
         return f"Episode {episode.number} already has a download in progress."
     if _is_restore(ctx, episode):
         return None
@@ -202,6 +207,57 @@ def manual_grab(
     else:
         action = "replacement"
     return f"Manually queued {action} for {show.title(ctx.settings.title_language)} Ep {entry.number} v{entry.version}: {entry.item.title}"
+
+
+def stalled_download(ctx: Context, episode: Episode) -> Optional[Download]:
+    """The episode's active download, if the last settle pass found its torrent stalled."""
+    active = downloads.active_download(ctx, episode)
+    return active if active is not None and active.id in ctx.caches.stalled else None
+
+
+def alternatives(ctx: Context, show: Show, episode: Episode, dl: Download, found: Optional[List[Candidate]] = None) -> List[Candidate]:
+    """The other releases of the episode that could take a stalled download's place, best first.
+
+    They come from the feeds the show may use (so its feed lock stands) and never include the stalled release itself.
+    A batch is never offered a swap: its torrent serves other episodes too.
+    """
+    if downloads.is_batch_download(dl):
+        return []
+    options: List[Candidate] = []
+    for feed, entry in candidates(ctx, show) if found is None else found:
+        item = entry.item
+        if entry.episode.id != episode.id or not item.torrent_url:
+            continue
+        dead = item.title == dl.title or (item.info_hash and item.info_hash == dl.info_hash) or (feed.id == dl.feed_id and item.guid == dl.feed_item_guid)
+        if dead:
+            continue
+        if dl.supersedes_id is not None and _refusal(ctx, episode, entry.version, _other_source(ctx, episode, feed, item), stalled=dl):
+            # A stalled replacement leaves the previous release in place, and a new one must still be able to replace it.
+            continue
+        options.append((feed, entry))
+    return sorted(options, key=lambda option: -option[1].version)
+
+
+def try_another(ctx: Context, show: Show, episode: Episode) -> str:
+    """Drop the episode's stalled download and add the best other release of it, in one step."""
+    if show.paused:
+        raise ValueError("This show is paused. Resume it before downloading.")
+    dl = stalled_download(ctx, episode)
+    if dl is None:
+        raise ValueError(f"Episode {episode.number} has no stalled download.")
+    options = alternatives(ctx, show, episode, dl)
+    if not options:
+        raise ValueError(f"No other release of episode {episode.number} is in the feeds this show uses.")
+    feed, entry = options[0]
+    switch_source = _other_source(ctx, episode, feed, entry.item)
+    facts = facts_for(ctx, [show])[show.id]
+    grab.record_evidence(ctx, grab._state(ctx, show, facts), feed, entry.raw, entry.number)
+    hours = int(downloads.STALLED_AFTER.total_seconds() // 3600)
+    downloads.abandon_stalled(ctx, dl, f"Stalled for over {hours} hours; replaced by another release.")
+    started = downloads.start_download(ctx, show, feed, episode, entry.item, switch_source=switch_source)
+    if started is None:
+        raise ValueError(entry.episode.last_error or "Could not start the download for that release.")
+    return f"Dropped the stalled release of {show.title(ctx.settings.title_language)} Ep {entry.number} and queued {entry.item.title}"
 
 
 def restore_episode(ctx: Context, show: Show, episode: Episode) -> str:

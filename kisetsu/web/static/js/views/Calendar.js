@@ -3,6 +3,7 @@ import { useResource } from '../store.js';
 import { go, prefetch, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
 import { useTheme } from '../theme.js';
 
@@ -113,11 +114,12 @@ function Slot({ slot }) {
 }
 
 export function Calendar() {
-  const { data } = useResource(showsData);
+  const { data, error, reload } = useResource(showsData);
   const now = useNow();
   const minute = Math.floor(now / 60000);
   const [offset, setOffset] = useState(0);
   const week = useMemo(() => buildWeek(data || [], new Date(minute * 60000), offset), [data, minute, offset]);
+  if (!data && error) return html`<div class="page full"><${LoadError} what="the calendar" error=${error} reload=${reload} /></div>`;
   const nowLine = html`<div class="cal-now" key="now">Now</div>`;
   // Quiet days get half a column; the grid only applies it when the week is laid out side by side.
   const cols = week.days.map(day => day.quiet ? '.5fr' : '1fr').join(' ');

@@ -288,7 +288,9 @@
 .history-status {
   grid-area: status; display: flex; align-items: center; justify-content: flex-end; gap: .25rem; white-space: nowrap;
   &.grabbed { color: rgb(var(--queued)); } &.replaced { color: rgb(var(--info)); } &.done .icon { color: rgb(var(--ok)); }
+  &.failed { color: rgb(var(--bad)); } &.missed { color: rgb(var(--warn)); }
 }
+.history-row .history-reason { margin-top: .125rem; font-size: .75rem; line-height: 1rem; color: rgb(var(--text-2)); }
 .history-time { grid-area: time; min-width: 2.5rem; text-align: right; }
 .history-feed { grid-area: feed; margin-top: .125rem; line-height: 1rem; text-align: right; }
 /* Narrow: the title gets the width, and status, feed and time share a third line. */

@@ -5,6 +5,7 @@ import { go, leaveTarget, useNow } from '../router.js';
 import { applyShowPalette } from '../theme.js';
 import { feedMatches, feeds as feedsData, settings as settingsData, shows as showsData, showPage } from '../data.js';
 import { Icon, Spinner } from '../components/Icon.js';
+import { LoadError } from '../components/LoadError.js';
 import { confirmDialog } from '../components/Modal.js';
 import { SaveBar, Seg } from '../components/Controls.js';
 import { useDraft } from '../components/useDraft.js';
@@ -101,6 +102,7 @@ export function Show({ route }) {
   };
 
   if (page.error && page.error.status === 404) return html`<div class="page"><div class="empty">This show is gone.</div><button class="btn" onClick=${() => go(leaveTarget())}>Back to shows</button></div>`;
+  if (!data && page.error) return html`<div class="page"><${LoadError} what="this show" error=${page.error} reload=${page.reload} /><button type="button" class="btn" onClick=${() => go(leaveTarget())}>Back to shows</button></div>`;
   if (!data) {
     const known = (knownShows.data || []).find(sh => sh.id === id);
     return html`<div class="show-page">
@@ -192,13 +194,14 @@ export function Show({ route }) {
         <div class="pane-head">
           <${Seg} label="List" value=${listTab} onChange=${setListTab} options=${[['episodes', 'Episodes'], ['releases', 'Releases']]} />
           <span class="row">
-            <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} tracked` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : 'checking feed…'}</span>
+            <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} tracked` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : matches.error ? 'not loaded' : 'checking feed…'}</span>
             ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : html`<button type="button" class="link" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
           </span>
         </div>
         <div class="card list-card">
           ${listTab === 'episodes'
             ? html`<${EpisodeList} episodes=${data.episodes} groups=${matchData} paused=${data.paused} now=${new Date(now)} actions=${actions} onSearch=${searchOlder} searching=${searching} />`
+            : !matchData && matches.error ? html`<${LoadError} what="the releases" error=${matches.error} reload=${matches.reload} />`
             : html`<${ReleaseList} groups=${matchData} loading=${!matchData} actions=${actions} onUseFeed=${(feedId) => save({ feed_id: feedId })} />`}
         </div>
       </section>

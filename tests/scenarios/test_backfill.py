@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from sqlmodel import select
 
-from kisetsu.db.schema import EpisodeStatus, FeedItemMatch, FeedState
+from kisetsu.db.schema import EpisodeStatus, FeedItem, FeedItemMatch, FeedState
 from kisetsu.services import backfill, grab, ingest
 from tests.fakes import START, article
 
@@ -158,3 +158,63 @@ def test_the_names_that_found_releases_before_are_searched_first(world):
     world.commit()
     [item] = backfill.due(world.ctx())
     assert item.terms[:2] == ["Ao Ashi", "Aoashi"]
+
+
+def test_a_search_leaves_another_shows_release_for_the_ordinary_feed_read(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    show = airing(world)
+    other = world.show(2, "Another Show", episodes=1, first_air=START - timedelta(days=1))
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    theirs = world.feeds.post(NYAA, "[Grp] Another Show - 01 (1080p).mkv", START - timedelta(days=1))
+    mine = world.feeds.post(NYAA, title(2), START - timedelta(days=14))
+
+    async def everything(client, url, term, now=None):
+        return [mine, theirs]
+
+    [item] = [i for i in backfill.due(world.ctx()) if i.show_id == show.id]
+    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=everything))
+    assert backfill.apply(world.ctx(), item, found) == 1
+    world.commit()
+    # Only the searched show's release was stored, so the other one is still new to the next ordinary read.
+    assert [i.title for i in world.session.exec(select(FeedItem)).all()] == [mine.title]
+    result = ingest.ingest(world.ctx(), feed, [mine, theirs])
+    world.commit()
+    assert result.new == 1 and result.show_ids == {other.id}
+    assert {(m.show_id) for m in world.session.exec(select(FeedItemMatch)).all()} == {show.id, other.id}
+
+
+def test_a_completed_shows_search_still_stores_its_release_and_reopens_the_show(world):
+    world.feed("Nyaa", NYAA, 1)
+    show = airing(world, completed=True)
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    release = world.feeds.post(NYAA, title(2), START - timedelta(days=14))
+
+    async def one(client, url, term, now=None):
+        return [release]
+
+    [item] = backfill.due(world.ctx(), show_id=show.id, force=True)
+    found = asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=one))
+    assert backfill.apply(world.ctx(), item, found) == 1
+    world.commit()
+    world.session.refresh(show)
+    assert show.completed is False
+
+
+def test_a_sequels_release_found_by_the_first_seasons_search_reaches_the_sequel(world):
+    world.feed("Nyaa", NYAA, 1)
+    first = airing(world)
+    sequel = world.show(2, "Sousou no Frieren 2nd Season", aliases=["Sousou no Frieren 2nd Season"], episodes=4, first_air=START - timedelta(days=21))
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    release = world.feeds.post(NYAA, "[Grp] Sousou no Frieren 2nd Season - 01 (1080p).mkv", START)
+
+    async def found(client, url, term, now=None):
+        return [release]
+
+    [item] = [i for i in backfill.due(world.ctx()) if i.show_id == first.id]
+    backfill.apply(world.ctx(), item, asyncio.run(backfill.search(None, item, backfill.matcher_for(first), world.clock(), searcher=found)))
+    world.commit()
+    assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {sequel.id}
+    assert grab.covered_numbers(world.ctx(), sequel) == {1}
