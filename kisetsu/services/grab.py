@@ -375,8 +375,7 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
     if any(f.last_ok_at is not None and f.failing_since is None for f in candidates):
         result.missed += _mark_missed(ctx, state, facts, resolved_by_feed)
     if grabbed_from is not None and show.feed_state in (FeedState.NONE, FeedState.CANDIDATE):
-        show.feed_id, show.feed_state, show.candidate_since = grabbed_from, FeedState.ASSIGNED, None
-        ctx.session.add(show)
+        feeds.set_assigned(ctx, show, chosen)
 
 
 def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolved_by_feed) -> Optional[Feed]:

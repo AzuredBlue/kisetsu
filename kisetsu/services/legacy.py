@@ -4,7 +4,8 @@ from typing import Any, Dict, List
 
 from sqlmodel import select
 
-from kisetsu.db.schema import EpisodeOffset, Feed, FeedState, OffsetSource, Show
+from kisetsu.db.schema import EpisodeOffset, Feed, OffsetSource, Show
+from kisetsu.services import feeds as feed_service
 from kisetsu.services.context import Context, get_state, set_state
 
 PENDING_KEY = "legacy_overrides"
@@ -41,7 +42,7 @@ def apply_pending(ctx: Context, show: Show) -> bool:
     feeds = {f.url: f for f in ctx.session.exec(select(Feed)).all()}
     pinned = feeds.get(entry.get("pinned_feed_url") or "")
     if pinned is not None:
-        show.feed_id, show.feed_state = pinned.id, FeedState.PINNED
+        feed_service.pin(ctx, show, pinned)
     ctx.session.add(show)
     for item in entry.get("offsets", []):
         feed = feeds.get(item["feed_url"])

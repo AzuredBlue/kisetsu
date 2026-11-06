@@ -176,7 +176,7 @@ def assign(ctx: Context, show: Show, carriers: Sequence[Carrier], excluded: Set[
         return ctx.session.get(Feed, show.feed_id)
     top = next((f for f in ranked(ctx) if f.id not in excluded), None)
     if top is not None and best.feed.id == top.id:
-        _set_assigned(ctx, show, best.feed)
+        set_assigned(ctx, show, best.feed)
         return best.feed
     if show.feed_state != FeedState.CANDIDATE or show.feed_id != best.feed.id:
         show.feed_id = best.feed.id
@@ -187,7 +187,7 @@ def assign(ctx: Context, show: Show, carriers: Sequence[Carrier], excluded: Set[
     since = show.candidate_since or ctx.now
     if since + CANDIDATE_GRACE > ctx.now:
         return None
-    _set_assigned(ctx, show, best.feed)
+    set_assigned(ctx, show, best.feed)
     return best.feed
 
 
@@ -200,7 +200,8 @@ def next_candidate_due(ctx: Context) -> Optional[datetime]:
     return min(due) if due else None
 
 
-def _set_assigned(ctx: Context, show: Show, feed: Feed) -> None:
+def set_assigned(ctx: Context, show: Show, feed: Feed) -> None:
+    """Make a feed the show's guess: it downloads from it, but an assignment is not the lock."""
     if show.feed_state == FeedState.ASSIGNED and show.feed_id == feed.id:
         return
     show.feed_id = feed.id

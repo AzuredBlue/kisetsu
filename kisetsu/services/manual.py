@@ -198,8 +198,7 @@ def manual_grab(
     if dl is None:
         raise ValueError(entry.episode.last_error or "Could not start the download for that release.")
     if show.feed_state in (FeedState.NONE, FeedState.CANDIDATE):
-        show.feed_id, show.feed_state, show.candidate_since = feed.id, FeedState.ASSIGNED, None
-        ctx.session.add(show)
+        feeds.set_assigned(ctx, show, feed)
     if dl.supersedes_id is None:
         action = "download"
     elif previous is not None and previous.info_hash is None:
