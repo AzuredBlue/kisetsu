@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -9,6 +10,7 @@ from kisetsu.db.migrations import LATEST_VERSION, SchemaError, migrate
 from kisetsu.db.schema import (
     Download,
     DownloadState,
+    EndReason,
     Episode,
     EpisodeStatus,
     Feed,
@@ -201,6 +203,46 @@ def test_a_version_6_database_frees_only_the_replacements_that_gave_up():
     }
 
 
+def test_a_version_7_database_gets_the_end_reason_of_each_ended_download():
+    engine = make_engine()
+    migrate(engine)
+    now = datetime.now(timezone.utc)
+    removed = "Torrent is no longer present in qBittorrent; queued for a safe retry."
+    rows = (
+        ("add gave up", DownloadState.CANCELED, "Gave up after 8 attempts: qBittorrent has not shown the torrent."),
+        ("add failed for good", DownloadState.FAILED, "Gave up after 8 attempts: qBittorrent has not shown the torrent."),
+        ("replacement gave up", DownloadState.CANCELED, "Gave up after 48 hours: the replacement did not finish and was removed."),
+        ("removed", DownloadState.CANCELED, removed),
+        ("by the user", DownloadState.CANCELED, "Show paused by user."),
+        ("still adding", DownloadState.ADDING, "Gave up after 8 attempts: not an ending."),
+    )
+    with Session(engine) as session:
+        show = Show(anilist_id=1)
+        session.add(show)
+        session.flush()
+        episode = Episode(show_id=show.id, number=1)
+        session.add(episode)
+        session.flush()
+        for title, state, error in rows:
+            session.add(Download(episode_id=episode.id, title=title, state=state, last_error=error, created_at=now, updated_at=now))
+        session.commit()
+    # Back to the layout before the column existed, so the step has to add it.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE downloads DROP COLUMN end_reason")
+        conn.exec_driver_sql("PRAGMA user_version = 7")
+    migrate(engine)
+    with Session(engine) as session:
+        reasons = {d.title: d.end_reason for d in session.exec(select(Download)).all()}
+    assert reasons == {
+        "add gave up": EndReason.ADD_GAVE_UP,
+        "add failed for good": EndReason.ADD_GAVE_UP,
+        "replacement gave up": EndReason.REPLACEMENT_GAVE_UP,
+        "removed": EndReason.REMOVED,
+        "by the user": None,
+        "still adding": None,
+    }
+
+
 def test_the_schema_has_the_new_tables_only():
     from kisetsu.db.schema import Base
 
@@ -251,4 +293,6 @@ def test_the_backup_before_a_migration_holds_what_is_still_only_in_the_wal(tmp_p
     _backup(path, 99)
     [backup] = tmp_path.glob("k.db.v99.*.bak")
     assert sqlite3.connect(backup).execute("SELECT name FROM feeds").fetchall() == [("Only in the log",)]
-    assert backup.stat().st_mode & 0o777 == 0o600
+    if os.name == "posix":
+        # Windows has no POSIX permission bits to check.
+        assert backup.stat().st_mode & 0o777 == 0o600

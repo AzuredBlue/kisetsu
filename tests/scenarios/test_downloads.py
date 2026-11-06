@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitError, QbitRejected, QbitUnavailable
-from kisetsu.db.schema import Download, DownloadState, EpisodeStatus, Event, EventKind, FeedState
+from kisetsu.db.schema import Download, DownloadState, EndReason, EpisodeStatus, Event, EventKind, FeedState
 from kisetsu.services import downloads
 from kisetsu.services.ingest import _new_item
 from tests.fakes import START, article
@@ -131,6 +131,7 @@ def test_a_replacement_that_never_finishes_is_dropped_after_48_hours(world):
     v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
     settle(world, minutes=49 * 60)
     assert v2.state == DownloadState.CANCELED and v2.last_error.startswith("Gave up after 48 hours")
+    assert v2.end_reason == EndReason.REPLACEMENT_GAVE_UP
     assert row2.info_hash not in world.qbit.truth
     assert v1.state == DownloadState.DONE and row1.info_hash in world.qbit.truth
     episode = world.episode(show, 1)
@@ -200,6 +201,7 @@ def test_a_grab_that_keeps_failing_gives_up_for_hours_then_fails_for_good(world)
     for _ in range(downloads.MAX_ATTEMPTS):
         settle(world, minutes=16)
     assert dl.state == DownloadState.CANCELED and dl.last_error.startswith("Gave up after")
+    assert dl.end_reason == EndReason.ADD_GAVE_UP
     episode = world.episode(show, 1)
     assert episode.status == EpisodeStatus.WANTED and episode.retry_after == world.clock() + timedelta(hours=2)
     assert show.feed_state == FeedState.NONE
@@ -213,10 +215,28 @@ def test_a_grab_that_keeps_failing_gives_up_for_hours_then_fails_for_good(world)
     for _ in range(downloads.MAX_ATTEMPTS):
         settle(world, minutes=16)
     assert dl.state == DownloadState.FAILED and world.episode(show, 1).status == EpisodeStatus.FAILED
+    assert dl.end_reason == EndReason.ADD_GAVE_UP
     # qBittorrent never had the torrent, so it must not read as removed there and be queued again.
     settle(world, minutes=1)
     settle(world, minutes=1)
     assert dl.state == DownloadState.FAILED and world.episode(show, 1).status == EpisodeStatus.FAILED
+
+
+def test_the_give_up_ladder_counts_end_reasons_not_error_text(world):
+    feed, show, ep = setup(world)
+    now = world.clock()
+    # Reads like a give-up but was not recorded as one, so it is not a rung of the ladder.
+    world.session.add(Download(
+        episode_id=ep.id, title="earlier", version=1, state=DownloadState.CANCELED,
+        last_error="Gave up after 8 attempts: elsewhere.", created_at=now, updated_at=now,
+    ))
+    world.commit()
+    world.qbit.reject_adds = QbitRejected("bad link")
+    dl, row = grab(world, show, feed, ep)
+    for _ in range(downloads.MAX_ATTEMPTS):
+        settle(world, minutes=16)
+    assert dl.state == DownloadState.CANCELED
+    assert world.episode(show, 1).retry_after == world.clock() + timedelta(hours=2)
 
 
 def batch(world, episodes=3):

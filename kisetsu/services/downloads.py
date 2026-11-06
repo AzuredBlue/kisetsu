@@ -17,6 +17,7 @@ from kisetsu.db.schema import (
     FIXED_FEED_STATES,
     Download,
     DownloadState,
+    EndReason,
     Episode,
     EpisodeStatus,
     EventKind,
@@ -442,12 +443,13 @@ def _notify_done(ctx: Context, show: Show, dl: Download, episode: Episode) -> No
         ctx.notify(f"{name} - Batch", "Download finished", show.cover_image)
 
 
-def _fail(ctx: Context, dl: Download, episode: Episode, error: str) -> None:
+def _fail(ctx: Context, dl: Download, episode: Episode, error: str, end_reason: Optional[EndReason] = None) -> None:
     dl.state = DownloadState.FAILED
     if dl.supersedes_id is not None:
         # A failed replacement's torrent is gone or was deleted; nothing is left to follow.
         dl.info_hash = None
     dl.last_error = error
+    dl.end_reason = end_reason
     dl.next_retry_at = None
     dl.updated_at = ctx.now
     ctx.session.add(dl)
@@ -456,9 +458,10 @@ def _fail(ctx: Context, dl: Download, episode: Episode, error: str) -> None:
     events.record(ctx, EventKind.FAILED, error, show=show, episode=episode.number, feed_id=dl.feed_id, title=dl.title)
 
 
-def _cancel(ctx: Context, dl: Download, episode: Episode, reason: str) -> None:
+def _cancel(ctx: Context, dl: Download, episode: Episode, reason: str, end_reason: Optional[EndReason] = None) -> None:
     dl.state = DownloadState.CANCELED
     dl.last_error = reason
+    dl.end_reason = end_reason
     dl.next_retry_at = None
     dl.updated_at = ctx.now
     ctx.session.add(dl)
@@ -475,21 +478,23 @@ def _give_up_hours(ctx: Context, dl: Download) -> Optional[int]:
             Download.episode_id == dl.episode_id,
             Download.version == dl.version,
             Download.state == DownloadState.CANCELED,
-            Download.last_error.like(f"{GAVE_UP_PREFIX}%"),
+            Download.end_reason.in_((EndReason.ADD_GAVE_UP, EndReason.REPLACEMENT_GAVE_UP)),
         )
     ).all()
     return GIVE_UP_RETRY_HOURS[len(earlier)] if len(earlier) < len(GIVE_UP_RETRY_HOURS) else None
 
 
-def _give_up(ctx: Context, dl: Download, episode: Episode, show: Optional[Show], error: Optional[str] = None) -> None:
+def _give_up(
+    ctx: Context, dl: Download, episode: Episode, show: Optional[Show], end_reason: EndReason, error: Optional[str] = None,
+) -> None:
     error = error or f"{GAVE_UP_PREFIX} {dl.attempts} attempts: {dl.last_error or 'qBittorrent never showed the torrent.'}"
     hours = _give_up_hours(ctx, dl)
     if hours is None:
         # The hash came from the feed and qBittorrent never had it; followed, it would read as a removed torrent and be tried again.
         dl.info_hash = None
-        _fail(ctx, dl, episode, error)
+        _fail(ctx, dl, episode, error, end_reason)
     else:
-        _cancel(ctx, dl, episode, error)
+        _cancel(ctx, dl, episode, error, end_reason)
         episode.retry_after = ctx.now + timedelta(hours=hours)
         ctx.session.add(episode)
     if show is not None and dl.supersedes_id is None:
@@ -678,7 +683,7 @@ def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, boo
             return
         if dl.next_retry_at is not None and dl.next_retry_at <= ctx.now and show is not None:
             if dl.attempts >= MAX_ATTEMPTS:
-                _give_up(ctx, dl, episode, show)
+                _give_up(ctx, dl, episode, show, EndReason.ADD_GAVE_UP)
             else:
                 _attempt_add(ctx, show, episode, dl, paused=_adds_paused(ctx, dl))
         return
@@ -739,17 +744,17 @@ def _forget(ctx: Context, dl: Download, episode: Episode, show: Optional[Show]) 
             Download.episode_id == dl.episode_id,
             Download.version == dl.version,
             Download.state == DownloadState.CANCELED,
-            Download.last_error == REMOVED_REASON,
+            Download.end_reason == EndReason.REMOVED,
         )
     ).one()
     if removed_before:
         # Removed again after one retry: someone keeps deleting it, so it is not added a third time.
         dl.info_hash = None
-        _fail(ctx, dl, episode, "Removed from qBittorrent again after one retry; not adding it again.")
+        _fail(ctx, dl, episode, "Removed from qBittorrent again after one retry; not adding it again.", EndReason.REMOVED)
         if show is not None:
             feeds.unwind_unproven(ctx, show, dl.feed_id)
         return
-    _cancel(ctx, dl, episode, REMOVED_REASON)
+    _cancel(ctx, dl, episode, REMOVED_REASON, EndReason.REMOVED)
     episode.retry_after = ctx.now + ERROR_RETRY
     ctx.session.add(episode)
     if show is not None:
@@ -767,7 +772,10 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
         except QbitError:
             pass
         hours = int(REPLACEMENT_GIVE_UP.total_seconds() // 3600)
-        _give_up(ctx, dl, episode, None, f"{GAVE_UP_PREFIX} {hours} hours: the replacement did not finish and was removed; the previous release was kept.")
+        _give_up(
+            ctx, dl, episode, None, EndReason.REPLACEMENT_GAVE_UP,
+            f"{GAVE_UP_PREFIX} {hours} hours: the replacement did not finish and was removed; the previous release was kept.",
+        )
         return
     if torrent.errored:
         dl.last_error = f"Replacement torrent state: {torrent.state}"

@@ -63,6 +63,25 @@ def _v7(engine: Engine) -> None:
         )
 
 
+def _v8(engine: Engine) -> None:
+    # The retry ladders used to count earlier endings by matching the error text; they count this column now.
+    with engine.begin() as conn:
+        if "end_reason" not in {c["name"] for c in inspect(engine).get_columns("downloads")}:
+            conn.exec_driver_sql("ALTER TABLE downloads ADD COLUMN end_reason VARCHAR")
+        conn.exec_driver_sql(
+            "UPDATE downloads SET end_reason = 'ADD_GAVE_UP' "
+            "WHERE state IN ('CANCELED', 'FAILED') AND last_error LIKE 'Gave up after % attempts%'"
+        )
+        conn.exec_driver_sql(
+            "UPDATE downloads SET end_reason = 'REPLACEMENT_GAVE_UP' "
+            "WHERE state IN ('CANCELED', 'FAILED') AND last_error LIKE 'Gave up after % hours%'"
+        )
+        conn.exec_driver_sql(
+            "UPDATE downloads SET end_reason = 'REMOVED' "
+            "WHERE state = 'CANCELED' AND last_error = 'Torrent is no longer present in qBittorrent; queued for a safe retry.'"
+        )
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -73,6 +92,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (5, _v5),
     (6, _v6),
     (7, _v7),
+    (8, _v8),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 

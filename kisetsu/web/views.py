@@ -10,6 +10,7 @@ from sqlmodel import select
 from kisetsu.db.schema import (
     Download,
     DownloadState,
+    EndReason,
     Episode,
     EpisodeOffset,
     EpisodeStatus,
@@ -427,7 +428,7 @@ def stuck_adds(ctx: Context) -> int:
         .join(Show, Show.id == Episode.show_id)
         .where(
             Download.state == DownloadState.CANCELED,
-            Download.last_error.like(f"{downloads.GAVE_UP_PREFIX} % attempts%"),
+            Download.end_reason == EndReason.ADD_GAVE_UP,
             Episode.retry_after > ctx.now,
             Episode.status.not_in((EpisodeStatus.COMPLETED, EpisodeStatus.SKIPPED)),
             *live,

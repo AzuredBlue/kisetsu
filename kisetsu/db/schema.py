@@ -100,6 +100,14 @@ class DownloadState(str, Enum):
     CANCELED = "canceled"
 
 
+class EndReason(str, Enum):
+    """Why a CANCELED or FAILED download ended, for the retry ladders that count earlier endings."""
+
+    ADD_GAVE_UP = "add_gave_up"
+    REPLACEMENT_GAVE_UP = "replacement_gave_up"
+    REMOVED = "removed"
+
+
 class OffsetSource(str, Enum):
     INFERRED = "inferred"
     CONFIRMED = "confirmed"
@@ -334,6 +342,7 @@ class Download(Base, table=True):
     attempts: int = Field(default=1)
     next_retry_at: Optional[datetime] = _timestamp(default=None, nullable=True)
     last_error: Optional[str] = Field(default=None, nullable=True)
+    end_reason: Optional[EndReason] = Field(default=None, nullable=True)
     created_at: datetime = _timestamp(default_factory=utc_now)
     updated_at: datetime = _timestamp(default_factory=utc_now)
     completed_at: Optional[datetime] = _timestamp(default=None, nullable=True)

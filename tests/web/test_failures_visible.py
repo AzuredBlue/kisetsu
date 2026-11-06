@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from kisetsu.db.schema import Download, DownloadState, Episode, EpisodeStatus, Event, EventKind, Feed
+from kisetsu.db.schema import Download, DownloadState, EndReason, Episode, EpisodeStatus, Event, EventKind, Feed
 from tests.fakes import START
 
 GAVE_UP = "Gave up after 8 attempts: qBittorrent never showed the torrent."
@@ -53,7 +53,7 @@ async def test_status_names_the_feeds_that_are_failing(web):
     assert (await web.client.get("/api/status")).json()["failing_feeds"] == ["Bad"]
 
 
-def _download(web, show, *, state, error=None, age=timedelta(hours=2), retry_in=None, episode_status=None):
+def _download(web, show, *, state, error=None, age=timedelta(hours=2), retry_in=None, episode_status=None, end_reason=None):
     """A download of episode 1 of ``show``, created ``age`` ago."""
 
     def add(session):
@@ -63,7 +63,7 @@ def _download(web, show, *, state, error=None, age=timedelta(hours=2), retry_in=
         if episode_status is not None:
             episode.status = episode_status
         session.add(Download(
-            episode_id=episode.id, title="Varyg - 01", state=state, last_error=error,
+            episode_id=episode.id, title="Varyg - 01", state=state, last_error=error, end_reason=end_reason,
             created_at=web.clock() - age, updated_at=web.clock() - age,
         ))
         session.commit()
@@ -105,31 +105,40 @@ async def test_paused_and_completed_shows_are_never_stuck(web):
 
 async def test_a_give_up_stays_stuck_through_its_wait_before_the_next_try(web):
     show = web.show()
-    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, age=timedelta(hours=1), retry_in=timedelta(hours=2))
+    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, end_reason=EndReason.ADD_GAVE_UP, age=timedelta(hours=1), retry_in=timedelta(hours=2))
     assert await _stuck(web) == 1
 
 
 async def test_a_give_up_whose_wait_is_over_is_not_counted(web):
     show = web.show()
-    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, retry_in=-timedelta(minutes=1))
+    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, end_reason=EndReason.ADD_GAVE_UP, retry_in=-timedelta(minutes=1))
     assert await _stuck(web) == 0
 
 
 async def test_a_replacement_that_gave_up_after_48_hours_is_a_slow_torrent_not_a_lost_add(web):
     show = web.show()
-    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP_SLOW, retry_in=timedelta(hours=2))
+    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP_SLOW, end_reason=EndReason.REPLACEMENT_GAVE_UP, retry_in=timedelta(hours=2))
     assert await _stuck(web) == 0
 
 
 async def test_a_give_up_whose_episode_has_since_completed_is_not_counted(web):
     show = web.show()
-    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, retry_in=timedelta(hours=2), episode_status=EpisodeStatus.COMPLETED)
+    _download(
+        web, show, state=DownloadState.CANCELED, error=GAVE_UP, end_reason=EndReason.ADD_GAVE_UP,
+        retry_in=timedelta(hours=2), episode_status=EpisodeStatus.COMPLETED,
+    )
+    assert await _stuck(web) == 0
+
+
+async def test_error_text_alone_does_not_make_a_give_up(web):
+    show = web.show()
+    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, retry_in=timedelta(hours=2))
     assert await _stuck(web) == 0
 
 
 async def test_the_same_episode_is_counted_once_and_not_while_qbittorrent_is_unreachable(web):
     show = web.show()
-    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, retry_in=timedelta(hours=2))
+    _download(web, show, state=DownloadState.CANCELED, error=GAVE_UP, end_reason=EndReason.ADD_GAVE_UP, retry_in=timedelta(hours=2))
     _download(web, show, state=DownloadState.ADDING)
     assert await _stuck(web) == 1
     web.runtime.jobs.health["qbit"] = "refused"
