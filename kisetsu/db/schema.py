@@ -96,6 +96,8 @@ class DownloadState(str, Enum):
     DONE = "done"
     SUPERSEDED = "superseded"
     RETRY_WAIT = "retry_wait"
+    # Two kinds: qBittorrent reported the torrent errored (the hash is kept and it can go back to
+    # DOWNLOADING), or the download failed for good (the hash is cleared). See ``is_final_failure``.
     FAILED = "failed"
     CANCELED = "canceled"
 

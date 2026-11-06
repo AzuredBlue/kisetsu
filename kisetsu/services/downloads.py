@@ -88,6 +88,11 @@ class Settled:
     changed: bool = False
 
 
+def is_final_failure(dl: Download) -> bool:
+    """Whether a download failed for good. A FAILED download that kept its hash is only a torrent qBittorrent reports as errored."""
+    return dl.state == DownloadState.FAILED and dl.info_hash is None
+
+
 def _tag() -> str:
     return f"{TAG_PREFIX}{uuid4().hex}"
 
@@ -444,10 +449,9 @@ def _notify_done(ctx: Context, show: Show, dl: Download, episode: Episode) -> No
 
 
 def _fail(ctx: Context, dl: Download, episode: Episode, error: str, end_reason: Optional[EndReason] = None) -> None:
+    """Fail a download for good. Its hash is cleared: nothing is left to follow, and a kept hash would read as an errored torrent."""
     dl.state = DownloadState.FAILED
-    if dl.supersedes_id is not None:
-        # A failed replacement's torrent is gone or was deleted; nothing is left to follow.
-        dl.info_hash = None
+    dl.info_hash = None
     dl.last_error = error
     dl.end_reason = end_reason
     dl.next_retry_at = None
@@ -491,7 +495,6 @@ def _give_up(
     hours = _give_up_hours(ctx, dl)
     if hours is None:
         # The hash came from the feed and qBittorrent never had it; followed, it would read as a removed torrent and be tried again.
-        dl.info_hash = None
         _fail(ctx, dl, episode, error, end_reason)
     else:
         _cancel(ctx, dl, episode, error, end_reason)
@@ -666,7 +669,7 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
 
 
 def _advance(ctx: Context, dl: Download, episode: Episode, judged: Dict[str, bool], loading: bool, observe_only: bool = False) -> None:
-    if dl.state in (DownloadState.SUPERSEDED, DownloadState.CANCELED):
+    if dl.state in (DownloadState.SUPERSEDED, DownloadState.CANCELED) or is_final_failure(dl):
         return
     show = ctx.session.get(Show, episode.show_id)
     suspended = show is not None and (show.paused or show.completed)
@@ -749,7 +752,6 @@ def _forget(ctx: Context, dl: Download, episode: Episode, show: Optional[Show]) 
     ).one()
     if removed_before:
         # Removed again after one retry: someone keeps deleting it, so it is not added a third time.
-        dl.info_hash = None
         _fail(ctx, dl, episode, "Removed from qBittorrent again after one retry; not adding it again.", EndReason.REMOVED)
         if show is not None:
             feeds.unwind_unproven(ctx, show, dl.feed_id)

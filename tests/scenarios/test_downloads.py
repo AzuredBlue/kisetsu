@@ -215,7 +215,7 @@ def test_a_grab_that_keeps_failing_gives_up_for_hours_then_fails_for_good(world)
     for _ in range(downloads.MAX_ATTEMPTS):
         settle(world, minutes=16)
     assert dl.state == DownloadState.FAILED and world.episode(show, 1).status == EpisodeStatus.FAILED
-    assert dl.end_reason == EndReason.ADD_GAVE_UP
+    assert dl.end_reason == EndReason.ADD_GAVE_UP and downloads.is_final_failure(dl)
     # qBittorrent never had the torrent, so it must not read as removed there and be queued again.
     settle(world, minutes=1)
     settle(world, minutes=1)
