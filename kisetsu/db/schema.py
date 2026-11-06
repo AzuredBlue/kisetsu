@@ -76,6 +76,7 @@ class ScheduleState(str, Enum):
     UNKNOWN = "unknown"
     SCHEDULED = "scheduled"
     AIRED = "aired"
+    # Never set today; kept so a stored row with it still loads.
     POSTPONED = "postponed"
 
 
