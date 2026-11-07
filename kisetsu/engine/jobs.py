@@ -30,6 +30,8 @@ SETTLE_ACTIVE = 60.0
 SETTLE_IDLE = 300.0
 GRAB_FALLBACK = 15 * 60.0
 BACKFILL_INTERVAL = 6 * 3600.0
+# Shows whose past releases are searched for at the same time; each site still gets one request at a time.
+SEARCH_CONCURRENCY = 4
 HOUSEKEEPING_INTERVAL = 24 * 3600.0
 # Well before a whole interval, or a machine restarted every day would never get to it.
 HOUSEKEEPING_FIRST = 3600.0
@@ -200,7 +202,8 @@ class Jobs:
     async def _search_held(self, targets: List[int]) -> None:
         """Search for the held shows' releases, release each one searched, then lock what the saved files now prove."""
         for show_id in targets:
-            await self._backfill_show(show_id, force=True)
+            # Every feed is searched: the saved files are matched to the one feed whose items hold them.
+            await self._backfill_show(show_id, force=True, exhaustive=True)
             if await self.engine.run(lambda ctx, i=show_id: backfill.search_completed(ctx, i)):
                 await self.engine.run(cycle.release_hold, [show_id])
         if targets:
@@ -427,24 +430,40 @@ class Jobs:
             self.poke("grab")
         return added
 
-    async def _backfill_show(self, show_id: int, force: bool = False, unmanaged: bool = False) -> int:
+    async def _backfill_show(self, show_id: int, force: bool = False, unmanaged: bool = False, exhaustive: bool = False) -> int:
         due = await self.engine.run(lambda ctx: backfill.due(ctx, show_id=show_id, force=force, unmanaged=unmanaged))
-        return await self._search(due)
+        return await self._search(due, exhaustive=exhaustive)
 
-    async def _search(self, due: "List[backfill.Due]") -> int:
-        added = 0
-        for item in due:
-            # The backfill job and Search older never search one show twice at once.
-            async with self._search_locks.setdefault(item.show_id, asyncio.Lock()):
-                matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i), ctx.settings.min_resolution))
-                found = await backfill.search(self.http, item, matcher, self.engine.clock(), searcher=self.searcher)
-                added += await self.engine.run(backfill.apply, item, found)
-            if found.stopped:
-                logger.warning(f"Past-release search stopped: {found.stopped}")
-                break
-            # Whatever it found, a finished search lets the grab mark what is still not there as missed.
-            self.poke("grab")
-        return added
+    async def _search(self, due: "List[backfill.Due]", exhaustive: bool = False) -> int:
+        """Search for the shows' past releases, a few shows at a time; each site's own pacing keeps its requests spaced.
+
+        Unless ``exhaustive``, a show's lower feeds are skipped once its missing episodes are found. A search a site
+        cut short (rate limiting) stops the shows not yet started.
+        """
+        gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
+        stopped: List[str] = []
+
+        async def one(item: "backfill.Due") -> int:
+            async with gate:
+                if stopped:
+                    return 0
+                # The backfill job and Search older never search one show twice at once.
+                async with self._search_locks.setdefault(item.show_id, asyncio.Lock()):
+                    matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i), ctx.settings.min_resolution))
+                    found = await backfill.search(
+                        self.http, item, matcher, self.engine.clock(), searcher=self.searcher, stop_when_found=not exhaustive,
+                    )
+                    added = await self.engine.run(backfill.apply, item, found)
+                if found.stopped:
+                    if not stopped:
+                        logger.warning(f"Past-release search stopped: {found.stopped}")
+                    stopped.append(found.stopped)
+                    return added
+                # Whatever it found, a finished search lets the grab mark what is still not there as missed.
+                self.poke("grab")
+                return added
+
+        return sum(await asyncio.gather(*(one(item) for item in due)))
 
     async def search_new_show(self, entry: Dict[str, Any]) -> Dict[str, Any]:
         """Search the feeds' sites for a show the user is adding, then preview what each feed carries for it.

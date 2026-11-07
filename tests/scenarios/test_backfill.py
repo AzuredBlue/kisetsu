@@ -220,6 +220,28 @@ def test_a_sequels_release_found_by_the_first_seasons_search_reaches_the_sequel(
     assert grab.covered_numbers(world.ctx(), sequel) == {1}
 
 
+def test_a_search_that_stops_when_found_skips_the_lower_feeds_once_everything_is_found(world):
+    top = "https://subsplease.org/rss/?t&r=1080"
+    world.feed("SubsPlease", top, 1)
+    world.feed("Nyaa", NYAA, 2)
+    show = airing(world)
+    world.feeds.searchable[top] = [world.feeds.post(top, title(n), START - timedelta(days=7 * (4 - n))) for n in (1, 2, 3, 4)]
+    world.feeds.searchable[NYAA] = []
+    [item] = backfill.due(world.ctx())
+
+    async def fake(client, url, term, now=None):
+        return await world.feeds.search(url, term)
+
+    def searched_with(**kwargs):
+        world.feeds.searched.clear()
+        asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=fake, **kwargs))
+        return {url for url, _ in world.feeds.searched}
+
+    assert searched_with(stop_when_found=True) == {top}
+    # By default (finding the feed of saved files, or showing what each feed carries) every feed is asked.
+    assert searched_with() == {top, NYAA}
+
+
 def test_an_episode_is_missed_only_once_the_search_for_it_found_nothing(world):
     feed = world.feed("Nyaa", NYAA, 1)
     feed.last_ok_at = START

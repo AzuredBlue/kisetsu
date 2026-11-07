@@ -157,16 +157,23 @@ async def _search_site(
     show_matcher,
     now: datetime,
     searcher,
+    across_feeds: bool = False,
 ) -> Searched:
-    """Search one site's feeds for the show, one request after another.
+    """Search the feeds for the show, one request after another.
 
     A feed's remaining terms are skipped once its results already cover every missing
     episode; until then the next term may still reach releases the earlier ones did not.
+    With ``across_feeds`` what one feed found counts for the next, and once every missing
+    episode is covered the remaining feeds are not asked at all.
     """
     found = Searched()
     cache: Dict[str, dict] = {}
+    covered: set = set()
     for feed in site_feeds:
-        covered: set = set()
+        if not across_feeds:
+            covered = set()
+        elif covered.issuperset(item.missing):
+            break
         for term in item.terms:
             try:
                 articles = await searcher(client, feed.url, term, now=now)
@@ -193,8 +200,17 @@ async def search(
     show_matcher,
     now: datetime,
     searcher=sites.search_feed,
+    stop_when_found: bool = False,
 ) -> Searched:
-    """Run the searches for one show: sites in parallel, each site's requests in turn."""
+    """Run the searches for one show: sites in parallel, each site's requests in turn.
+
+    With ``stop_when_found`` the feeds are asked one after another by priority instead, and
+    the lower ones are skipped once what was found covers every missing episode. That saves
+    most searches of a first run; it is not for finding which feed holds a show's saved files,
+    nor for showing what every feed carries.
+    """
+    if stop_when_found:
+        return await _search_site(client, item, list(item.feeds), show_matcher, now, searcher, across_feeds=True)
     by_site: Dict[Optional[str], List[Feed]] = {}
     for feed in item.feeds:
         by_site.setdefault(sites.site_of(feed.url), []).append(feed)
