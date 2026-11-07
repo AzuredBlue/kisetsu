@@ -21,8 +21,11 @@ export function Checklist() {
   };
   const steps = [
     {
-      done: !info.qbit_error, title: 'qBittorrent connected',
-      todo: html`Kisetsu can't reach qBittorrent. <a class="link" href="#settings">Check the connection in Settings</a>.`,
+      // Connected only once startup has read qBittorrent; until then no error does not mean it answered.
+      done: info.ready && !info.qbit_error, title: 'qBittorrent connected',
+      todo: info.qbit_error
+        ? html`Kisetsu can't reach qBittorrent. <a class="link" href="#settings">Check the connection in Settings</a>.`
+        : html`Connecting to qBittorrent…`,
     },
     {
       done: info.feeds > 0, title: `${info.feeds} RSS feed${info.feeds === 1 ? '' : 's'}`,
