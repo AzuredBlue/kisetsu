@@ -260,7 +260,7 @@ class Qbit:
         if write and self.read_only:
             raise QbitReadOnly("This instance is read-only; it never changes qBittorrent.")
         client = self._connect()
-        kind = "qBittorrent change" if write else "qBittorrent read"
+        kind = f"qBittorrent {'change' if write else 'read'} ({traffic.caller_outside_clients()})"
         try:
             result = fn(client)
             traffic.record(kind, traffic.host_of(self.host))

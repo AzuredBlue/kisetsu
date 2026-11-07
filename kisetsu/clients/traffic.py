@@ -3,6 +3,7 @@
 Every attempt counts, retries included, since each one reaches the site. Kept in memory only.
 """
 
+import sys
 import threading
 from collections import Counter
 from datetime import datetime, timezone
@@ -23,6 +24,17 @@ def host_of(url: str) -> str:
 def record(kind: str, host: str, outcome: str = OK) -> None:
     with _lock:
         _counts[(kind, host, outcome)] += 1
+
+
+def caller_outside_clients() -> str:
+    """``module.function`` of the nearest caller outside ``kisetsu.clients``: which part of the app made a request."""
+    frame = sys._getframe(1)
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "")
+        if not module.startswith("kisetsu.clients"):
+            return f"{module.rpartition('.')[2]}.{frame.f_code.co_name}"
+        frame = frame.f_back
+    return "?"
 
 
 def outcome_of(status_code: int) -> str:
