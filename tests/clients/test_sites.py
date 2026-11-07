@@ -180,3 +180,21 @@ def test_an_unsearchable_feed_returns_none_without_a_request():
         raise AssertionError("no request expected")
 
     assert _search(handler, "https://example.com/rss") is None
+
+
+def test_what_was_learned_of_a_host_is_kept_across_a_restart_until_it_is_due_again():
+    now = [1_000_000.0]
+    clock = lambda: now[0]  # noqa: E731
+    before = sites.Grouping(clock=clock)
+    before.saw("nyaa.si", 75)
+    before.record("nyaa.si", True)
+    after = sites.Grouping(clock=clock)
+    after.load(before.dump())
+    assert after.works("nyaa.si") is True and after.complete("nyaa.si", 74) and not after.claim("nyaa.si")
+    now[0] += sites.GROUPING_RECHECK_SECONDS + 1
+    later = sites.Grouping(clock=clock)
+    later.load(before.dump())
+    # Due again: checked anew, and its page size learned anew with it.
+    assert later.works("nyaa.si") is None and not later.complete("nyaa.si", 74)
+    for broken in ("", "not json", "[]", '{"checked": 1}'):
+        sites.Grouping(clock=clock).load(broken)

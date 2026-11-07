@@ -18,7 +18,7 @@ from kisetsu.db.schema import Show
 from kisetsu.engine.runner import Engine
 from kisetsu.engine.scheduler import Scheduler
 from kisetsu.services import addshow, adoption, backfill, cycle, feedsync, tags
-from kisetsu.services.context import setup_completed
+from kisetsu.services.context import get_state, set_state, setup_completed
 from kisetsu.services.shows import SCHEDULE_FULL_LOOKBACK, SCHEDULE_REFRESH_LOOKBACK
 
 logger = logging.getLogger("kisetsu.engine.jobs")
@@ -40,6 +40,8 @@ HOUSEKEEPING_FIRST = 3600.0
 HUNT_IDLE_MAX = 3600.0
 # How long Add show keeps a search's results for the Add button.
 FOUND_KEEP_SECONDS = 3600.0
+# Where what the searches learned of each site (``sites.Grouping``) is kept across restarts.
+GROUPING_KEY = "search_grouping"
 # With no AniList user set there is nothing to sync until the settings change.
 NO_USER_WAIT = 3600.0
 # Until the first-run wizard is done the stored qBittorrent login is still the default one.
@@ -71,6 +73,8 @@ class Jobs:
         self.searcher = searcher
         # Whether nyaa takes a show's names in one search; checked by the searches themselves.
         self.grouping = sites.Grouping()
+        # What of it is stored; None until it is read back.
+        self._grouping_kept: Optional[str] = None
         self.fetch_hues = fetch_hues
         self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
@@ -454,6 +458,7 @@ class Jobs:
         """
         gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
         stopped: List[str] = []
+        await self._load_grouping()
 
         async def one(item: "backfill.Due") -> int:
             async with gate:
@@ -476,7 +481,21 @@ class Jobs:
                 self.poke("grab")
                 return added
 
-        return sum(await asyncio.gather(*(one(item) for item in due)))
+        added = sum(await asyncio.gather(*(one(item) for item in due)))
+        await self._keep_grouping()
+        return added
+
+    async def _load_grouping(self) -> None:
+        """Take back what the searches learned of each site before a restart, so it is not checked again."""
+        if self._grouping_kept is None:
+            self._grouping_kept = await self.engine.run(lambda ctx: get_state(ctx, GROUPING_KEY))
+            self.grouping.load(self._grouping_kept)
+
+    async def _keep_grouping(self) -> None:
+        kept = self.grouping.dump()
+        if kept != self._grouping_kept:
+            await self.engine.run(lambda ctx: set_state(ctx, GROUPING_KEY, kept))
+            self._grouping_kept = kept
 
     async def search_new_show(self, entry: Dict[str, Any]) -> Dict[str, Any]:
         """Search the feeds' sites for a show the user is adding, then preview what each feed carries for it.
@@ -487,6 +506,7 @@ class Jobs:
         stopped = None
         articles: Dict[int, Any] = {}
         if plan.terms and plan.feeds:
+            await self._load_grouping()
             total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
             due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
             found = await backfill.search(
@@ -495,6 +515,7 @@ class Jobs:
             )
             stopped = found.stopped
             articles = found.articles
+            await self._keep_grouping()
         now = time.monotonic()
         self._found = {k: v for k, v in self._found.items() if now - v[0] < FOUND_KEEP_SECONDS}
         self._found[entry["anilist_id"]] = (now, articles)

@@ -82,9 +82,10 @@ class Grouping:
     releases the names find alone, each name is asked for alone; a check that finds a
     difference turns grouping off. Either result is checked again after a while. One search
     at a time checks a host, as a check asks for every name and costs more than a plain search.
+    What was learned is kept across restarts (``dump``, ``load``), so the clock is the wall clock.
     """
 
-    def __init__(self, clock: Callable[[], float] = time.monotonic):
+    def __init__(self, clock: Callable[[], float] = time.time):
         self._clock = clock
         self._checked: Dict[str, Tuple[float, bool]] = {}
         self._checking: Set[str] = set()
@@ -103,9 +104,10 @@ class Grouping:
     def works(self, host: str) -> Optional[bool]:
         """True or False once checked, None while it is still to be checked."""
         checked = self._checked.get(host)
-        if checked is None or self._clock() - checked[0] > GROUPING_RECHECK_SECONDS:
-            return None
-        return checked[1]
+        return checked[1] if checked is not None and self._current(checked[0]) else None
+
+    def _current(self, checked_at: float) -> bool:
+        return 0 <= self._clock() - checked_at <= GROUPING_RECHECK_SECONDS
 
     def record(self, host: str, works: bool) -> None:
         self._checked[host] = (self._clock(), works)
@@ -121,6 +123,20 @@ class Grouping:
     def saw(self, host: str, count: int) -> None:
         """Note how many results one of the host's pages held."""
         self._largest[host] = max(count, self._largest.get(host, 0))
+
+    def dump(self) -> str:
+        return json.dumps({"checked": self._checked, "largest": self._largest}, sort_keys=True)
+
+    def load(self, text: str) -> None:
+        """Take back what ``dump`` kept. A host whose check is due again starts over, page size included."""
+        try:
+            data = json.loads(text or "{}")
+            checked = {str(host): (float(at), bool(works)) for host, (at, works) in data["checked"].items()}
+            largest = {str(host): int(count) for host, count in data["largest"].items()}
+        except (ValueError, TypeError, KeyError, AttributeError):
+            return
+        self._checked = {host: value for host, value in checked.items() if self._current(value[0])}
+        self._largest = {host: count for host, count in largest.items() if host in self._checked}
 
 
 def site_of(feed_url: str) -> Optional[str]:

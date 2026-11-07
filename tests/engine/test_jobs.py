@@ -8,7 +8,7 @@ from kisetsu.clients.anilist import AniListDeferred, AniListError
 from kisetsu.clients.qbittorrent import QbitUnavailable
 from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS
 from kisetsu.db.schema import AppState, Download, DownloadState, Event, EventKind, Feed, FeedItem, FeedState, Show
-from kisetsu.engine.jobs import SETUP_WAIT
+from kisetsu.engine.jobs import SETUP_WAIT, Jobs
 from tests.fakes import START, anilist_show
 
 TOP = "https://top/rss"
@@ -615,3 +615,16 @@ def test_two_reads_of_the_feeds_never_run_at_once(env):
 
     run(env, go)
     assert state["most"] == 1
+
+
+def test_what_the_searches_learned_of_a_site_outlives_a_restart(env):
+    env.jobs.grouping.saw("nyaa.si", 75)
+    env.jobs.grouping.record("nyaa.si", True)
+    restarted = Jobs(env.engine, env.scheduler, anilist=env.anilist, fetcher=env.feeds.fetch, searcher=env.jobs.searcher)
+
+    async def go():
+        await env.jobs.backfill()
+        await restarted.backfill()
+
+    run(env, go)
+    assert restarted.grouping.works("nyaa.si") is True and restarted.grouping.complete("nyaa.si", 74)
