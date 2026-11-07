@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict
 
 from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.db.schema import Episode, FeedState
-from kisetsu.services import feeds as feeds_service, library, manual, shows
+from kisetsu.services import backfill, feeds as feeds_service, library, manual, shows
 from kisetsu.web import views
 from kisetsu.web.deps import NotFound, read, runtime, show_or_404, write
 
@@ -49,8 +49,18 @@ def _feed_matches(ctx, show_id: int):
 
 
 def _edit(ctx, show_id: int, body: EditShow):
-    result = shows.edit_show(ctx, show_or_404(ctx, show_id), **body.model_dump())
-    return {"message": result.message, "canceled": result.canceled}
+    show = show_or_404(ctx, show_id)
+    before = show.feed_id
+    result = shows.edit_show(ctx, show, **body.model_dump())
+    return {"message": result.message, "canceled": result.canceled}, show.feed_id is not None and show.feed_id != before
+
+
+def _missing(ctx, show_id: int) -> Optional[int]:
+    """How many aired episodes a search would look for; None when there is no feed or search term to tell."""
+    show_or_404(ctx, show_id)
+    if backfill.search_unavailable(ctx, show_id):
+        return None
+    return len(backfill.missing_episodes(ctx, show_id))
 
 
 def _pause(ctx, show_id: int):
@@ -150,8 +160,11 @@ async def feed_matches(show_id: int, request: Request):
 
 @router.post("/{show_id}/edit")
 async def edit(show_id: int, body: EditShow, request: Request):
-    result = await write(request, _edit, show_id, body)
+    result, feed_changed = await write(request, _edit, show_id, body)
     runtime(request).jobs.poke("grab")
+    if feed_changed:
+        # The new feed's RSS may have lost the show's older episodes: search its site for the ones still missing.
+        runtime(request).jobs.request_backfill([show_id])
     return result
 
 
@@ -177,8 +190,9 @@ async def rediscover(show_id: int, request: Request, release_lock: bool = False)
 
 @router.post("/{show_id}/search-releases")
 async def search_releases(show_id: int, request: Request):
-    await read(request, _show_view, show_id)
-    return {"found": await runtime(request).jobs.search_older(show_id)}
+    missing = await read(request, _missing, show_id)
+    # "missing" 0 means every aired episode is downloaded or in the feeds, so there was nothing to search for.
+    return {"found": await runtime(request).jobs.search_older(show_id) if missing != 0 else 0, "missing": missing}
 
 
 @router.post("/{show_id}/download")

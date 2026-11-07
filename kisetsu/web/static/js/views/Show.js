@@ -171,8 +171,9 @@ export function Show({ route }) {
     if (searching) return;
     setSearching(true);
     try {
-      const { found } = await apiFetch(`/api/shows/${id}/search-releases`, { method: 'POST' });
-      toast(found ? `Found ${found} past release${found === 1 ? '' : 's'}.${data.paused ? ' Resume the show to download them.' : ' Checking for episodes to download.'}` : 'Nothing older was found in the feeds.', found ? 'success' : 'info');
+      const { found, missing } = await apiFetch(`/api/shows/${id}/search-releases`, { method: 'POST' });
+      toast(found ? `Found ${found} past release${found === 1 ? '' : 's'}.${data.paused ? ' Resume the show to download them.' : ' Checking for episodes to download.'}`
+        : missing === 0 ? 'No episode is missing, so there was nothing to search for.' : 'Nothing older was found in the feeds.', found ? 'success' : 'info');
       if (found) { setListTab('releases'); page.reload(); matches.reload(); }
     } catch (err) { /* shown by apiFetch */ }
     setSearching(false);

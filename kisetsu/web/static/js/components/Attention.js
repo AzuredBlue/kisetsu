@@ -77,7 +77,7 @@ export function NeedsAttention() {
     setPending(key);
     try {
       const body = await request();
-      toast((body && body.message) || (body && body.found !== undefined ? (body.found ? `Found ${body.found} release${body.found === 1 ? '' : 's'}.` : 'Nothing older was found.') : 'Done.'), 'success');
+      toast((body && body.message) || (body && body.found !== undefined ? (body.found ? `Found ${body.found} release${body.found === 1 ? '' : 's'}.` : body.missing === 0 ? 'No episode is missing, so there was nothing to search for.' : 'Nothing older was found.') : 'Done.'), 'success');
     } catch (err) { toast(err.message, err.status === 400 || err.status === 409 ? 'info' : 'error'); }
     setPending(null);
   };

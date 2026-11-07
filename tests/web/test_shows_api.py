@@ -419,7 +419,7 @@ async def test_searching_when_nothing_is_missing_asks_no_site(web):
     show = web.show(episodes=0)
     web.feed("Nyaa", "https://nyaa.si/?page=rss&c=1_2&f=0", 1)
     response = await web.client.post(f"/api/shows/{show}/search-releases")
-    assert response.json() == {"found": 0} and web.feeds.searched == []
+    assert response.json() == {"found": 0, "missing": 0} and web.feeds.searched == []
 
 
 async def test_a_finished_show_reopens_when_the_search_finds_its_missed_episode(web):
@@ -428,7 +428,7 @@ async def test_a_finished_show_reopens_when_the_search_finds_its_missed_episode(
     web.feed("Nyaa", url, 1)
     web.feeds.searchable[url] = [article("[Grp] Sousou no Frieren - 02 (1080p).mkv", START - timedelta(days=7))]
     response = await web.client.post(f"/api/shows/{show}/search-releases")
-    assert response.json() == {"found": 1}
+    assert response.json() == {"found": 1, "missing": 3}
     assert web.load(Show, show).completed is False and "grab" in web.pokes
 
 
@@ -564,3 +564,10 @@ async def test_the_folder_is_kept_when_qbittorrent_never_confirms_the_torrents_a
     body = (await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "true"})).json()
     assert not body["folder"]["removed"] and "still removing" in body["folder"]["reason"]
     assert folder.exists()
+
+
+async def test_picking_another_feed_searches_its_site_for_missing_episodes(web):
+    show = web.show()
+    feed = web.feed("Nyaa", "https://nyaa.si/?page=rss&c=1_2&f=0", 1)
+    response = await web.client.post(f"/api/shows/{show}/edit", json={"feed_id": feed})
+    assert response.status_code == 200 and "backfill" in web.pokes and web.runtime.jobs.backfill_requests == {show}
