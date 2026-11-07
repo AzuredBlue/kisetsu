@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import logging
 import mimetypes
 import os
@@ -46,6 +47,9 @@ EXECUTOR_THREADS = 2
 # FastAPI's own threadpool, for the few handlers that are not async.
 THREADPOOL_TOKENS = 4
 HASH_MARK = re.compile(r"@@v:([\w./-]+)@@")
+# Where index.html takes the import map that gives every module its hash, so only what changed is fetched again.
+IMPORT_MAP_MARK = "@@importmap@@"
+MODULE_DIRS = ("js", "vendor")
 # How often, at most, the sandbox's UI hears that the request counts changed.
 REQUESTS_PUBLISH_SECONDS = 2.0
 # The jobs whose progress the header shows; the others run too often to be worth a message.
@@ -65,17 +69,30 @@ class HashedStatic(StaticFiles):
         return response
 
 
+def _digest(path: Path) -> str:
+    try:
+        return hashlib.sha1(path.read_bytes()).hexdigest()[:10]
+    except OSError:
+        return "0"
+
+
+def import_map(static_dir: Path) -> str:
+    """Every module under ``MODULE_DIRS`` mapped to its URL with its hash, so the modules a module imports are versioned too."""
+    imports = {}
+    for folder in MODULE_DIRS:
+        for path in sorted((static_dir / folder).rglob("*.js")):
+            url = f"/static/{path.relative_to(static_dir).as_posix()}"
+            imports[url] = f"{url}?v={_digest(path)}"
+    return json.dumps({"imports": imports})
+
+
 def stamped_index(static_dir: Path) -> HTMLResponse:
-    """index.html with every ``@@v:path@@`` replaced by a hash of that file, so a deploy busts the browser cache."""
+    """index.html with every ``@@v:path@@`` replaced by a hash of that file and ``@@importmap@@`` by the import map, so a deploy busts the browser cache."""
     html = (static_dir / "index.html").read_text(encoding="utf-8")
-
-    def digest(match: re.Match) -> str:
-        try:
-            return hashlib.sha1((static_dir / match.group(1)).read_bytes()).hexdigest()[:10]
-        except OSError:
-            return "0"
-
-    return HTMLResponse(HASH_MARK.sub(digest, html), headers={"Cache-Control": "no-store, must-revalidate"})
+    html = HASH_MARK.sub(lambda match: _digest(static_dir / match.group(1)), html)
+    if IMPORT_MAP_MARK in html:
+        html = html.replace(IMPORT_MAP_MARK, import_map(static_dir))
+    return HTMLResponse(html, headers={"Cache-Control": "no-store, must-revalidate"})
 
 
 def build_runtime(*, sandbox: bool) -> Runtime:

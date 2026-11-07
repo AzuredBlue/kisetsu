@@ -223,6 +223,17 @@ async def test_the_page_is_never_cached_and_its_assets_carry_their_hash(web):
     assert (await web.client.get("/static/app.js")).headers["cache-control"] == "no-cache"
 
 
+async def test_the_modules_the_page_imports_carry_their_hash_through_the_import_map(web):
+    (web.static / "js" / "views").mkdir(parents=True)
+    (web.static / "js" / "views" / "a.js").write_text("export const a = 1;")
+    (web.static / "index.html").write_text('<script type="importmap">@@importmap@@</script>')
+    first = json.loads((await web.client.get("/")).text.split(">", 1)[1].split("</script>")[0])["imports"]
+    assert first["/static/js/views/a.js"].startswith("/static/js/views/a.js?v=")
+    (web.static / "js" / "views" / "a.js").write_text("export const a = 2;")
+    second = json.loads((await web.client.get("/")).text.split(">", 1)[1].split("</script>")[0])["imports"]
+    assert second["/static/js/views/a.js"] != first["/static/js/views/a.js"]
+
+
 async def test_telling_the_server_to_stop_ends_open_streams(web):
     from kisetsu.web import app as web_app
 
