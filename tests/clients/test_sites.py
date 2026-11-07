@@ -59,6 +59,25 @@ def test_nyaa_search_url_extends_the_feed_query():
     assert bare["u"] == ["varyg1001"]
 
 
+def test_several_names_are_one_nyaa_search_that_keeps_the_feeds_own_filter():
+    term = sites.any_of(["Kusuriya no Hitorigoto", "The Apothecary Diaries"])
+    assert term == "((Kusuriya no Hitorigoto)|(The Apothecary Diaries))"
+    # Grouped, the alternatives stay inside the feed's query: "1080p -HEVC" still applies to each.
+    query = parse_qs(urlparse(sites.nyaa_search_url(NYAA_FEED, term)).query)
+    assert query["q"] == ["1080p -HEVC ((Kusuriya no Hitorigoto)|(The Apothecary Diaries))"]
+    assert sites.any_of(["Frieren"]) == "Frieren"
+
+
+def test_whether_a_site_takes_grouped_names_is_checked_again_after_a_day():
+    now = [0.0]
+    grouping = sites.Grouping(clock=lambda: now[0])
+    assert grouping.works("nyaa") is None
+    grouping.record("nyaa", False)
+    assert grouping.works("nyaa") is False and grouping.works("subsplease") is None
+    now[0] += sites.GROUPING_RECHECK_SECONDS + 1
+    assert grouping.works("nyaa") is None
+
+
 def test_only_known_sites_are_searched():
     assert sites.site_of(NYAA_FEED) == "nyaa"
     assert sites.site_of(SUBS_FEED) == "subsplease"

@@ -429,4 +429,6 @@ class FakeFeeds:
             return None
         if feed_url in self.errors:
             raise self.errors[feed_url]
-        return [a for a in self.searchable[feed_url] if term.casefold() in a.title.casefold()]
+        # A grouped search ("((a)|(b))", as nyaa takes it) finds what any of its names would.
+        names = term[2:-2].split(")|(") if term.startswith("((") and term.endswith("))") else [term]
+        return [a for a in self.searchable[feed_url] if any(n.casefold() in a.title.casefold() for n in names)]

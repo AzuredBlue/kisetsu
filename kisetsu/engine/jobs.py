@@ -67,6 +67,8 @@ class Jobs:
         self.http = http
         self._fetcher = fetcher
         self.searcher = searcher
+        # Whether nyaa takes a show's names in one search; checked by the searches themselves.
+        self.grouping = sites.Grouping()
         self.fetch_hues = fetch_hues
         self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
@@ -452,6 +454,7 @@ class Jobs:
                     matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i), ctx.settings.min_resolution))
                     found = await backfill.search(
                         self.http, item, matcher, self.engine.clock(), searcher=self.searcher, stop_when_found=not exhaustive,
+                        grouping=self.grouping,
                     )
                     added = await self.engine.run(backfill.apply, item, found)
                 if found.stopped:
@@ -476,7 +479,10 @@ class Jobs:
         if plan.terms and plan.feeds:
             total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
             due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
-            found = await backfill.search(self.http, due, addshow.matcher_for(entry, plan.min_resolution), self.engine.clock(), searcher=self.searcher)
+            found = await backfill.search(
+                self.http, due, addshow.matcher_for(entry, plan.min_resolution), self.engine.clock(), searcher=self.searcher,
+                grouping=self.grouping,
+            )
             stopped = found.stopped
             articles = found.articles
         now = time.monotonic()

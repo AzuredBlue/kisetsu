@@ -187,6 +187,7 @@ async def _search_site(
     now: datetime,
     searcher,
     across_feeds: bool = False,
+    grouping: Optional[sites.Grouping] = None,
 ) -> Searched:
     """Search the feeds for the show, one request after another.
 
@@ -194,10 +195,26 @@ async def _search_site(
     episode; until then the next term may still reach releases the earlier ones did not.
     With ``across_feeds`` what one feed found counts for the next, and once every missing
     episode is covered the remaining feeds are not asked at all.
+
+    With ``grouping`` a nyaa feed is asked for all the show's names in one search, once a
+    check has shown the site answers that as it answers the names one by one. A page short of
+    full then holds every match, so the names are not asked for alone; a full page may have
+    left some out, so they still are.
     """
     found = Searched()
     cache: Dict[str, dict] = {}
     covered: Set[int] = set()
+
+    async def ask(feed: Feed, term: str) -> Optional[List[FeedArticle]]:
+        try:
+            return await searcher(client, feed.url, term, now=now)
+        except FeedFetchError as e:
+            if "rate limiting" in str(e):
+                found.stopped = str(e)
+            else:
+                logger.warning(f"Searching '{feed.name}' for '{term}' failed: {e}")
+            return None
+
     for feed in site_feeds:
         if not across_feeds:
             covered = set()
@@ -205,17 +222,22 @@ async def _search_site(
             break
         before = covered
         releases: List[Tuple[int, Optional[datetime]]] = []
-        for term in item.terms:
-            try:
-                articles = await searcher(client, feed.url, term, now=now)
-            except FeedFetchError as e:
-                if "rate limiting" in str(e):
-                    found.stopped = str(e)
-                    return found
-                logger.warning(f"Searching '{feed.name}' for '{term}' failed: {e}")
+        site = sites.site_of(feed.url)
+        groupable = grouping is not None and site == "nyaa" and len(item.terms) > 1
+        works = grouping.works(site) if groupable else None
+        grouped = sites.any_of(item.terms)
+        queries = [grouped, *item.terms] if groupable and works else list(item.terms)
+        # Until the site is checked, every name is asked for alone, so the grouped search can be compared with them.
+        checking = groupable and works is None
+        pages: Dict[str, List[FeedArticle]] = {}
+        for term in queries:
+            articles = await ask(feed, term)
+            if found.stopped:
+                return found
+            if articles is None:
+                checking = False
                 continue
-            if not articles:
-                continue
+            pages[term] = articles
             found.articles.setdefault(feed.id, []).extend(articles)
             for article in articles:
                 if not plausible_for_show(article.published_at, item.first_air, now):
@@ -225,9 +247,35 @@ async def _search_site(
                 if matched and raw is not None and raw > 0:
                     releases.append((int(raw), article.published_at))
             covered = before | item.numbers(releases, now)
-            if covered.issuperset(item.missing):
+            if groupable and works and term == grouped and len(articles) < sites.NYAA_PAGE_SIZE:
                 break
+            if not checking and covered.issuperset(item.missing):
+                break
+        if checking:
+            await _check_grouping(grouping, site, feed, grouped, pages, ask)
+            if found.stopped:
+                return found
     return found
+
+
+async def _check_grouping(grouping: sites.Grouping, site: str, feed: Feed, grouped: str, pages: Dict[str, List[FeedArticle]], ask) -> None:
+    """Ask the grouped search once, and keep grouping only if it found exactly what the names found alone.
+
+    Nothing is decided from empty or full pages: an empty one cannot tell a search that works
+    from one that ignores the names, and a full one may have left matches out.
+    """
+    alone = {article.guid for articles in pages.values() for article in articles}
+    if not alone or any(len(articles) >= sites.NYAA_PAGE_SIZE for articles in pages.values()):
+        return
+    together = await ask(feed, grouped)
+    if together is None:
+        return
+    works = len(together) < sites.NYAA_PAGE_SIZE and {article.guid for article in together} == alone
+    grouping.record(site, works)
+    if works:
+        logger.info(f"{feed.name}'s site finds a show's names in one search, so they are asked for together from now on.")
+    else:
+        logger.warning(f"{feed.name}'s site did not answer a search for several names as it answers each alone; each is asked for alone.")
 
 
 async def search(
@@ -237,6 +285,7 @@ async def search(
     now: datetime,
     searcher=sites.search_feed,
     stop_when_found: bool = False,
+    grouping: Optional[sites.Grouping] = None,
 ) -> Searched:
     """Run the searches for one show: sites in parallel, each site's requests in turn.
 
@@ -246,11 +295,13 @@ async def search(
     nor for showing what every feed carries.
     """
     if stop_when_found:
-        return await _search_site(client, item, list(item.feeds), show_matcher, now, searcher, across_feeds=True)
+        return await _search_site(client, item, list(item.feeds), show_matcher, now, searcher, across_feeds=True, grouping=grouping)
     by_site: Dict[Optional[str], List[Feed]] = {}
     for feed in item.feeds:
         by_site.setdefault(sites.site_of(feed.url), []).append(feed)
-    results = await asyncio.gather(*(_search_site(client, item, group, show_matcher, now, searcher) for group in by_site.values()))
+    results = await asyncio.gather(
+        *(_search_site(client, item, group, show_matcher, now, searcher, grouping=grouping) for group in by_site.values())
+    )
     merged = Searched()
     for result in results:
         for feed_id, articles in result.articles.items():

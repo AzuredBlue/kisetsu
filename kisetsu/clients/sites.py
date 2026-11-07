@@ -7,8 +7,9 @@ site's search finds them again.
 
 import json
 import re
+import time
 from datetime import datetime, timezone
-from typing import Any, Iterable, List, Optional
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 import httpx2
@@ -17,6 +18,10 @@ from kisetsu.clients.rss import FeedArticle, fetch_bytes, magnet_parts, normaliz
 
 # Search terms per show.
 MAX_TERMS = 3
+# nyaa's RSS lists at most this many results: a shorter page holds every match.
+NYAA_PAGE_SIZE = 75
+# How long a check of whether a site takes several names in one search holds.
+GROUPING_RECHECK_SECONDS = 24 * 3600
 
 _SEGMENT_SPLIT = re.compile(r"\s*[:：–—]\s*|\s+-\s+")
 _MARKERS = re.compile(
@@ -57,6 +62,40 @@ def search_terms(titles: Iterable[Optional[str]]) -> List[str]:
             seen.add(key)
             terms.append(term)
     return terms[:MAX_TERMS]
+
+
+def any_of(terms: List[str]) -> str:
+    """Several names as one nyaa search: "((a)|(b))".
+
+    Each name is grouped so its words must all match, and the whole is grouped so the feed's
+    own words ("1080p -HEVC") still apply to every name; without the outer brackets they do not.
+    """
+    if len(terms) == 1:
+        return terms[0]
+    return "(" + "|".join(f"({term})" for term in terms) + ")"
+
+
+class Grouping:
+    """Whether a site's search answers several names at once (``any_of``) as it answers them one by one.
+
+    It is never assumed. Until a check shows that the grouped search finds exactly the
+    releases the names find alone, each name is asked for alone; a check that finds a
+    difference turns grouping off. Either result is checked again after a while.
+    """
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic):
+        self._clock = clock
+        self._checked: Dict[str, Tuple[float, bool]] = {}
+
+    def works(self, site: str) -> Optional[bool]:
+        """True or False once checked, None while it is still to be checked."""
+        checked = self._checked.get(site)
+        if checked is None or self._clock() - checked[0] > GROUPING_RECHECK_SECONDS:
+            return None
+        return checked[1]
+
+    def record(self, site: str, works: bool) -> None:
+        self._checked[site] = (self._clock(), works)
 
 
 def site_of(feed_url: str) -> Optional[str]:

@@ -242,6 +242,68 @@ def test_a_search_that_stops_when_found_skips_the_lower_feeds_once_everything_is
     assert searched_with() == {top, NYAA}
 
 
+def names_show(world):
+    world.feed("Nyaa", NYAA, 1)
+    show = world.show(title="Sousou no Frieren", aliases=["Frieren Beyond Journeys End", "Frieren the Slayer"], episodes=4,
+                      first_air=START - timedelta(days=21))
+    [item] = backfill.due(world.ctx())
+    assert len(item.terms) == 3
+    return show, item
+
+
+def queries(world, item, show, grouping, grouped_answer=None):
+    """The searches sent; ``grouped_answer`` stands in for a site that answers the grouped search its own way."""
+    async def fake(client, url, term, now=None):
+        if grouped_answer is not None and term.startswith("(("):
+            world.feeds.searched.append((url, term))
+            return grouped_answer
+        return await world.feeds.search(url, term)
+
+    world.feeds.searched.clear()
+    asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=fake, grouping=grouping))
+    return [term for _, term in world.feeds.searched]
+
+
+def test_a_nyaa_feed_is_asked_for_all_of_a_shows_names_at_once_once_that_is_shown_to_work(world):
+    from kisetsu.clients import sites
+    show, item = names_show(world)
+    grouped = sites.any_of(item.terms)
+    grouping = sites.Grouping()
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
+    # Not yet known: every name is asked for alone, then the grouped search, which found the same.
+    assert queries(world, item, show, grouping) == [*item.terms, grouped]
+    assert grouping.works("nyaa") is True
+    # Shown to work: one search, and a page short of full holds every match.
+    assert queries(world, item, show, grouping) == [grouped]
+    # A full page may have left some out: then each name is asked for, as before.
+    world.feeds.searchable[NYAA] = [
+        world.feeds.post(NYAA, f"[Grp{n}] Sousou no Frieren - 01 (1080p).mkv", START - timedelta(days=21)) for n in range(sites.NYAA_PAGE_SIZE)
+    ]
+    assert queries(world, item, show, grouping) == [grouped, *item.terms]
+
+
+def test_a_site_that_answers_the_grouped_search_differently_is_asked_for_each_name_alone(world):
+    from kisetsu.clients import sites
+    show, item = names_show(world)
+    grouped = sites.any_of(item.terms)
+    grouping = sites.Grouping()
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
+    # The site takes the brackets literally and finds nothing.
+    assert queries(world, item, show, grouping, grouped_answer=[]) == [*item.terms, grouped]
+    assert grouping.works("nyaa") is False
+    assert queries(world, item, show, grouping) == item.terms
+
+
+def test_nothing_found_by_any_name_decides_nothing_about_grouping(world):
+    from kisetsu.clients import sites
+    show, item = names_show(world)
+    grouping = sites.Grouping()
+    world.feeds.searchable[NYAA] = []
+    # An empty grouped answer could mean it works or that it ignores the names, so it is not asked.
+    assert queries(world, item, show, grouping) == item.terms
+    assert grouping.works("nyaa") is None
+
+
 def test_releases_a_feed_numbers_from_an_earlier_season_count_as_found(world):
     top = "https://subsplease.org/rss/?t&r=1080"
     world.feed("SubsPlease", top, 1)
