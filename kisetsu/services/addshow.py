@@ -264,7 +264,14 @@ def _feed_from_files(ctx: Context, show: Show, files: List[str]) -> Optional[Fee
     return carriers[0] if len(carriers) == 1 else None
 
 
-def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str]] = None) -> Dict[str, Any]:
+def item_key(item: FeedItem) -> str:
+    """A release's name for the add flow: its feed and guid. A searched release has no row until the show is added."""
+    return f"{item.feed_id}:{item.guid}"
+
+
+def preview(
+    ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str]] = None, found: Optional[Dict[int, List[FeedArticle]]] = None,
+) -> Dict[str, Any]:
     """What each feed carries for the entry, episode by episode and in batches, and the feed its files on disk came from.
 
     Meant for ``Engine.dry_run``: the show it builds to number the releases exactly as the
@@ -272,6 +279,9 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
     """
     if ctx.session.exec(select(Show.id).where(Show.anilist_id == entry["anilist_id"])).first() is not None:
         raise ValueError("Kisetsu already follows this show.")
+    if found:
+        # Stored only for this dry run: the releases are kept for real when the user adds the show.
+        store_found(ctx, found)
     folder = existing_folder(ctx, entry)
     show = _draft(ctx, entry, folder)
     on_disk_feed: Optional[Feed] = None
@@ -294,7 +304,7 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
             "feed_name": feed.name,
             "batches": [
                 {
-                    "item_id": b.item.id,
+                    "item_key": item_key(b.item),
                     "title": b.item.title,
                     "numbers": b.numbers,
                     "ranged": batch_range(b.item.title) is not None,
@@ -306,7 +316,7 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
             "episodes": [
                 {
                     "number": number,
-                    "item_id": r.item.id,
+                    "item_key": item_key(r.item),
                     "title": r.item.title,
                     "version": r.version,
                     "published_at": r.item.published_at.isoformat() if r.item.published_at else None,
@@ -315,8 +325,14 @@ def preview(ctx: Context, entry: Dict[str, Any], unsearchable: Optional[List[str
                 for number, r in sorted(releases.items())
             ],
         })
+    nothing_offered = not groups
+    if nothing_offered:
+        # No feed offers a release (an upcoming show, or one the feeds lost): any feed may carry it later,
+        # or the first one to post wins.
+        groups = [{"feed_id": f.id, "feed_name": f.name, "batches": [], "episodes": []} for f in feeds.ranked(ctx)]
     return {
         "anilist_id": entry["anilist_id"],
+        "nothing_offered": nothing_offered,
         "title": show.title(ctx.settings.title_language),
         "status": entry.get("status"),
         "total_episodes": show.total_episodes,
@@ -335,13 +351,21 @@ def library_key(name: str) -> str:
     return (base if ext.lower() in library.VIDEO_EXTENSIONS else name).casefold().strip()
 
 
-def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[int]) -> Dict[str, Any]:
-    """Follow the entry from ``feed_id`` and grab the chosen releases; the feed's other episodes are skipped."""
+def confirm(
+    ctx: Context, entry: Dict[str, Any], feed_id: int, item_keys: List[str], found: Optional[Dict[int, List[FeedArticle]]] = None,
+) -> Dict[str, Any]:
+    """Follow the entry from ``feed_id`` and grab the chosen releases; the feed's other episodes are skipped.
+
+    ``feed_id`` 0 leaves the feed to discovery (for a show nothing was released for yet). ``found`` is what the search found;
+    it is stored now, so that a search the user backed out of leaves nothing behind.
+    """
     if ctx.session.exec(select(Show).where(Show.anilist_id == entry["anilist_id"])).first() is not None:
         raise ValueError("Kisetsu already follows this show.")
-    feed = ctx.session.get(Feed, feed_id)
-    if feed is None:
+    feed = ctx.session.get(Feed, feed_id) if feed_id else None
+    if feed is None and feed_id:
         raise ValueError("Selected feed not found")
+    if found:
+        store_found(ctx, found)
     folder = existing_folder(ctx, entry)
     paused_all = shows.all_paused(ctx)
     show = shows.show_from_entry(entry, paused_all)
@@ -354,13 +378,18 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     episodes = shows.ensure_episodes(ctx, show)
     ctx.session.flush()
     ingest.ensure_matches_current(ctx)
+    name = show.title(ctx.settings.title_language)
+    if feed is None:
+        logger.info(f"Added '{name}' by hand; its feed is left to discovery.")
+        ctx.emit("shows", f"show:{show.id}")
+        return {"show_id": show.id, "started": 0, "skipped": 0, "errors": []}
     feeds.pin(ctx, show, feed)
     if folder is not None:
         found = adoption.feed_from_saved_files(ctx, show, folder["files"], [])
         if found is not None and found[0].id == feed.id:
             # The user kept the feed the files on disk came from: that is the evidence a lock needs.
             feeds.lock(ctx, show, feed, Evidence.SAVED_FILES_UNIQUE, learned_name=found[2], learned_group=found[1])
-    chosen = set(item_ids)
+    chosen = set(item_keys)
     releases = _releases(ctx, show, feed)
     batches = _batches(ctx, show, feed)
     batch_ids = {b.item.id for b in batches}
@@ -368,12 +397,12 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     picked: Dict[int, Tuple[Episode, FeedItem]] = {}
     by_number = {e.number: e for e in episodes}
     for batch in batches:
-        if batch.item.id in chosen:
+        if item_key(batch.item) in chosen:
             for number in batch.numbers:
                 if number in by_number:
                     picked.setdefault(number, (by_number[number], batch.item))
     for number, release in releases.items():
-        if release.item.id in chosen:
+        if item_key(release.item) in chosen:
             picked.setdefault(number, (release.episode, release.item))
     offered = set(releases) | {n for b in batches for n in b.numbers}
     for episode in episodes:

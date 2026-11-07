@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Set
@@ -33,6 +34,8 @@ HOUSEKEEPING_INTERVAL = 24 * 3600.0
 # Well before a whole interval, or a machine restarted every day would never get to it.
 HOUSEKEEPING_FIRST = 3600.0
 HUNT_IDLE_MAX = 3600.0
+# How long Add show keeps a search's results for the Add button.
+FOUND_KEEP_SECONDS = 3600.0
 # With no AniList user set there is nothing to sync until the settings change.
 NO_USER_WAIT = 3600.0
 # Until the first-run wizard is done the stored qBittorrent login is still the default one.
@@ -81,6 +84,8 @@ class Jobs:
         self._feeds_lock = asyncio.Lock()
         self._anilist_lock = asyncio.Lock()
         self._search_locks: Dict[int, asyncio.Lock] = {}
+        # Add show: what a search found, by AniList id, until the user adds the show or it ages out.
+        self._found: Dict[int, Any] = {}
 
     # -- wiring -------------------------------------------------------------
 
@@ -439,19 +444,30 @@ class Jobs:
         return added
 
     async def search_new_show(self, entry: Dict[str, Any]) -> Dict[str, Any]:
-        """Search the feeds' sites for a show the user is adding, then preview what each feed carries for it."""
+        """Search the feeds' sites for a show the user is adding, then preview what each feed carries for it.
+
+        What the search found is kept in memory, and stored only if the user adds the show (``found_for``).
+        """
         plan = await self.engine.run(addshow.search_plan, entry)
         stopped = None
+        articles: Dict[int, Any] = {}
         if plan.terms and plan.feeds:
             total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
             due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
             found = await backfill.search(self.http, due, addshow.matcher_for(entry, plan.min_resolution), self.engine.clock(), searcher=self.searcher)
             stopped = found.stopped
-            if found.articles:
-                await self.engine.run(addshow.store_found, found.articles)
-        result = await self.engine.dry_run(addshow.preview, entry, plan.unsearchable)
+            articles = found.articles
+        now = time.monotonic()
+        self._found = {k: v for k, v in self._found.items() if now - v[0] < FOUND_KEEP_SECONDS}
+        self._found[entry["anilist_id"]] = (now, articles)
+        result = await self.engine.dry_run(addshow.preview, entry, plan.unsearchable, articles)
         result["stopped"] = stopped
         return result
+
+    def found_for(self, anilist_id: int) -> Dict[int, Any]:
+        """What the last search for this entry found, to store when the show is added."""
+        kept = self._found.pop(anilist_id, None)
+        return kept[1] if kept and time.monotonic() - kept[0] < FOUND_KEEP_SECONDS else {}
 
     async def after_manual_add(self) -> None:
         """Date the episodes of a show the user just added, then let the grab and settle passes follow it."""

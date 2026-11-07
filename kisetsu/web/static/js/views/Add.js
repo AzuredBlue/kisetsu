@@ -35,28 +35,30 @@ function PickEntry({ onPick }) {
   const shown = useMemo(() => {
     if (!list) return [];
     const words = fold(text).split(/\s+/).filter(Boolean);
-    if (!words.length) return list.entries;
-    return list.entries.filter(e => {
+    const found = !words.length ? list.entries : list.entries.filter(e => {
       const hay = fold([e.title, ...(e.aliases || [])].join(' '));
       return words.every(w => hay.includes(w));
     });
+    // What can still be added comes first; shows already followed follow as shortcuts to their page.
+    return [...found.filter(e => !e.followed), ...found.filter(e => e.followed)];
   }, [list, text]);
+  const firstFollowed = shown.findIndex(e => e.followed);
   return html`<div class="stack add-step">
     <section class="add-section">
       <div class="add-search">
         <${Icon} name="search" small />
         <input class="field" type="search" placeholder="Search your AniList list" value=${text} onInput=${(e) => setText(e.target.value)} autofocus aria-label="Search your AniList list" />
       </div>
-      ${list && list.fetched_at ? html`<p class="field-hint add-hint">Your AniList list, read ${relativeTime(list.fetched_at, Date.now())}. Sync Now reads it again.</p>` : null}
+      ${list && list.fetched_at ? html`<p class="field-hint add-hint">Your AniList list, read ${relativeTime(list.fetched_at, Date.now())}. Sync Now reads it again. Planning entries are added by themselves once their season is the current or next one.</p>` : null}
     </section>
     ${error ? html`<p class="error-text">${error}</p>` : null}
     ${error ? null : html`<div class="card feeds-card"><ul class="feed-list">
       ${!list ? html`<li class="add-empty"><${Spinner} small /> Reading your list…</li>` : null}
       ${list && !shown.length ? html`<li class="add-empty">
         ${text ? 'Nothing on your list matches.' : 'Your list has no entries to add.'}
-        <p class="field-hint">Entries you are watching, rewatching, paused or dropped show here, but not Completed ones. To add something else, put it on your list on AniList, then press Sync Now.</p>
+        <p class="field-hint">Entries you are watching, rewatching, paused or dropped show here, but not Completed ones. Planning entries are added by themselves once their season is the current or next one. To add something else, put it on your Watching list on AniList, then press Sync Now.</p>
       </li>` : null}
-      ${shown.map(entry => html`<${EntryRow} key=${entry.anilist_id} entry=${entry} onPick=${onPick} />`)}
+      ${shown.map((entry, i) => html`${i === firstFollowed ? html`<li class="list-head" key="followed-head"><span>Already following</span></li>` : null}<${EntryRow} key=${entry.anilist_id} entry=${entry} onPick=${onPick} />`)}
     </ul></div>`}
   </div>`;
 }
@@ -74,8 +76,8 @@ function Notes({ result }) {
 // The episodes the feed offers, and those the ticked releases cover; a ticked batch covers its singles.
 function coverage(group, picked) {
   const offered = new Set([...group.episodes.map(e => e.number), ...(group.batches || []).flatMap(b => b.numbers)]);
-  const inBatch = new Set((group.batches || []).filter(b => picked.has(b.item_id)).flatMap(b => b.numbers));
-  const covered = new Set([...inBatch, ...group.episodes.filter(e => picked.has(e.item_id)).map(e => e.number)]);
+  const inBatch = new Set((group.batches || []).filter(b => picked.has(b.item_key)).flatMap(b => b.numbers));
+  const covered = new Set([...inBatch, ...group.episodes.filter(e => picked.has(e.item_key)).map(e => e.number)]);
   return { offered, inBatch, covered };
 }
 
@@ -88,10 +90,10 @@ function pickAll(group) {
   const ids = new Set();
   (ranged.length ? ranged : batches).forEach(b => {
     if (b.numbers.some(n => taken.has(n))) return;
-    ids.add(b.item_id);
+    ids.add(b.item_key);
     b.numbers.forEach(n => taken.add(n));
   });
-  group.episodes.filter(e => !taken.has(e.number)).forEach(e => ids.add(e.item_id));
+  group.episodes.filter(e => !taken.has(e.number)).forEach(e => ids.add(e.item_key));
   return ids;
 }
 
@@ -131,13 +133,13 @@ function Releases({ group, picked, onToggle }) {
   const { inBatch } = coverage(group, picked);
   const singles = group.episodes.filter(ep => !inBatch.has(ep.number));
   const hidden = group.episodes.length - singles.length;
-  const ticked = (group.batches || []).filter(b => picked.has(b.item_id)).length;
+  const ticked = (group.batches || []).filter(b => picked.has(b.item_key)).length;
   return html`<ul class="feed-list add-releases">
-    ${(group.batches || []).map(batch => html`<${ReleaseRow} key=${`b:${batch.item_id}`} release=${batch} label=${span(batch.numbers)} checked=${picked.has(batch.item_id)} onToggle=${() => onToggle(batch)}>
+    ${(group.batches || []).map(batch => html`<${ReleaseRow} key=${`b:${batch.item_key}`} release=${batch} label=${span(batch.numbers)} checked=${picked.has(batch.item_key)} onToggle=${() => onToggle(batch)}>
       ${batch.on_disk ? html`<span class="state ok">${batch.on_disk} on disk</span>` : null}<span class="pill pill-idle">Batch</span>
     <//>`)}
     ${hidden ? html`<li class="add-hidden">Untick the ${ticked === 1 ? 'batch' : 'batches'} to pick from ${plural(hidden, 'single episode')}.</li>` : null}
-    ${singles.map(ep => html`<${ReleaseRow} key=${`e:${ep.item_id}`} release=${ep} label=${`Ep ${ep.number}${version(ep.version)}`} checked=${picked.has(ep.item_id)} onToggle=${() => onToggle(ep)}>
+    ${singles.map(ep => html`<${ReleaseRow} key=${`e:${ep.item_key}`} release=${ep} label=${`Ep ${ep.number}${version(ep.version)}`} checked=${picked.has(ep.item_key)} onToggle=${() => onToggle(ep)}>
       ${ep.on_disk ? html`<span class="state ok">on disk</span>` : null}
     <//>`)}
   </ul>`;
@@ -156,6 +158,7 @@ function PickReleases({ entry, onBack }) {
       .then(body => {
         if (!live) return;
         setResult(body);
+        if (body.nothing_offered) { setFeedId(0); setPicked(new Set()); return; }
         // A lone feed is no choice to make.
         const pre = body.feeds.length === 1 ? body.feeds[0] : body.preselect && body.feeds.find(g => g.feed_id === body.preselect);
         if (pre) choose(pre);
@@ -164,17 +167,17 @@ function PickReleases({ entry, onBack }) {
     return () => { live = false; };
   }, [entry.anilist_id]);
   const toggle = (release) => {
-    setPicked(set => { const next = new Set(set); if (next.has(release.item_id)) next.delete(release.item_id); else next.add(release.item_id); return next; });
+    setPicked(set => { const next = new Set(set); if (next.has(release.item_key)) next.delete(release.item_key); else next.add(release.item_key); return next; });
   };
   // The step never gets shorter: ticking a batch hides rows, and the clamped scroll would move the page under the pointer.
   const step = useRef(null);
   useLayoutEffect(() => { step.current.style.minHeight = `${step.current.offsetHeight}px`; }, [feedId, picked, result]);
-  const group = result && result.feeds.find(g => g.feed_id === feedId);
+  const group = result && !result.nothing_offered && result.feeds.find(g => g.feed_id === feedId);
   const counts = group ? coverage(group, picked) : null;
   const add = async () => {
     setAdding(true);
     try {
-      const body = await apiFetch('/api/add/confirm', { method: 'POST', json: { anilist_id: entry.anilist_id, feed_id: feedId, item_ids: [...picked] } });
+      const body = await apiFetch('/api/add/confirm', { method: 'POST', json: { anilist_id: entry.anilist_id, feed_id: feedId, item_keys: [...picked] } });
       const parts = [`Added ${entry.title}.`];
       if (body.started) parts.push(`${body.started} download${body.started === 1 ? '' : 's'} started.`);
       if (body.errors && body.errors.length) parts.push(body.errors.join(' '));
@@ -183,9 +186,12 @@ function PickReleases({ entry, onBack }) {
     } catch (err) { setAdding(false); }
   };
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
-  const summary = !group ? 'Pick a feed to see its releases'
+  const summary = result && result.nothing_offered ? 'Future episodes only'
+    : !group ? 'Pick a feed to see its releases'
     : counts.covered.size ? `${counts.covered.size} of ${plural(counts.offered.size, 'episode')}`
     : 'Future episodes only';
+  const upcoming = entry.status === 'NOT_YET_RELEASED';
+  const feedName = result && result.nothing_offered ? (feedId === 0 ? 'Auto-discover' : (result.feeds.find(g => g.feed_id === feedId) || {}).feed_name) : group && group.feed_name;
   return html`<div class="stack add-step" ref=${step}>
     <button type="button" class="btn plain sm add-back" onClick=${onBack}><${Icon} name="back" small /><span>Your list</span></button>
     <div class="add-picked">
@@ -199,7 +205,21 @@ function PickReleases({ entry, onBack }) {
     ${!result && !error ? html`<div class="card card-pad row"><${Spinner} small /><span class="muted">Searching your feeds for this show. This takes a few seconds.</span></div>` : null}
     ${result ? html`
       <${Notes} result=${result} />
-      ${result.feeds.length ? html`
+      ${result.nothing_offered ? html`
+        <section class="add-section">
+          <div class="add-section-head"><h3 class="section-title">Feed</h3><span class="muted">${upcoming ? 'Nothing has been released yet.' : 'None of your feeds offers a release of this show right now.'}</span></div>
+          <div class="card feeds-card"><ul class="feed-list">
+            ${[{ feed_id: 0, feed_name: 'Auto-discover', hint: 'The first feed that posts an episode is used, then kept.' }, ...result.feeds.map(g => ({ ...g, hint: 'Only this feed is used.' }))].map(g => html`<li key=${g.feed_id}><label class=${`feed-row add-feed${g.feed_id === feedId ? ' selected' : ''}`}>
+              <input type="radio" name="add-feed" checked=${g.feed_id === feedId} onChange=${() => setFeedId(g.feed_id)} />
+              <div class="feed-main"><div class="row"><span class="feed-name truncate">${g.feed_name}</span></div><div class="feed-url truncate">${g.hint}</div></div>
+            </label></li>`)}
+          </ul></div>
+          <div class="card add-card"><div class="add-foot">
+            <span class="add-summary truncate">${summary}${feedName ? html`<span class="add-summary-feed"> · ${feedName}</span>` : null}</span>
+            <button type="button" class="btn primary" disabled=${feedId === null || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
+          </div></div>
+        </section>`
+      : result.feeds.length ? html`
         <section class="add-section">
           <div class="add-section-head"><h3 class="section-title">Feed</h3><span class="muted">New episodes will only come from this feed.</span></div>
           <div class="card feeds-card"><ul class="feed-list">
@@ -222,7 +242,7 @@ function PickReleases({ entry, onBack }) {
             </div>
           </div>
         </section>`
-      : html`<div class="card empty">None of your feeds has releases for this show. Add a feed that carries it on the <a class="link" href="#feeds">RSS Feeds</a> page, then try again.</div>`}` : null}
+      : html`<div class="card empty">You have no RSS feeds yet. Add one on the <a class="link" href="#feeds">RSS Feeds</a> page, then try again.</div>`}` : null}
   </div>`;
 }
 

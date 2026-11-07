@@ -83,15 +83,15 @@ async def test_confirming_follows_the_feed_grabs_the_ticked_episodes_and_skips_t
     feed = web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
-    items = {e["number"]: e["item_id"] for e in preview["feeds"][0]["episodes"]}
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [items[1], items[2]]})).json()
+    items = {e["number"]: e["item_key"] for e in preview["feeds"][0]["episodes"]}
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": [items[1], items[2]]})).json()
     assert body["started"] == 2 and body["skipped"] == 1 and body["errors"] == []
     show = web.load(Show, body["show_id"])
     assert show.feed_id == feed and show.feed_state == FeedState.LOCKED and show.anilist_status == "FINISHED"
     statuses = {n: web.episode(show.id, n).status for n in (1, 2, 3)}
     assert statuses == {1: EpisodeStatus.DOWNLOADING, 2: EpisodeStatus.DOWNLOADING, 3: EpisodeStatus.SKIPPED}
     assert len(web.qbit.calls_named("add_torrent")) == 2
-    again = await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": []})
+    again = await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": []})
     assert again.status_code == 400
 
 
@@ -109,8 +109,8 @@ async def test_files_already_on_disk_preselect_their_feed_and_use_their_folder(w
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert preview["preselect"] == nyaa and preview["folder"]["files"] == 1 and preview["note"] is None
     assert [e["on_disk"] for e in preview["feeds"][0]["episodes"]] == [True, False, False]
-    items = [e["item_id"] for e in preview["feeds"][0]["episodes"]]
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": nyaa, "item_ids": items})).json()
+    items = [e["item_key"] for e in preview["feeds"][0]["episodes"]]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": nyaa, "item_keys": items})).json()
     show = web.load(Show, body["show_id"])
     assert show.save_folder == "Frieren" and show.feed_state == FeedState.LOCKED
     assert {call["save_path"] for call in web.qbit.calls_named("add_torrent")} == {str(folder.resolve())}
@@ -159,7 +159,7 @@ async def test_a_batch_is_offered_and_its_episodes_share_one_torrent_without_its
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     batches = preview["feeds"][0]["batches"]
     assert [(b["title"], b["numbers"]) for b in batches] == [(batch.title, [1, 2, 3])]
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [batches[0]["item_id"]]})).json()
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": [batches[0]["item_key"]]})).json()
     assert body["started"] == 3 and body["skipped"] == 0
     hashes = web.query(lambda s: {d.info_hash for d in s.exec(select(Download)).all()})
     assert hashes == {batch.info_hash} and list(web.qbit.truth) == [batch.info_hash]
@@ -177,7 +177,7 @@ async def test_an_episode_from_a_batch_is_never_replaced_by_a_later_version(web,
     feed = web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
-    show_id = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()["show_id"]
+    show_id = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": [preview["feeds"][0]["batches"][0]["item_key"]]})).json()["show_id"]
     web.qbit.finish(batch.info_hash)
     v2 = "[Grp] Sousou no Frieren - 02v2 (1080p).mkv"
     web.feeds.post(NYAA, v2, START)
@@ -208,7 +208,7 @@ async def test_single_episodes_after_a_batch_are_still_grabbed_from_the_feed(web
     feed = web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": [preview["feeds"][0]["batches"][0]["item_key"]]})).json()
     show_id = body["show_id"]
     assert web.load(Show, show_id).learned_name is None
     web.qbit.finish(batch.info_hash)
@@ -229,7 +229,7 @@ async def test_a_batch_is_added_once_even_before_qbittorrent_shows_it(web, tmp_p
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     web.qbit.hide_added = True
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_ids": [preview["feeds"][0]["batches"][0]["item_id"]]})).json()
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": [preview["feeds"][0]["batches"][0]["item_key"]]})).json()
     assert body["started"] == 3 and len(web.qbit.calls_named("add_torrent")) == 1
     web.qbit.reveal()
     await web.runtime.engine.run(lambda ctx: downloads.settle(ctx))
@@ -244,7 +244,7 @@ async def test_a_batch_longer_than_the_season_is_another_seasons_and_not_offered
     web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
-    assert preview["feeds"] == []
+    assert preview["nothing_offered"] and all(not g["episodes"] and not g["batches"] for g in preview["feeds"])
 
 
 async def test_a_sequel_is_never_offered_a_batch_of_another_season(web, tmp_path):
@@ -308,8 +308,8 @@ async def test_confirming_an_unmarked_season_batch_adds_it_once_and_flags_its_do
     feed = web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 9})).json()
-    item = preview["feeds"][0]["batches"][0]["item_id"]
-    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 9, "feed_id": feed, "item_ids": [item]})).json()
+    item = preview["feeds"][0]["batches"][0]["item_key"]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 9, "feed_id": feed, "item_keys": [item]})).json()
     assert body["started"] == 10 and body["errors"] == []
     calls = web.qbit.calls_named("add_torrent")
     assert len(calls) == 1 and calls[0]["content_layout"] == "NoSubfolder"
@@ -330,7 +330,7 @@ async def test_a_special_without_an_episode_number_is_not_offered_as_a_season_ba
     web.feed("Nyaa", NYAA, 1)
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
-    assert preview["feeds"] == []
+    assert preview["nothing_offered"] and all(not g["episodes"] and not g["batches"] for g in preview["feeds"])
 
 
 async def test_a_number_in_a_specials_subtitle_is_not_offered_as_that_episode(web):
@@ -355,3 +355,32 @@ async def test_no_release_without_a_range_holds_a_show_still_airing(web):
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert all(not g["batches"] for g in preview["feeds"])
+
+
+async def test_a_search_stores_nothing_until_the_show_is_added(web):
+    from kisetsu.db.schema import FeedItem
+    _user(web)
+    _finished(web)
+    _releases(web)
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert len(preview["feeds"][0]["episodes"]) == 3
+    assert web.query(lambda s: s.exec(select(FeedItem)).all()) == []
+    keys = [e["item_key"] for e in preview["feeds"][0]["episodes"]]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": keys[:1]})).json()
+    assert body["started"] == 1
+    assert len(web.query(lambda s: s.exec(select(FeedItem)).all())) == 3
+
+
+async def test_a_show_nothing_was_released_for_yet_can_still_be_added(web):
+    _user(web)
+    web.anilist.shows.append(anilist_show(11, "Upcoming Show", status="NOT_YET_RELEASED", list_status="CURRENT", total_episodes=12, season="WINTER", season_year=2027))
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 11})).json()
+    assert preview["nothing_offered"] is True
+    assert [(g["feed_id"], g["episodes"], g["batches"]) for g in preview["feeds"]] == [(feed, [], [])]
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 11, "feed_id": 0, "item_keys": []})).json()
+    show = web.load(Show, body["show_id"])
+    assert show.feed_state == FeedState.NONE and body["started"] == 0

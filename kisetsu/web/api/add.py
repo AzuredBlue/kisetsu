@@ -24,8 +24,9 @@ class Confirm(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     anilist_id: int
+    # 0 leaves the feed to discovery: for a show nothing was released for yet.
     feed_id: int
-    item_ids: List[int]
+    item_keys: List[str]
 
 
 def _entry(request: Request, anilist_id: int) -> Dict[str, Any]:
@@ -58,7 +59,8 @@ async def search(body: Search, request: Request):
 @router.post("/confirm")
 async def confirm(body: Confirm, request: Request):
     entry = _entry(request, body.anilist_id)
-    result = await write(request, addshow.confirm, entry, body.feed_id, body.item_ids)
+    found = runtime(request).jobs.found_for(body.anilist_id)
+    result = await write(request, addshow.confirm, entry, body.feed_id, body.item_keys, found)
     task = asyncio.create_task(runtime(request).jobs.after_manual_add())
     _background.add(task)
     task.add_done_callback(_background.discard)
