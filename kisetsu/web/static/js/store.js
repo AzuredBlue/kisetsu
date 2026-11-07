@@ -6,6 +6,8 @@ import { apiFetch } from './api.js';
 // Components that show the connection state; each resource keeps its own listeners.
 const connectionListeners = new Set();
 let connection = { online: true };
+// A resource the stream marks stale this soon after its last fetch waits out the rest, so a run of changes costs one fetch.
+const MIN_REFETCH_MS = 1000;
 
 export class Resource {
   // `topics` are the stream topics that make the data stale; a function gives them for a keyed resource.
@@ -18,6 +20,8 @@ export class Resource {
     this.users = 0;
     this.inflight = null;
     this.again = false;
+    this.started = 0;
+    this.timer = null;
     this.listeners = new Set();
   }
 
@@ -26,6 +30,7 @@ export class Resource {
   async load() {
     if (this.inflight) { this.again = true; return this.inflight; }
     this.stale = false;
+    this.started = Date.now();
     this.inflight = apiFetch(this.path, { quiet: true })
       .then((data) => { this.data = data; this.at = Date.now(); this.error = null; })
       .catch((err) => { this.error = err; this.stale = true; })
@@ -39,7 +44,15 @@ export class Resource {
 
   invalidate() {
     this.stale = true;
-    if (this.users > 0) this.load();
+    this.refresh();
+  }
+
+  // Refetch stale data that is in use: not while the page is hidden (it is refetched once shown), and at most once per MIN_REFETCH_MS.
+  refresh() {
+    if (!this.stale || this.users === 0 || document.hidden || this.timer) return;
+    const wait = this.started + MIN_REFETCH_MS - Date.now();
+    if (wait <= 0) { this.load(); return; }
+    this.timer = setTimeout(() => { this.timer = null; this.refresh(); }, wait);
   }
 }
 
@@ -104,6 +117,7 @@ export function invalidate(topics) {
 
 // Opens the event stream. The server sends "*" first on every (re)connect, which refetches whatever is in use.
 export function connect() {
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) resources.forEach(r => r.refresh()); });
   const source = new EventSource('/api/stream');
   source.onmessage = (event) => {
     let message;
