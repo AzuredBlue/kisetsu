@@ -40,12 +40,6 @@ PAGES_PER_REQUEST = 8
 # List statuses whose entries only update shows already followed; the sync never adds them as new.
 FOLLOWED_ONLY_LIST_STATUSES = ("COMPLETED", "PAUSED", "DROPPED", "REPEATING")
 
-USER_EXISTS_QUERY = """
-query ($name: String) {
-  User(name: $name) { id }
-}
-"""
-
 USER_SEASONAL_QUERY = """
 query ($userName: String) {
   MediaListCollection(userName: $userName, type: ANIME, status_in: [CURRENT, PLANNING, COMPLETED, PAUSED, DROPPED, REPEATING]) {
@@ -156,6 +150,10 @@ class AniListDeferred(AniListError):
         super().__init__(message)
         self.retry_in = max(0.0, float(retry_in))
         self.partial: Dict[Any, Any] = partial if partial is not None else {}
+
+
+class AniListNotFound(AniListError):
+    """AniList answered 404: the user (or show) asked about does not exist."""
 
 
 class AniListRateLimited(AniListDeferred):
@@ -319,6 +317,8 @@ class AniListClient:
         self.last_sync_at: Optional[datetime] = None
         self.user_list: List[Dict[str, Any]] = []
         self.user_list_at: Optional[datetime] = None
+        # Whose list ``user_list`` is, when it was fetched in this run.
+        self.user_list_of: Optional[str] = None
         self._load_user_list()
 
     def _load_user_list(self) -> None:
@@ -407,6 +407,8 @@ class AniListClient:
                         raise AniListRateLimited(
                             f"AniList is rate limiting this client; retry in {wait:.0f}s.", retry_in=wait
                         )
+                    if resp.status_code == 404:
+                        raise AniListNotFound(f"AniList HTTP error: 404 - {resp.text[:200]}")
                     if 400 <= resp.status_code < 500:
                         raise AniListError(f"AniList HTTP error: {resp.status_code} - {resp.text[:200]}")
                     resp.raise_for_status()
@@ -436,41 +438,37 @@ class AniListClient:
         raise AniListUnavailable(f"{problem} Pausing AniList requests for {wait:.0f}s.", retry_in=wait)
 
     async def user_exists(self, username: str) -> bool:
-        """Whether AniList knows this user name.
+        """Whether AniList knows this user name, told by asking for the user's list.
 
-        One attempt only: the retry backoff of `_post_query` would make a typo take
-        several seconds to report. A missing user comes back as HTTP 404.
+        A missing user comes back as HTTP 404. The list is kept, so the sync that follows
+        setup takes it instead of asking AniList again (``reuse_within``). One attempt only:
+        the retry backoff would make a typo take several seconds to report.
         """
         try:
-            async with httpx2.AsyncClient(timeout=self.timeout) as client:
-                resp = await client.post(
-                    ANILIST_GRAPHQL_URL,
-                    json={"query": USER_EXISTS_QUERY, "variables": {"name": username.strip()}},
-                    headers={"Content-Type": "application/json", "Accept": "application/json"},
-                )
-        except httpx2.RequestError as e:
-            traffic.record("AniList user check", ANILIST_HOST, traffic.ERROR)
-            raise AniListError(f"AniList network connection failed: {e}") from e
-        traffic.record("AniList user check", ANILIST_HOST, traffic.outcome_of(resp.status_code) if resp.status_code != 404 else traffic.OK)
-        if resp.status_code == 404:
+            await self._fetch_list(username, max_retries=1)
+        except AniListNotFound:
             return False
-        if resp.status_code != 200:
-            raise AniListError(f"AniList HTTP error: {resp.status_code}")
-        try:
-            data = resp.json()
-        except ValueError as e:
-            raise AniListError("AniList returned an unreadable answer.") from e
-        return bool((data.get("data") or {}).get("User"))
+        return True
 
-    async def fetch_user_list(self, username: str) -> List[Dict[str, Any]]:
+    async def fetch_user_list(self, username: str, reuse_within: Optional[float] = None) -> List[Dict[str, Any]]:
         """Every entry on the user's list in the statuses Kisetsu reads, unfiltered.
 
         The answer is kept as ``user_list`` (with ``user_list_at``) so the add-show search
-        can look through it without asking AniList again.
+        can look through it without asking AniList again. With ``reuse_within``, a list of
+        this user fetched less than that many seconds ago is taken instead of a new request.
         """
         if not username.strip():
             return []
-        data = await self._post_query(USER_SEASONAL_QUERY, {"userName": username.strip()})
+        fresh = (
+            reuse_within is not None and self.user_list_of == username.strip() and self.user_list_at is not None
+            and (datetime.now(timezone.utc) - self.user_list_at).total_seconds() < reuse_within
+        )
+        if not fresh:
+            await self._fetch_list(username)
+        return list(self.user_list)
+
+    async def _fetch_list(self, username: str, max_retries: int = 3) -> None:
+        data = await self._post_query(USER_SEASONAL_QUERY, {"userName": username.strip()}, max_retries=max_retries)
         self.last_sync_at = datetime.now(timezone.utc)
         entries: Dict[int, Dict[str, Any]] = {}
         for l in (data.get("MediaListCollection") or {}).get("lists", []):
@@ -480,11 +478,11 @@ class AniListClient:
                     entries[media["id"]] = _list_entry(entry.get("status"), media)
         self.user_list = list(entries.values())
         self.user_list_at = self.last_sync_at
+        self.user_list_of = username.strip()
         self._save_user_list()
-        return list(self.user_list)
 
     async def fetch_user_seasonal_anime(
-        self, username: str, monitored_anilist_ids: Optional[Set[int]] = None
+        self, username: str, monitored_anilist_ids: Optional[Set[int]] = None, reuse_within: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """
         Fetch user's anime filtered to:
@@ -495,7 +493,7 @@ class AniListClient:
 
         Each returned dict carries the entry's own list status as "list_status".
         """
-        entries = await self.fetch_user_list(username)
+        entries = await self.fetch_user_list(username, reuse_within)
         (cur_season, cur_year), (next_season, next_year) = get_current_and_next_season()
         result = []
         for item in entries:

@@ -346,13 +346,15 @@ class FakeAniList:
         self._enter("user_exists", username)
         return username in self.users
 
-    async def fetch_user_list(self, username: str) -> List[Dict[str, Any]]:
+    async def fetch_user_list(self, username: str, reuse_within: Optional[float] = None) -> List[Dict[str, Any]]:
         self._enter("fetch_user_list", username)
         self.user_list = [dict(show) for show in self.shows]
         self.user_list_at = datetime.now(timezone.utc)
         return list(self.user_list)
 
-    async def fetch_user_seasonal_anime(self, username: str, monitored_anilist_ids: Optional[Iterable[int]] = None) -> List[Dict[str, Any]]:
+    async def fetch_user_seasonal_anime(
+        self, username: str, monitored_anilist_ids: Optional[Iterable[int]] = None, reuse_within: Optional[float] = None,
+    ) -> List[Dict[str, Any]]:
         self._enter("fetch_user_seasonal_anime", username)
         self.user_list = [dict(show) for show in self.shows]
         self.user_list_at = datetime.now(timezone.utc)

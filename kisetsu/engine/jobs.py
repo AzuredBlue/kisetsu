@@ -40,6 +40,8 @@ HOUSEKEEPING_FIRST = 3600.0
 HUNT_IDLE_MAX = 3600.0
 # How long Add show keeps a search's results for the Add button.
 FOUND_KEEP_SECONDS = 3600.0
+# The list the setup check fetched is taken by the sync that follows within this time, instead of asking again.
+LIST_REUSE_SECONDS = 120.0
 # Where what the searches learned of each site (``sites.Grouping``) is kept across restarts.
 GROUPING_KEY = "search_grouping"
 # With no AniList user set there is nothing to sync until the settings change.
@@ -325,7 +327,9 @@ class Jobs:
             logger.info(f"AniList was synced {round(info.last_sync_ago / 60)} min ago. Next sync in {round(wait / 60)} min.")
             return wait
         try:
-            seasonal = await self.anilist.fetch_user_seasonal_anime(info.username, monitored_anilist_ids=info.monitored_ids)
+            seasonal = await self.anilist.fetch_user_seasonal_anime(
+                info.username, monitored_anilist_ids=info.monitored_ids, reuse_within=LIST_REUSE_SECONDS if startup else None,
+            )
         except AniListDeferred as e:
             self._set_health(anilist=str(e), anilist_retry_in=e.retry_in)
             await self.engine.run(cycle.rollover)

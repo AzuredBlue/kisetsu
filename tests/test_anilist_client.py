@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from kisetsu.clients.anilist import AniListClient, AniListError, get_current_and_next_season
+from kisetsu.clients.anilist import AniListClient, AniListError, get_current_and_next_season, rate_governor
 
 
 def test_season_calculation():
@@ -326,15 +326,17 @@ def answer(status_code, payload=None):
     response = MagicMock()
     response.status_code = status_code
     response.json.return_value = payload or {}
+    response.headers = {}
+    response.text = ""
     return response
 
 
 @pytest.mark.parametrize("response, expected", [
-    (answer(200, {"data": {"User": {"id": 5}}}), True),
-    (answer(200, {"data": {"User": None}}), False),
-    (answer(404, {"errors": [{"message": "Not Found."}]}), False),
+    (answer(200, {"data": {"MediaListCollection": {"lists": []}}}), True),
+    (answer(404, {"errors": [{"message": "User not found", "status": 404}], "data": {"MediaListCollection": None}}), False),
 ])
 async def test_user_exists_reads_the_answer(monkeypatch, response, expected):
+    rate_governor.reset()
     post = AsyncMock(return_value=response)
     monkeypatch.setattr("httpx2.AsyncClient.post", post)
     assert await AniListClient().user_exists("alvaro") is expected
@@ -387,3 +389,18 @@ def test_an_unreadable_saved_list_is_ignored(tmp_path):
     path.write_text("{not json", encoding="utf-8")
     client = AniListClient(cache_path=path)
     assert client.user_list == [] and client.user_list_at is None
+
+
+async def test_the_sync_right_after_setup_takes_the_list_the_user_check_fetched(monkeypatch):
+    rate_governor.reset()
+    media = {"id": 7, "title": {"romaji": "Frieren"}, "status": "RELEASING", "season": None, "seasonYear": None}
+    post = AsyncMock(return_value=answer(200, {"data": {"MediaListCollection": {"lists": [{"entries": [{"status": "CURRENT", "media": media}]}]}}}))
+    monkeypatch.setattr("httpx2.AsyncClient.post", post)
+    client = AniListClient()
+    assert await client.user_exists("alvaro")
+    assert [e["anilist_id"] for e in await client.fetch_user_seasonal_anime("alvaro", reuse_within=60)] == [7]
+    assert post.await_count == 1
+    # Another user's list, or a sync that does not reuse, asks AniList again.
+    await client.fetch_user_seasonal_anime("someone", reuse_within=60)
+    await client.fetch_user_seasonal_anime("alvaro")
+    assert post.await_count == 3
