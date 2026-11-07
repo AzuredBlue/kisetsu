@@ -180,12 +180,14 @@ export function Show({ route }) {
   };
 
   const art = data.banner || data.cover;
+  // The cover is asked for with CORS by its poster; asking for it without would load it again, as AniList varies on Origin.
+  const artCors = data.banner ? undefined : 'anonymous';
   const matchData = matches.data;
   const numbering = (data.episode_offsets || []).find(o => data.feed && o.feed_id === data.feed.id);
   return html`<div class="show-page">
-    <div class="show-backdrop" aria-hidden="true">${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} />` : null}</div>
+    <div class="show-backdrop" aria-hidden="true">${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} crossorigin=${artCors} />` : null}</div>
     <div class="show-banner on-art">
-      ${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} />` : null}
+      ${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} crossorigin=${artCors} />` : null}
       <button type="button" class="back" onClick=${leave} aria-label="Back" title="Back (Esc)"><${Icon} name="back" /></button>
     </div>
     <div class="show-body">
