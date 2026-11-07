@@ -80,7 +80,7 @@ The database is migrated by itself the first time the new version starts. Before
 | Command | What it does |
 |:---|:---|
 | `kisetsu [PORT]` | Starts the app. `--port` (default 8085) and `--host` (default `127.0.0.1`) change where it listens. |
-| `kisetsu --sandbox` | Runs a throwaway copy on port 8086 with a temporary database and no background work, to try the first-run setup. Your real settings and qBittorrent are not touched. |
+| `kisetsu --sandbox` | Runs a throwaway copy on port 8086 with a temporary database. Downloads are only pretended and logged; your real settings, qBittorrent and files are not touched. |
 | `kisetsu import-legacy [FILE]` | Copies the settings, feeds, dismissed shows and per-show overrides from the database of the earlier releases (`anime.db` in the settings folder unless you give a file). It is opened read-only. |
 | `kisetsu --adopt-report [FILE]` | A dry run of the first start on a throwaway database: imports the same old data, reads AniList and the feeds, adopts what qBittorrent already holds and lists what one grab pass would add. qBittorrent is only ever read. |
 

@@ -41,6 +41,7 @@ function Notes({ info }) {
   const jobs = Object.entries(info.jobs_failing || {});
   const background = [info.grab_error, ...jobs.map(([name, error]) => `${name}: ${error}`)].filter(Boolean);
   return html`<div class="notes">
+    ${info.sandbox ? html`<span class="note-info" title="A throwaway copy: downloads are pretended and logged (see Logs). qBittorrent and your files are never changed.">Sandbox</span>` : null}
     ${offline ? html`<span class="note-bad" title="Kisetsu did not answer the last check. Trying again.">Not responding</span>` : null}
     ${info.all_paused ? html`<span class="note-warn">Paused</span>` : null}
     ${info.qbit_error ? html`<span class="note-bad" title=${info.qbit_error}>qBittorrent unreachable</span>` : null}
@@ -148,9 +149,8 @@ function Shell() {
 
 function App() {
   const setup = useResource(setupStatus);
-  const [done, setDone] = useState(false);
   if (!setup.data) return html`<div style="margin:auto">${setup.error ? html`<${LoadError} what="the page" error=${null} reload=${setup.reload} />` : null}</div>`;
-  return html`${setup.data.setup_completed && !done ? html`<${Shell} />` : html`<${Setup} sandbox=${setup.data.sandbox} done=${done} setDone=${setDone} />`}<${ModalHost} /><${Toasts} />`;
+  return html`${setup.data.setup_completed ? html`<${Shell} />` : html`<${Setup} sandbox=${setup.data.sandbox} />`}<${ModalHost} /><${Toasts} />`;
 }
 
 setErrorHandler((message) => toast(message, 'error'));

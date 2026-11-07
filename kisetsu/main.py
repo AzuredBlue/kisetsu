@@ -22,7 +22,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument(
         "--sandbox",
         action="store_true",
-        help="run a throwaway instance (temporary database, no background work) to try the first-run setup",
+        help="run a throwaway instance with a temporary database: setup, shows and downloads all work, but downloads are only pretended and logged",
     )
     return parser.parse_args(argv)
 
@@ -59,7 +59,7 @@ def main(argv=None) -> None:
         sandbox_dir = tempfile.mkdtemp(prefix="kisetsu-sandbox-")
         os.environ["KISETSU_DB_PATH"] = os.path.join(sandbox_dir, "kisetsu.db")
         os.environ["KISETSU_SANDBOX"] = "1"
-        print(f"Sandbox: throwaway database in {sandbox_dir}; your real settings and qBittorrent are not touched.")
+        print(f"Sandbox: throwaway database in {sandbox_dir}. Downloads are only pretended and logged; your real settings, qBittorrent and files are not touched.")
 
     import uvicorn
 

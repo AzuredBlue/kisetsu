@@ -9,15 +9,10 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-# The only writes a sandbox allows: the wizard's own calls, which touch the throwaway database
-# or only read from qBittorrent.
-SANDBOX_WRITES = {
-    "/api/setup/save",
-    "/api/setup/complete",
-    "/api/setup/reset",
-    "/api/settings/test-qbit",
-    "/api/feeds/sync",
-    "/api/feeds/reorder",
+# What a sandbox refuses; every other write only reaches its throwaway database or its pretend qBittorrent.
+SANDBOX_REFUSED = {
+    "/api/backup/restore",
+    "/api/backup/inspect",
 }
 
 
@@ -68,7 +63,7 @@ class Guard:
         origin = headers.get("origin")
         if origin and method not in SAFE_METHODS and urlsplit(origin).netloc != host_header:
             return "Cross-origin requests are not allowed."
-        if self.sandbox and method not in SAFE_METHODS and scope["path"] not in SANDBOX_WRITES:
+        if self.sandbox and method not in SAFE_METHODS and scope["path"] in SANDBOX_REFUSED:
             return "Not available in the sandbox."
         return None
 

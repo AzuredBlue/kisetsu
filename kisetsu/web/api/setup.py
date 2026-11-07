@@ -1,14 +1,11 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from sqlmodel import delete, select
 
 from kisetsu.clients.anilist import AniListError
-from kisetsu.db.schema import AppState, Feed, Settings
-from kisetsu.services import feeds as feeds_service
 from kisetsu.services.context import SETUP_KEY, set_state, setup_completed
 from kisetsu.web import settings as settings_model
-from kisetsu.web.deps import NotFound, read, runtime, write
+from kisetsu.web.deps import read, runtime, write
 from kisetsu.web.settings import SETUP_FIELDS, SettingsError, SettingsPatch
 
 router = APIRouter(prefix="/api/setup")
@@ -41,17 +38,6 @@ def _finish(ctx, name: str):
     ctx.session.add(ctx.settings)
     set_state(ctx, SETUP_KEY, "1")
     ctx.emit("settings", "status")
-
-
-def _reset(ctx):
-    for feed in ctx.session.exec(select(Feed)).all():
-        feeds_service.forget_feed(ctx, feed)
-    ctx.session.execute(delete(Settings))
-    ctx.session.execute(delete(AppState))
-    ctx.session.flush()
-    ctx.session.add(Settings(id=1))
-    ctx.caches.known_items = None
-    ctx.emit("*")
 
 
 class _AlreadyDone(Exception):
@@ -92,14 +78,6 @@ async def complete(body: Finish, request: Request):
     except _AlreadyDone:
         return _conflict()
     rt.jobs.poke("startup")
-    return {"status": "success", "sandbox": rt.sandbox}
-
-
-@router.post("/reset")
-async def reset(request: Request):
-    if not runtime(request).sandbox:
-        raise NotFound()
-    await write(request, _reset)
     return {"status": "success"}
 
 

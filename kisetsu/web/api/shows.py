@@ -249,7 +249,10 @@ async def delete(show_id: int, request: Request, delete_torrents: bool = False, 
                     error = f"qBittorrent could not confirm the torrents are gone ({e}), so the folder was kept."
                     break
                 await asyncio.sleep(0.5)
-            if error is None:
+            if error is None and runtime(request).sandbox:
+                logger.info(f"[sandbox] Would delete the folder {plan['path']}.")
+                error = "This is a sandbox, so the folder was kept."
+            elif error is None:
                 error = await asyncio.to_thread(library.remove_folder, plan["path"], base_dir)
         folder = {"path": plan["path"], "removed": plan["remove"] and error is None, "reason": error}
         if folder["removed"]:

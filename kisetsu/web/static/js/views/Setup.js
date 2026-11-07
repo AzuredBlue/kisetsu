@@ -17,7 +17,7 @@ async function save(patch) {
   await apiFetch('/api/setup/save', { method: 'POST', json: patch });
 }
 
-export function Setup({ sandbox, done, setDone }) {
+export function Setup({ sandbox }) {
   useTheme();
   const settings = useResource(settingsData);
   const feeds = useResource(feedsData);
@@ -62,9 +62,8 @@ export function Setup({ sandbox, done, setDone }) {
       if (name === 'qbit') await save(connection());
       if (name === 'downloads') await save({ base_dir: form.value('base_dir'), default_category: form.value('default_category'), default_seed_ratio: Number(form.value('default_seed_ratio')) });
       if (name === 'anilist') {
-        const result = await apiFetch('/api/setup/complete', { method: 'POST', json: { anilist_username: form.value('anilist_username') }, quiet: true });
-        if (result.sandbox) setDone(true);
-        else settings.reload();
+        await apiFetch('/api/setup/complete', { method: 'POST', json: { anilist_username: form.value('anilist_username') }, quiet: true });
+        settings.reload();
         setBusy(false);
         return;
       }
@@ -72,34 +71,18 @@ export function Setup({ sandbox, done, setDone }) {
     } catch (err) { setError(err instanceof ApiError || err instanceof Error ? err.message : String(err)); }
     setBusy(false);
   };
-  const startOver = async () => {
-    try { await apiFetch('/api/setup/reset', { method: 'POST' }); } catch (err) { return; }
-    form.reset();
-    setDone(false);
-    setStep(0);
-    setTested({ state: '', text: '' });
-    settings.reload();
-  };
   const blocked = (name === 'qbit' && tested.state !== 'ok') || (name === 'anilist' && !form.value('anilist_username').trim());
   const accent = currentAccent();
   const applyAppearance = async (patch, undo) => {
     try { await save(patch); settings.reload(); } catch (err) { if (undo) undo(); }
   };
 
-  if (done) {
-    return html`<div class="setup"><div class="setup-card">
-      <h2>Setup finished</h2>
-      <p class="page-sub">This is a sandbox, so nothing was saved for real and no downloads will start.</p>
-      <div class="row"><button type="button" class="btn primary" onClick=${startOver}>Start over</button></div>
-    </div></div>`;
-  }
-
   return html`<div class="setup">
     <div class="setup-card" key=${name}>
       ${name === 'welcome' ? html`
         <h2>Welcome to Kisetsu</h2>
         <p class="page-sub">Kisetsu follows your AniList watching list and has qBittorrent download each new episode as it airs. A few questions first.</p>
-        ${sandbox ? html`<p class="field-hint">Sandbox: nothing here changes qBittorrent or is kept.</p>` : null}` : null}
+        ${sandbox ? html`<p class="field-hint">Sandbox: downloads are pretended and logged. qBittorrent and your files are never changed, and nothing is kept once it stops.</p>` : null}` : null}
       ${name === 'qbit' ? html`
         <h2>qBittorrent</h2>
         <p class="page-sub">Turn on the Web UI in qBittorrent (Options, Web UI), then enter its address and login.</p>

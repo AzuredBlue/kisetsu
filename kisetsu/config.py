@@ -16,7 +16,7 @@ CONFIG_DIR = _config_dir()
 DB_PATH = Path(os.environ["KISETSU_DB_PATH"]) if os.environ.get("KISETSU_DB_PATH") else CONFIG_DIR / "kisetsu.db"
 # The database of the releases before the redesign; only `kisetsu import-legacy` reads it.
 LEGACY_DB_PATH = CONFIG_DIR / "anime.db"
-# A sandbox instance runs no background work and refuses anything that could change the real qBittorrent.
+# A sandbox instance reads qBittorrent but only logs and pretends the changes it would make (clients/sandbox.py).
 SANDBOX = os.environ.get("KISETSU_SANDBOX") == "1"
 
 DEFAULT_QBIT_HOST = "http://localhost:8080"

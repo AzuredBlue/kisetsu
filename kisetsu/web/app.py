@@ -9,19 +9,22 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import anyio.to_thread
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session, select
 from starlette.types import Scope
 
 from kisetsu import config
 from kisetsu.clients import rss
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.clients.notify import notify
+from kisetsu.clients.sandbox import SandboxQbit, SandboxState
 from kisetsu.db import store
+from kisetsu.db.schema import Download
 from kisetsu.engine.instance import InstanceLock
 from kisetsu.engine.jobs import Jobs
 from kisetsu.engine.runner import Engine
@@ -74,10 +77,17 @@ def stamped_index(static_dir: Path) -> HTMLResponse:
 
 
 def build_runtime(*, sandbox: bool) -> Runtime:
-    """The real thing: the configured database, qBittorrent, AniList and the internet."""
+    """The real thing: the configured database, qBittorrent, AniList and the internet.
+
+    A sandbox reads them all, but its qBittorrent only pretends to change anything.
+    """
     db = store.get_engine()
     logs = LogRing()
-    engine = Engine(db, notify=notify, read_only=sandbox)
+    if sandbox:
+        state = SandboxState(release_for=lambda url: _release(db, url))
+        engine = Engine(db, read_only=True, qbit_factory=lambda host, user, password, read_only=True: SandboxQbit(host, user, password, state=state))
+    else:
+        engine = Engine(db, notify=notify)
     logs.on_line = lambda: engine.bus.publish(["logs"])
     logging.getLogger("kisetsu").addHandler(logs)
     scheduler = Scheduler()
@@ -87,16 +97,22 @@ def build_runtime(*, sandbox: bool) -> Runtime:
     return Runtime(engine=engine, scheduler=scheduler, jobs=jobs, anilist=anilist, logs=logs, sandbox=sandbox)
 
 
+def _release(db, url: str) -> Tuple[Optional[str], Optional[str]]:
+    """The title and info hash of the download that adds ``url``, for the sandbox's pretend torrent."""
+    with Session(db) as session:
+        row = session.exec(select(Download.title, Download.info_hash).where(Download.torrent_url == url).order_by(Download.id.desc())).first()
+    return (row[0], row[1]) if row else (None, None)
+
+
 def create_app(
     *,
     runtime_factory: Optional[Callable[[], Runtime]] = None,
     sandbox: Optional[bool] = None,
-    run_jobs: Optional[bool] = None,
+    run_jobs: bool = True,
     static_dir: Path = STATIC_DIR,
     lock_path: Optional[Path] = None,
 ) -> FastAPI:
     sandbox = config.SANDBOX if sandbox is None else sandbox
-    run_jobs = (not sandbox) if run_jobs is None else run_jobs
     factory = runtime_factory or (lambda: build_runtime(sandbox=sandbox))
 
     @asynccontextmanager
@@ -112,7 +128,6 @@ def create_app(
         await rt.engine.start()
         hook = lambda: loop.call_soon_threadsafe(rt.engine.bus.shutdown)  # noqa: E731
         shutdown_hooks.append(hook)
-        # A sandbox only serves the setup wizard; nothing runs against the real qBittorrent.
         if run_jobs:
             rt.scheduler.on_change = lambda name, running: rt.engine.bus.publish(["status"]) if name in VISIBLE_JOBS else None
             rt.jobs.register()

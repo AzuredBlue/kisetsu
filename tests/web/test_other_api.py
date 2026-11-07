@@ -141,15 +141,12 @@ async def test_finishing_setup_starts_the_engine_and_closes_the_wizard(fresh):
     assert fresh.load(Settings, 1).anilist_username == "user"
     assert (await fresh.client.post("/api/setup/complete", json={"anilist_username": "user"})).status_code == 409
     assert (await fresh.client.post("/api/setup/save", json={"qbit_host": "http://q:1"})).status_code == 409
-    assert (await fresh.client.post("/api/setup/reset")).status_code == 404
 
 
-async def test_the_sandbox_allows_only_the_wizard_and_can_reset_it(sandbox):
-    assert (await sandbox.client.post("/api/shows/pause-all")).status_code == 403
+async def test_the_sandbox_allows_everything_but_restoring_a_backup(sandbox):
     assert (await sandbox.client.post("/api/setup/save", json={"qbit_host": "http://q:1", "qbit_password": "x"})).status_code == 200
-    assert (await sandbox.client.post("/api/setup/reset")).status_code == 200
-    assert sandbox.load(Settings, 1).qbit_host == "http://localhost:8080"
-    assert sandbox.load(AppState, "setup_completed") is None
+    assert (await sandbox.client.post("/api/shows/pause-all")).status_code == 200
+    assert (await sandbox.client.post("/api/backup/restore", content=b"x")).status_code == 403
 
 
 async def test_status_reports_counts_and_what_the_engine_is_doing(web):
