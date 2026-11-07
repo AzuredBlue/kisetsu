@@ -25,7 +25,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain import matcher as matching
 from kisetsu.domain.numbering import LedgerRow, inferred_offset, map_episode, rebase_plan
-from kisetsu.domain.parsing import names_something_else
+from kisetsu.domain.parsing import is_batch, names_something_else, release_resolution, season_conflict, strip_batch
 from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
     air_horizon,
@@ -153,12 +153,14 @@ def _undated(item: FeedItem) -> bool:
     return item.published_at is None or item.published_at.year <= EPOCH_YEAR
 
 
-def resolve(ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True) -> Tuple[List[Resolved], Dict[int, int]]:
+def resolve(
+    ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True, rejected: Optional[List[Tuple[FeedItem, str]]] = None,
+) -> Tuple[List[Resolved], Dict[int, int]]:
     """Which episode each stored item of a feed is for, and the newest usable version of each.
 
     The one place that decides whether an item is this show's release of one of its episodes:
     the grab acts on the result and the missed rule asks the same question with ``learn=False``,
-    which never renumbers stored releases.
+    which never renumbers stored releases. ``rejected`` collects the items it turned down, each with why.
     """
     show = state.show
     matcher = _matcher_for(ctx, state, feed)
@@ -178,17 +180,25 @@ def resolve(ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True) -
         return check
 
     names = [*show.effective_aliases, *([show.learned_name] if show.learned_name else [])]
+
+    def turn_down(item: FeedItem, reason: str) -> None:
+        if rejected is not None:
+            rejected.append((item, reason))
+
     for item in items:
         matched, parsed = matching.decide_dated(matcher, item.title, cache, on_schedule(item))
         if not matched:
+            turn_down(item, why_not_matched(ctx, matcher, item.title))
             continue
         # A movie, special or side story under the show's name ("… - Coleus no Yume - 01") is not one of its episodes.
         if names_something_else(item.title, names):
+            turn_down(item, "A movie, special or side story, not one of the episodes.")
             continue
         raw = parsed.get("episode")
         if raw is None and state.target_count == 1:
             raw = 1
         if raw is None or raw <= 0:
+            turn_down(item, "Its name has no episode number (a recap like \"12.5\", or a special).")
             continue
         mapped = map_episode(
             int(raw),
@@ -203,19 +213,55 @@ def resolve(ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True) -
         )
         number = mapped.local
         if number is None:
+            turn_down(item, f"Its episode {raw} does not fit this season's aired episodes (yet).")
             continue
         if mapped.by_date and learn:
             _learn_offset(ctx, state, feed, int(raw), number)
         episode = state.by_number.get(number)
         if episode is None:
+            turn_down(item, f"This season has no episode {number}.")
             continue
         if published_before_air(item.published_at, episode.air_at or state.first_air, ctx.tolerance_hours):
+            turn_down(item, "Published before this episode aired, so it is an earlier season's release.")
             continue
         version = int(parsed.get("version") or 1)
         resolved.append(Resolved(item, int(raw), number, episode, version))
         if version not in state.failed.get(episode.id, set()):
             best[number] = max(best.get(number, 0), version)
     return resolved, best
+
+
+def why_not_matched(ctx: Context, matcher: matching.Matcher, title: str) -> str:
+    """Why a release carrying the show's name is still not taken as one of its episodes."""
+    if is_batch(title):
+        return "A batch (several episodes in one torrent). Download it by hand, or add the show again from Add show to take it."
+    resolution = release_resolution(title)
+    minimum = ctx.settings.min_resolution
+    if resolution is not None and resolution < minimum:
+        return f"{resolution}p is below your minimum quality ({minimum}p, in Settings)."
+    if season_conflict(title, list(matcher.aliases)):
+        return "It names another season."
+    if matcher.strict:
+        return "Not named the way this feed names the show's releases."
+    return "Its name does not match this show's names closely enough. A custom alias can fix that."
+
+
+def unmatched_releases(ctx: Context, show: Show, feed: Feed, seen: Set[int], limit: int = 300) -> List[Tuple[FeedItem, str]]:
+    """The feed's recent items that carry the show's name but were never matched to it: batches and lower resolutions."""
+    relaxed = matching.build_matcher(show.effective_aliases, show.learned_name, 0)
+    strict = matching.build_matcher(show.effective_aliases, show.learned_name, ctx.settings.min_resolution)
+    cache = ctx.caches.parsed_cache()
+    rows = ctx.session.exec(
+        select(FeedItem).where(FeedItem.feed_id == feed.id).order_by(FeedItem.published_at.desc(), FeedItem.id.desc()).limit(limit)
+    ).all()
+    found: List[Tuple[FeedItem, str]] = []
+    for item in rows:
+        if item.id in seen:
+            continue
+        name = strip_batch(item.title) if is_batch(item.title) else item.title
+        if matching.broad_match(relaxed, name, cache):
+            found.append((item, why_not_matched(ctx, strict, item.title)))
+    return found
 
 
 def _ledger(state: ShowState, feed: Feed) -> List[LedgerRow]:

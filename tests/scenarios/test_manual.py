@@ -149,3 +149,25 @@ def test_an_older_version_is_not_offered_over_a_finished_repack_whose_feed_is_go
     post(world, feed, V1)
     match = manual.feed_matches(world.ctx(), show)[0]["matches"][0]
     assert match["version"] == 1 and match["downloadable"] is False and match["replaces"] is False
+
+
+def test_the_releases_list_says_why_a_release_of_the_show_was_not_used(world):
+    from kisetsu.services import manual, ingest
+    from tests.fakes import article
+    from datetime import timedelta
+    from tests.fakes import START
+    top = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=3, first_air=START - timedelta(days=14))
+    ingest.ingest(world.ctx(), top, [
+        article("[Grp] Sousou no Frieren - 03 (720p).mkv", START),
+        article("[Grp] Sousou no Frieren - 02.5 (1080p).mkv", START),
+        article("[Grp] Sousou no Frieren (01-12) (1080p) [Batch]", START),
+        article("[Grp] Sousou no Frieren - 03 (1080p).mkv", START),
+    ])
+    world.commit()
+    [group] = manual.feed_matches(world.ctx(), show)
+    reasons = {r["title"]: r["reason"] for r in group["rejected"]}
+    assert "below your minimum quality" in reasons["[Grp] Sousou no Frieren - 03 (720p).mkv"]
+    assert "episode number" in reasons["[Grp] Sousou no Frieren - 02.5 (1080p).mkv"]
+    assert "batch" in reasons["[Grp] Sousou no Frieren (01-12) (1080p) [Batch]"]
+    assert [m["title"] for m in group["matches"]] == ["[Grp] Sousou no Frieren - 03 (1080p).mkv"]

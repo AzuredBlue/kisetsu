@@ -172,3 +172,43 @@ async def test_a_stalled_download_reaches_the_show_page_and_try_another_swaps_it
     page = (await web.client.get(f"/api/shows/{show}")).json()
     assert page["episodes"][0]["stalled"] is None and page["episodes"][0]["release"]["title"] == other
     assert (await web.client.post(f"/api/shows/{show}/episodes/{episode.id}/try-another")).status_code == 400
+
+
+async def test_the_status_tells_the_first_run_checklist_and_failing_background_work(web):
+    body = (await web.client.get("/api/status")).json()
+    assert body["feeds"] == 0 and body["anilist_synced_at"] is None and body["any_download"] is False
+    assert body["grab_error"] is None and body["jobs_failing"] == {}
+    web.runtime.jobs.health["grab"] = "Sousou no Frieren: boom"
+    job = web.runtime.scheduler.add("backfill", None, interval=None, first=None)
+    job.last_error = "site down"
+    body = (await web.client.get("/api/status")).json()
+    assert body["grab_error"] == "Sousou no Frieren: boom" and body["jobs_failing"] == {"backfill": "site down"}
+
+
+async def test_the_attention_list_gathers_failed_missed_and_retrying_episodes_across_shows(web):
+    from datetime import timedelta
+    from kisetsu.db.schema import Download, DownloadState, Episode, EpisodeStatus
+    from sqlmodel import select
+    from tests.fakes import START
+
+    first = web.show(1, "Sousou no Frieren", episodes=3)
+    second = web.show(2, "Dandadan", episodes=3)
+
+    def mark(session):
+        eps = {(e.show_id, e.number): e for e in session.exec(select(Episode)).all()}
+        failed = eps[(first, 1)]
+        dl = Download(episode_id=failed.id, title="[Grp] Sousou no Frieren - 01.mkv", state=DownloadState.FAILED, last_error="qBittorrent rejected it")
+        session.add(dl)
+        session.flush()
+        failed.current_download_id, failed.status, failed.last_error = dl.id, EpisodeStatus.FAILED, "qBittorrent rejected it"
+        eps[(second, 2)].status = EpisodeStatus.MISSED
+        retrying = eps[(second, 3)]
+        retrying.last_error, retrying.retry_after = "Gave up after 8 attempts", START + timedelta(hours=2)
+        session.commit()
+
+    web.query(mark)
+    rows = (await web.client.get("/api/attention")).json()
+    assert [(r["show"], r["episode"], r["kind"]) for r in rows] == [
+        ("Sousou no Frieren", 1, "failed"), ("Dandadan", 3, "retrying"), ("Dandadan", 2, "missed"),
+    ]
+    assert rows[0]["reason"] == "qBittorrent rejected it" and rows[0]["show_id"] == first

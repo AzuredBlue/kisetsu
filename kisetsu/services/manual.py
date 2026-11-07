@@ -77,11 +77,14 @@ def _own_feeds(ctx: Context, show: Show) -> List[Feed]:
     return all_feeds
 
 
-def candidates(ctx: Context, show: Show, feed_list: Optional[List[Feed]] = None) -> List[Candidate]:
+def candidates(
+    ctx: Context, show: Show, feed_list: Optional[List[Feed]] = None, rejected: Optional[Dict[int, List[Tuple[FeedItem, str]]]] = None,
+) -> List[Candidate]:
     """Every stored item the grabber would accept for the show, with its episode.
 
     Reads only the feeds the show may use, so the feed lock is honoured, and never writes.
-    ``feed_list`` replaces that set, to list what other feeds carry.
+    ``feed_list`` replaces that set, to list what other feeds carry. ``rejected`` collects, by feed id,
+    the items turned down and why.
     """
     chosen = _own_feeds(ctx, show) if feed_list is None else feed_list
     if not chosen:
@@ -90,7 +93,8 @@ def candidates(ctx: Context, show: Show, feed_list: Optional[List[Feed]] = None)
     state = grab._state(ctx, show, facts)
     found: List[Candidate] = []
     for feed in chosen:
-        resolved, _ = grab.resolve(ctx, state, feed, learn=False)
+        turned_down = rejected.setdefault(feed.id, []) if rejected is not None else None
+        resolved, _ = grab.resolve(ctx, state, feed, learn=False, rejected=turned_down)
         found.extend((feed, entry) for entry in resolved)
     return found
 
@@ -143,8 +147,22 @@ def feed_matches(ctx: Context, show: Show, limit: int = 30) -> List[Dict[str, An
                 "downloadable": refusal is None,
             })
 
-    for feed, entry in candidates(ctx, show):
+    rejected: Dict[int, List[Tuple[FeedItem, str]]] = {}
+    own_found = candidates(ctx, show, rejected=rejected)
+    for feed, entry in own_found:
         add(feed, _role(show, feed), True, [(feed, entry)])
+    # What the show's own feeds carry under its name but it does not take, and why: the answer to "why wasn't it grabbed?".
+    for feed in own:
+        seen = {entry.item.id for f, entry in own_found if f.id == feed.id} | {item.id for item, _ in rejected.get(feed.id, [])}
+        notes = rejected.get(feed.id, []) + grab.unmatched_releases(ctx, show, feed, seen)
+        if not notes:
+            continue
+        notes.sort(key=lambda pair: (pair[0].published_at or pair[0].first_seen_at), reverse=True)
+        group = groups.setdefault(feed.id, {"feed_id": feed.id, "feed_name": feed.name, "role": _role(show, feed), "usable": True, "matches": []})
+        group["rejected"] = [
+            {"title": item.title, "reason": reason, "published_at": item.published_at.isoformat() if item.published_at else None}
+            for item, reason in notes[:limit]
+        ]
     for feed in all_feeds:
         if feed.id not in own_ids:
             add(feed, "other", False, candidates(ctx, show, [feed]))
@@ -206,6 +224,19 @@ def manual_grab(
     else:
         action = "replacement"
     return f"Manually queued {action} for {show.title(ctx.settings.title_language)} Ep {entry.number} v{entry.version}: {entry.item.title}"
+
+
+def retry_release(ctx: Context, show: Show, episode: Episode, found: Optional[List[Candidate]] = None) -> Optional[str]:
+    """The title of the best release of a failed episode that can be downloaded again by hand, if the feeds still carry one."""
+    best: Optional[Candidate] = None
+    for feed, entry in candidates(ctx, show) if found is None else found:
+        if entry.episode.id != episode.id or not entry.item.torrent_url:
+            continue
+        if _refusal(ctx, episode, entry.version, _other_source(ctx, episode, feed, entry.item)):
+            continue
+        if best is None or entry.version > best[1].version:
+            best = (feed, entry)
+    return best[1].item.title if best else None
 
 
 def stalled_download(ctx: Context, episode: Episode) -> Optional[Download]:

@@ -8,7 +8,9 @@ from sqlalchemy import delete, func
 from sqlmodel import select
 
 from kisetsu.clients.anilist import rate_limit_status
-from kisetsu.db.schema import Event, Feed
+from kisetsu.db.schema import Download, Event, Feed
+from kisetsu.services.context import get_state
+from kisetsu.services.cycle import LAST_SYNC_KEY
 from kisetsu.web import views
 from kisetsu.web.deps import read, runtime, write
 
@@ -19,7 +21,13 @@ HISTORY_LIMIT_MAX = 500
 
 
 def _totals(ctx):
-    return {**views.counts_view(ctx), "last_feed_read_at": views.iso(ctx.session.exec(select(func.max(Feed.last_fetch_at))).one())}
+    return {
+        **views.counts_view(ctx),
+        "last_feed_read_at": views.iso(ctx.session.exec(select(func.max(Feed.last_fetch_at))).one()),
+        # For the first-run checklist: has AniList ever been read, and has anything ever been downloaded.
+        "anilist_synced_at": get_state(ctx, LAST_SYNC_KEY) or None,
+        "any_download": ctx.session.exec(select(Download.id).limit(1)).first() is not None,
+    }
 
 
 def _clear_history(ctx):
@@ -43,6 +51,9 @@ def _live(request: Request):
         "next_feed_read_in": max(0, int(min(dues))) if dues else None,
         "qbit_error": rt.jobs.health.get("qbit"),
         "anilist_error": rt.jobs.health.get("anilist"),
+        "grab_error": rt.jobs.health.get("grab"),
+        # Background jobs whose last run raised; each is retried a minute later.
+        "jobs_failing": {name: job.last_error for name, job in rt.scheduler.jobs.items() if job.last_error},
         "anilist_blocked_until": None if not blocked_until else datetime.fromtimestamp(blocked_until, tz=timezone.utc).isoformat(),
         "rev": rt.engine.bus.rev,
     }
@@ -55,6 +66,11 @@ async def get_status(request: Request):
         # Adds can't be judged while qBittorrent is unreachable; that chip already says so.
         body["stuck_adds"] = 0
     return body
+
+
+@router.get("/attention")
+async def get_attention(request: Request):
+    return await read(request, views.attention_view)
 
 
 @router.get("/logs")

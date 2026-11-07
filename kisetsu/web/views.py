@@ -403,6 +403,66 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
     ]
 
 
+ATTENTION_ORDER = {"stalled": 0, "failed": 1, "retrying": 2, "missed": 3}
+
+
+def attention_view(ctx: Context) -> List[Dict[str, Any]]:
+    """Episodes across every show that need the user's eye, each with the one action that helps, if any.
+
+    Stalled and failed downloads first, then those waiting to be tried again, then episodes no feed carries any more.
+    Paused and completed shows are left out.
+    """
+    language = ctx.settings.title_language
+    shows = {s.id: s for s in ctx.session.exec(select(Show).where(Show.paused.is_(False), Show.completed.is_(False))).all()}
+    if not shows:
+        return []
+    stalled_episodes = {
+        dl.episode_id: dl for dl in ctx.session.exec(select(Download).where(Download.id.in_(ctx.caches.stalled))).all()
+    } if ctx.caches.stalled else {}
+    rows = ctx.session.exec(select(Episode).where(Episode.show_id.in_(list(shows)))).all()
+    found_for: Dict[int, List[Any]] = {}
+    out: List[Dict[str, Any]] = []
+    for episode in rows:
+        show = shows[episode.show_id]
+        aired = episode.air_at is None or episode.air_at <= ctx.now
+        if episode.id in stalled_episodes:
+            kind, reason = "stalled", "The torrent has moved no data for hours."
+        elif episode.status == EpisodeStatus.FAILED:
+            kind, reason = "failed", episode.last_error or "The download failed."
+        elif episode.status == EpisodeStatus.WANTED and aired and episode.last_error and episode.retry_after and episode.retry_after > ctx.now:
+            kind, reason = "retrying", episode.last_error
+        elif episode.status == EpisodeStatus.MISSED:
+            kind, reason = "missed", "No feed carries it any more. Search older asks the feeds' sites for it."
+        else:
+            continue
+        action = None
+        if kind == "missed":
+            action = {"type": "search"}
+        elif kind in ("failed", "stalled"):
+            if show.id not in found_for:
+                found_for[show.id] = manual.candidates(ctx, show)
+            if kind == "stalled":
+                if manual.alternatives(ctx, show, episode, stalled_episodes[episode.id], found_for[show.id]):
+                    action = {"type": "try_another"}
+            else:
+                retry = manual.retry_release(ctx, show, episode, found_for[show.id])
+                if retry is not None:
+                    action = {"type": "download", "title": retry}
+        out.append({
+            "show_id": show.id,
+            "show": show.title(language),
+            "cover": show.cover_image,
+            "episode_id": episode.id,
+            "episode": episode.number,
+            "kind": kind,
+            "reason": reason,
+            "retry_after": iso(episode.retry_after) if kind == "retrying" else None,
+            "action": action,
+        })
+    out.sort(key=lambda row: (ATTENTION_ORDER[row["kind"]], row["show"].casefold(), -row["episode"]))
+    return out
+
+
 def stuck_adds(ctx: Context) -> int:
     """Episodes whose add qBittorrent seems to be ignoring, from the database alone (read sessions cannot reach qBittorrent).
 
