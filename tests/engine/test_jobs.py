@@ -628,3 +628,22 @@ def test_what_the_searches_learned_of_a_site_outlives_a_restart(env):
 
     run(env, go)
     assert restarted.grouping.works("nyaa.si") is True and restarted.grouping.complete("nyaa.si", 74)
+
+
+def test_subsplease_schedule_is_read_once_and_only_with_a_subsplease_feed(env):
+    reads = []
+
+    async def read_schedule(client):
+        reads.append(client)
+        return ["Some Other Show"]
+
+    env.jobs.read_schedule = read_schedule
+
+    async def go():
+        await env.jobs.backfill()
+        env.add_feed("SubsPlease", "https://subsplease.org/rss/?t&r=1080", 1)
+        await env.jobs.backfill()
+        await env.jobs.backfill()
+
+    run(env, go)
+    assert len(reads) == 1

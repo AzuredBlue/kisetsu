@@ -15,6 +15,7 @@ from kisetsu.clients.rss import FeedArticle, FeedFetchError
 from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedItem, FeedItemMatch, FeedState, Show
 from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import broad_match, build_matcher, decide
+from kisetsu.domain.schedule import WEEK
 from kisetsu.domain.numbering import map_episode
 from kisetsu.domain.schedule import AIR_DATE_TOLERANCE, PUBLISHED_BEFORE_AIR_SLACK, plausible_for_show
 from kisetsu.services import downloads, feeds, grab, ingest
@@ -82,29 +83,67 @@ def _searchable_feeds(ctx: Context, show: Show) -> List[Feed]:
 
 
 def _lacking(ctx: Context, show: Show, show_feeds: List[Feed]) -> Set[int]:
-    """The feeds whose last read shows they do not carry the show, so a search of them would find nothing.
+    """The feeds that do not carry the show, so a search of them would find nothing.
 
-    A feed lists its newest releases. When its last read reached back past one of the show's
-    aired episodes, far enough that a release of it would be listed even if posted early, and
-    was read late enough that it would have been posted, yet nothing the feed ever listed or a
-    search found on it is of the show, the feed does not carry the show.
+    A feed that ever listed the show, or on which a search found it, carries it. Otherwise:
+
+    - A feed lists its newest releases. When its last read reached back past one of the
+      show's aired episodes, far enough that a release of it would be listed even if posted
+      early, and was read late enough that it would have been posted, the feed lacks the show.
+    - A SubsPlease feed lacks an airing show SubsPlease's own schedule leaves out (``note_schedule``).
     """
     windows = {f.id: ctx.caches.read_windows[f.id] for f in show_feeds if f.id in ctx.caches.read_windows}
-    if not windows:
-        return set()
-    aired = ctx.session.exec(
-        select(Episode.air_at).where(Episode.show_id == show.id, Episode.air_at.is_not(None), Episode.air_at <= ctx.now)
-    ).all()
-    if not aired:
+    off_schedule = show.id in ctx.caches.off_schedule
+    if not windows and not off_schedule:
         return set()
     carrying = set(ctx.session.exec(
         select(FeedItem.feed_id).join(FeedItemMatch, FeedItemMatch.item_id == FeedItem.id).where(FeedItemMatch.show_id == show.id)
     ).all())
-    return {
+    lacking = {f.id for f in show_feeds if off_schedule and sites.site_of(f.url) == "subsplease" and f.id not in carrying}
+    aired = ctx.session.exec(
+        select(Episode.air_at).where(Episode.show_id == show.id, Episode.air_at.is_not(None), Episode.air_at <= ctx.now)
+    ).all() if windows else []
+    lacking.update(
         feed_id for feed_id, (oldest, read_at) in windows.items()
         if feed_id not in carrying
         and any(oldest + PUBLISHED_BEFORE_AIR_SLACK <= air and air + AIR_DATE_TOLERANCE <= read_at for air in aired)
+    )
+    return lacking
+
+
+def subsplease_feeds(ctx: Context) -> List[int]:
+    return [f.id for f in ctx.session.exec(select(Feed)).all() if sites.site_of(f.url) == "subsplease"]
+
+
+def note_schedule(ctx: Context, titles: Optional[List[str]]) -> None:
+    """Take SubsPlease's schedule in: which airing shows it leaves out, so its feeds are not searched for them.
+
+    Only a show airing week by week now (an episode in the last week and one still to come)
+    is judged, as that is all the schedule lists. It is matched as a release named after the
+    schedule's title would be. The schedule is not assumed complete: when it leaves out a
+    show airing now that a SubsPlease feed carries, it is not used at all.
+    """
+    ctx.caches.off_schedule = set()
+    feeds_on = subsplease_feeds(ctx)
+    if not titles or not feeds_on:
+        return
+    airing_ids = set(ctx.session.exec(select(Episode.show_id).where(Episode.air_at > ctx.now - WEEK, Episode.air_at <= ctx.now)).all())
+    airing_ids &= set(ctx.session.exec(select(Episode.show_id).where(Episode.air_at > ctx.now)).all())
+    _, matchers = ingest._matchers(ctx)
+    releases = [f"[SubsPlease] {title} - 01 (1080p).mkv" for title in titles]
+    cache = ctx.caches.parsed_cache()
+    off = {
+        show_id for show_id, matcher in matchers
+        if show_id in airing_ids and not any(broad_match(matcher, release, cache) for release in releases)
     }
+    carried = set(ctx.session.exec(
+        select(FeedItemMatch.show_id).join(FeedItem, FeedItem.id == FeedItemMatch.item_id).where(FeedItem.feed_id.in_(feeds_on))
+    ).all())
+    if off & carried:
+        names = ", ".join(sorted(show.title(ctx.settings.title_language) for show in (ctx.session.get(Show, i) for i in off & carried)))
+        logger.warning(f"SubsPlease's schedule leaves out {names}, which its feed carries, so it is not used to skip searches.")
+        return
+    ctx.caches.off_schedule = off
 
 
 def due(

@@ -492,3 +492,46 @@ def test_a_search_the_user_asks_for_still_asks_a_feed_that_seems_not_to_carry_th
     assert backfill.missing_episodes(world.ctx(), show.id) == [1, 2, 3, 4]
     [item] = backfill.due(world.ctx(), show_id=show.id, force=True, everywhere=True)
     assert item.feeds == [feed]
+
+
+SUBS = "https://subsplease.org/rss/?t&r=1080"
+
+
+def weekly_now(world, anilist_id=1, title="Sousou no Frieren"):
+    """A show with an episode in the last week and one still to come."""
+    return world.show(anilist_id, title, episodes=5, first_air=START - timedelta(days=21))
+
+
+def test_a_subsplease_feed_is_not_searched_for_an_airing_show_its_schedule_leaves_out(world):
+    subs = world.feed("SubsPlease", SUBS, 1)
+    nyaa = world.feed("Nyaa", NYAA, 2)
+    show = weekly_now(world)
+    backfill.note_schedule(world.ctx(), ["Some Other Show"])
+    assert backfill.due(world.ctx())[0].feeds == [nyaa]
+    # A search the user asks for still asks it.
+    assert backfill.due(world.ctx(), show_id=show.id, force=True, everywhere=True)[0].feeds == [subs, nyaa]
+    backfill.note_schedule(world.ctx(), ["Some Other Show", "Sousou no Frieren"])
+    assert backfill.due(world.ctx())[0].feeds == [subs, nyaa]
+    # A schedule that could not be read says nothing.
+    backfill.note_schedule(world.ctx(), ["Some Other Show"])
+    backfill.note_schedule(world.ctx(), None)
+    assert backfill.due(world.ctx())[0].feeds == [subs, nyaa]
+
+
+def test_only_a_show_airing_week_by_week_is_judged_by_the_schedule(world):
+    subs = world.feed("SubsPlease", SUBS, 1)
+    airing(world)  # its last episode aired now: none is still to come
+    backfill.note_schedule(world.ctx(), ["Some Other Show"])
+    assert backfill.due(world.ctx())[0].feeds == [subs]
+
+
+def test_a_schedule_that_leaves_out_a_show_the_feed_carries_is_not_used(world, caplog):
+    subs = world.feed("SubsPlease", SUBS, 1)
+    weekly_now(world)
+    other = weekly_now(world, 2, "Kusuriya no Hitorigoto")
+    ingest.ingest(world.ctx(), subs, [article("[SubsPlease] Kusuriya no Hitorigoto - 03 (1080p).mkv", START - timedelta(days=7))])
+    world.commit()
+    backfill.note_schedule(world.ctx(), ["Some Other Show"])
+    assert {item.show_id: item.feeds for item in backfill.due(world.ctx())}[other.id] == [subs]
+    assert [item.feeds for item in backfill.due(world.ctx())] == [[subs], [subs]]
+    assert "leaves out" in caplog.text

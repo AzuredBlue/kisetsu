@@ -42,6 +42,8 @@ HUNT_IDLE_MAX = 3600.0
 FOUND_KEEP_SECONDS = 3600.0
 # The list the setup check fetched is taken by the sync that follows within this time, instead of asking again.
 LIST_REUSE_SECONDS = 120.0
+# SubsPlease's schedule of the shows it airs is read again after this long.
+SCHEDULE_KEEP = timedelta(hours=12)
 # Where what the searches learned of each site (``sites.Grouping``) is kept across restarts.
 GROUPING_KEY = "search_grouping"
 # With no AniList user set there is nothing to sync until the settings change.
@@ -77,6 +79,10 @@ class Jobs:
         self.grouping = sites.Grouping()
         # What of it is stored; None until it is read back.
         self._grouping_kept: Optional[str] = None
+        # SubsPlease's schedule (``sites.subsplease_schedule``): the titles, and when they were read.
+        self.read_schedule = sites.subsplease_schedule
+        self._schedule: Optional[List[str]] = None
+        self._schedule_at: Optional[datetime] = None
         self.fetch_hues = fetch_hues
         self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
@@ -186,7 +192,9 @@ class Jobs:
         self.poke("settle")
         # AniList and the feeds are different sites, so they are read together. Items stored before a show is added are
         # matched to it by the grab pass (``ensure_matches_current``).
-        next_sync, _ = await asyncio.gather(self.sync_anilist(startup=True), self.refresh_feeds(everything=True))
+        next_sync, _, _ = await asyncio.gather(
+            self.sync_anilist(startup=True), self.refresh_feeds(everything=True), self._read_schedule(),
+        )
         await self.engine.run(adoption.adopt_existing)
         await self.engine.run(adoption.reattribute)
         await self.engine.run(tags.sync_tags)
@@ -433,11 +441,27 @@ class Jobs:
         for show_id in requested:
             added += await self._backfill_show(show_id, force=True)
         if everything or not requested:
+            await self._read_schedule()
+            await self.engine.run(backfill.note_schedule, self._schedule)
             due = await self.engine.run(lambda ctx: backfill.due(ctx, force=everything))
             added += await self._search(due)
         if added:
             self.poke("grab")
         return None
+
+    async def _read_schedule(self) -> None:
+        """Read which shows SubsPlease airs, when a feed is on SubsPlease and the last read is old. One request."""
+        now = self.engine.clock()
+        if self._schedule_at is not None and now - self._schedule_at < SCHEDULE_KEEP:
+            return
+        if not await self.engine.read(backfill.subsplease_feeds):
+            return
+        try:
+            titles = await self.read_schedule(self.http)
+        except rss.FeedFetchError as e:
+            logger.debug(f"SubsPlease's schedule could not be read: {e}")
+            return
+        self._schedule, self._schedule_at = titles, now
 
     async def search_older(self, show_id: int) -> int:
         """Search the show's feed sites for past episodes now; returns how many releases were found."""

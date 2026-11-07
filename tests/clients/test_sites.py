@@ -198,3 +198,10 @@ def test_what_was_learned_of_a_host_is_kept_across_a_restart_until_it_is_due_aga
     assert later.works("nyaa.si") is None and not later.complete("nyaa.si", 74)
     for broken in ("", "not json", "[]", '{"checked": 1}'):
         sites.Grouping(clock=clock).load(broken)
+
+
+def test_subsplease_schedule_titles_are_read_from_every_day():
+    payload = {"tz": "UTC", "schedule": {"Monday": [{"title": "Kanata kara", "time": "12:00"}], "Friday": [{"title": "Sasaki to Pii-chan S2"}, {"x": 1}]}}
+    assert sites.parse_subsplease_schedule(payload) == ["Kanata kara", "Sasaki to Pii-chan S2"]
+    assert sites.parse_subsplease_schedule({"schedule": {}}) is None
+    assert sites.parse_subsplease_schedule([]) is None

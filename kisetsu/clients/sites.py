@@ -168,6 +168,27 @@ def subsplease_search_url(term: str) -> str:
     return f"https://subsplease.org/api/?f=search&tz=UTC&s={quote(term)}"
 
 
+SUBSPLEASE_SCHEDULE_URL = "https://subsplease.org/api/?f=schedule&tz=UTC"
+
+
+def parse_subsplease_schedule(payload: Any) -> Optional[List[str]]:
+    """The titles of the shows SubsPlease's weekly schedule lists; None when the answer is not a schedule."""
+    days = payload.get("schedule") if isinstance(payload, dict) else None
+    if not isinstance(days, dict):
+        return None
+    titles = [entry.get("title") for day in days.values() if isinstance(day, list) for entry in day if isinstance(entry, dict)]
+    titles = [title for title in titles if isinstance(title, str) and title.strip()]
+    return titles or None
+
+
+async def subsplease_schedule(client: httpx2.AsyncClient) -> Optional[List[str]]:
+    """The shows SubsPlease is airing this week, in one request; None when it could not be read."""
+    try:
+        return parse_subsplease_schedule(json.loads(await fetch_bytes(client, SUBSPLEASE_SCHEDULE_URL, "Schedule")))
+    except ValueError:
+        return None
+
+
 def subsplease_resolution(feed_url: str) -> str:
     for key, value in parse_qsl(urlparse(feed_url).query, keep_blank_values=True):
         if key == "r" and value:
