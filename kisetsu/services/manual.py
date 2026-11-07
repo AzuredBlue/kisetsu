@@ -90,7 +90,7 @@ def candidates(
     if not chosen:
         return []
     facts = facts_for(ctx, [show])[show.id]
-    state = grab._state(ctx, show, facts)
+    state = grab.show_state(ctx, show, facts)
     found: List[Candidate] = []
     for feed in chosen:
         turned_down = rejected.setdefault(feed.id, []) if rejected is not None else None
@@ -210,7 +210,7 @@ def manual_grab(
     if refusal:
         raise ValueError(refusal)
     facts = facts_for(ctx, [show])[show.id]
-    grab.record_evidence(ctx, grab._state(ctx, show, facts), feed, entry.raw, entry.number)
+    grab.record_evidence(ctx, grab.show_state(ctx, show, facts), feed, entry.raw, entry.number)
     previous = downloads.current(ctx, entry.episode)
     dl = downloads.start_download(ctx, show, feed, entry.episode, entry.item, switch_source=switch_source)
     if dl is None:
@@ -281,7 +281,7 @@ def try_another(ctx: Context, show: Show, episode: Episode) -> str:
     feed, entry = options[0]
     switch_source = _other_source(ctx, episode, feed, entry.item)
     facts = facts_for(ctx, [show])[show.id]
-    grab.record_evidence(ctx, grab._state(ctx, show, facts), feed, entry.raw, entry.number)
+    grab.record_evidence(ctx, grab.show_state(ctx, show, facts), feed, entry.raw, entry.number)
     hours = int(downloads.STALLED_AFTER.total_seconds() // 3600)
     downloads.abandon_stalled(ctx, dl, f"Stalled for over {hours} hours; replaced by another release.")
     started = downloads.start_download(ctx, show, feed, episode, entry.item, switch_source=switch_source)

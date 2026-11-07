@@ -85,7 +85,7 @@ class ShowState:
         return cur.version if cur is not None and episode.status in (*RELEASE_HOLDING, EpisodeStatus.FAILED) else 1
 
 
-def _state(ctx: Context, show: Show, facts) -> ShowState:
+def show_state(ctx: Context, show: Show, facts) -> ShowState:
     episodes = list(ctx.session.exec(select(Episode).where(Episode.show_id == show.id).order_by(Episode.number)).all())
     ids = [e.id for e in episodes]
     current: Dict[int, Optional[Download]] = {}
@@ -413,7 +413,7 @@ def grab_pass(ctx: Context, only: Optional[Set[int]] = None, held: Optional[Set[
 
 
 def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: GrabResult) -> None:
-    state = _state(ctx, show, facts)
+    state = show_state(ctx, show, facts)
     if premiere_out_of_reach(facts, ctx.now) or (
         show.next_airing_episode == 1 and show.next_airing_at is not None and show.next_airing_at > state.horizon
     ):
@@ -517,7 +517,7 @@ def _mark_missed(ctx: Context, state: ShowState, facts, resolved_by_feed) -> int
 def covered_numbers(ctx: Context, show: Show) -> Set[int]:
     """The show's episodes that the stored feed items can already supply; read only."""
     facts = facts_for(ctx, [show])[show.id]
-    state = _state(ctx, show, facts)
+    state = show_state(ctx, show, facts)
     covered: Set[int] = set()
     for feed in _candidate_feeds(ctx, show, feeds.ranked(ctx)):
         _, best = resolve(ctx, state, feed, learn=False)

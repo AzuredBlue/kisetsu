@@ -30,7 +30,7 @@ from kisetsu.domain.patterns import resolve_save_path, sanitize_folder_name
 from kisetsu.services import events, feeds, tags
 from kisetsu.services.context import Context
 from kisetsu.services.feeds import Evidence
-from kisetsu.services.library import _same_dir
+from kisetsu.services.library import same_dir
 
 logger = logging.getLogger("kisetsu.services.downloads")
 
@@ -387,7 +387,7 @@ def _release_tag(ctx: Context, dl: Download) -> None:
 def _check_folder(ctx: Context, show: Show, torrent: Torrent) -> None:
     """Say once per show when a torrent is not in the folder Kisetsu asked qBittorrent to use."""
     wanted = resolve_save_path(ctx.settings.base_dir, show.title(ctx.settings.title_language), show.save_folder)
-    if not wanted or _same_dir(torrent.save_path, wanted) or show.id in ctx.caches.misplaced:
+    if not wanted or same_dir(torrent.save_path, wanted) or show.id in ctx.caches.misplaced:
         return
     ctx.caches.misplaced.add(show.id)
     message = (

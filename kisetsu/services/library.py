@@ -69,7 +69,7 @@ def held_ids(ctx: Context) -> Set[int]:
     return {show_id for show_id, since in ctx.caches.held.items() if ctx.now - since < HOLD}
 
 
-def _same_dir(a: Any, b: str) -> bool:
+def same_dir(a: Any, b: str) -> bool:
     """Whether two folder paths are one, however each writes its separators (qBittorrent reports "/" on Windows)."""
 
     def uniform(path: Any) -> str:
@@ -131,7 +131,7 @@ def show_torrent_preview(ctx: Context, show: Show) -> List[Dict[str, Any]]:
                     continue
                 if tags.owner_id(torrent, owned) not in (None, show.id):
                     continue
-                if not _same_dir(torrent.save_path, save_path):
+                if not same_dir(torrent.save_path, save_path):
                     continue
                 if (first_air is not None and torrent.added_on is not None and torrent.added_on < first_air - slack) or not decide(matcher, torrent.name, cache)[0]:
                     continue
@@ -168,14 +168,14 @@ def plan_move(ctx: Context, shows: List[Show], new_path: Callable[[Show], str], 
     for show in shows:
         old = resolve_save_path(settings.base_dir, show.title(settings.title_language), show.save_folder)
         new = new_path(show)
-        if not new or (not anywhere and (not old or _same_dir(old, new))):
+        if not new or (not anywhere and (not old or same_dir(old, new))):
             continue
         entries = show_torrent_preview(ctx, show)
         found = [(e["tracked"], ctx.qbit.torrents[e["hash"]]) for e in entries if e["hash"] in ctx.qbit.torrents]
         if anywhere:
-            here = [t for tracked, t in found if (tracked or _same_dir(t.save_path, old)) and not _same_dir(t.save_path, new)]
+            here = [t for tracked, t in found if (tracked or same_dir(t.save_path, old)) and not same_dir(t.save_path, new)]
         else:
-            here = [t for _, t in found if _same_dir(t.save_path, old)]
+            here = [t for _, t in found if same_dir(t.save_path, old)]
         moving = [t for _, t in found if t.state.lower() == "moving"]
         if here or moving:
             plan.append({"show": show, "old": old, "new": new, "hashes": [t.hash for t in here], "moving": len(moving)})
