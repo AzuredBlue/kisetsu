@@ -370,14 +370,50 @@ section + section { margin-top: .5rem; }
 .test-wait { color: rgb(var(--text-3)); font-size: .75rem; }
 .danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; }
 .page.medium { & .adv { display: block; } }
-/* Settings: the main sections side by side when there is room, so they read at a glance; Advanced and Clear all span both. */
+/* Settings: the main sections side by side when there is room, so they read at a glance; Advanced and Clear all span both.
+   On one column the sections keep their natural order. */
 .settings { container-type: inline-size; & .adv { display: block; } }
 .settings-cols { display: grid; gap: 1.25rem; align-items: start; }
-.settings-col { display: grid; gap: 1.25rem; align-content: start; min-width: 0; }
+.settings-col { display: contents; }
+.sec-downloads { order: 1; } .sec-connections { order: 2; } .sec-appearance { order: 3; } .sec-backup { order: 4; }
 @container (min-width: 60rem) {
   .settings-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; }
-  /* Half a page is too narrow for a long field beside its name: it goes under it at full width. */
-  .settings-cols .set-ctl.wide { flex: 1 1 100%; width: auto; }
+  .settings-col { display: grid; gap: 1.25rem; align-content: start; min-width: 0; }
+}
+/* One form grid in every settings card: the names share a column, every control starts on the same line, and its hint sits under it. */
+.form-grid { container-type: inline-size; }
+.form-grid .set-row {
+  display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); column-gap: 1rem; row-gap: .375rem; align-items: start;
+  & .set-text { display: contents; }
+  /* Lined up with the middle of a one-line control. */
+  & .set-name { grid-column: 1; grid-row: 1; padding-top: .45rem; }
+  & .set-text .field-hint { grid-column: 2; grid-row: 2; margin-top: 0; max-width: 34rem; }
+  & .set-ctl { grid-column: 2; grid-row: 1; justify-self: start; min-width: 0; }
+  & .set-ctl.wide { justify-self: stretch; width: auto; }
+  & .set-ctl.mid { width: min(100%, 14rem); }
+  & .set-ctl.num { width: 3.75rem; }
+  /* A typed number needs no spin arrows. */
+  & .field.num { padding-inline: .5rem; appearance: textfield; -moz-appearance: textfield; }
+  & .field.num::-webkit-inner-spin-button, & .field.num::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  & .set-stack .row { gap: .75rem; font-size: .75rem; }
+  & .set-stack .field-hint { margin: -.125rem 0 .125rem; }
+  & .swatches { gap: .3125rem; }
+}
+/* A number box is short: its hint sits beside it instead of below. */
+@container (min-width: 26.01rem) {
+  .form-grid .set-row:has(.set-ctl.num) {
+    grid-template-columns: 7.5rem 3.75rem minmax(0, 1fr);
+    & .set-text .field-hint { grid-column: 3; grid-row: 1; align-self: center; }
+  }
+}
+/* Too narrow for two columns: the name goes above its control. */
+@container (max-width: 26rem) {
+  .form-grid .set-row {
+    grid-template-columns: minmax(0, 1fr);
+    & .set-name { grid-row: 1; padding-top: 0; }
+    & .set-ctl { grid-row: 2; grid-column: 1; }
+    & .set-text .field-hint { grid-row: 3; grid-column: 1; }
+  }
 }
 .backup-compare { width: 100%; border-collapse: collapse; font-size: .8125rem;
   & th, & td { padding: .3125rem .5rem; text-align: left; vertical-align: top; font-weight: 400; }

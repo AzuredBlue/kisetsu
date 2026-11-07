@@ -107,42 +107,46 @@ export function Settings() {
   return html`<div class="page wide settings">
     <div class="settings-cols">
       <div class="settings-col">
-        <section>
+        <section class="sec-downloads">
           <h3 class="section-title section-gap">Downloads</h3>
-          <div class="card card-divided">
-            <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
-            <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
+          <div class="card card-divided form-grid">
+            <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Use a folder qBittorrent can see (with Docker, the path inside the container). Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
+            <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(none)" ...${bind('default_category')} /><//>
             <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
-            <${SetRow} name="Preferred quality" hint="Downloaded when the feed has it, otherwise the closest resolution above it. Lower resolutions are never downloaded."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
-            <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
+            <${SetRow} name="Preferred quality" hint="Used when the feed has it, otherwise the next resolution up. Lower ones are never downloaded."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
+            <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
+          </div>
+        </section>
+        <section class="sec-backup">
+          <h3 class="section-title section-gap">Backup</h3>
+          <div class="card card-divided form-grid">
+            <${SetRow} name="Export" hint="Settings, shows, feeds and history. Keep it private: feed addresses can hold keys."><button type="button" class="btn sm" onClick=${runExport} disabled=${exporting}>${exporting ? 'Exporting…' : 'Export backup'}</button><//>
+            <${SetRow} name="Restore" hint="Replaces everything, after a preview. The current data is saved first."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
           </div>
         </section>
       </div>
       <div class="settings-col">
-        <section>
+        <section class="sec-connections">
           <h3 class="section-title section-gap">Connections</h3>
-          <div class="card card-divided">
-            <div class="set-row">
-              <div class="set-text">
-                <div class="set-name">qBittorrent</div>
-                <p class="field-hint">Leave the password blank to keep the saved one.</p>
-                <div class="row" style="margin-top:.5rem"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`mono test-${test.state}`}>${test.text}</span></div>
-              </div>
-              <div class="set-ctl wide set-stack">
-                <input class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${bind('qbit_host')} />
+          <div class="card card-divided form-grid">
+            <${SetRow} name="qBittorrent" htmlFor="set-qbit-host" size="wide">
+              <div class="set-stack">
+                <input id="set-qbit-host" class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${bind('qbit_host')} />
                 <div class="set-pair">
                   <input class="field" placeholder="Username" aria-label="qBittorrent username" ...${bind('qbit_username')} />
                   <input class="field" type="password" placeholder="Password" aria-label="qBittorrent password" autocomplete="new-password" ...${bind('qbit_password')} />
                 </div>
+                <p class="field-hint">Leave the password blank to keep the saved one.</p>
+                <div class="row"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`test-${test.state}`}>${test.text}</span></div>
               </div>
-            </div>
-            <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Whose list to follow: what airs this season or next on Watching and Planning. Add anything else from Shows, Add show." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
+            <//>
+            <${SetRow} name="AniList" htmlFor="set-anilist" hint="Your username. Kisetsu follows what airs this season or next on your Watching and Planning lists." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
           </div>
         </section>
-        <section>
+        <section class="sec-appearance">
           <h3 class="section-title section-gap">Appearance</h3>
-          <div class="card card-divided">
-            <${SetRow} name="Theme" hint="Saved in this browser only. System follows your OS setting."><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
+          <div class="card card-divided form-grid">
+            <${SetRow} name="Theme" hint="Saved in this browser. System follows your OS."><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
             <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
             <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
             <${SetRow} name="Colour tint" hint="How much the accent colours the backgrounds."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
@@ -153,21 +157,13 @@ export function Settings() {
 
     <details class="adv">
       <summary class="section-title">Advanced</summary>
-      <div class="card card-divided">
-        <${SetRow} name="AniList sync every (min)" htmlFor="set-sync" hint="How often to sync your AniList list." size="num"><input id="set-sync" type="number" min="1" max="10080" class="field num" ...${bind('anilist_sync_minutes')} /><//>
-        <${SetRow} name="Check feeds every (min)" htmlFor="set-feeds" hint="How often a show's feed is read while one of its episodes aired in the last 3 days and is still missing. Feeds no show needs are read every 6 hours, for replacements, batches and movies." size="num"><input id="set-feeds" type="number" min="5" max="240" class="field num" ...${bind('feed_refresh_minutes')} /><//>
-        <${SetRow} name="Hunt every (min)" htmlFor="set-hunt" hint="After an episode airs, how often to read its show's feed until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
+      <div class="card card-divided form-grid">
+        <${SetRow} name="AniList sync (min)" htmlFor="set-sync" hint="How often your AniList list is read." size="num"><input id="set-sync" type="number" min="1" max="10080" class="field num" ...${bind('anilist_sync_minutes')} /><//>
+        <${SetRow} name="Feed check (min)" htmlFor="set-feeds" hint="How often a show's feed is read while an episode that aired in the last 3 days is still missing. Feeds no show needs are read every 6 hours." size="num"><input id="set-feeds" type="number" min="5" max="240" class="field num" ...${bind('feed_refresh_minutes')} /><//>
+        <${SetRow} name="Hunt (min)" htmlFor="set-hunt" hint="Right after an episode airs, how often its show's feed is read until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
         <${SetRow} name="Early air (h)" htmlFor="set-early" hint="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time." size="num"><input id="set-early" type="number" min="0" max="168" class="field num" ...${bind('early_air_tolerance_hours')} /><//>
       </div>
     </details>
-
-    <section>
-      <h3 class="section-title section-gap">Backup</h3>
-      <div class="card card-divided">
-        <${SetRow} name="Export" hint="One file with your settings, shows, feeds and history. It leaves out your qBittorrent password. Feed addresses are included as they are, so treat the file as private if yours contain keys."><button type="button" class="btn sm" onClick=${runExport} disabled=${exporting}>${exporting ? 'Exporting…' : 'Export backup'}</button><//>
-        <${SetRow} name="Restore" hint="Replaces everything here with a backup, after showing you what's in it. What's here now is saved first. Torrents and files in qBittorrent are not touched."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
-      </div>
-    </section>
 
     <div class="card danger-zone">
       <div><h3 class="section-title">Clear all shows</h3><p class="field-hint" style="margin-top:.125rem">Removes every show and the history. Downloads are kept. Shows on your AniList list come back with the next sync.</p></div>
