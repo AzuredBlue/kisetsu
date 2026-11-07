@@ -5,7 +5,7 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Set, Tuple
 
 import qbittorrentapi
 import requests
@@ -21,6 +21,8 @@ READ_TIMEOUT_SECONDS = 10.0
 UNAVAILABLE_BACKOFF_SECONDS = (30, 60, 120, 300)
 # A rejected login is not retried for a while: qBittorrent bans an address after a few failed logins.
 AUTH_BACKOFF_SECONDS = 300
+# qBittorrent's default save folder is asked again after this long.
+DEFAULT_PATH_TTL_SECONDS = 300
 
 
 class QbitError(Exception):
@@ -199,6 +201,7 @@ class Qbit:
         self._rid = 0
         self._raw: Dict[str, Dict[str, Any]] = {}
         self._view: Dict[str, Torrent] = {}
+        self._default_path: Optional[Tuple[float, str]] = None
         self.synced = False
 
     # -- connection ---------------------------------------------------------
@@ -393,7 +396,10 @@ class Qbit:
             self._hash_call("torrents_remove_tags", hashes, tags=tags)
 
     def default_save_path(self) -> str:
-        return self._call(lambda c: str(c.app_default_save_path() or ""))
+        """qBittorrent's default folder. It is asked once in a while, not for every add of a pass."""
+        if self._default_path is None or self._clock() - self._default_path[0] > DEFAULT_PATH_TTL_SECONDS:
+            self._default_path = (self._clock(), self._call(lambda c: str(c.app_default_save_path() or "")))
+        return self._default_path[1]
 
     def tags(self) -> List[str]:
         return self._call(lambda c: [str(tag) for tag in c.torrents_tags()])

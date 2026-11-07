@@ -5,6 +5,7 @@ import qbittorrentapi
 import requests
 
 from kisetsu.clients.qbittorrent import (
+    DEFAULT_PATH_TTL_SECONDS,
     Qbit,
     QbitAuthError,
     QbitDuplicate,
@@ -107,6 +108,17 @@ def torrent(name="Show - 01.mkv", state="downloading", progress=0.5, tags="", **
     )
     values.update(extra)
     return values
+
+
+def test_the_default_save_path_is_asked_once_in_a_while_not_for_every_add():
+    api = Api()
+    asked = []
+    api.app_default_save_path = lambda: asked.append(1) or "D:\\Torrents"
+    qbit, _, clock, _ = make(api)
+    assert [qbit.default_save_path() for _ in range(3)] == ["D:\\Torrents"] * 3 and len(asked) == 1
+    clock.now += DEFAULT_PATH_TTL_SECONDS + 1
+    qbit.default_save_path()
+    assert len(asked) == 2
 
 
 # Connection and errors
