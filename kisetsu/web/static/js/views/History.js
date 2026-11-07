@@ -3,7 +3,7 @@ import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { useNow } from '../router.js';
 import { history as historyData } from '../data.js';
-import { dayLabel, localTime, relativeTime } from '../format.js';
+import { dayLabel, episodeLabel, localTime, relativeTime } from '../format.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
@@ -29,16 +29,6 @@ function collapseBatches(items) {
     else out.push({ ...item, episodes: item.episode ? [item.episode] : [] });
   });
   return out;
-}
-
-// [10, 9, 8, 3] -> "3, 8–10"
-function episodeLabel(numbers) {
-  const runs = [];
-  [...numbers].sort((a, b) => a - b).forEach(n => {
-    const run = runs[runs.length - 1];
-    if (run && run[1] === n - 1) run[1] = n; else runs.push([n, n]);
-  });
-  return runs.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(', ');
 }
 
 function Row({ item, now }) {

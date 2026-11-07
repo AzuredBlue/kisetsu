@@ -208,37 +208,42 @@ async def test_the_attention_list_gathers_failed_missed_and_retrying_episodes_ac
 
     web.query(mark)
     rows = (await web.client.get("/api/attention")).json()
-    assert [(r["show"], r["episode"], r["kind"]) for r in rows] == [
-        ("Sousou no Frieren", 1, "failed"), ("Dandadan", 3, "retrying"), ("Dandadan", 2, "missed"),
+    assert [(r["show"], r["episodes"], r["kind"]) for r in rows] == [
+        ("Sousou no Frieren", [1], "failed"), ("Dandadan", [3], "retrying"), ("Dandadan", [2], "missed"),
     ]
     assert rows[0]["reason"] == "qBittorrent rejected it" and rows[0]["show_id"] == first
 
 
-async def test_a_closed_attention_row_stays_hidden_until_the_episode_needs_attention_again(web):
+async def test_a_shows_missed_episodes_share_one_row_that_stays_hidden_once_closed(web):
     from kisetsu.db.schema import Episode, EpisodeStatus
     from sqlmodel import select
 
     show = web.show(1, "Sousou no Frieren", episodes=3)
+    other = web.show(2, "Dandadan", episodes=3)
 
-    def set_status(number, status):
+    def set_status(show_id, number, status):
         def change(session):
-            episode = session.exec(select(Episode).where(Episode.show_id == show, Episode.number == number)).one()
+            episode = session.exec(select(Episode).where(Episode.show_id == show_id, Episode.number == number)).one()
             episode.status = status
             session.commit()
         return change
 
-    web.query(set_status(1, EpisodeStatus.MISSED))
-    web.query(set_status(2, EpisodeStatus.MISSED))
+    for number in (1, 2):
+        web.query(set_status(show, number, EpisodeStatus.MISSED))
+    web.query(set_status(other, 1, EpisodeStatus.MISSED))
     rows = (await web.client.get("/api/attention")).json()
-    assert [r["episode"] for r in rows] == [2, 1]
-    response = await web.client.post("/api/attention/dismiss", json={"key": rows[1]["key"]})
+    assert [(r["show"], r["episodes"], r["action"]) for r in rows] == [
+        ("Dandadan", [1], {"type": "search"}), ("Sousou no Frieren", [1, 2], {"type": "search"}),
+    ]
+    frieren = rows[1]
+    response = await web.client.post("/api/attention/dismiss", json={"keys": frieren["keys"]})
     assert response.status_code == 200
-    assert [r["episode"] for r in (await web.client.get("/api/attention")).json()] == [2]
-    # The episode itself is untouched: still missed, so a release that turns up later is still grabbed.
+    assert [r["show"] for r in (await web.client.get("/api/attention")).json()] == ["Dandadan"]
+    # The episodes themselves are untouched: still missed, so a release that turns up later is still grabbed.
     assert web.query(lambda s: s.exec(select(Episode).where(Episode.show_id == show, Episode.number == 1)).one().status) == EpisodeStatus.MISSED
-    # Once it no longer needs attention its closing is forgotten, so a later problem shows again.
-    web.query(set_status(1, EpisodeStatus.WANTED))
-    await web.client.post("/api/attention/dismiss", json={"key": rows[0]["key"]})
-    web.query(set_status(1, EpisodeStatus.MISSED))
-    assert [r["episode"] for r in (await web.client.get("/api/attention")).json()] == [1]
-    assert (await web.client.post("/api/attention/dismiss", json={"key": "0:missed:0"})).status_code == 404
+    # Once one no longer needs attention its closing is forgotten, so a later problem shows again.
+    web.query(set_status(show, 1, EpisodeStatus.WANTED))
+    await web.client.post("/api/attention/dismiss", json={"keys": rows[0]["keys"]})
+    web.query(set_status(show, 1, EpisodeStatus.MISSED))
+    assert [(r["show"], r["episodes"]) for r in (await web.client.get("/api/attention")).json()] == [("Sousou no Frieren", [1])]
+    assert (await web.client.post("/api/attention/dismiss", json={"keys": ["0:missed:0"]})).status_code == 404

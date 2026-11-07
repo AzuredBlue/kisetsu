@@ -1,6 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import List
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -70,15 +71,16 @@ async def get_status(request: Request):
 
 
 class Dismiss(BaseModel):
-    key: str
+    keys: List[str]
 
 
-def _dismiss_attention(ctx, key: str) -> None:
-    current = {row["key"] for row in views.attention_view(ctx, include_dismissed=True)}
-    if key not in current:
+def _dismiss_attention(ctx, keys: List[str]) -> None:
+    current = {key for row in views.attention_view(ctx, include_dismissed=True) for key in row["keys"]}
+    closing = current.intersection(keys)
+    if not closing:
         raise NotFound("That no longer needs attention.")
     # Keys of rows that are gone are dropped, so the list only ever holds what it still hides.
-    kept = (views.dismissed_attention(ctx) & current) | {key}
+    kept = (views.dismissed_attention(ctx) & current) | closing
     set_state(ctx, views.ATTENTION_DISMISSED_KEY, json.dumps(sorted(kept)))
     ctx.emit("shows")
 
@@ -90,7 +92,7 @@ async def get_attention(request: Request):
 
 @router.post("/attention/dismiss")
 async def dismiss_attention(request: Request, body: Dismiss):
-    await write(request, _dismiss_attention, body.key)
+    await write(request, _dismiss_attention, body.keys)
     return {"status": "success"}
 
 

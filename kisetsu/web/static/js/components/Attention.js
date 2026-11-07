@@ -4,7 +4,7 @@ import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { go } from '../router.js';
 import { attention as attentionData, status as statusData } from '../data.js';
-import { localTime, relativeTime } from '../format.js';
+import { episodeLabel, localTime, relativeTime } from '../format.js';
 import { Icon, Spinner } from './Icon.js';
 import { Poster } from './ShowSummary.js';
 import { toast } from './Toast.js';
@@ -55,7 +55,7 @@ const KIND_TONES = { stalled: 'warn', failed: 'bad', retrying: 'warn', missed: '
 function Action({ row, pending, run }) {
   const action = row.action;
   if (!action) return row.kind === 'retrying' && row.retry_after ? html`<span class="muted">next try ${localTime(row.retry_after)}</span>` : null;
-  const key = `${row.episode_id}`;
+  const key = row.keys[0];
   const busy = pending === key;
   const label = { download: 'Try again', try_another: 'Try another release', search: 'Search older' }[action.type];
   const request = {
@@ -81,21 +81,22 @@ export function NeedsAttention() {
     } catch (err) { toast(err.message, err.status === 400 || err.status === 409 ? 'info' : 'error'); }
     setPending(null);
   };
-  const dismiss = async (key) => {
-    try { await apiFetch('/api/attention/dismiss', { method: 'POST', json: { key }, quiet: true }); } catch (err) { toast(err.message, 'error'); }
+  const dismiss = async (keys) => {
+    // A 404 means the row is already gone (a second click, or it was fixed meanwhile): nothing is left to close.
+    try { await apiFetch('/api/attention/dismiss', { method: 'POST', json: { keys }, quiet: true }); } catch (err) { if (err.status !== 404) toast(err.message, 'error'); }
   };
   return html`<section class="stack-sm show-section">
     <div class="page-head"><div class="row"><h2 class="section-title">Needs attention</h2><span class="count-badge">${data.length}</span></div></div>
     <div class="card card-divided attention-card">
-      ${data.map(row => html`<div class="attention-row" key=${`${row.episode_id}`} role="link" tabindex="0" onClick=${() => go(row.show_id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(row.show_id); }}>
+      ${data.map(row => html`<div class="attention-row" key=${row.keys[0]} role="link" tabindex="0" onClick=${() => go(row.show_id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(row.show_id); }}>
         <div class="sr-poster"><${Poster} show=${{ id: row.show_id, title: row.show, cover: row.cover }} dim=${false} /></div>
         <div class="attention-main">
-          <div class="history-title"><span class="history-show">${row.show}</span><span class="ep tabular">Ep ${row.episode}</span><span class=${`state ${KIND_TONES[row.kind]}`}>${KIND_LABELS[row.kind]}</span></div>
+          <div class="history-title"><span class="history-show">${row.show}</span><span class="ep tabular">Ep ${episodeLabel(row.episodes)}</span><span class=${`state ${KIND_TONES[row.kind]}`}>${KIND_LABELS[row.kind]}</span></div>
           <div class="attention-reason">${row.reason}</div>
         </div>
         <${Action} row=${row} pending=${pending} run=${run} />
         <button type="button" class="btn plain icon-only sm" aria-label="Dismiss" title="Hide from this list. The episode is left as it is, and a release that turns up later is still downloaded."
-          onClick=${(e) => { e.stopPropagation(); dismiss(row.key); }} onKeyDown=${(e) => e.stopPropagation()}><${Icon} name="x" small /></button>
+          onClick=${(e) => { e.stopPropagation(); dismiss(row.keys); }} onKeyDown=${(e) => e.stopPropagation()}><${Icon} name="x" small /></button>
       </div>`)}
     </div>
   </section>`;

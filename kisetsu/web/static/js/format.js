@@ -99,3 +99,13 @@ export function initials(name) {
 export function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+// [10, 9, 8, 3] -> "3, 8–10"
+export function episodeLabel(numbers) {
+  const runs = [];
+  [...numbers].sort((a, b) => a - b).forEach(n => {
+    const run = runs[runs.length - 1];
+    if (run && run[1] === n - 1) run[1] = n; else runs.push([n, n]);
+  });
+  return runs.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(', ');
+}

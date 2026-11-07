@@ -447,7 +447,8 @@ def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[s
 
     Stalled and failed downloads first, then those waiting to be tried again, then episodes no feed carries any more.
     Paused and completed shows are left out, and so are rows the user closed. A closed row is keyed by its episode, its
-    kind and its current download, so the same episode coming back for another reason is shown again.
+    kind and its current download, so the same episode coming back for another reason is shown again. A show's missed
+    episodes share one row, which holds the key of each.
     """
     language = ctx.settings.title_language
     dismissed = set() if include_dismissed else dismissed_attention(ctx)
@@ -459,6 +460,7 @@ def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[s
     } if ctx.caches.stalled else {}
     rows = ctx.session.exec(select(Episode).where(Episode.show_id.in_(list(shows)))).all()
     found_for: Dict[int, List[Any]] = {}
+    missed_rows: Dict[int, Dict[str, Any]] = {}
     out: List[Dict[str, Any]] = []
     for episode in rows:
         show = shows[episode.show_id]
@@ -489,19 +491,31 @@ def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[s
                 retry = manual.retry_release(ctx, show, episode, found_for[show.id])
                 if retry is not None:
                     action = {"type": "download", "title": retry}
-        out.append({
+        if kind == "missed" and show.id in missed_rows:
+            # One search looks for every missed episode of a show, so they share one row and one Search older.
+            row = missed_rows[show.id]
+            row["episodes"].append(episode.number)
+            row["keys"].append(key)
+            row["reason"] = "No feed carries them any more. Search older asks the feeds' sites for them."
+            continue
+        row = {
             "show_id": show.id,
             "show": show.title(language),
             "cover": show.cover_image,
             "episode_id": episode.id,
-            "episode": episode.number,
+            "episodes": [episode.number],
             "kind": kind,
-            "key": key,
+            "keys": [key],
             "reason": reason,
             "retry_after": iso(episode.retry_after) if kind == "retrying" else None,
             "action": action,
-        })
-    out.sort(key=lambda row: (ATTENTION_ORDER[row["kind"]], row["show"].casefold(), -row["episode"]))
+        }
+        if kind == "missed":
+            missed_rows[show.id] = row
+        out.append(row)
+    for row in out:
+        row["episodes"].sort()
+    out.sort(key=lambda row: (ATTENTION_ORDER[row["kind"]], row["show"].casefold(), -row["episodes"][-1]))
     return out
 
 
