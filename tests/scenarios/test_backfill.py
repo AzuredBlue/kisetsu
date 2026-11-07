@@ -4,7 +4,7 @@ from datetime import timedelta
 from sqlmodel import select
 
 from kisetsu.db.schema import EpisodeStatus, FeedItem, FeedItemMatch, FeedState
-from kisetsu.services import backfill, grab, ingest
+from kisetsu.services import backfill, feedsync, grab, ingest
 from tests.fakes import START, article
 
 NYAA = "https://nyaa.si/?page=rss&c=1_2&f=0&q=x"
@@ -414,3 +414,81 @@ def test_a_restart_does_not_search_again_a_show_searched_in_the_last_six_hours(w
     assert [d.show_id for d in backfill.due(world.ctx(), force=True)] == [show.id]
     world.clock.advance(hours=6)
     assert [d.show_id for d in backfill.due(world.ctx())] == [show.id]
+
+
+NYAA_B = "https://nyaa.si/?page=rss&c=1_2&f=0&q=y"
+
+
+def other(n, days_ago):
+    return article(f"[Grp] Some Other Show - {n:02d} (1080p).mkv", START - timedelta(days=days_ago))
+
+
+def test_a_feed_whose_last_read_reached_back_past_an_episode_yet_held_nothing_of_the_show_is_not_searched(world):
+    lacking = world.feed("Lacking", NYAA, 1)
+    carrying = world.feed("Carrying", NYAA_B, 2)
+    airing(world)
+    # Both reads reach back 30 days, past episodes 1-3; only one of them holds anything of the show.
+    feedsync.apply_fetch(world.ctx(), {
+        lacking.id: [other(1, 30), other(2, 1)],
+        carrying.id: [other(1, 30), article(title(4), START)],
+    })
+    world.commit()
+    [item] = backfill.due(world.ctx())
+    assert item.feeds == [carrying] and item.missing == [1, 2, 3]
+
+
+def test_a_read_too_short_or_without_dates_says_nothing_about_what_a_feed_carries(world):
+    short = world.feed("Short", NYAA, 1)
+    undated = world.feed("Undated", NYAA_B, 2)
+    airing(world)
+    # Episode 3 aired 7 days ago: a read reaching back 8 days could hold a release posted up to 2 days before it,
+    # and one reaching back 30 days that is a day old cannot yet hold a release posted 3 days late.
+    feedsync.apply_fetch(world.ctx(), {short.id: [other(1, 8), other(2, 0)], undated.id: [article("[Grp] Some Other Show - 01.mkv")]})
+    world.commit()
+    assert backfill.due(world.ctx())[0].feeds == [short, undated]
+
+
+def test_a_show_no_feed_carries_is_not_searched_and_its_aired_episodes_are_missed_at_once(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    feed.last_ok_at = START
+    show = airing(world)
+    feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), other(2, 0)]})
+    world.commit()
+    assert backfill.due(world.ctx()) == [] and backfill.search_completed(world.ctx(), show.id)
+    grab.grab_pass(world.ctx())
+    world.commit()
+    assert [world.episode(show, n).status for n in (1, 2, 3)] == [EpisodeStatus.MISSED] * 3
+
+
+def test_a_show_added_after_the_read_is_searched_on_the_feeds_whose_read_held_it(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), article(title(4), START)]})
+    world.commit()
+    show = airing(world)
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    [item] = backfill.due(world.ctx())
+    assert item.show_id == show.id and item.feeds == [feed]
+
+
+def test_saved_files_are_still_looked_for_on_a_feed_that_no_longer_carries_the_show(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    show = airing(world)
+    for n in (1, 2, 3, 4):
+        world.episode(show, n).status = EpisodeStatus.COMPLETED
+    world.commit()
+    feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), other(2, 0)]})
+    world.commit()
+    [item] = backfill.due(world.ctx(), show_id=show.id, force=True, unmanaged=True)
+    assert item.feeds == [feed]
+
+
+def test_a_search_the_user_asks_for_still_asks_a_feed_that_seems_not_to_carry_the_show(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    show = airing(world)
+    feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), other(2, 0)]})
+    world.commit()
+    assert backfill.due(world.ctx(), show_id=show.id, force=True) == []
+    assert backfill.missing_episodes(world.ctx(), show.id) == [1, 2, 3, 4]
+    [item] = backfill.due(world.ctx(), show_id=show.id, force=True, everywhere=True)
+    assert item.feeds == [feed]

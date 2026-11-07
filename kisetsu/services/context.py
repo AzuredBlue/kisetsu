@@ -34,6 +34,8 @@ class Caches:
     announced_batches: Set[str] = field(default_factory=set)
     # By show: (search signature, when, the episodes searched for, how many searches in a row found nothing).
     searched: Dict[int, Tuple[int, datetime, FrozenSet[int], int]] = field(default_factory=dict)
+    # By feed: the oldest release date its last successful read listed, and when that read was.
+    read_windows: Dict[int, Tuple[datetime, datetime]] = field(default_factory=dict)
     # Downloads whose torrent has not moved for a long time, found by the last settle pass. A read cannot ask qBittorrent,
     # so it is given this set; a pass replaces it whole and nothing edits it in place.
     stalled: Set[int] = field(default_factory=set)

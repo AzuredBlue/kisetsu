@@ -12,11 +12,11 @@ from sqlmodel import select
 
 from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle, FeedFetchError
-from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
+from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedItem, FeedItemMatch, FeedState, Show
 from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import broad_match, build_matcher, decide
 from kisetsu.domain.numbering import map_episode
-from kisetsu.domain.schedule import plausible_for_show
+from kisetsu.domain.schedule import AIR_DATE_TOLERANCE, PUBLISHED_BEFORE_AIR_SLACK, plausible_for_show
 from kisetsu.services import downloads, feeds, grab, ingest
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
@@ -81,19 +81,48 @@ def _searchable_feeds(ctx: Context, show: Show) -> List[Feed]:
     return [f for f in all_feeds if sites.site_of(f.url)]
 
 
+def _lacking(ctx: Context, show: Show, show_feeds: List[Feed]) -> Set[int]:
+    """The feeds whose last read shows they do not carry the show, so a search of them would find nothing.
+
+    A feed lists its newest releases. When its last read reached back past one of the show's
+    aired episodes, far enough that a release of it would be listed even if posted early, and
+    was read late enough that it would have been posted, yet nothing the feed ever listed or a
+    search found on it is of the show, the feed does not carry the show.
+    """
+    windows = {f.id: ctx.caches.read_windows[f.id] for f in show_feeds if f.id in ctx.caches.read_windows}
+    if not windows:
+        return set()
+    aired = ctx.session.exec(
+        select(Episode.air_at).where(Episode.show_id == show.id, Episode.air_at.is_not(None), Episode.air_at <= ctx.now)
+    ).all()
+    if not aired:
+        return set()
+    carrying = set(ctx.session.exec(
+        select(FeedItem.feed_id).join(FeedItemMatch, FeedItemMatch.item_id == FeedItem.id).where(FeedItemMatch.show_id == show.id)
+    ).all())
+    return {
+        feed_id for feed_id, (oldest, read_at) in windows.items()
+        if feed_id not in carrying
+        and any(oldest + PUBLISHED_BEFORE_AIR_SLACK <= air and air + AIR_DATE_TOLERANCE <= read_at for air in aired)
+    }
+
+
 def due(
     ctx: Context,
     *,
     show_id: Optional[int] = None,
     force: bool = False,
     unmanaged: bool = False,
+    everywhere: bool = False,
     unsearchable: Optional[List[int]] = None,
 ) -> List[Due]:
     """Shows with an aired episode that is still wanted and that no stored feed item can supply.
 
-    Searching is only for what the feeds have lost. ``unmanaged`` also counts finished
-    episodes Kisetsu holds no torrent for. ``unsearchable``, when given, collects the ids of
-    shows skipped because no feed can be searched or the show has no usable search term.
+    Searching is only for what the feeds have lost, and only on feeds that may carry the show
+    (``_lacking``), unless ``everywhere`` (a search the user asked for) or ``unmanaged``, which
+    also counts finished episodes Kisetsu holds no torrent for.
+    ``unsearchable``, when given, collects the ids of shows skipped because no feed can be
+    searched or the show has no usable search term.
     """
     query = select(Show)
     if show_id is not None:
@@ -120,6 +149,12 @@ def due(
         missing = [n for n in wanted if n not in covered]
         if not missing:
             continue
+        if not (unmanaged or everywhere):
+            # Saved files may come from a feed that has since stopped carrying the show, so they are looked for everywhere.
+            lacking = _lacking(ctx, show, show_feeds)
+            show_feeds = [f for f in show_feeds if f.id not in lacking]
+            if not show_feeds:
+                continue
         signature = hash((tuple(terms), tuple(f.id for f in show_feeds), tuple(missing)))
         last = ctx.caches.searched.get(show.id)
         if not force and last and last[0] == signature and ctx.now - last[1] < _repeat(last[3]):
@@ -175,8 +210,8 @@ def search_pending(ctx: Context, show_id: int, numbers: List[int]) -> bool:
 
 
 def missing_episodes(ctx: Context, show_id: int, unmanaged: bool = False) -> List[int]:
-    """The episodes of one show that a forced search would look for (empty: nothing is missing)."""
-    found = due(ctx, show_id=show_id, force=True, unmanaged=unmanaged)
+    """The episodes of one show that a search the user asks for would look for (empty: nothing is missing)."""
+    found = due(ctx, show_id=show_id, force=True, unmanaged=unmanaged, everywhere=True)
     return found[0].missing if found else []
 
 

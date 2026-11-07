@@ -136,6 +136,9 @@ def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:
         ctx.session.add(feed)
         if result and feed.id in stored_feeds and not any((feed.id, a.guid) in known for a in result):
             outcome.gaps.append(feed.id)
+        dated = [a.published_at for a in result if a.published_at is not None]
+        if dated:
+            ctx.caches.read_windows[feed.id] = (min(dated), ctx.now)
         stored = ingest.ingest(ctx, feed, result)
         outcome.new += stored.new
         outcome.matched_show_ids |= stored.show_ids

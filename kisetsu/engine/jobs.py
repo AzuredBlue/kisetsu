@@ -433,13 +433,17 @@ class Jobs:
 
     async def search_older(self, show_id: int) -> int:
         """Search the show's feed sites for past episodes now; returns how many releases were found."""
-        added = await self._backfill_show(show_id, force=True)
+        added = await self._backfill_show(show_id, force=True, everywhere=True)
         if added:
             self.poke("grab")
         return added
 
-    async def _backfill_show(self, show_id: int, force: bool = False, unmanaged: bool = False, exhaustive: bool = False) -> int:
-        due = await self.engine.run(lambda ctx: backfill.due(ctx, show_id=show_id, force=force, unmanaged=unmanaged))
+    async def _backfill_show(
+        self, show_id: int, force: bool = False, unmanaged: bool = False, exhaustive: bool = False, everywhere: bool = False,
+    ) -> int:
+        due = await self.engine.run(
+            lambda ctx: backfill.due(ctx, show_id=show_id, force=force, unmanaged=unmanaged, everywhere=everywhere)
+        )
         return await self._search(due, exhaustive=exhaustive)
 
     async def _search(self, due: "List[backfill.Due]", exhaustive: bool = False) -> int:
