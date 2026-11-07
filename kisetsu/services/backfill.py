@@ -129,6 +129,14 @@ def search_completed(ctx: Context, show_id: int) -> bool:
     return show_id in ctx.caches.searched or not due(ctx, show_id=show_id, force=True)
 
 
+def search_pending(ctx: Context, show_id: int, numbers: List[int]) -> bool:
+    """Whether a search of the feeds' sites for these episodes is still to run, so they may yet turn up."""
+    last = ctx.caches.searched.get(show_id)
+    if last is not None and last[2].issuperset(numbers):
+        return False
+    return bool(due(ctx, show_id=show_id))
+
+
 def missing_episodes(ctx: Context, show_id: int, unmanaged: bool = False) -> List[int]:
     """The episodes of one show that a forced search would look for (empty: nothing is missing)."""
     found = due(ctx, show_id=show_id, force=True, unmanaged=unmanaged)
@@ -227,7 +235,7 @@ def apply(ctx: Context, item: Due, found: Searched) -> int:
         show.completed = False
     if found.stopped is None:
         # Only a search that ran to the end counts as done; one a site cut short is tried again.
-        ctx.caches.searched[show.id] = (item.signature, ctx.now)
+        ctx.caches.searched[show.id] = (item.signature, ctx.now, frozenset(item.missing))
         show.last_backfill_at = ctx.now
     ctx.session.add(show)
     return added

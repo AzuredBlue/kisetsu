@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Set, Tuple
 
 from sqlmodel import Session
 
@@ -32,8 +32,8 @@ class Caches:
     misplaced: Set[int] = field(default_factory=set)
     # Batch torrents whose finish the desktop notification already told of.
     announced_batches: Set[str] = field(default_factory=set)
-    # Past-release searches already run: show id -> (what was searched for, when).
-    searched: Dict[int, Tuple[int, datetime]] = field(default_factory=dict)
+    # Past-release searches already run: show id -> (what was searched for, when, the episodes looked for).
+    searched: Dict[int, Tuple[int, datetime, FrozenSet[int]]] = field(default_factory=dict)
     # Downloads whose torrent has not moved for a long time, found by the last settle pass. A read cannot ask qBittorrent,
     # so it is given this set; a pass replaces it whole and nothing edits it in place.
     stalled: Set[int] = field(default_factory=set)

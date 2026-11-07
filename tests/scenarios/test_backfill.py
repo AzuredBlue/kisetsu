@@ -220,6 +220,26 @@ def test_a_sequels_release_found_by_the_first_seasons_search_reaches_the_sequel(
     assert grab.covered_numbers(world.ctx(), sequel) == {1}
 
 
+def test_an_episode_is_missed_only_once_the_search_for_it_found_nothing(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    feed.last_ok_at = START
+    show = airing(world)
+    ingest.ingest(world.ctx(), feed, [article(title(4), START)])
+    world.commit()
+    first = grab.grab_pass(world.ctx())
+    world.commit()
+    # The search for the older episodes has not run yet: they may still turn up, so nothing is missed.
+    assert first.started == 1 and first.missed == 0
+    assert [world.episode(show, n).status for n in (1, 2, 3)] == [EpisodeStatus.WANTED] * 3
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
+    [item] = backfill.due(world.ctx())
+    run_search(world, item, show)
+    second = grab.grab_pass(world.ctx())
+    world.commit()
+    assert second.started == 1 and second.missed == 2
+    assert [world.episode(show, n).status for n in (1, 2, 3)] == [EpisodeStatus.MISSED, EpisodeStatus.DOWNLOADING, EpisodeStatus.MISSED]
+
+
 def test_a_restart_does_not_search_again_a_show_searched_in_the_last_six_hours(world):
     from kisetsu.services.context import Caches
     world.feed("Nyaa", NYAA, 1)

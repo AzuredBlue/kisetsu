@@ -441,6 +441,8 @@ class Jobs:
             if found.stopped:
                 logger.warning(f"Past-release search stopped: {found.stopped}")
                 break
+            # Whatever it found, a finished search lets the grab mark what is still not there as missed.
+            self.poke("grab")
         return added
 
     async def search_new_show(self, entry: Dict[str, Any]) -> Dict[str, Any]:

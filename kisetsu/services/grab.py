@@ -502,11 +502,18 @@ def _mark_missed(ctx: Context, state: ShowState, facts, resolved_by_feed) -> int
     wanted = [e for e in refreshed.episodes if e.status == EpisodeStatus.WANTED]
     if not wanted:
         return 0
+    numbers = [
+        n for n in missed_numbers(list(refreshed.episodes), ctx.now, state.horizon, state.newest_aired, covered)
+        if (e := state.by_number.get(n)) is not None and e.status == EpisodeStatus.WANTED
+    ]
+    from kisetsu.services import backfill  # backfill imports this module
+
+    # Not missed while the search of the feeds' sites for it is still to run: it may well find it.
+    if not numbers or backfill.search_pending(ctx, state.show.id, numbers):
+        return 0
     marked = 0
-    for number in missed_numbers(list(refreshed.episodes), ctx.now, state.horizon, state.newest_aired, covered):
-        episode = state.by_number.get(number)
-        if episode is None or episode.status != EpisodeStatus.WANTED:
-            continue
+    for number in numbers:
+        episode = state.by_number[number]
         episode.status = EpisodeStatus.MISSED
         ctx.session.add(episode)
         events.record(
