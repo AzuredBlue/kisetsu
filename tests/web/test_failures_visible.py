@@ -212,3 +212,33 @@ async def test_the_attention_list_gathers_failed_missed_and_retrying_episodes_ac
         ("Sousou no Frieren", 1, "failed"), ("Dandadan", 3, "retrying"), ("Dandadan", 2, "missed"),
     ]
     assert rows[0]["reason"] == "qBittorrent rejected it" and rows[0]["show_id"] == first
+
+
+async def test_a_closed_attention_row_stays_hidden_until_the_episode_needs_attention_again(web):
+    from kisetsu.db.schema import Episode, EpisodeStatus
+    from sqlmodel import select
+
+    show = web.show(1, "Sousou no Frieren", episodes=3)
+
+    def set_status(number, status):
+        def change(session):
+            episode = session.exec(select(Episode).where(Episode.show_id == show, Episode.number == number)).one()
+            episode.status = status
+            session.commit()
+        return change
+
+    web.query(set_status(1, EpisodeStatus.MISSED))
+    web.query(set_status(2, EpisodeStatus.MISSED))
+    rows = (await web.client.get("/api/attention")).json()
+    assert [r["episode"] for r in rows] == [2, 1]
+    response = await web.client.post("/api/attention/dismiss", json={"key": rows[1]["key"]})
+    assert response.status_code == 200
+    assert [r["episode"] for r in (await web.client.get("/api/attention")).json()] == [2]
+    # The episode itself is untouched: still missed, so a release that turns up later is still grabbed.
+    assert web.query(lambda s: s.exec(select(Episode).where(Episode.show_id == show, Episode.number == 1)).one().status) == EpisodeStatus.MISSED
+    # Once it no longer needs attention its closing is forgotten, so a later problem shows again.
+    web.query(set_status(1, EpisodeStatus.WANTED))
+    await web.client.post("/api/attention/dismiss", json={"key": rows[0]["key"]})
+    web.query(set_status(1, EpisodeStatus.MISSED))
+    assert [r["episode"] for r in (await web.client.get("/api/attention")).json()] == [1]
+    assert (await web.client.post("/api/attention/dismiss", json={"key": "0:missed:0"})).status_code == 404

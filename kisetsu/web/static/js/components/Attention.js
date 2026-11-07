@@ -81,6 +81,9 @@ export function NeedsAttention() {
     } catch (err) { toast(err.message, err.status === 400 || err.status === 409 ? 'info' : 'error'); }
     setPending(null);
   };
+  const dismiss = async (key) => {
+    try { await apiFetch('/api/attention/dismiss', { method: 'POST', json: { key }, quiet: true }); } catch (err) { toast(err.message, 'error'); }
+  };
   return html`<section class="stack-sm show-section">
     <div class="page-head"><div class="row"><h2 class="section-title">Needs attention</h2><span class="count-badge">${data.length}</span></div></div>
     <div class="card card-divided attention-card">
@@ -91,6 +94,8 @@ export function NeedsAttention() {
           <div class="attention-reason">${row.reason}</div>
         </div>
         <${Action} row=${row} pending=${pending} run=${run} />
+        <button type="button" class="btn plain icon-only sm" aria-label="Dismiss" title="Hide from this list. The episode is left as it is, and a release that turns up later is still downloaded."
+          onClick=${(e) => { e.stopPropagation(); dismiss(row.key); }} onKeyDown=${(e) => e.stopPropagation()}><${Icon} name="x" small /></button>
       </div>`)}
     </div>
   </section>`;

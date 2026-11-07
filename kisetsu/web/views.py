@@ -1,5 +1,6 @@
 """What the UI shows, built from the database. The UI decides nothing: statuses, labels and roles are settled here."""
 
+import json
 from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -26,7 +27,7 @@ from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.domain.schedule import is_unreleased
 from kisetsu.domain.status import ShowStatus, show_status
 from kisetsu.services import downloads, manual, shows as shows_service
-from kisetsu.services.context import Context
+from kisetsu.services.context import Context, get_state
 from kisetsu.services.facts import facts_for
 
 STATUS_LABELS = {
@@ -429,15 +430,27 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
 
 
 ATTENTION_ORDER = {"stalled": 0, "failed": 1, "retrying": 2, "missed": 3}
+# The attention rows the user closed, as a JSON list of keys. Only the list hides them: the episode itself is left as it is.
+ATTENTION_DISMISSED_KEY = "attention_dismissed"
 
 
-def attention_view(ctx: Context) -> List[Dict[str, Any]]:
+def dismissed_attention(ctx: Context) -> Set[str]:
+    try:
+        keys = json.loads(get_state(ctx, ATTENTION_DISMISSED_KEY) or "[]")
+    except ValueError:
+        return set()
+    return set(keys) if isinstance(keys, list) else set()
+
+
+def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[str, Any]]:
     """Episodes across every show that need the user's eye, each with the one action that helps, if any.
 
     Stalled and failed downloads first, then those waiting to be tried again, then episodes no feed carries any more.
-    Paused and completed shows are left out.
+    Paused and completed shows are left out, and so are rows the user closed. A closed row is keyed by its episode, its
+    kind and its current download, so the same episode coming back for another reason is shown again.
     """
     language = ctx.settings.title_language
+    dismissed = set() if include_dismissed else dismissed_attention(ctx)
     shows = {s.id: s for s in ctx.session.exec(select(Show).where(Show.paused.is_(False), Show.completed.is_(False))).all()}
     if not shows:
         return []
@@ -460,6 +473,9 @@ def attention_view(ctx: Context) -> List[Dict[str, Any]]:
             kind, reason = "missed", "No feed carries it any more. Search older asks the feeds' sites for it."
         else:
             continue
+        key = f"{episode.id}:{kind}:{episode.current_download_id or 0}"
+        if key in dismissed:
+            continue
         action = None
         if kind == "missed":
             action = {"type": "search"}
@@ -480,6 +496,7 @@ def attention_view(ctx: Context) -> List[Dict[str, Any]]:
             "episode_id": episode.id,
             "episode": episode.number,
             "kind": kind,
+            "key": key,
             "reason": reason,
             "retry_after": iso(episode.retry_after) if kind == "retrying" else None,
             "action": action,

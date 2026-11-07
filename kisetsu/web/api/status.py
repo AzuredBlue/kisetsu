@@ -4,15 +4,16 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import delete, func
 from sqlmodel import select
 
 from kisetsu.clients.anilist import rate_limit_status
 from kisetsu.db.schema import Download, Event, Feed
-from kisetsu.services.context import get_state
+from kisetsu.services.context import get_state, set_state
 from kisetsu.services.cycle import LAST_SYNC_KEY
 from kisetsu.web import views
-from kisetsu.web.deps import read, runtime, write
+from kisetsu.web.deps import NotFound, read, runtime, write
 
 router = APIRouter(prefix="/api")
 
@@ -68,9 +69,29 @@ async def get_status(request: Request):
     return body
 
 
+class Dismiss(BaseModel):
+    key: str
+
+
+def _dismiss_attention(ctx, key: str) -> None:
+    current = {row["key"] for row in views.attention_view(ctx, include_dismissed=True)}
+    if key not in current:
+        raise NotFound("That no longer needs attention.")
+    # Keys of rows that are gone are dropped, so the list only ever holds what it still hides.
+    kept = (views.dismissed_attention(ctx) & current) | {key}
+    set_state(ctx, views.ATTENTION_DISMISSED_KEY, json.dumps(sorted(kept)))
+    ctx.emit("shows")
+
+
 @router.get("/attention")
 async def get_attention(request: Request):
     return await read(request, views.attention_view)
+
+
+@router.post("/attention/dismiss")
+async def dismiss_attention(request: Request, body: Dismiss):
+    await write(request, _dismiss_attention, body.key)
+    return {"status": "success"}
 
 
 @router.get("/logs")
