@@ -112,6 +112,7 @@ export function Setup({ sandbox }) {
           <${SetRow} name="Theme"><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
           <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${(v) => applyAppearance({ title_language: v })} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
           <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(c) => { const prev = accent; applyUserAccent(c.toLowerCase(), accent.tint); applyAppearance({ accent_color: c.toLowerCase() }, () => applyUserAccent(prev.color, prev.tint)); }} onPreview=${(c) => applyUserAccent(c.toLowerCase(), accent.tint, { persist: false })} /><//>
+          <${SetRow} name="Colour tint" hint="How much the accent colours the backgrounds."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(t) => { const prev = accent; applyUserAccent(accent.color, t); applyAppearance({ accent_tint: t }, () => applyUserAccent(prev.color, prev.tint)); }} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
           <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${(v) => applyAppearance({ desktop_notifications: v })} options=${[[true, 'On'], [false, 'Off']]} /><//>
         </div>` : null}
       ${name === 'anilist' ? html`

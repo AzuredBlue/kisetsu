@@ -19,7 +19,7 @@ LANGUAGES = ("english", "romaji")
 # The wizard may only set these; the rest of the page opens once setup is finished.
 SETUP_FIELDS = {
     "qbit_host", "qbit_username", "qbit_password", "base_dir", "default_category",
-    "default_seed_ratio", "title_language", "accent_color", "desktop_notifications",
+    "default_seed_ratio", "title_language", "accent_color", "accent_tint", "desktop_notifications",
 }
 
 

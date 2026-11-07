@@ -122,6 +122,8 @@ async def test_the_wizard_saves_steps_then_finishes_once(fresh):
     assert (await fresh.client.post("/api/setup/save", json={"qbit_host": "http://q:1", "qbit_password": "x"})).status_code == 200
     outside = await fresh.client.post("/api/setup/save", json={"hunt_interval_minutes": 9})
     assert outside.status_code == 400
+    assert (await fresh.client.post("/api/setup/save", json={"accent_color": "#ff0000", "accent_tint": "full"})).status_code == 200
+    assert fresh.load(Settings, 1).accent_tint == "full"
     assert (await fresh.client.post("/api/setup/complete", json={"anilist_username": ""})).status_code == 400
     fresh.anilist.users = set()
     gone = await fresh.client.post("/api/setup/complete", json={"anilist_username": "nobody"})
