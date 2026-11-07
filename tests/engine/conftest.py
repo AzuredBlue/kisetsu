@@ -13,8 +13,8 @@ from tests.fakes import FakeAniList, FakeClock, FakeFeeds, FakeQbit
 class Env:
     """A real Engine on an in-memory database with the fakes behind every network edge."""
 
-    def __init__(self):
-        self.db = make_engine()
+    def __init__(self, path=None):
+        self.db = make_engine(path)
         migrate(self.db)
         self.clock = FakeClock()
         self.qbit = FakeQbit(self.clock)
@@ -72,5 +72,8 @@ class Env:
 
 
 @pytest.fixture
-def env():
-    yield Env()
+def env(tmp_path):
+    # A database file, as the app uses: reads run beside the engine thread, which one shared in-memory connection cannot take.
+    env = Env(tmp_path / "kisetsu.db")
+    yield env
+    env.db.dispose()
