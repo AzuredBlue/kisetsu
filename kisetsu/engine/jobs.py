@@ -32,6 +32,8 @@ GRAB_FALLBACK = 15 * 60.0
 BACKFILL_INTERVAL = 6 * 3600.0
 # Shows whose past releases are searched for at the same time; each site still gets one request at a time.
 SEARCH_CONCURRENCY = 4
+# Cover images read at the same time for their colours (AniList's image server).
+PALETTE_CONCURRENCY = 4
 HOUSEKEEPING_INTERVAL = 24 * 3600.0
 # Well before a whole interval, or a machine restarted every day would never get to it.
 HOUSEKEEPING_FIRST = 3600.0
@@ -513,15 +515,35 @@ class Jobs:
     # -- upkeep -------------------------------------------------------------
 
     async def palette(self) -> Optional[float]:
-        for show_id, key, banner, cover in await self.engine.run(cycle.palette_targets):
-            ok, hues = await self.fetch_hues(banner, cover)
+        """Read the colours of the covers that changed, a few at a time, and store them all as one change."""
+        hue_targets = await self.engine.run(cycle.palette_targets)
+        edge_targets = await self.engine.run(cycle.edge_targets)
+        gate = asyncio.Semaphore(PALETTE_CONCURRENCY)
+
+        async def hues(banner: str, cover: str):
+            async with gate:
+                return await self.fetch_hues(banner, cover)
+
+        async def edge(cover: str):
+            async with gate:
+                return await self.fetch_edge(cover)
+
+        got_hues, got_edges = await asyncio.gather(
+            asyncio.gather(*(hues(banner, cover) for _, _, banner, cover in hue_targets)),
+            asyncio.gather(*(edge(cover) for _, _, cover in edge_targets)),
+        )
+
+        def store(ctx) -> None:
             # A failed download is not remembered, so it is tried again next time.
-            if ok:
-                await self.engine.run(cycle.store_palette, show_id, key, hues)
-        for show_id, key, cover in await self.engine.run(cycle.edge_targets):
-            ok, color = await self.fetch_edge(cover)
-            if ok:
-                await self.engine.run(cycle.store_edge, show_id, key, color)
+            for (show_id, key, _, _), (ok, found) in zip(hue_targets, got_hues):
+                if ok:
+                    cycle.store_palette(ctx, show_id, key, found)
+            for (show_id, key, _), (ok, color) in zip(edge_targets, got_edges):
+                if ok:
+                    cycle.store_edge(ctx, show_id, key, color)
+
+        if hue_targets or edge_targets:
+            await self.engine.run(store)
         return None
 
     async def housekeeping(self) -> Optional[float]:

@@ -309,6 +309,32 @@ def test_the_palette_reads_a_cover_edge_once_and_again_when_the_cover_changes(en
         assert session.exec(select(Show)).one().cover_edge == "#336699"
 
 
+def test_the_colours_of_every_show_are_stored_together_as_one_change(env):
+    airing(env)
+    env.anilist.shows.append(anilist_show(2, "Kusuriya no Hitorigoto", total_episodes=12))
+    env.jobs.fetch_hues = lambda *urls: asyncio.sleep(0, (True, (10, 0.5, 20, 30, 0.4)))
+    env.jobs.fetch_edge = lambda url: asyncio.sleep(0, (True, "#336699"))
+
+    def covers(session):
+        for show in session.exec(select(Show)).all():
+            show.cover_image = f"https://s4.anilist.co/{show.id}.jpg"
+            session.add(show)
+        session.commit()
+
+    async def go():
+        await env.jobs.sync_anilist()
+        env.query(covers)
+        queue = env.engine.bus.open_queue()
+        await env.jobs.palette()
+        await asyncio.sleep(0)
+        return [queue.get_nowait()["changed"] for _ in range(queue.qsize())]
+
+    changes = run(env, go)
+    assert len(changes) == 1 and "shows" in changes[0]
+    with Session(env.db) as session:
+        assert {s.cover_edge for s in session.exec(select(Show)).all()} == {"#336699"}
+
+
 def test_history_records_what_a_failed_replacement_did_exactly_once(env):
     first = airing(env, 1)
     env.add_feed()
