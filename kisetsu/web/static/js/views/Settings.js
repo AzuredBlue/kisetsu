@@ -93,7 +93,7 @@ export function Settings() {
     if (result) reload();
   };
   const clearAll = async () => {
-    if (!(await confirmDialog({ title: 'Clear all shows?', body: html`<p>Removes every show and its history. Downloads in qBittorrent are kept.</p>`, confirm: 'Clear all', danger: true }))) return;
+    if (!(await confirmDialog({ title: 'Clear all shows?', body: html`<p>Removes every show and its history. Downloads in qBittorrent are kept.</p><p>Shows still on your AniList list come back with the next sync and look for their feed again.</p>`, confirm: 'Clear all', danger: true }))) return;
     try { const r = await apiFetch('/api/settings/clear-all', { method: 'POST' }); toast(r.message, 'success'); } catch (err) { /* shown by apiFetch */ }
   };
 
@@ -106,10 +106,11 @@ export function Settings() {
   const accent = currentAccent();
   return html`<div class="page medium">
     <section>
-      <h3 class="section-title section-gap">Downloading</h3>
+      <h3 class="section-title section-gap">Downloads</h3>
       <div class="card card-divided">
         <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
         <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
+        <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
         <${SetRow} name="Minimum quality" hint="Releases marked below this are skipped. Releases that name no resolution are always taken."><${Seg} label="Minimum quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[0, 'Any'], [480, '480p'], [720, '720p'], [1080, '1080p'], [2160, '4K']]} /><//>
         <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
       </div>
@@ -132,7 +133,7 @@ export function Settings() {
             </div>
           </div>
         </div>
-        <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Whose watching list to follow." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
+        <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Whose list to follow: what airs this season or next on Watching and Planning. Add anything else from Shows, Add show." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
       </div>
     </section>
 
@@ -153,7 +154,6 @@ export function Settings() {
         <${SetRow} name="Check feeds every (min)" htmlFor="set-feeds" hint="How often a show's feed is read while one of its episodes aired in the last 3 days and is still missing. Feeds no show needs are read every 6 hours, for replacements, batches and movies." size="num"><input id="set-feeds" type="number" min="5" max="240" class="field num" ...${bind('feed_refresh_minutes')} /><//>
         <${SetRow} name="Hunt every (min)" htmlFor="set-hunt" hint="After an episode airs, how often to read its show's feed until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
         <${SetRow} name="Early air (h)" htmlFor="set-early" hint="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time." size="num"><input id="set-early" type="number" min="0" max="168" class="field num" ...${bind('early_air_tolerance_hours')} /><//>
-        <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Default for shows that don't set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
       </div>
     </details>
 
@@ -166,7 +166,7 @@ export function Settings() {
     </section>
 
     <div class="card danger-zone">
-      <div><h3 class="section-title">Clear all shows</h3><p class="field-hint" style="margin-top:.125rem">Removes every show and the history. Downloads are kept.</p></div>
+      <div><h3 class="section-title">Clear all shows</h3><p class="field-hint" style="margin-top:.125rem">Removes every show and the history. Downloads are kept. Shows on your AniList list come back with the next sync.</p></div>
       <button type="button" class="btn danger sm" onClick=${clearAll}>Clear all</button>
     </div>
 

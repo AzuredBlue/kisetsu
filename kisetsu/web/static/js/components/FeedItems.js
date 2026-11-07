@@ -113,7 +113,7 @@ export function FeedItems({ feeds, selected, onSelect }) {
   const feed = selected === null ? null : feeds.find(f => f.id === selected);
   return html`<div class="feed-items">
     <div class="feed-items-head">
-      <h2 class="section-title">Releases</h2>
+      <h2 class="section-title">Feed items</h2>
       ${feed
         ? html`<button type="button" class="chip feed-filter" aria-pressed="true" onClick=${() => onSelect(null)} title="Show every feed's releases">${feed.name}<${Icon} name="x" small /></button>`
         : html`<span class="page-sub feed-filter-hint truncate">All feeds · pick one on the left to filter</span>`}

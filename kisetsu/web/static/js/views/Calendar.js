@@ -4,6 +4,7 @@ import { go, prefetch, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
+import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
 import { useTheme } from '../theme.js';
 
@@ -131,6 +132,8 @@ export function Calendar() {
       <span class="page-sub">${weekName(offset)}</span>
       ${offset !== 0 ? html`<button type="button" class="btn sm" onClick=${() => setOffset(0)}>Today</button>` : null}
     </div>
+    ${data && !data.length ? html`<${EmptyState} title="No shows yet" hint="Shows from your AniList list appear here with their air times after a sync." />`
+      : data && week.days.every(day => !day.slots.length) ? html`<p class="page-sub">Nothing airs this week.</p>` : null}
     <div class="cal-wrap"><div class="cal-grid" style=${`--cols: ${cols}`}>
       ${week.days.map(day => {
         let drawn = false;

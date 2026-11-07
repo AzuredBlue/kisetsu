@@ -7,6 +7,7 @@ import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { ShowCard, ShowRow } from '../components/ShowSummary.js';
 import { Checklist, NeedsAttention } from '../components/Attention.js';
+import { EmptyState } from '../components/EmptyState.js';
 
 const read = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (err) { return fallback; } };
 const write = (key, value) => { try { localStorage.setItem(key, value); } catch (err) { /* only a convenience */ } };
@@ -34,7 +35,7 @@ function Section({ title, count, tone, list, view, now, empty, tools, swap }) {
       ${tools}
     </div>
     <div key=${swap} class=${`${view === 'list' ? 'show-list' : 'show-grid'}${swap ? ' show-swap' : ''}`}>
-      ${list.length ? list.map(show => html`<${Item} key=${show.id} show=${show} now=${now} />`) : html`<div class="empty" style="grid-column:1/-1">${empty}</div>`}
+      ${list.length ? list.map(show => html`<${Item} key=${show.id} show=${show} now=${now} />`) : html`<div style="grid-column:1/-1">${empty}</div>`}
     </div>
   </section>`;
 }
@@ -65,7 +66,7 @@ export function Shows() {
   return html`<div class="page full">
     <${Checklist} />
     <${NeedsAttention} />
-    <${Section} title="Releasing" tone="" count=${groups.releasing.length} list=${groups.releasing} view=${view} swap=${swap} now=${now} empty="No currently releasing anime." tools=${tools} />
+    <${Section} title="Releasing" tone="" count=${groups.releasing.length} list=${groups.releasing} view=${view} swap=${swap} now=${now} empty=${html`<${EmptyState} title="Nothing airing right now" hint="Shows on your AniList Watching list that air this season appear here after a sync. Use Add show for anything else." />`} tools=${tools} />
     ${groups.completed.length ? html`<${Section} title="Completed" tone="done" count=${groups.completed.length} list=${groups.completed} view=${view} swap=${swap} now=${now} />` : null}
     ${groups.planned.length ? html`<${Section} title="Planned" tone="info" count=${groups.planned.length} list=${groups.planned} view=${view} swap=${swap} now=${now} />` : null}
   </div>`;

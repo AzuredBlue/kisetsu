@@ -5,6 +5,7 @@ import { go } from '../router.js';
 import { Icon, Spinner } from '../components/Icon.js';
 import { Poster } from '../components/ShowSummary.js';
 import { toast } from '../components/Toast.js';
+import { LoadError } from '../components/LoadError.js';
 import { relativeTime } from '../format.js';
 
 const version = (v) => (v > 1 ? ` v${v}` : '');
@@ -29,9 +30,8 @@ function PickEntry({ onPick }) {
   const [list, setList] = useState(null);
   const [error, setError] = useState(null);
   const [text, setText] = useState('');
-  useEffect(() => {
-    apiFetch('/api/add/list', { quiet: true }).then(setList).catch(err => setError(err.message));
-  }, []);
+  const load = () => { setError(null); apiFetch('/api/add/list', { quiet: true }).then(setList).catch(setError); };
+  useEffect(load, []);
   const shown = useMemo(() => {
     if (!list) return [];
     const words = fold(text).split(/\s+/).filter(Boolean);
@@ -51,7 +51,7 @@ function PickEntry({ onPick }) {
       </div>
       ${list && list.fetched_at ? html`<p class="field-hint add-hint">Your AniList list, read ${relativeTime(list.fetched_at, Date.now())}. Sync Now reads it again. Planning entries are added by themselves once their season is the current or next one.</p>` : null}
     </section>
-    ${error ? html`<p class="error-text">${error}</p>` : null}
+    ${error ? (error.status === 400 ? html`<p class="error-text">${error.message}</p>` : html`<${LoadError} what="your AniList list" error=${error} reload=${load} />`) : null}
     ${error ? null : html`<div class="card feeds-card"><ul class="feed-list">
       ${!list ? html`<li class="add-empty"><${Spinner} small /> Reading your list…</li>` : null}
       ${list && !shown.length ? html`<li class="add-empty">

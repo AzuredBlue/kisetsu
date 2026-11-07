@@ -6,6 +6,7 @@ import { history as historyData } from '../data.js';
 import { dayLabel, localTime, relativeTime } from '../format.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
+import { EmptyState } from '../components/EmptyState.js';
 import { confirmDialog } from '../components/Modal.js';
 import { Poster, posterVars } from '../components/ShowSummary.js';
 import { useTheme } from '../theme.js';
@@ -87,7 +88,7 @@ export function History() {
       <button type="button" class="btn sm plain" onClick=${clear} disabled=${!data || !data.length}>Clear</button>
     </div>
     ${!data ? (error ? html`<${LoadError} what="the history" error=${error} reload=${reload} />` : null) : !data.length
-      ? html`<div class="card empty"><div>Nothing here yet</div><p class="field-hint">Episodes show up here once Kisetsu queues them.</p></div>`
+      ? html`<${EmptyState} card title="Nothing here yet" hint="Episodes show up here once Kisetsu queues them." />`
       : groups.map(group => html`<section key=${group.label}>
           <div class="section-title history-day">${group.label}</div>
           <div class="card card-divided history-card">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} />`)}</div>

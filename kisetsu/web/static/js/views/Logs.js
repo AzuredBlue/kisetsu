@@ -4,6 +4,7 @@ import { logs as logsData } from '../data.js';
 import { localTime } from '../format.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
+import { EmptyState } from '../components/EmptyState.js';
 import { toast } from '../components/Toast.js';
 
 const MARKS = { ERROR: ['ERROR', 'bad'], WARNING: ['WARN', 'warn'], DEBUG: ['DEBUG', 'info'] };
@@ -11,7 +12,9 @@ const MARKS = { ERROR: ['ERROR', 'bad'], WARNING: ['WARN', 'warn'], DEBUG: ['DEB
 export function Logs() {
   const { data, error, reload } = useResource(logsData);
   const box = useRef(null);
-  useEffect(() => { if (box.current) box.current.scrollTop = box.current.scrollHeight; }, [data]);
+  const atBottom = useRef(true);
+  useEffect(() => { if (box.current && atBottom.current) box.current.scrollTop = box.current.scrollHeight; }, [data]);
+  const onScroll = (e) => { const el = e.currentTarget; atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; };
   const copy = async () => {
     if (!data || !data.length) { toast('No logs to copy.', 'info'); return; }
     try {
@@ -23,14 +26,13 @@ export function Logs() {
     <div class="page-head">
       <p class="page-sub">What Kisetsu has been doing. New lines appear by themselves.</p>
       <div class="row">
-        <button type="button" class="btn sm" onClick=${reload}><${Icon} name="refresh" small />Refresh</button>
         <button type="button" class="btn sm" onClick=${copy}><${Icon} name="copy" small />Copy</button>
       </div>
     </div>
     <div class="log-pane">
       <div class="log-head muted">${data ? data.length : 0} entries</div>
-      <div class="log-lines mono" ref=${box}>
-        ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<div class="empty">No activity logged yet.</div>` : data.map((l, i) => {
+      <div class="log-lines mono" ref=${box} onScroll=${onScroll}>
+        ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<${EmptyState} title="No activity logged yet" hint="What Kisetsu does is written here as it happens." />` : data.map((l, i) => {
           const mark = MARKS[l.level];
           return html`<div class="log-line" key=${`${l.at}${i}`}>
             <span class="log-time">${localTime(l.at, true)}</span>

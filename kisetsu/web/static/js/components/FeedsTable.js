@@ -5,6 +5,7 @@ import { relativeTime } from '../format.js';
 import { Icon } from './Icon.js';
 import { confirmDialog, showModal } from './Modal.js';
 import { toast } from './Toast.js';
+import { EmptyState } from './EmptyState.js';
 
 export function feedHealth(feed) {
   if (!feed.failing_since) return feed.last_ok_at ? html`<span class="muted" title="The last time this feed was read without an error.">Read ${relativeTime(feed.last_ok_at)}</span>` : null;
@@ -93,7 +94,7 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
     ids.splice(to, 0, ids.splice(from, 1)[0]);
     try { await apiFetch('/api/feeds/reorder', { method: 'POST', json: { ids } }); } catch (err) { /* shown by apiFetch */ }
   };
-  if (!feeds.length) return html`<div class="empty">No feeds yet. Add one, or import the ones qBittorrent already has.</div>`;
+  if (!feeds.length) return html`<${EmptyState} title="No feeds yet" hint="Add the RSS feed of a release group or site (for example a SubsPlease or nyaa.si RSS link), or import the feeds qBittorrent already has." />`;
   // Before any show follows a feed (the setup wizard) "No shows" on every row says nothing.
   const inUse = feeds.some(feed => feed.shows > 0);
   return html`<ul class="feed-list">

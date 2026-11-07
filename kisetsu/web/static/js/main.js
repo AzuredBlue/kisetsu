@@ -27,7 +27,7 @@ const NAV = [
   ['logs', 'Logs', 'logs'],
   ['settings', 'Settings', 'settings'],
 ];
-const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), calendar: 'Weekly Calendar', add: 'Add show' };
+const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show' };
 const CHECK_JOBS = ['startup', 'refresh_feeds', 'sync_anilist', 'backfill'];
 
 function Notes({ info }) {
