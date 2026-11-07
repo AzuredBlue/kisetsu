@@ -71,11 +71,30 @@ def test_several_names_are_one_nyaa_search_that_keeps_the_feeds_own_filter():
 def test_whether_a_site_takes_grouped_names_is_checked_again_after_a_day():
     now = [0.0]
     grouping = sites.Grouping(clock=lambda: now[0])
-    assert grouping.works("nyaa") is None
-    grouping.record("nyaa", False)
-    assert grouping.works("nyaa") is False and grouping.works("subsplease") is None
+    assert grouping.works("nyaa.si") is None
+    grouping.record("nyaa.si", False)
+    assert grouping.works("nyaa.si") is False and grouping.works("subsplease.org") is None
     now[0] += sites.GROUPING_RECHECK_SECONDS + 1
-    assert grouping.works("nyaa") is None
+    assert grouping.works("nyaa.si") is None
+
+
+def test_a_page_is_complete_only_when_empty_or_smaller_than_one_the_host_returned_before():
+    grouping = sites.Grouping()
+    # Nothing is known of the host's page size yet: only an empty page is surely complete.
+    assert grouping.complete("nyaa.si", 0) and not grouping.complete("nyaa.si", 5)
+    grouping.saw("nyaa.si", 30)
+    assert grouping.complete("nyaa.si", 29) and not grouping.complete("nyaa.si", 30)
+    assert not grouping.complete("other.example", 5)
+
+
+def test_one_search_at_a_time_checks_a_site():
+    grouping = sites.Grouping()
+    assert grouping.claim("nyaa.si") and not grouping.claim("nyaa.si") and grouping.claim("subsplease.org")
+    grouping.release("nyaa.si")
+    assert grouping.claim("nyaa.si")
+    grouping.release("nyaa.si")
+    grouping.record("nyaa.si", True)
+    assert not grouping.claim("nyaa.si")
 
 
 def test_only_known_sites_are_searched():

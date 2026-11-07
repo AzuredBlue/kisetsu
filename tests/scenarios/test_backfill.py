@@ -242,6 +242,10 @@ def test_a_search_that_stops_when_found_skips_the_lower_feeds_once_everything_is
     assert searched_with() == {top, NYAA}
 
 
+# How many results a page of the fake site was seen to hold.
+PAGE = 75
+
+
 def names_show(world):
     world.feed("Nyaa", NYAA, 1)
     show = world.show(title="Sousou no Frieren", aliases=["Frieren Beyond Journeys End", "Frieren the Slayer"], episodes=4,
@@ -269,15 +273,16 @@ def test_a_nyaa_feed_is_asked_for_all_of_a_shows_names_at_once_once_that_is_show
     show, item = names_show(world)
     grouped = sites.any_of(item.terms)
     grouping = sites.Grouping()
+    grouping.saw("nyaa.si", PAGE)  # earlier searches showed the host's pages hold this many
     world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
     # Not yet known: every name is asked for alone, then the grouped search, which found the same.
     assert queries(world, item, show, grouping) == [*item.terms, grouped]
-    assert grouping.works("nyaa") is True
+    assert grouping.works("nyaa.si") is True
     # Shown to work: one search, and a page short of full holds every match.
     assert queries(world, item, show, grouping) == [grouped]
     # A full page may have left some out: then each name is asked for, as before.
     world.feeds.searchable[NYAA] = [
-        world.feeds.post(NYAA, f"[Grp{n}] Sousou no Frieren - 01 (1080p).mkv", START - timedelta(days=21)) for n in range(sites.NYAA_PAGE_SIZE)
+        world.feeds.post(NYAA, f"[Grp{n}] Sousou no Frieren - 01 (1080p).mkv", START - timedelta(days=21)) for n in range(PAGE)
     ]
     assert queries(world, item, show, grouping) == [grouped, *item.terms]
 
@@ -287,21 +292,46 @@ def test_a_site_that_answers_the_grouped_search_differently_is_asked_for_each_na
     show, item = names_show(world)
     grouped = sites.any_of(item.terms)
     grouping = sites.Grouping()
+    grouping.saw("nyaa.si", PAGE)  # earlier searches showed the host's pages hold this many
     world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
     # The site takes the brackets literally and finds nothing.
     assert queries(world, item, show, grouping, grouped_answer=[]) == [*item.terms, grouped]
-    assert grouping.works("nyaa") is False
+    assert grouping.works("nyaa.si") is False
     assert queries(world, item, show, grouping) == item.terms
+
+
+def test_while_one_search_checks_the_site_the_others_search_as_before(world):
+    from kisetsu.clients import sites
+    show, item = names_show(world)
+    grouping = sites.Grouping()
+    grouping.saw("nyaa.si", PAGE)  # earlier searches showed the host's pages hold this many
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(n), START - timedelta(days=7 * (4 - n))) for n in (1, 2, 3, 4)]
+    assert grouping.claim("nyaa.si")
+    # The first name finds every missing episode, so the others are not asked for.
+    assert queries(world, item, show, grouping) == item.terms[:1]
+    grouping.release("nyaa.si")
+    assert queries(world, item, show, grouping) == [*item.terms, sites.any_of(item.terms)]
+
+
+def test_a_page_that_may_have_been_cut_off_decides_nothing_about_grouping(world):
+    from kisetsu.clients import sites
+    show, item = names_show(world)
+    grouping = sites.Grouping()
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
+    # The host has never returned more than this one result, so its page may hold just one.
+    assert queries(world, item, show, grouping) == item.terms
+    assert grouping.works("nyaa.si") is None
 
 
 def test_nothing_found_by_any_name_decides_nothing_about_grouping(world):
     from kisetsu.clients import sites
     show, item = names_show(world)
     grouping = sites.Grouping()
+    grouping.saw("nyaa.si", PAGE)  # earlier searches showed the host's pages hold this many
     world.feeds.searchable[NYAA] = []
     # An empty grouped answer could mean it works or that it ignores the names, so it is not asked.
     assert queries(world, item, show, grouping) == item.terms
-    assert grouping.works("nyaa") is None
+    assert grouping.works("nyaa.si") is None
 
 
 def test_releases_a_feed_numbers_from_an_earlier_season_count_as_found(world):

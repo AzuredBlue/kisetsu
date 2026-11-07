@@ -9,7 +9,7 @@ import json
 import re
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 import httpx2
@@ -18,8 +18,6 @@ from kisetsu.clients.rss import FeedArticle, fetch_bytes, magnet_parts, normaliz
 
 # Search terms per show.
 MAX_TERMS = 3
-# nyaa's RSS lists at most this many results: a shorter page holds every match.
-NYAA_PAGE_SIZE = 75
 # How long a check of whether a site takes several names in one search holds.
 GROUPING_RECHECK_SECONDS = 24 * 3600
 
@@ -69,6 +67,7 @@ def any_of(terms: List[str]) -> str:
 
     Each name is grouped so its words must all match, and the whole is grouped so the feed's
     own words ("1080p -HEVC") still apply to every name; without the outer brackets they do not.
+    That the host really answers it so is never assumed: ``Grouping`` checks it.
     """
     if len(terms) == 1:
         return terms[0]
@@ -76,26 +75,52 @@ def any_of(terms: List[str]) -> str:
 
 
 class Grouping:
-    """Whether a site's search answers several names at once (``any_of``) as it answers them one by one.
+    """By host: whether its search answers several names at once (``any_of``) as it answers them one by one,
+    and how many results its pages are known to hold.
 
-    It is never assumed. Until a check shows that the grouped search finds exactly the
+    Neither is assumed. Until a check shows that the grouped search finds exactly the
     releases the names find alone, each name is asked for alone; a check that finds a
-    difference turns grouping off. Either result is checked again after a while.
+    difference turns grouping off. Either result is checked again after a while. One search
+    at a time checks a host, as a check asks for every name and costs more than a plain search.
     """
 
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock
         self._checked: Dict[str, Tuple[float, bool]] = {}
+        self._checking: Set[str] = set()
+        self._largest: Dict[str, int] = {}
 
-    def works(self, site: str) -> Optional[bool]:
+    def claim(self, host: str) -> bool:
+        """Whether the caller is to check the host now; it then calls ``release`` when done."""
+        if self.works(host) is not None or host in self._checking:
+            return False
+        self._checking.add(host)
+        return True
+
+    def release(self, host: str) -> None:
+        self._checking.discard(host)
+
+    def works(self, host: str) -> Optional[bool]:
         """True or False once checked, None while it is still to be checked."""
-        checked = self._checked.get(site)
+        checked = self._checked.get(host)
         if checked is None or self._clock() - checked[0] > GROUPING_RECHECK_SECONDS:
             return None
         return checked[1]
 
-    def record(self, site: str, works: bool) -> None:
-        self._checked[site] = (self._clock(), works)
+    def record(self, host: str, works: bool) -> None:
+        self._checked[host] = (self._clock(), works)
+
+    def complete(self, host: str, count: int) -> bool:
+        """Whether a page of ``count`` results holds every match.
+
+        A site's page size is not assumed. A page with no results was not cut off, and one with
+        fewer results than the host has returned before had room for more.
+        """
+        return count == 0 or count < self._largest.get(host, 0)
+
+    def saw(self, host: str, count: int) -> None:
+        """Note how many results one of the host's pages held."""
+        self._largest[host] = max(count, self._largest.get(host, 0))
 
 
 def site_of(feed_url: str) -> Optional[str]:

@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 import httpx2
 from sqlmodel import select
@@ -222,60 +223,75 @@ async def _search_site(
             break
         before = covered
         releases: List[Tuple[int, Optional[datetime]]] = []
-        site = sites.site_of(feed.url)
-        groupable = grouping is not None and site == "nyaa" and len(item.terms) > 1
-        works = grouping.works(site) if groupable else None
+        host = urlparse(feed.url).hostname or feed.url
+        # Several names in one search is nyaa's form; even there it is used only once checked.
+        groupable = grouping is not None and sites.site_of(feed.url) == "nyaa" and len(item.terms) > 1
+        works = grouping.works(host) if groupable else None
         grouped = sites.any_of(item.terms)
         queries = [grouped, *item.terms] if groupable and works else list(item.terms)
-        # Until the site is checked, every name is asked for alone, so the grouped search can be compared with them.
-        checking = groupable and works is None
-        pages: Dict[str, List[FeedArticle]] = {}
-        for term in queries:
-            articles = await ask(feed, term)
-            if found.stopped:
-                return found
-            if articles is None:
-                checking = False
-                continue
-            pages[term] = articles
-            found.articles.setdefault(feed.id, []).extend(articles)
-            for article in articles:
-                if not plausible_for_show(article.published_at, item.first_air, now):
+        # The search that checks the host asks for every name alone, so the grouped search can be compared with them.
+        claimed = groupable and works is None and grouping.claim(host)
+        checking = claimed
+        # Each page found, and whether it held every match (judged before it counts towards the host's page size).
+        pages: Dict[str, Tuple[List[FeedArticle], bool]] = {}
+        try:
+            for term in queries:
+                articles = await ask(feed, term)
+                if found.stopped:
+                    return found
+                if articles is None:
+                    checking = False
                     continue
-                matched, parsed = decide(show_matcher, article.title, cache)
-                raw = parsed.get("episode")
-                if matched and raw is not None and raw > 0:
-                    releases.append((int(raw), article.published_at))
-            covered = before | item.numbers(releases, now)
-            if groupable and works and term == grouped and len(articles) < sites.NYAA_PAGE_SIZE:
-                break
-            if not checking and covered.issuperset(item.missing):
-                break
-        if checking:
-            await _check_grouping(grouping, site, feed, grouped, pages, ask)
-            if found.stopped:
-                return found
+                complete = grouping is not None and grouping.complete(host, len(articles))
+                if grouping is not None:
+                    grouping.saw(host, len(articles))
+                pages[term] = (articles, complete)
+                found.articles.setdefault(feed.id, []).extend(articles)
+                for article in articles:
+                    if not plausible_for_show(article.published_at, item.first_air, now):
+                        continue
+                    matched, parsed = decide(show_matcher, article.title, cache)
+                    raw = parsed.get("episode")
+                    if matched and raw is not None and raw > 0:
+                        releases.append((int(raw), article.published_at))
+                covered = before | item.numbers(releases, now)
+                if groupable and works and term == grouped and complete:
+                    # The grouped page held every match: the names alone could find nothing more.
+                    break
+                if not checking and covered.issuperset(item.missing):
+                    break
+            if checking:
+                await _check_grouping(grouping, host, feed, grouped, pages, ask)
+                if found.stopped:
+                    return found
+        finally:
+            if claimed:
+                grouping.release(host)
     return found
 
 
-async def _check_grouping(grouping: sites.Grouping, site: str, feed: Feed, grouped: str, pages: Dict[str, List[FeedArticle]], ask) -> None:
+async def _check_grouping(
+    grouping: sites.Grouping, host: str, feed: Feed, grouped: str, pages: Dict[str, Tuple[List[FeedArticle], bool]], ask,
+) -> None:
     """Ask the grouped search once, and keep grouping only if it found exactly what the names found alone.
 
-    Nothing is decided from empty or full pages: an empty one cannot tell a search that works
-    from one that ignores the names, and a full one may have left matches out.
+    Nothing is decided from empty pages or pages that may have been cut off: an empty one
+    cannot tell a search that works from one that ignores the names, and a cut one may have
+    left matches out.
     """
-    alone = {article.guid for articles in pages.values() for article in articles}
-    if not alone or any(len(articles) >= sites.NYAA_PAGE_SIZE for articles in pages.values()):
+    alone = {article.guid for articles, _ in pages.values() for article in articles}
+    if not alone or not all(complete for _, complete in pages.values()):
         return
     together = await ask(feed, grouped)
     if together is None:
         return
-    works = len(together) < sites.NYAA_PAGE_SIZE and {article.guid for article in together} == alone
-    grouping.record(site, works)
+    works = grouping.complete(host, len(together)) and {article.guid for article in together} == alone
+    grouping.saw(host, len(together))
+    grouping.record(host, works)
     if works:
-        logger.info(f"{feed.name}'s site finds a show's names in one search, so they are asked for together from now on.")
+        logger.info(f"{host} finds a show's names in one search, so they are asked for together from now on.")
     else:
-        logger.warning(f"{feed.name}'s site did not answer a search for several names as it answers each alone; each is asked for alone.")
+        logger.warning(f"{host} did not answer a search for several names as it answers each alone, so each is asked for alone.")
 
 
 async def search(
