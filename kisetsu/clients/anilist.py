@@ -5,7 +5,7 @@ import json
 import logging
 from pathlib import Path
 import time
-from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set, Tuple
 import httpx2
 
 from kisetsu.clients import traffic
@@ -35,6 +35,8 @@ PASS_BUDGET_SECONDS = 30.0
 PASS_RESUME_SECONDS = 30.0
 # Shows asked about in one batched schedule query.
 UPCOMING_CHUNK = 40
+# Pages of air times one request asks for, each under its own alias: AniList answers them all at once.
+PAGES_PER_REQUEST = 8
 # List statuses whose entries only update shows already followed; the sync never adds them as new.
 FOLLOWED_ONLY_LIST_STATUSES = ("COMPLETED", "PAUSED", "DROPPED", "REPEATING")
 
@@ -80,43 +82,24 @@ query ($userName: String) {
 }
 """
 
-AIRING_SCHEDULE_QUERY = """
-query ($mediaId: Int, $page: Int) {
-  Page(page: $page, perPage: 50) {
-    pageInfo {
-      hasNextPage
-      currentPage
-    }
-    airingSchedules(mediaId: $mediaId, sort: TIME) {
-      episode
-      airingAt
-    }
-  }
-}
-"""
 
 
-AIRING_UPCOMING_QUERY = """
-query ($ids: [Int], $page: Int, $after: Int) {
-  Page(page: $page, perPage: 50) {
-    pageInfo {
-      hasNextPage
-    }
-    airingSchedules(mediaId_in: $ids, airingAt_greater: $after, sort: TIME) {
-      mediaId
-      episode
-      airingAt
-    }
-  }
-}
-"""
+def _schedule_query(pages: List[Tuple[str, int]]) -> str:
+    """One query for several pages of air times: ``pages`` holds (filter, page) pairs, the i-th answered as ``p{i}``.
+
+    The filters are built from integers only, so they are written into the query itself.
+    """
+    blocks = "\n".join(
+        f"  p{i}: Page(page: {page}, perPage: 50) {{ pageInfo {{ hasNextPage }} "
+        f"airingSchedules({where}, sort: TIME) {{ mediaId episode airingAt }} }}"
+        for i, (where, page) in enumerate(pages)
+    )
+    return "query {\n" + blocks + "\n}"
 
 ANILIST_HOST = "graphql.anilist.co"
 # What each query is called in the request counts (``traffic``).
 QUERY_KINDS = {
     USER_SEASONAL_QUERY: "AniList list sync",
-    AIRING_SCHEDULE_QUERY: "AniList full schedule",
-    AIRING_UPCOMING_QUERY: "AniList upcoming schedule",
 }
 
 
@@ -386,6 +369,7 @@ class AniListClient:
         variables: Dict[str, Any],
         max_retries: int = 3,
         allow_partial: bool = False,
+        kind: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Execute a GraphQL query, spaced by the shared rate governor.
 
@@ -401,7 +385,7 @@ class AniListClient:
         """
         backoff = 2.0
         problem = "AniList did not answer."
-        kind = QUERY_KINDS.get(query, "AniList")
+        kind = kind or QUERY_KINDS.get(query, "AniList")
         async with httpx2.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(max_retries):
                 await rate_governor.acquire()
@@ -534,131 +518,145 @@ class AniListClient:
             result.append(dict(item))
         return result
 
+    async def _schedule_pages(self, filters: Dict[Any, str], kind: str) -> Dict[Any, Optional[List[Dict[str, Any]]]]:
+        """Every page of air times each filter selects, several pages in each request.
+
+        A request asks for up to PAGES_PER_REQUEST pages under aliases, shared among the
+        filters whose pages are still coming: a filter alone gets them all, so one request
+        usually brings everything. Returns the nodes by key, None for a filter AniList answered
+        with an error. A deferral carries the keys finished so far as ``partial``.
+        """
+        nodes: Dict[Any, Optional[List[Dict[str, Any]]]] = {key: [] for key in filters}
+        next_page = {key: 1 for key in filters}
+        remaining = list(filters)
+        deadline = time.monotonic() + PASS_BUDGET_SECONDS
+
+        def finished() -> Dict[Any, Optional[List[Dict[str, Any]]]]:
+            return {key: value for key, value in nodes.items() if key not in remaining}
+
+        while remaining:
+            if time.monotonic() >= deadline:
+                raise AniListRateLimited("AniList request budget for this pass is used up.", retry_in=PASS_RESUME_SECONDS, partial=finished())
+            share = max(1, PAGES_PER_REQUEST // len(remaining))
+            asked: List[Tuple[Any, int]] = []
+            for key in remaining:
+                if len(asked) >= PAGES_PER_REQUEST:
+                    break
+                asked.extend((key, page) for page in range(next_page[key], min(next_page[key] + share, MAX_SCHEDULE_PAGES + 1)))
+            try:
+                data = await self._post_query(
+                    _schedule_query([(filters[key], page) for key, page in asked]), {}, allow_partial=True, kind=kind,
+                )
+            except AniListDeferred as e:
+                e.partial = finished()
+                raise
+            ended: Set[Any] = set()
+            for i, (key, page) in enumerate(asked):
+                if nodes[key] is None or key in ended:
+                    continue
+                block = data.get(f"p{i}")
+                if not isinstance(block, dict):
+                    logger.warning(f"AniList answered part of a schedule query with an error: {data.get('__errors__')}")
+                    nodes[key] = None
+                    continue
+                nodes[key].extend(block.get("airingSchedules") or [])
+                next_page[key] = page + 1
+                # Only hasNextPage is reliable: AniList's page total is a placeholder.
+                if not (block.get("pageInfo") or {}).get("hasNextPage"):
+                    ended.add(key)
+            remaining = [key for key in remaining if nodes[key] is not None and key not in ended and next_page[key] <= MAX_SCHEDULE_PAGES]
+        return nodes
+
     async def fetch_media_airing_schedules(
         self,
         media_ids: List[int],
     ) -> Dict[int, List[Dict[str, Any]]]:
-        """Fetch complete airing schedules, isolating per-show failures.
+        """Complete airing schedules, several shows in each request.
 
-        A single unusable media ID must not cost the schedules of every other show,
-        so its failure is logged and skipped. When AniList defers the rest (a rate
-        limit, a pause after repeated failures, or this pass's time budget), the shows
-        already fetched are not lost: they travel on the AniListDeferred as ``partial``
-        and the remaining ids are fetched on a later pass.
+        A show AniList answers with an error is logged and left out, so it does not cost the
+        others their schedules. When AniList defers the rest (a rate limit, a pause after
+        repeated failures, or this pass's time budget), the shows already fetched travel on
+        the AniListDeferred as ``partial`` and the rest are fetched on a later pass.
         """
         unique_ids = list(dict.fromkeys(int(media_id) for media_id in media_ids))
         if not unique_ids:
             return {}
-        schedules: Dict[int, List[Dict[str, Any]]] = {}
-        deadline = time.monotonic() + PASS_BUDGET_SECONDS
-        for media_id in unique_ids:
-            if time.monotonic() >= deadline:
-                raise AniListRateLimited(
-                    "AniList request budget for this pass is used up.",
-                    retry_in=PASS_RESUME_SECONDS,
-                    partial=schedules,
-                )
-            schedule: List[Dict[str, Any]] = []
-            page = 1
-            seen_episodes = set()
-            try:
-                while True:
-                    data = await self._post_query(
-                        AIRING_SCHEDULE_QUERY,
-                        {"mediaId": media_id, "page": page},
-                        allow_partial=True,
-                    )
-                    block = data.get("Page") or {}
-                    nodes = block.get("airingSchedules") or []
-                    for node in nodes:
-                        episode = node.get("episode")
-                        airing_at = node.get("airingAt")
-                        if episode is None or airing_at is None:
-                            continue
-                        episode = int(episode)
-                        if episode in seen_episodes:
-                            continue
-                        seen_episodes.add(episode)
-                        schedule.append({
-                            "episode": episode,
-                            "airing_at": datetime.fromtimestamp(airing_at, tz=timezone.utc),
-                        })
-                    page_info = block.get("pageInfo") or {}
-                    if not page_info.get("hasNextPage") or page >= MAX_SCHEDULE_PAGES:
-                        break
-                    page += 1
-            except AniListDeferred as e:
-                e.partial = schedules
-                raise
-            except AniListError as e:
-                logger.warning(f"Could not fetch airing schedule for media {media_id}: {e}")
-                continue
-            except Exception as e:
-                logger.warning(f"Unexpected airing schedule failure for media {media_id}: {e}")
-                continue
-            schedules[media_id] = schedule
-        return schedules
-
-    async def _fetch_upcoming_chunk(self, media_ids: List[int], since: datetime) -> Dict[int, List[Dict[str, Any]]]:
-        found: Dict[int, Dict[int, datetime]] = {media_id: {} for media_id in media_ids}
-        page = 1
-        while True:
-            data = await self._post_query(
-                AIRING_UPCOMING_QUERY,
-                {"ids": media_ids, "page": page, "after": int(since.timestamp())},
-                allow_partial=True,
-            )
-            block = data.get("Page")
-            if not isinstance(block, dict) or "__errors__" in data:
-                raise AniListError(f"AniList answered the schedule query incompletely: {data.get('__errors__')}")
-            for node in block.get("airingSchedules") or []:
-                media_id, episode, airing_at = node.get("mediaId"), node.get("episode"), node.get("airingAt")
-                if media_id in found and episode is not None and airing_at is not None:
-                    found[media_id][int(episode)] = datetime.fromtimestamp(airing_at, tz=timezone.utc)
-            # Only hasNextPage is reliable: AniList's page total is a placeholder.
-            if not (block.get("pageInfo") or {}).get("hasNextPage") or page >= MAX_SCHEDULE_PAGES:
-                break
-            page += 1
-        return {
-            media_id: [{"episode": episode, "airing_at": airing_at} for episode, airing_at in sorted(episodes.items())]
-            for media_id, episodes in found.items()
-        }
+        try:
+            found = await self._schedule_pages({media_id: f"mediaId: {media_id}" for media_id in unique_ids}, "AniList full schedule")
+        except AniListDeferred as e:
+            e.partial = _full_schedules(e.partial)
+            raise
+        for media_id, nodes in found.items():
+            if nodes is None:
+                logger.warning(f"Could not fetch airing schedule for media {media_id}.")
+        return _full_schedules(found)
 
     async def fetch_upcoming_airing_schedules(
         self,
         media_ids: List[int],
         since: datetime,
     ) -> Dict[int, List[Dict[str, Any]]]:
-        """Air times from ``since`` on for many shows at once, in a few requests for all of them.
+        """Air times from ``since`` on for many shows at once, usually in a single request.
 
         A refresh of shows whose past episodes are already dated only needs what is still
-        to come, so it costs a request per 40 shows instead of one per show. Every id asked
-        about is in the result (an empty list when nothing is scheduled), so a show that
-        simply has no more episodes is not mistaken for one that failed. A chunk AniList
-        rejects is fetched show by show instead. As with ``fetch_media_airing_schedules``,
-        a deferral carries what was already fetched.
+        to come. Every id asked about is in the result (an empty list when nothing is
+        scheduled), so a show that simply has no more episodes is not mistaken for one that
+        failed. A chunk AniList rejects is fetched show by show instead. As with
+        ``fetch_media_airing_schedules``, a deferral carries what was already fetched.
         """
         unique_ids = list(dict.fromkeys(int(media_id) for media_id in media_ids))
-        schedules: Dict[int, List[Dict[str, Any]]] = {}
-        deadline = time.monotonic() + PASS_BUDGET_SECONDS
-        for start in range(0, len(unique_ids), UPCOMING_CHUNK):
-            chunk = unique_ids[start:start + UPCOMING_CHUNK]
-            if time.monotonic() >= deadline:
-                raise AniListRateLimited(
-                    "AniList request budget for this pass is used up.",
-                    retry_in=PASS_RESUME_SECONDS,
-                    partial=schedules,
-                )
+        chunks = [unique_ids[start:start + UPCOMING_CHUNK] for start in range(0, len(unique_ids), UPCOMING_CHUNK)]
+        after = int(since.timestamp())
+        filters = {
+            index: f"mediaId_in: [{', '.join(str(media_id) for media_id in chunk)}], airingAt_greater: {after}"
+            for index, chunk in enumerate(chunks)
+        }
+        try:
+            found = await self._schedule_pages(filters, "AniList upcoming schedule")
+        except AniListDeferred as e:
+            e.partial = _upcoming_schedules(chunks, e.partial)
+            raise
+        schedules = _upcoming_schedules(chunks, found)
+        rejected = [media_id for index, chunk in enumerate(chunks) if found[index] is None for media_id in chunk]
+        if rejected:
+            logger.warning("Batched airing schedule query failed; fetching those shows one at a time.")
             try:
-                schedules.update(await self._fetch_upcoming_chunk(chunk, since))
-            except AniListDeferred as e:
-                e.partial = {**schedules, **e.partial}
+                schedules.update(await self.fetch_media_airing_schedules(rejected))
+            except AniListDeferred as deferred:
+                deferred.partial = {**schedules, **deferred.partial}
                 raise
-            except AniListError as e:
-                logger.warning(f"Batched airing schedule query failed ({e}); fetching those shows one at a time.")
-                try:
-                    schedules.update(await self.fetch_media_airing_schedules(chunk))
-                except AniListDeferred as deferred:
-                    deferred.partial = {**schedules, **deferred.partial}
-                    raise
         return schedules
+
+
+def _full_schedules(found: Dict[Any, Optional[List[Dict[str, Any]]]]) -> Dict[int, List[Dict[str, Any]]]:
+    """Each answered show's nodes as its schedule, in air order, an episode listed twice kept once."""
+    schedules: Dict[int, List[Dict[str, Any]]] = {}
+    for media_id, nodes in found.items():
+        if nodes is None:
+            continue
+        seen: Set[int] = set()
+        schedule = []
+        for node in nodes:
+            episode, airing_at = node.get("episode"), node.get("airingAt")
+            if episode is None or airing_at is None or int(episode) in seen:
+                continue
+            seen.add(int(episode))
+            schedule.append({"episode": int(episode), "airing_at": datetime.fromtimestamp(airing_at, tz=timezone.utc)})
+        schedules[media_id] = schedule
+    return schedules
+
+
+def _upcoming_schedules(chunks: List[List[int]], found: Dict[Any, Optional[List[Dict[str, Any]]]]) -> Dict[int, List[Dict[str, Any]]]:
+    """The schedules of the chunks answered, by show in episode order, every show of such a chunk included."""
+    schedules: Dict[int, List[Dict[str, Any]]] = {}
+    for index, nodes in found.items():
+        if nodes is None:
+            continue
+        by_show: Dict[int, Dict[int, datetime]] = {media_id: {} for media_id in chunks[index]}
+        for node in nodes:
+            media_id, episode, airing_at = node.get("mediaId"), node.get("episode"), node.get("airingAt")
+            if media_id in by_show and episode is not None and airing_at is not None:
+                by_show[media_id][int(episode)] = datetime.fromtimestamp(airing_at, tz=timezone.utc)
+        for media_id, episodes in by_show.items():
+            schedules[media_id] = [{"episode": episode, "airing_at": at} for episode, at in sorted(episodes.items())]
+    return schedules
