@@ -233,7 +233,8 @@ async def test_the_countdown_is_to_the_next_real_read_not_the_hunts_recheck(web)
 
 async def test_the_minimum_resolution_is_a_setting_with_known_values(web):
     assert (await web.client.get("/api/settings")).json()["min_resolution"] == 1080
-    assert (await web.client.post("/api/settings", json={"min_resolution": 900})).status_code == 422
+    for bad in (900, 0, 2160):
+        assert (await web.client.post("/api/settings", json={"min_resolution": bad})).status_code == 422, bad
     assert (await web.client.post("/api/settings", json={"min_resolution": 720})).status_code == 200
     assert web.load(Settings, 1).min_resolution == 720 and "grab" in web.pokes
 

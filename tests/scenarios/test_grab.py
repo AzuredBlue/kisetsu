@@ -463,3 +463,26 @@ def test_a_720p_release_is_grabbed_once_the_minimum_resolution_allows_it(world):
     world.commit()
     assert run(world).started == 1
     assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+@pytest.mark.parametrize("preferred, offered, taken", [
+    (720, ["1080p", "720p"], "720p"),
+    (720, ["720p", "1080p"], "720p"),
+    (720, ["1080p"], "1080p"),
+    (720, ["2160p", "1080p"], "1080p"),
+    (1080, ["", "1080p"], "1080p"),
+    (1080, [""], ""),
+])
+def test_the_preferred_quality_is_taken_when_the_feed_has_it_else_the_closest_above(world, preferred, offered, taken):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    world.ctx().settings.min_resolution = preferred
+    world.commit()
+    for i, resolution in enumerate(offered):
+        tag = f" ({resolution})" if resolution else ""
+        post(world, top, f"[Grp] Sousou no Frieren - 03{tag}.mkv", START + timedelta(minutes=i))
+    assert run(world).started == 1
+    world.session.expire_all()
+    [dl] = world.session.exec(select(Download)).all()
+    assert dl.title == f"[Grp] Sousou no Frieren - 03{f' ({taken})' if taken else ''}.mkv"
+    assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

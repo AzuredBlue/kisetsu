@@ -167,7 +167,7 @@ def test_the_releases_list_says_why_a_release_of_the_show_was_not_used(world):
     world.commit()
     [group] = manual.feed_matches(world.ctx(), show)
     reasons = {r["title"]: r["reason"] for r in group["rejected"]}
-    assert "below your minimum quality" in reasons["[Grp] Sousou no Frieren - 03 (720p).mkv"]
+    assert "below your preferred quality" in reasons["[Grp] Sousou no Frieren - 03 (720p).mkv"]
     assert "episode number" in reasons["[Grp] Sousou no Frieren - 02.5 (1080p).mkv"]
     assert "batch" in reasons["[Grp] Sousou no Frieren (01-12) (1080p) [Batch]"]
     assert [m["title"] for m in group["matches"]] == ["[Grp] Sousou no Frieren - 03 (1080p).mkv"]

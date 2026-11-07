@@ -12,7 +12,7 @@ from kisetsu.db.schema import (
     FeedState,
     Show,
 )
-from kisetsu.domain.parsing import same_release
+from kisetsu.domain.parsing import resolution_rank, same_release
 from kisetsu.domain.schedule import RELEASE_HOLDING
 from kisetsu.services import downloads, feeds, grab, tags
 from kisetsu.services.context import Context
@@ -265,7 +265,8 @@ def alternatives(ctx: Context, show: Show, episode: Episode, dl: Download, found
             # A stalled replacement leaves the previous release in place, and a new one must still be able to replace it.
             continue
         options.append((feed, entry))
-    return sorted(options, key=lambda option: -option[1].version)
+    preferred = ctx.settings.min_resolution
+    return sorted(options, key=lambda option: (-option[1].version, resolution_rank(option[1].item.title, preferred)))
 
 
 def try_another(ctx: Context, show: Show, episode: Episode) -> str:

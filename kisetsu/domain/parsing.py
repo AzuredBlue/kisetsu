@@ -428,6 +428,17 @@ def strip_batch(raw_title: str) -> str:
     return " ".join(text.split())
 
 
+def resolution_rank(raw_title: str, preferred: int) -> int:
+    """How well a release fits the preferred quality, lower is better: the preferred resolution itself, then the closest one
+    above it, then a release that names none. One below the preference (which is never taken) ranks last of all."""
+    resolution = release_resolution(raw_title)
+    if resolution is None:
+        return 10_000
+    if resolution >= preferred:
+        return resolution - preferred
+    return 100_000
+
+
 def is_valid_release(raw_title: str, min_resolution: int = DEFAULT_MIN_RESOLUTION) -> bool:
     """Reject batches and releases marked below the minimum resolution; a release that names none is kept."""
     if is_batch(raw_title):

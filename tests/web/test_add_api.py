@@ -384,3 +384,17 @@ async def test_a_show_nothing_was_released_for_yet_can_still_be_added(web):
     body = (await web.client.post("/api/add/confirm", json={"anilist_id": 11, "feed_id": 0, "item_keys": []})).json()
     show = web.load(Show, body["show_id"])
     assert show.feed_state == FeedState.NONE and body["started"] == 0
+
+
+async def test_add_show_offers_the_preferred_quality_when_the_feed_has_it(web):
+    _user(web)
+    _finished(web, episodes=1)
+    web.feeds.searchable[NYAA] = [
+        article("[Grp] Sousou no Frieren - 01 (1080p).mkv", START - timedelta(days=393)),
+        article("[Grp] Sousou no Frieren - 01 (720p).mkv", START - timedelta(days=393, minutes=1)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    web.query(lambda s: (setattr(s.get(Settings, 1), "min_resolution", 720), s.commit()))
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    assert [e["title"] for e in preview["feeds"][0]["episodes"]] == ["[Grp] Sousou no Frieren - 01 (720p).mkv"]

@@ -25,7 +25,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain import matcher as matching
 from kisetsu.domain.numbering import LedgerRow, inferred_offset, map_episode, rebase_plan
-from kisetsu.domain.parsing import is_batch, names_something_else, release_resolution, season_conflict, strip_batch
+from kisetsu.domain.parsing import is_batch, names_something_else, release_resolution, resolution_rank, season_conflict, strip_batch
 from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
     air_horizon,
@@ -238,7 +238,7 @@ def why_not_matched(ctx: Context, matcher: matching.Matcher, title: str) -> str:
     resolution = release_resolution(title)
     minimum = ctx.settings.min_resolution
     if resolution is not None and resolution < minimum:
-        return f"{resolution}p is below your minimum quality ({minimum}p, in Settings)."
+        return f"{resolution}p is below your preferred quality ({minimum}p, in Settings), and lower ones are never taken."
     if season_conflict(title, list(matcher.aliases)):
         return "It names another season."
     if matcher.strict:
@@ -426,7 +426,9 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
     if chosen is not None:
         resolved, best = resolve(ctx, state, chosen)
         resolved_by_feed[chosen.id] = (resolved, best)
-        for entry in resolved:
+        # Of an episode's releases the preferred quality goes first, then the closest above it; the first taken wins.
+        preferred = ctx.settings.min_resolution
+        for entry in sorted(resolved, key=lambda r: resolution_rank(r.item.title, preferred)):
             if _take(ctx, state, chosen, entry, best):
                 grabbed_from = chosen.id
                 result.started += 1

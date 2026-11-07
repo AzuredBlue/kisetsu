@@ -25,9 +25,10 @@ DEFAULT_QBIT_PASSWORD = "adminadmin"
 DEFAULT_BASE_DIR = ""
 DEFAULT_CATEGORY = ""
 DEFAULT_SEED_RATIO = 1.0
-# Releases marked below this many lines ("720p") are skipped; 0 takes any. Unmarked releases always count.
+# The preferred quality: taken when a feed has it, else the closest resolution above it; lower ones are never taken.
+# Releases that name no resolution are taken last. (Stored as Settings.min_resolution, as it is also the floor.)
 DEFAULT_MIN_RESOLUTION = 1080
-MIN_RESOLUTIONS = (0, 480, 720, 1080, 2160)
+MIN_RESOLUTIONS = (480, 720, 1080)
 DEFAULT_ANILIST_SYNC_MINUTES = 360
 # How often every feed is read for new releases.
 DEFAULT_FEED_REFRESH_MINUTES = 15

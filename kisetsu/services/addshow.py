@@ -18,7 +18,9 @@ from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import DismissedShow, Episode, EpisodeStatus, Feed, FeedItem, Show
 from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import build_matcher, decide
-from kisetsu.domain.parsing import batch_range, is_batch, is_single_file, names_something_else, parse_release_title, release_season, strip_batch
+from kisetsu.domain.parsing import (
+    batch_range, is_batch, is_single_file, names_something_else, parse_release_title, release_season, resolution_rank, strip_batch,
+)
 from kisetsu.domain.patterns import sanitize_folder_name
 from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows
 from kisetsu.services.context import Context
@@ -172,15 +174,19 @@ def _too_old(show: Show, item: FeedItem) -> bool:
 
 
 def _releases(ctx: Context, show: Show, feed: Feed) -> Dict[int, Any]:
-    """The release the feed offers for each episode: the highest version, then the newest."""
+    """The release the feed offers for each episode: the highest version, then the preferred quality, then the newest."""
     best: Dict[int, Any] = {}
+    preferred = ctx.settings.min_resolution
     for _, entry in manual.candidates(ctx, show, [feed]):
         # A number in a special's subtitle ("- The Case of Ultra 30") reads as an episode, and only the show's titles tell them apart.
         if _too_old(show, entry.item) or names_something_else(entry.item.title, show.effective_aliases):
             continue
         held = best.get(entry.number)
-        key = (entry.version, entry.item.published_at or entry.item.first_seen_at)
-        if held is None or key > (held.version, held.item.published_at or held.item.first_seen_at):
+
+        def key(e):
+            return (e.version, -resolution_rank(e.item.title, preferred), e.item.published_at or e.item.first_seen_at)
+
+        if held is None or key(entry) > key(held):
             best[entry.number] = entry
     return best
 
