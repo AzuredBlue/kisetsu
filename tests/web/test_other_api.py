@@ -168,7 +168,10 @@ async def test_logs_are_returned_newest_last(web):
         logging.getLogger("kisetsu.test").warning("second")
     finally:
         logging.getLogger("kisetsu").removeHandler(web.runtime.logs)
-    assert [line["message"] for line in (await web.client.get("/api/logs", params={"limit": 1})).json()] == ["second"]
+    answer = (await web.client.get("/api/logs", params={"limit": 1})).json()
+    assert [line["message"] for line in answer["lines"]] == ["second"] and answer["full"]
+    newer = (await web.client.get("/api/logs", params={"after": answer["lines"][-1]["seq"], "run": answer["run"]})).json()
+    assert newer["lines"] == [] and not newer["full"]
 
 
 async def test_the_request_counts_are_reported_and_can_be_reset(web):

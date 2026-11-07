@@ -1,5 +1,5 @@
 // The server data the views read.
-import { keyedResource, resource } from './store.js';
+import { Resource, keyedResource, resource } from './store.js';
 
 // 'shows' is any change to the shows; 'episodes' is one only to their episodes and downloads, which also names the show
 // (`show:<id>`), so the feeds and another show's page are not refetched for it.
@@ -10,7 +10,20 @@ export const settings = resource('/api/settings', ['settings']);
 export const history = resource('/api/history?limit=100', ['history']);
 // Episodes across every show that need the user's eye (Shows page).
 export const attention = resource('/api/attention', ['shows', 'episodes', 'history']);
-export const logs = resource('/api/logs?limit=300', ['logs']);
+const LOG_LINES = 300;
+// The log lines: a refetch asks only for the lines after the newest one held, and keeps the last LOG_LINES.
+class LogLines extends Resource {
+  url() {
+    const last = this.data && this.data.length ? this.data[this.data.length - 1].seq : null;
+    return last === null || !this.run ? this.path : `${this.path}&after=${last}&run=${this.run}`;
+  }
+
+  take(answer) {
+    this.run = answer.run;
+    return (answer.full || !this.data ? answer.lines : this.data.concat(answer.lines)).slice(-LOG_LINES);
+  }
+}
+export const logs = resource(`/api/logs?limit=${LOG_LINES}`, ['logs'], LogLines);
 // Requests sent to each site since start (Logs page, sandbox only); the server says when they change, every few seconds at most.
 export const requests = resource('/api/requests', ['requests']);
 // Changes only when setup is finished (which emits 'settings') or a backup is restored (which emits everything).

@@ -58,9 +58,9 @@ export function Logs() {
     <div class="log-pane">
       <div class="log-head muted">${data ? data.length : 0} entries</div>
       <div class="log-lines mono" ref=${box} onScroll=${onScroll}>
-        ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<${EmptyState} title="No activity logged yet" hint="What Kisetsu does is written here as it happens." />` : data.map((l, i) => {
+        ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<${EmptyState} title="No activity logged yet" hint="What Kisetsu does is written here as it happens." />` : data.map((l) => {
           const mark = MARKS[l.level];
-          return html`<div class="log-line" key=${`${l.at}${i}`}>
+          return html`<div class="log-line" key=${l.seq}>
             <span class="log-time">${localTime(l.at, true)}</span>
             <span class="log-msg">${mark ? html`<b class=${mark[1]}>${mark[0]} </b>` : null}${l.message}</span>
           </div>`;

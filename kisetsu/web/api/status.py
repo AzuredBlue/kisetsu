@@ -1,7 +1,7 @@
 import asyncio
 import json
 from datetime import datetime, timezone
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -98,8 +98,8 @@ async def dismiss_attention(request: Request, body: Dismiss):
 
 
 @router.get("/logs")
-async def get_logs(request: Request, limit: int = 100):
-    return runtime(request).logs.recent(limit)
+async def get_logs(request: Request, limit: int = 100, after: Optional[int] = None, run: Optional[str] = None):
+    return runtime(request).logs.recent(limit, after, run)
 
 
 @router.get("/requests")

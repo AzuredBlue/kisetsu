@@ -27,12 +27,16 @@ export class Resource {
 
   notify() { this.listeners.forEach(fn => fn()); }
 
+  // What a fetch asks for, and how its answer becomes the data: a resource that fetches only what is new overrides both.
+  url() { return this.path; }
+  take(answer) { return answer; }
+
   async load() {
     if (this.inflight) { this.again = true; return this.inflight; }
     this.stale = false;
     this.started = Date.now();
-    this.inflight = apiFetch(this.path, { quiet: true })
-      .then((data) => { this.data = data; this.at = Date.now(); this.error = null; })
+    this.inflight = apiFetch(this.url(), { quiet: true })
+      .then((answer) => { this.data = this.take(answer); this.at = Date.now(); this.error = null; })
       .catch((err) => { this.error = err; this.stale = true; })
       .finally(() => {
         this.inflight = null;
@@ -59,8 +63,8 @@ export class Resource {
 const resources = new Set();
 const keyed = new Map();
 
-export function resource(path, topics) {
-  const r = new Resource(path, topics);
+export function resource(path, topics, Kind = Resource) {
+  const r = new Kind(path, topics);
   resources.add(r);
   return r;
 }
