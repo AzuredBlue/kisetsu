@@ -25,13 +25,14 @@ function initialForm(page) {
   };
 }
 
+// How the feed was chosen, in the words used everywhere: Auto-discover, Trying, Picked by you, Locked.
 function feedHint(page) {
   const feed = page.feed;
-  if (!feed) return page.released ? 'Auto: testing feeds by priority.' : 'Auto: first feed to post wins.';
-  if (feed.state === 'locked') return `Locked to ${feed.name} after a download.`;
-  if (feed.state === 'pinned') return 'Pinned by you.';
-  if (feed.state === 'candidate') return `May move to ${feed.name}, which posted first.`;
-  return page.status === 'waiting' ? 'Auto: waiting for a release.' : 'Auto: testing feeds by priority.';
+  if (!feed) return page.released ? 'Auto-discover: the feeds are tried by priority until one carries a release.' : 'Auto-discover: the first feed to post an episode is used.';
+  if (feed.state === 'locked') return `Locked to ${feed.name}: a release of this show came from it, so every episode comes from there and they all match.`;
+  if (feed.state === 'pinned') return `Picked by you. It is locked once a release from ${feed.name} is downloaded.`;
+  if (feed.state === 'candidate') return `Trying ${feed.name}, which posted first. A higher feed that posts within a few minutes still wins.`;
+  return `Trying ${feed.name}. It is locked once a release from it is downloaded.`;
 }
 
 function Header({ page, now }) {
@@ -50,14 +51,14 @@ function Header({ page, now }) {
         ${subtitle ? html`<p class="muted truncate" style="margin-top:.25rem">${subtitle}</p>` : null}
       </div>
       <div class="row">
-        ${page.status !== 'completed' ? html`<button type="button" class="btn sm" onClick=${() => togglePause(page)}><${Icon} name=${page.paused ? 'play' : 'pause'} small />${page.paused ? 'Resume' : 'Pause'}</button>` : null}
-        <button type="button" class="btn sm danger" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }}>Delete</button>
+        ${page.status !== 'completed' ? html`<button type="button" class="btn sm" onClick=${() => togglePause(page)} title=${page.paused ? 'Resume downloads for this show' : 'Pause downloads for this show'}><${Icon} name=${page.paused ? 'play' : 'pause'} small />${page.paused ? 'Resume' : 'Pause'}</button>` : null}
+        <button type="button" class="btn sm danger" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }}>Delete show</button>
       </div>
     </div>
     <div class="show-facts">
-      <span class=${`pill ${{ working: 'pill-ok', testing: 'pill-warn', waiting: 'pill-info', upcoming: 'pill-info', paused: 'pill-idle', completed: 'pill-done' }[page.status]}`}>${page.status_label}</span>
+      <span class=${`pill ${{ working: 'pill-ok', testing: 'pill-info', waiting: 'pill-info', upcoming: 'pill-info', paused: 'pill-idle', completed: 'pill-done' }[page.status]}`}>${page.status_label}</span>
       ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${`when ${air.tone}`} title=${air.at ? localDateTime(air.at) : undefined}>${air.info}</span></span>` : null}
-      <span class="feed-fact muted" title=${page.feed ? page.feed.name : 'No feed'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? page.feed.name : 'No feed'}</span></span>
+      <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} · ${page.feed.state_label}` : 'Auto-discover'}</span></span>
     </div>
     ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${done}/${total || '?'} downloaded</span></div>` : null}
   </div>`;
@@ -214,7 +215,7 @@ export function Show({ route }) {
         <div class="card side-card">
           ${sideTab === 'feed' ? html`
             <div>
-              <label for="show-feed-id" class="field-label">${!data.released ? 'Feed (not decided yet)' : data.status === 'testing' ? 'Feed (auto)' : 'Assigned feed'}</label>
+              <label for="show-feed-id" class="field-label">Feed</label>
               <select id="show-feed-id" class="field" value=${value('feed_id')} onChange=${(e) => form.set('feed_id', Number(e.target.value))}>
                 <option value="0">Auto-discover</option>
                 ${feedList.map(f => html`<option value=${f.id} selected=${f.id === value('feed_id')}>#${f.priority} ${f.name}</option>`)}

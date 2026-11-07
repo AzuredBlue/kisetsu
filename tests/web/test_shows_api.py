@@ -28,9 +28,9 @@ async def test_the_shows_list_gives_each_show_a_status_label_and_progress(web):
     web.show(1, "Locked", feed_id=feed, feed_state=FeedState.LOCKED, total_episodes=12)
     web.show(2, "Plain")
     cards = {c["title"]: c for c in (await web.client.get("/api/shows")).json()}
-    assert cards["Locked"]["status_label"] == "Working" and cards["Locked"]["feed"]["state_label"] == "Working"
+    assert cards["Locked"]["status_label"] == "Working" and cards["Locked"]["feed"]["state_label"] == "Locked"
     assert cards["Locked"]["progress"] == {"done": 0, "aired": 3, "total": 12}
-    assert cards["Plain"]["status_label"] == "Testing" and cards["Plain"]["progress"]["total"] is None
+    assert cards["Plain"]["status_label"] == "Searching" and cards["Plain"]["progress"]["total"] is None
 
 
 async def test_a_show_that_finished_airing_is_in_the_completed_section_while_it_still_downloads(web):

@@ -5,7 +5,7 @@ import { airTime, relativeTime, localTime } from '../format.js';
 import { Icon, Spinner } from './Icon.js';
 import { toast } from './Toast.js';
 
-const ROLE_LABELS = { locked: 'Locked', picked: 'Picked', assigned: 'Assigned', other: 'Not used by this show' };
+const ROLE_LABELS = { locked: 'Locked', picked: 'Picked by you', assigned: 'Trying', other: 'Not used by this show' };
 const GROUPS = [['attention', 'Needs attention'], ['active', 'Downloading'], ['done', 'Completed'], ['waiting', 'Waiting'], ['skipped', 'Not downloading']];
 
 const stalledNote = (stalled) => `The torrent has moved no data for hours.${stalled.alternatives ? '' : " No other release of this episode is in the feeds this show uses, so there is nothing to switch to; wait, or remove the torrent in qBittorrent."}`;

@@ -42,7 +42,7 @@ function Notes({ info }) {
     ${offline ? html`<span class="note-bad" title="Kisetsu did not answer the last check. Trying again.">Not responding</span>` : null}
     ${info.all_paused ? html`<span class="note-warn">Paused</span>` : null}
     ${info.qbit_error ? html`<span class="note-bad" title=${info.qbit_error}>qBittorrent unreachable</span>` : null}
-    ${testing ? html`<span class="note-warn" title="No release seen yet. Trying the feeds by priority.">${testing} Testing</span>` : null}
+    ${testing ? html`<span class="note-info" title="No release found yet for these shows. The feeds are tried by priority.">${testing} Searching</span>` : null}
     ${stuck ? html`<span class="note-bad" title=${`${stuck} episode${stuck === 1 ? ' was' : 's were'} added but qBittorrent never showed ${stuck === 1 ? 'it' : 'them'} (or kept refusing ${stuck === 1 ? 'it' : 'them'}) for over an hour, though it answers. Check that qBittorrent can download: its network or VPN, free space and the save folder. Kisetsu keeps trying.`}>qBittorrent isn't picking up new torrents</span>` : null}
     ${failed ? html`<button type="button" class="note-bad" onClick=${() => go('history')} title="Episodes that could not be downloaded. Open the History to see why.">${failed} Failed</button>` : null}
     ${failing.length ? html`<button type="button" class="note-warn" onClick=${() => go('feeds')} title=${`Could not read: ${failing.join(', ')}. Open the RSS Feeds to see why.`}>${failing.length} feed${failing.length === 1 ? '' : 's'} failing</button>` : null}
@@ -76,7 +76,7 @@ function Sidebar({ route, open, onClose, info, at }) {
   const togglePause = async () => {
     try {
       await apiFetch(paused ? '/api/shows/resume-all' : '/api/shows/pause-all', { method: 'POST' });
-      toast(paused ? 'Downloading resumed.' : 'Downloading paused. Torrents already added carry on.', 'success');
+      toast(paused ? 'All downloads resumed.' : 'All downloads paused. Torrents already added carry on.', 'success');
     } catch (err) { /* shown by apiFetch */ }
   };
   const badge = (id) => {
@@ -107,7 +107,7 @@ function Sidebar({ route, open, onClose, info, at }) {
           <button type="button" class="btn sm" style="flex:1" onClick=${sync} disabled=${running} title="Re-sync AniList, read the RSS feeds, grab new episodes and reconcile with qBittorrent">
             ${running ? html`<${Spinner} small />` : null}<span>Sync Now</span>
           </button>
-          <button type="button" class="btn sm icon-only" onClick=${togglePause} title=${paused ? 'Resume downloading' : 'Pause downloading'} aria-label=${paused ? 'Resume downloading' : 'Pause downloading'}>
+          <button type="button" class="btn sm icon-only" onClick=${togglePause} title=${paused ? 'Resume all downloads' : 'Pause all downloads'} aria-label=${paused ? 'Resume all downloads' : 'Pause all downloads'}>
             <${Icon} name=${paused ? 'play' : 'pause'} small />
           </button>
         </div>

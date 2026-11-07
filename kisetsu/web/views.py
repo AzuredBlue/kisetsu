@@ -35,14 +35,16 @@ STATUS_LABELS = {
     ShowStatus.WORKING: "Working",
     ShowStatus.UPCOMING: "Upcoming",
     ShowStatus.WAITING: "Waiting",
-    ShowStatus.TESTING: "Testing",
+    # Looking for its first release: the feeds are tried by priority.
+    ShowStatus.TESTING: "Searching",
 }
+# The one vocabulary for how a show's feed was chosen; the UI uses these words everywhere.
 FEED_STATE_LABELS = {
-    FeedState.NONE: "Not found yet",
-    FeedState.CANDIDATE: "Found",
-    FeedState.ASSIGNED: "Testing",
-    FeedState.PINNED: "Picked",
-    FeedState.LOCKED: "Working",
+    FeedState.NONE: "Auto-discover",
+    FeedState.CANDIDATE: "Trying",
+    FeedState.ASSIGNED: "Trying",
+    FeedState.PINNED: "Picked by you",
+    FeedState.LOCKED: "Locked",
 }
 IN_FLIGHT = (DownloadState.ADDING, DownloadState.VERIFYING, DownloadState.DOWNLOADING, DownloadState.RETRY_WAIT)
 HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED, EventKind.FAILED, EventKind.MISSED)

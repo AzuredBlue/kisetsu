@@ -10,9 +10,9 @@ import { confirmDialog } from './Modal.js';
 import { toast } from './Toast.js';
 
 const TAGS = {
-  testing: ['pill-warn', 'No release seen yet. Trying the feeds by priority.'],
+  testing: ['pill-info', 'No release found yet. The feeds are tried by priority.'],
   waiting: ['pill-info', 'Aired, but no release has turned up yet. It is grabbed as soon as a feed carries it.'],
-  paused: ['pill-idle', 'Monitoring is paused for this show.'],
+  paused: ['pill-idle', 'Downloads are paused for this show.'],
 };
 
 // "Ep n" plus a countdown or outcome.
@@ -89,7 +89,7 @@ export function Problems({ show }) {
 export async function togglePause(show) {
   try {
     await apiFetch(`/api/shows/${show.id}/${show.paused ? 'resume' : 'pause'}`, { method: 'POST' });
-    toast(show.paused ? `Monitoring resumed for ${show.title}.` : `Monitoring paused for ${show.title}. Torrents already added carry on.`, 'success');
+    toast(show.paused ? `Downloads resumed for ${show.title}.` : `Downloads paused for ${show.title}. Torrents already added carry on.`, 'success');
   } catch (err) { /* shown by apiFetch */ }
 }
 
@@ -156,8 +156,8 @@ export async function deleteShow(show) {
 function RowActions({ show }) {
   const stop = (fn) => (e) => { e.stopPropagation(); fn(); };
   return html`<div class="row-actions">
-    ${show.status !== 'completed' ? html`<button type="button" class="btn plain icon-only sm" onClick=${stop(() => togglePause(show))} title=${show.paused ? 'Resume monitoring' : 'Pause monitoring'} aria-label=${show.paused ? 'Resume monitoring' : 'Pause monitoring'}><${Icon} name=${show.paused ? 'play' : 'pause'} small /></button>` : null}
-    <button type="button" class="btn plain icon-only sm" onClick=${stop(() => deleteShow(show))} title="Remove show" aria-label="Remove show"><${Icon} name="trash" small /></button>
+    ${show.status !== 'completed' ? html`<button type="button" class="btn plain icon-only sm" onClick=${stop(() => togglePause(show))} title=${show.paused ? 'Resume downloads' : 'Pause downloads'} aria-label=${show.paused ? 'Resume downloads' : 'Pause downloads'}><${Icon} name=${show.paused ? 'play' : 'pause'} small /></button>` : null}
+    <button type="button" class="btn plain icon-only sm" onClick=${stop(() => deleteShow(show))} title="Delete show" aria-label="Delete show"><${Icon} name="trash" small /></button>
   </div>`;
 }
 
