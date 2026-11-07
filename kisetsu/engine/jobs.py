@@ -172,8 +172,9 @@ class Jobs:
         # What is downloading shows progress from here on, instead of after every backfill search has finished.
         self.synced.set()
         self.poke("settle")
-        next_sync = await self.sync_anilist(startup=True)
-        await self.refresh_feeds(everything=True)
+        # AniList and the feeds are different sites, so they are read together. Items stored before a show is added are
+        # matched to it by the grab pass (``ensure_matches_current``).
+        next_sync, _ = await asyncio.gather(self.sync_anilist(startup=True), self.refresh_feeds(everything=True))
         await self.engine.run(adoption.adopt_existing)
         await self.engine.run(adoption.reattribute)
         await self.engine.run(tags.sync_tags)
