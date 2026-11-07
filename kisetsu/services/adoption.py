@@ -135,7 +135,7 @@ def adopt_existing(ctx: Context) -> AdoptResult:
         return result
     shows = [s for s in followed_shows(ctx) if not s.completed]
     facts = facts_for(ctx, shows)
-    matchers = [(s, matching.build_matcher(s.effective_aliases, s.learned_name)) for s in shows]
+    matchers = [(s, matching.build_matcher(s.effective_aliases, s.learned_name, ctx.settings.min_resolution)) for s in shows]
     by_id = {s.id: s for s in shows}
     carried = _hash_owners(ctx, [t.hash for t in pending], set(by_id))
     tagged_shows = tags.owners(ctx)

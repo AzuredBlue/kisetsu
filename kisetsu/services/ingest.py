@@ -11,7 +11,7 @@ from sqlmodel import select
 from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import Episode, Feed, FeedItem, FeedItemMatch, Show
 from kisetsu.domain import matcher as matching
-from kisetsu.domain.parsing import is_valid_release, parse_release_title
+from kisetsu.domain.parsing import is_batch, parse_release_title
 from kisetsu.domain.schedule import PREMIERE_SLACK, premiere_out_of_reach
 from kisetsu.services.context import Context, get_state, set_state
 from kisetsu.services.facts import facts_for
@@ -42,12 +42,17 @@ def followed_shows(ctx: Context) -> List[Show]:
 def _matchers(ctx: Context) -> Tuple[Dict[int, str], List[Tuple[int, matching.Matcher]]]:
     """Each followed show's matcher, and the signature of what it was built from, by show id."""
     shows = followed_shows(ctx)
-    signatures = {show.id: matching.signature([(show.id, show.effective_aliases, show.learned_name or "")]) for show in shows}
+    minimum = ctx.settings.min_resolution
+    # The minimum resolution decides what matches too, so a change to it rematches every show.
+    signatures = {
+        show.id: matching.signature([(show.id, show.effective_aliases, show.learned_name or "")], extra=f"min_resolution={minimum}")
+        for show in shows
+    }
     key = json.dumps(sorted(signatures.items()))
     cached = ctx.caches.matchers
     if cached is not None and cached[0] == key:
         return cached[1], cached[2]
-    built = [(show.id, matching.build_matcher(show.effective_aliases, show.learned_name)) for show in shows]
+    built = [(show.id, matching.build_matcher(show.effective_aliases, show.learned_name, minimum)) for show in shows]
     ctx.caches.matchers = (key, signatures, built)
     return signatures, built
 
@@ -59,7 +64,8 @@ def _known(ctx: Context) -> Set[Tuple[int, str]]:
 
 
 def _new_item(feed: Feed, article: FeedArticle, first_seen_at) -> FeedItem:
-    parsed = parse_release_title(article.title) if is_valid_release(article.title) else {}
+    # Every single release is parsed, whatever its resolution: the minimum is a setting that can change later.
+    parsed = parse_release_title(article.title) if not is_batch(article.title) else {}
     return FeedItem(
         feed_id=feed.id,
         guid=article.guid,

@@ -108,3 +108,30 @@ def test_a_parent_release_goes_to_the_parent_not_its_spin_off():
     ]
     assert matching_show_ids(shows, "[SubsPlease] Boku no Hero Academia - 160 (1080p).mkv", {}) == [1]
     assert matching_show_ids(shows, "[SubsPlease] Vigilante - Boku no Hero Academia Illegals - 05 (1080p).mkv", {}) == [2]
+
+
+@pytest.mark.parametrize("title, resolution", [
+    ("[SubsPlease] Dungeon Meshi - 05 (720p) [ABCDEF12].mkv", 720),
+    ("[Erai-raws] Dungeon Meshi - 05 [480p][Multiple Subtitle]", 480),
+    ("[ASW] Dungeon Meshi - 05 [1080p HEVC]", 1080),
+    ("Dungeon Meshi S01E05 2160p NF WEB-DL", 2160),
+    ("[Grp] Dungeon Meshi - 05 [4K]", 2160),
+    ("[Grp] Dungeon Meshi - 05", None),
+])
+def test_the_resolution_a_release_names(title, resolution):
+    from kisetsu.domain.parsing import release_resolution
+    assert release_resolution(title) == resolution
+
+
+def test_the_minimum_resolution_decides_which_releases_are_valid():
+    from kisetsu.domain.parsing import is_valid_release
+    assert not is_valid_release("[SubsPlease] Dungeon Meshi - 05 (720p).mkv")
+    assert is_valid_release("[SubsPlease] Dungeon Meshi - 05 (720p).mkv", min_resolution=720)
+    assert not is_valid_release("[SubsPlease] Dungeon Meshi - 05 (1080p).mkv", min_resolution=2160)
+    assert is_valid_release("[SubsPlease] Dungeon Meshi - 05 (480p).mkv", min_resolution=0)
+    assert is_valid_release("[Grp] Dungeon Meshi - 05.mkv", min_resolution=2160)
+
+
+def test_a_matcher_follows_its_minimum_resolution():
+    assert not matches(["Dungeon Meshi"], "[SubsPlease] Dungeon Meshi - 05 (720p).mkv")
+    assert decide(build_matcher(["Dungeon Meshi"], None, min_resolution=720), "[SubsPlease] Dungeon Meshi - 05 (720p).mkv", {})[0]

@@ -123,7 +123,7 @@ def _offset(ctx: Context, show: Show, feed: Feed) -> Optional[EpisodeOffset]:
 
 def _matcher_for(ctx: Context, state: ShowState, feed: Feed) -> matching.Matcher:
     show = state.show
-    base = matching.build_matcher(show.effective_aliases, show.learned_name)
+    base = matching.build_matcher(show.effective_aliases, show.learned_name, ctx.settings.min_resolution)
     if show.feed_state != FeedState.LOCKED or show.feed_id != feed.id:
         return base
     held = [

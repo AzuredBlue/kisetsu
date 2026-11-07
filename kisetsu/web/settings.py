@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlmodel import select
 
 from kisetsu.clients.qbittorrent import QbitError
-from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, MIN_FEED_REFRESH_MINUTES, MIN_HUNT_INTERVAL_MINUTES
+from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, MIN_FEED_REFRESH_MINUTES, MIN_HUNT_INTERVAL_MINUTES, MIN_RESOLUTIONS
 from kisetsu.db.schema import Settings, Show
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.services import library, tags
@@ -44,6 +44,14 @@ class SettingsPatch(BaseModel):
     accent_color: Optional[str] = None
     accent_tint: Optional[str] = None
     desktop_notifications: Optional[bool] = None
+    min_resolution: Optional[int] = None
+
+    @field_validator("min_resolution")
+    @classmethod
+    def _resolution(cls, value: Optional[int]) -> Optional[int]:
+        if value is not None and value not in MIN_RESOLUTIONS:
+            raise ValueError(f"must be one of {', '.join(str(v) for v in MIN_RESOLUTIONS)}")
+        return value
 
     @field_validator("title_language", "accent_tint")
     @classmethod
@@ -102,6 +110,7 @@ def settings_view(settings: Settings) -> Dict[str, Any]:
         "accent_color": settings.accent_color,
         "accent_tint": settings.accent_tint,
         "desktop_notifications": settings.desktop_notifications,
+        "min_resolution": settings.min_resolution,
     }
 
 
@@ -129,7 +138,7 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
     if "default_category" in given:
         s.default_category = given["default_category"].strip()
     for name in ("default_seed_ratio", "anilist_sync_minutes", "feed_refresh_minutes", "hunt_interval_minutes", "early_air_tolerance_hours",
-                 "accent_color", "accent_tint", "desktop_notifications"):
+                 "accent_color", "accent_tint", "desktop_notifications", "min_resolution"):
         if name in given:
             setattr(s, name, given[name])
     if "anilist_username" in given:

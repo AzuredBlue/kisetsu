@@ -66,6 +66,7 @@ export function Settings() {
   };
 
   const setNotifications = async (on) => { await applyNow({ desktop_notifications: on }); reload(); };
+  const setMinResolution = async (value) => { if (await applyNow({ min_resolution: value })) reload(); };
   const setLanguage = async (lang) => {
     if (lang === data.title_language) return;
     let moveExisting = false;
@@ -109,6 +110,7 @@ export function Settings() {
       <div class="card card-divided">
         <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
         <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
+        <${SetRow} name="Minimum quality" hint="Releases marked below this are skipped. Releases that name no resolution are always taken."><${Seg} label="Minimum quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[0, 'Any'], [480, '480p'], [720, '720p'], [1080, '1080p'], [2160, '4K']]} /><//>
         <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
       </div>
     </section>

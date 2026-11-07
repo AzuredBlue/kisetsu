@@ -12,6 +12,7 @@ from sqlmodel import select
 from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle, FeedFetchError
 from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
+from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import broad_match, build_matcher, decide
 from kisetsu.domain.parsing import parse_release_title
 from kisetsu.domain.schedule import plausible_for_show
@@ -198,8 +199,8 @@ async def search(
     return merged
 
 
-def matcher_for(show: Show):
-    return build_matcher(show.effective_aliases, show.learned_name)
+def matcher_for(show: Show, min_resolution: int = DEFAULT_MIN_RESOLUTION):
+    return build_matcher(show.effective_aliases, show.learned_name, min_resolution)
 
 
 def apply(ctx: Context, item: Due, found: Searched) -> int:
@@ -208,7 +209,7 @@ def apply(ctx: Context, item: Due, found: Searched) -> int:
     if show is None:
         return 0
     added = 0
-    matcher, cache = matcher_for(show), ctx.caches.parsed_cache()
+    matcher, cache = matcher_for(show, ctx.settings.min_resolution), ctx.caches.parsed_cache()
     for feed_id, articles in found.articles.items():
         feed = ctx.session.get(Feed, feed_id)
         # Only what this show would match is stored: a stored article is marked known, so a later RSS read would skip it and a

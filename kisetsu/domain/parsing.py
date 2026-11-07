@@ -4,7 +4,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 from guessit import guessit
 from rapidfuzz import fuzz
-from kisetsu.config import FUZZY_MATCH_THRESHOLD
+from kisetsu.config import DEFAULT_MIN_RESOLUTION, FUZZY_MATCH_THRESHOLD
 from kisetsu.domain.patterns import build_regex_pattern
 
 logger = logging.getLogger("kisetsu.domain.parsing")
@@ -338,7 +338,15 @@ def calculate_match_score(
     return best_score, best_alias
 
 
-UNWANTED_RESOLUTION_REGEX: re.Pattern[str] = re.compile(r"\b(720p|480p|540p|360p|576p)\b", re.IGNORECASE)
+_RESOLUTION_REGEX: re.Pattern[str] = re.compile(r"\b(2160|1080|720|576|540|480|360)p\b|\b(4k)\b", re.IGNORECASE)
+
+
+def release_resolution(raw_title: str) -> Optional[int]:
+    """The lines a release says it has ("720p" is 720, "4K" is 2160), or None when it says nothing."""
+    match = _RESOLUTION_REGEX.search(raw_title or "")
+    if not match:
+        return None
+    return int(match.group(1)) if match.group(1) else 2160
 # "Collection" only counts set apart in brackets: titles contain the word ("Kantai Collection").
 BATCH_REGEX: re.Pattern[str] = re.compile(
     r"\b(?:batch|complete\s+series|complete\s+season)\b|[\[(]\s*collection\s*[\])]",
@@ -420,13 +428,12 @@ def strip_batch(raw_title: str) -> str:
     return " ".join(text.split())
 
 
-def is_valid_release(raw_title: str) -> bool:
-    """Reject batches and unwanted lower-resolution releases."""
-    if UNWANTED_RESOLUTION_REGEX.search(raw_title):
-        return False
+def is_valid_release(raw_title: str, min_resolution: int = DEFAULT_MIN_RESOLUTION) -> bool:
+    """Reject batches and releases marked below the minimum resolution; a release that names none is kept."""
     if is_batch(raw_title):
         return False
-    return True
+    resolution = release_resolution(raw_title)
+    return resolution is None or resolution >= min_resolution
 
 
 def extract_arc_qualifiers(text: str) -> Optional[str]:
@@ -549,6 +556,7 @@ def match_release_to_show(
     parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None,
     ignore_arc_marker: bool = False,
     allow_fuzzy: bool = True,
+    min_resolution: int = DEFAULT_MIN_RESOLUTION,
 ) -> Tuple[bool, float, Dict[str, Any]]:
     """
     Evaluate if an RSS item or torrent matches an anime show.
@@ -567,7 +575,7 @@ def match_release_to_show(
         parsed = parse_release_title(raw_title)
         if parsed_cache is not None:
             parsed_cache[raw_title] = dict(parsed)
-    if not is_valid_release(raw_title):
+    if not is_valid_release(raw_title, min_resolution):
         return False, 0.0, parsed
 
     requirement = None if ignore_arc_marker else alias_arc_requirement(aliases)

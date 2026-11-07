@@ -24,6 +24,7 @@ from kisetsu.domain.parsing import (
     release_season,
     season_conflict,
 )
+from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.patterns import show_match_patterns
 
 ParsedCache = Dict[str, Dict[str, Any]]
@@ -39,11 +40,13 @@ class Matcher:
     strict: bool = False
     season_known: bool = False
     season: Optional[int] = None
+    # Releases marked below this resolution are never the show's (the user's setting).
+    min_resolution: int = DEFAULT_MIN_RESOLUTION
 
 
-def build_matcher(aliases: Sequence[str], learned_name: Optional[str]) -> Matcher:
+def build_matcher(aliases: Sequence[str], learned_name: Optional[str], min_resolution: int = DEFAULT_MIN_RESOLUTION) -> Matcher:
     pattern, learned_pattern = show_match_patterns(list(aliases), learned_name)
-    return Matcher(tuple(aliases), tuple(prepare_aliases(list(aliases))), pattern, learned_pattern)
+    return Matcher(tuple(aliases), tuple(prepare_aliases(list(aliases))), pattern, learned_pattern, min_resolution=min_resolution)
 
 
 def narrow_to_feed(matcher: Matcher, learned_name: Optional[str], held_titles: Iterable[str]) -> Matcher:
@@ -83,6 +86,7 @@ def broad_match(matcher: Matcher, title: str, parsed_cache: Optional[ParsedCache
         prepared_aliases=list(matcher.prepared),
         parsed_cache=parsed_cache,
         ignore_arc_marker=True,
+        min_resolution=matcher.min_resolution,
     )[0]
 
 
@@ -108,6 +112,7 @@ def decide(
         parsed_cache=parsed_cache,
         ignore_arc_marker=learned_without_marker or (unmarked_ok and release_arc_qualifier(title) is None),
         allow_fuzzy=not matcher.strict,
+        min_resolution=matcher.min_resolution,
     )
     if matched and matcher.season_known and release_season(title) != matcher.season:
         return False, parsed
@@ -163,13 +168,13 @@ def newest_raw_episode(
     return newest
 
 
-def signature(entries: Iterable[Tuple[int, Sequence[str], str]]) -> str:
+def signature(entries: Iterable[Tuple[int, Sequence[str], str]], extra: str = "") -> str:
     """Changes whenever a show is added or removed, or its aliases or learned name change.
 
     It is stored, so it must not change between runs: a hash of the JSON text, never Python's per-process ``hash()``.
     """
     rows = sorted((show_id, list(aliases), learned or "") for show_id, aliases, learned in entries)
-    return hashlib.sha1(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return hashlib.sha1(json.dumps([rows, extra], ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def matching_show_ids(

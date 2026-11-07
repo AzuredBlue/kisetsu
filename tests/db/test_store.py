@@ -296,3 +296,15 @@ def test_the_backup_before_a_migration_holds_what_is_still_only_in_the_wal(tmp_p
     if os.name == "posix":
         # Windows has no POSIX permission bits to check.
         assert backup.stat().st_mode & 0o777 == 0o600
+
+
+def test_a_version_8_database_gains_the_minimum_resolution_at_1080p():
+    engine = make_engine()
+    migrate(engine)
+    with engine.begin() as conn:
+        conn.exec_driver_sql("ALTER TABLE settings DROP COLUMN min_resolution")
+        conn.exec_driver_sql("PRAGMA user_version = 8")
+    migrate(engine)
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT min_resolution FROM settings").scalar() == 1080
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION

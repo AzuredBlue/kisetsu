@@ -15,6 +15,7 @@ from kisetsu.config import (
     DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
     DEFAULT_FEED_REFRESH_MINUTES,
     DEFAULT_HUNT_INTERVAL_MINUTES,
+    DEFAULT_MIN_RESOLUTION,
     DEFAULT_QBIT_HOST,
     DEFAULT_QBIT_PASSWORD,
     DEFAULT_QBIT_USERNAME,
@@ -149,6 +150,7 @@ class Settings(Base, table=True):
     base_dir: str = Field(default=DEFAULT_BASE_DIR)
     default_category: str = Field(default=DEFAULT_CATEGORY)
     default_seed_ratio: float = Field(default=DEFAULT_SEED_RATIO)
+    min_resolution: int = Field(default=DEFAULT_MIN_RESOLUTION)
     anilist_username: str = Field(default="")
     anilist_sync_minutes: int = Field(default=DEFAULT_ANILIST_SYNC_MINUTES)
     feed_refresh_minutes: int = Field(default=DEFAULT_FEED_REFRESH_MINUTES)

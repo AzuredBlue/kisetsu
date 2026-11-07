@@ -16,6 +16,7 @@ from sqlmodel import select
 from kisetsu.clients import sites
 from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import DismissedShow, Episode, EpisodeStatus, Feed, FeedItem, Show
+from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import build_matcher, decide
 from kisetsu.domain.parsing import batch_range, is_batch, is_single_file, names_something_else, parse_release_title, release_season, strip_batch
 from kisetsu.domain.patterns import sanitize_folder_name
@@ -43,6 +44,7 @@ class Plan:
     terms: List[str]
     feeds: List[Feed]
     unsearchable: List[str] = field(default_factory=list)
+    min_resolution: int = DEFAULT_MIN_RESOLUTION
 
 
 def list_view(ctx: Context, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -76,8 +78,8 @@ def _titles(entry: Dict[str, Any]) -> List[str]:
     return [t for t in (entry.get("title_romaji"), entry.get("title_english"), *(entry.get("aliases") or [])) if t]
 
 
-def matcher_for(entry: Dict[str, Any]):
-    return build_matcher(list(dict.fromkeys(_titles(entry))), None)
+def matcher_for(entry: Dict[str, Any], min_resolution: int = DEFAULT_MIN_RESOLUTION):
+    return build_matcher(list(dict.fromkeys(_titles(entry))), None, min_resolution)
 
 
 def search_plan(ctx: Context, entry: Dict[str, Any]) -> Plan:
@@ -86,6 +88,7 @@ def search_plan(ctx: Context, entry: Dict[str, Any]) -> Plan:
         terms=sites.search_terms(_titles(entry)),
         feeds=[f for f in all_feeds if sites.site_of(f.url)],
         unsearchable=[f.name for f in all_feeds if not sites.site_of(f.url)],
+        min_resolution=ctx.settings.min_resolution,
     )
 
 
@@ -109,7 +112,7 @@ def existing_folder(ctx: Context, entry: Dict[str, Any]) -> Optional[Dict[str, A
     if not root or not os.path.isdir(root):
         return None
     wanted = _folder_names(entry)
-    matcher = matcher_for(entry)
+    matcher = matcher_for(entry, ctx.settings.min_resolution)
     cache: Dict[str, dict] = {}
     try:
         folders = [e for e in os.scandir(root) if e.is_dir() and e.name.casefold() in wanted]
@@ -219,7 +222,7 @@ def _batches(ctx: Context, show: Show, feed: Feed) -> List[Batch]:
     whole season posted under its plain name. It covers every episode, as a batch with no range does.
     One file's name or CRC rules that out, and a movie, special or subtitled release is never the show's.
     """
-    matcher = build_matcher(show.effective_aliases, None)
+    matcher = build_matcher(show.effective_aliases, None, ctx.settings.min_resolution)
     cache: Dict[str, dict] = {}
     target = show.total_episodes or len(shows.ensure_episodes(ctx, show))
     season = max((n for n in (release_season(a) for a in show.effective_aliases) if n), default=1)

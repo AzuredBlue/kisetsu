@@ -46,7 +46,7 @@ def saved_release_names(show: Show, settings: Settings) -> List[str]:
     except OSError as e:
         logger.debug(f"Could not read the save folder of '{show.title()}': {e}")
         return []
-    matcher = build_matcher(show.effective_aliases, show.learned_name)
+    matcher = build_matcher(show.effective_aliases, show.learned_name, settings.min_resolution)
     cache: Dict[str, dict] = {}
     return [
         name for name in sorted(names)
@@ -124,7 +124,7 @@ def show_torrent_preview(ctx: Context, show: Show) -> List[Dict[str, Any]]:
                 default=None,
             )
             slack = max(PUBLISHED_BEFORE_AIR_SLACK, timedelta(hours=ctx.tolerance_hours))
-            matcher = build_matcher(show.effective_aliases, show.learned_name)
+            matcher = build_matcher(show.effective_aliases, show.learned_name, settings.min_resolution)
             cache: Dict[str, dict] = {}
             for torrent in view.values():
                 if torrent.hash in entries or torrent.category != settings.default_category:

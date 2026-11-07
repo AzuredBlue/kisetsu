@@ -452,3 +452,14 @@ def test_a_bracketed_title_does_not_grab_another_shows_season(world):
     post(world, top, "[SubsPlease] Oshi no Ko S3 - 03 (1080p).mkv")
     assert run(world).started == 1
     assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+def test_a_720p_release_is_grabbed_once_the_minimum_resolution_allows_it(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    post(world, top, "[Grp] Sousou no Frieren - 03 (720p).mkv")
+    assert run(world).started == 0
+    world.ctx().settings.min_resolution = 720
+    world.commit()
+    assert run(world).started == 1
+    assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

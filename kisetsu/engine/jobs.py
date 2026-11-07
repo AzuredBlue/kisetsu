@@ -430,7 +430,7 @@ class Jobs:
         for item in due:
             # The backfill job and Search older never search one show twice at once.
             async with self._search_locks.setdefault(item.show_id, asyncio.Lock()):
-                matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i)))
+                matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i), ctx.settings.min_resolution))
                 found = await backfill.search(self.http, item, matcher, self.engine.clock(), searcher=self.searcher)
                 added += await self.engine.run(backfill.apply, item, found)
             if found.stopped:
@@ -445,7 +445,7 @@ class Jobs:
         if plan.terms and plan.feeds:
             total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
             due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
-            found = await backfill.search(self.http, due, addshow.matcher_for(entry), self.engine.clock(), searcher=self.searcher)
+            found = await backfill.search(self.http, due, addshow.matcher_for(entry, plan.min_resolution), self.engine.clock(), searcher=self.searcher)
             stopped = found.stopped
             if found.articles:
                 await self.engine.run(addshow.store_found, found.articles)

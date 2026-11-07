@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/settings")
 
 # What a change to these settings should set going again.
 SYNC_FIELDS = {"anilist_username", "anilist_sync_minutes"}
-GRAB_FIELDS = {"early_air_tolerance_hours", "title_language", "base_dir", "default_category", "default_seed_ratio"}
+GRAB_FIELDS = {"early_air_tolerance_hours", "title_language", "base_dir", "default_category", "default_seed_ratio", "min_resolution"}
 HUNT_FIELDS = {"hunt_interval_minutes", "early_air_tolerance_hours"}
 FEED_FIELDS = {"feed_refresh_minutes"}
 CONNECTION_FIELDS = {"qbit_host", "qbit_username", "qbit_password"}

@@ -82,6 +82,13 @@ def _v8(engine: Engine) -> None:
         )
 
 
+def _v9(engine: Engine) -> None:
+    # The minimum resolution was fixed at 1080p; it is a setting now, starting where it was.
+    if "min_resolution" not in {c["name"] for c in inspect(engine).get_columns("settings")}:
+        with engine.begin() as conn:
+            conn.exec_driver_sql("ALTER TABLE settings ADD COLUMN min_resolution INTEGER NOT NULL DEFAULT 1080")
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -93,6 +100,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (6, _v6),
     (7, _v7),
     (8, _v8),
+    (9, _v9),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 
