@@ -6,6 +6,8 @@ export const status = resource('/api/status', ['status', 'shows', 'feeds']);
 export const feeds = resource('/api/feeds', ['feeds', 'shows']);
 export const settings = resource('/api/settings', ['settings']);
 export const history = resource('/api/history?limit=100', ['history']);
+// Episodes across every show that need the user's eye (Shows page).
+export const attention = resource('/api/attention', ['shows', 'history']);
 export const logs = resource('/api/logs?limit=300', ['logs']);
 export const setupStatus = resource('/api/setup/status', ['settings', 'status']);
 export const showPage = (id) => keyedResource(`/api/shows/${id}`, [`show:${id}`, 'shows']);

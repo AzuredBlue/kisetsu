@@ -38,10 +38,14 @@ function Notes({ info }) {
   const anilist = info.anilist_blocked_until && Date.parse(info.anilist_blocked_until) > Date.now();
   const failing = info.failing_feeds || [];
   const stuck = info.qbit_error ? 0 : info.stuck_adds || 0;
+  const jobs = Object.entries(info.jobs_failing || {});
+  const background = [info.grab_error, ...jobs.map(([name, error]) => `${name}: ${error}`)].filter(Boolean);
   return html`<div class="notes">
     ${offline ? html`<span class="note-bad" title="Kisetsu did not answer the last check. Trying again.">Not responding</span>` : null}
     ${info.all_paused ? html`<span class="note-warn">Paused</span>` : null}
     ${info.qbit_error ? html`<span class="note-bad" title=${info.qbit_error}>qBittorrent unreachable</span>` : null}
+    ${info.feeds === 0 ? html`<button type="button" class="note-bad" onClick=${() => go('feeds')} title="Nothing can be found or downloaded until you add an RSS feed.">No RSS feeds</button>` : null}
+    ${background.length ? html`<button type="button" class="note-bad" onClick=${() => go('logs')} title=${`${background.join('\n')}\nIt is tried again in a minute. Open the Logs to see more.`}>Background task failing</button>` : null}
     ${testing ? html`<span class="note-info" title="No release found yet for these shows. The feeds are tried by priority.">${testing} Searching</span>` : null}
     ${stuck ? html`<span class="note-bad" title=${`${stuck} episode${stuck === 1 ? ' was' : 's were'} added but qBittorrent never showed ${stuck === 1 ? 'it' : 'them'} (or kept refusing ${stuck === 1 ? 'it' : 'them'}) for over an hour, though it answers. Check that qBittorrent can download: its network or VPN, free space and the save folder. Kisetsu keeps trying.`}>qBittorrent isn't picking up new torrents</span>` : null}
     ${failed ? html`<button type="button" class="note-bad" onClick=${() => go('history')} title="Episodes that could not be downloaded. Open the History to see why.">${failed} Failed</button>` : null}
@@ -55,7 +59,9 @@ function NextCheck({ info, at }) {
   if (!info) return html`<span>…</span>`;
   const running = (info.running || []).some(name => CHECK_JOBS.includes(name));
   if (running) return html`<span>Checking…</span>`;
-  if (info.next_feed_read_in === null || info.next_feed_read_in === undefined) return html`<span>Routine check</span>`;
+  if (info.next_feed_read_in === null || info.next_feed_read_in === undefined) {
+    return html`<span>${info.feeds === 0 ? 'No feeds' : !info.ready ? 'Starting…' : 'Idle'}</span>`;
+  }
   const left = info.next_feed_read_in - (now - at) / 1000;
   return html`<span>${left <= 0 ? 'Checking…' : wait(left)}</span>`;
 }

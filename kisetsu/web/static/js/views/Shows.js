@@ -6,6 +6,7 @@ import { Seg } from '../components/Controls.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { ShowCard, ShowRow } from '../components/ShowSummary.js';
+import { Checklist, NeedsAttention } from '../components/Attention.js';
 
 const read = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (err) { return fallback; } };
 const write = (key, value) => { try { localStorage.setItem(key, value); } catch (err) { /* only a convenience */ } };
@@ -62,6 +63,8 @@ export function Shows() {
     <${Seg} small icons label="View" value=${view} onChange=${changeView} options=${[['grid', 'Grid view', 'grid', 'Poster grid'], ['list', 'List view', 'list', 'Compact list']]} />
   </div>`;
   return html`<div class="page full">
+    <${Checklist} />
+    <${NeedsAttention} />
     <${Section} title="Releasing" tone="" count=${groups.releasing.length} list=${groups.releasing} view=${view} swap=${swap} now=${now} empty="No currently releasing anime." tools=${tools} />
     ${groups.completed.length ? html`<${Section} title="Completed" tone="done" count=${groups.completed.length} list=${groups.completed} view=${view} swap=${swap} now=${now} />` : null}
     ${groups.planned.length ? html`<${Section} title="Planned" tone="info" count=${groups.planned.length} list=${groups.planned} view=${view} swap=${swap} now=${now} />` : null}

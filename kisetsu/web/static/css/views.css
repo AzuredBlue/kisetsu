@@ -394,6 +394,22 @@ section + section { margin-top: .5rem; }
 .setup .set-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 
 .show-section { gap: 1rem; }
+/* Shows page: what a new user still has to set up. */
+.checklist { display: grid; gap: .5rem; padding: 1rem; margin-bottom: 1.5rem;
+  & ul { display: grid; gap: .375rem; }
+  & li { display: flex; align-items: center; gap: .5rem; font-size: .875rem; color: rgb(var(--text-2)); }
+  & li.ok .icon { color: rgb(var(--ok)); } & li.todo .icon { color: rgb(var(--info)); }
+  & .link { font-size: inherit; }
+}
+/* Shows page: episodes of any show that need a look, each with its action. */
+.attention-card { overflow: hidden; margin-bottom: .5rem; }
+.attention-row { display: flex; align-items: center; gap: .75rem; padding: .5rem 1rem .5rem .5rem; cursor: pointer;
+  &:hover { background: rgb(var(--raised) / .5); }
+  & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: .75rem; } }
+  & .ep { flex: none; font-size: .75rem; } & .state { flex: none; font-size: .75rem; }
+}
+.attention-main { flex: 1; min-width: 0; }
+.attention-reason { margin-top: .125rem; font-size: .75rem; line-height: 1rem; color: rgb(var(--text-2)); overflow-wrap: anywhere; }
 
 .pager { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: .25rem; min-height: 2rem;
   & button { min-width: 2rem; padding: .25rem .625rem; border-radius: var(--r-sm); font-size: .8125rem; color: rgb(var(--text-seg)); transition: background-color .15s, color .15s;

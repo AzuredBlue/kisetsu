@@ -7,6 +7,7 @@ import { restoreBackup } from '../components/Backup.js';
 import { Seg, SetRow, Swatches } from '../components/Controls.js';
 import { FeedsTable, importFromQbit, openFeedDialog } from '../components/FeedsTable.js';
 import { useDraft } from '../components/useDraft.js';
+import { confirmDialog } from '../components/Modal.js';
 import { Spinner } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 
@@ -47,6 +48,14 @@ export function Setup({ sandbox, done, setDone }) {
     } catch (err) { setTested({ state: 'bad', text: err.message }); }
   };
   const next = async () => {
+    if (name === 'feeds' && feeds.data && !feeds.data.length) {
+      const ok = await confirmDialog({
+        title: 'Continue without RSS feeds?',
+        body: html`<p>Nothing can be found or downloaded until you add a feed. You can add one later on the RSS Feeds page.</p>`,
+        confirm: 'Continue',
+      });
+      if (!ok) return;
+    }
     setBusy(true);
     setError('');
     try {
