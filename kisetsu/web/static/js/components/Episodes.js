@@ -125,6 +125,12 @@ function NotUsed({ group }) {
     </li>`) : null}`;
 }
 
+// What a release row that can't be downloaded says: the episode's state, but nothing when the episode has another copy.
+function matchState(m) {
+  if (m.this_release) return m.episode_status;
+  return m.episode_status === 'completed' || m.episode_status === 'downloading' ? '' : m.episode_status;
+}
+
 export function ReleaseList({ groups, actions, loading, onUseFeed }) {
   if (loading) return html`<ul class="list"><li class="list-empty">Checking the feed…</li></ul>`;
   const any = (groups || []).some(g => g.matches.length || (g.rejected && g.rejected.length));
@@ -142,7 +148,7 @@ export function ReleaseList({ groups, actions, loading, onUseFeed }) {
           ${m.downloadable
             ? html`<${RowButton} icon=${m.replaces ? 'swap' : 'download'} pending=${actions.pending.has(m.title)} onClick=${() => actions.download(m.title)}
                 title=${m.replaces ? `Replace Ep ${m.episode} with this release. The current copy is deleted with its files once this one has finished.` : m.restore ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.' : 'Download this release now. It is tracked like any other episode.'} />`
-            : html`<span class="muted">${m.episode_status}</span>`}
+            : html`<span class="muted">${matchState(m)}</span>`}
         </span>
       </li>`)}
       <${NotUsed} group=${g} />`)

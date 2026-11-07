@@ -142,6 +142,8 @@ def feed_matches(ctx: Context, show: Show, limit: int = 30) -> List[Dict[str, An
                 "episode": entry.number,
                 "version": entry.version,
                 "episode_status": episode.status.value,
+                # Whether this item is the release the episode has: another feed's copy of a finished episode is not.
+                "this_release": this_release,
                 "restore": usable and _is_restore(ctx, episode),
                 "replaces": bool(replaces) and refusal is None,
                 "downloadable": refusal is None,
