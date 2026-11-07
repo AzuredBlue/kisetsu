@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 from starlette.types import Scope
 
 from kisetsu import config
-from kisetsu.clients import rss
+from kisetsu.clients import rss, traffic
 from kisetsu.clients.anilist import AniListClient
 from kisetsu.clients.notify import notify
 from kisetsu.clients.sandbox import SandboxQbit, SandboxState
@@ -46,6 +46,8 @@ EXECUTOR_THREADS = 2
 # FastAPI's own threadpool, for the few handlers that are not async.
 THREADPOOL_TOKENS = 4
 HASH_MARK = re.compile(r"@@v:([\w./-]+)@@")
+# How often, at most, the sandbox's UI hears that the request counts changed.
+REQUESTS_PUBLISH_SECONDS = 2.0
 # The jobs whose progress the header shows; the others run too often to be worth a message.
 VISIBLE_JOBS = {"startup", "refresh_feeds", "hunt", "sync_anilist", "backfill"}
 # Called when the server is told to stop, before it waits for open connections: an event
@@ -89,6 +91,8 @@ def build_runtime(*, sandbox: bool) -> Runtime:
     else:
         engine = Engine(db, notify=notify)
     logs.on_line = lambda: engine.bus.publish(["logs"])
+    # Only the sandbox shows the request counts; they change with every request, so the UI hears of it every few seconds.
+    traffic.on_change = (lambda: engine.bus.publish_after("requests", REQUESTS_PUBLISH_SECONDS)) if sandbox else None
     logging.getLogger("kisetsu").addHandler(logs)
     scheduler = Scheduler()
     anilist = AniListClient(cache_path=Path(str(config.DB_PATH) + ".userlist.json"))

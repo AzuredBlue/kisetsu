@@ -26,6 +26,7 @@ class ChangeBus:
         self.rev = 0
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._subscribers: Set[asyncio.Queue] = set()
+        self._held: Set[str] = set()
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -38,6 +39,28 @@ class ChangeBus:
             self._loop.call_soon_threadsafe(self._deliver, names)
         except RuntimeError:
             pass
+
+    def publish_after(self, topic: str, seconds: float) -> None:
+        """Publish ``topic`` once, ``seconds`` from the first call; the calls made meanwhile add nothing.
+
+        For what changes many times a second, so the UI refetches it now and then instead of every time.
+        """
+        if self._loop is None:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._hold, topic, seconds)
+        except RuntimeError:
+            pass
+
+    def _hold(self, topic: str, seconds: float) -> None:
+        if topic in self._held:
+            return
+        self._held.add(topic)
+        self._loop.call_later(seconds, self._release, topic)
+
+    def _release(self, topic: str) -> None:
+        self._held.discard(topic)
+        self._deliver([topic])
 
     def _deliver(self, names: list) -> None:
         self.rev += 1

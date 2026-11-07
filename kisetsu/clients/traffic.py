@@ -7,7 +7,7 @@ import sys
 import threading
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Any, Dict, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 OK, RATE_LIMITED, ERROR = "ok", "rate_limited", "error"
@@ -15,6 +15,8 @@ OK, RATE_LIMITED, ERROR = "ok", "rate_limited", "error"
 _lock = threading.Lock()
 _counts: Counter = Counter()
 _started = datetime.now(timezone.utc)
+# Called after each request is counted (from any thread), when something shows the counts.
+on_change: Optional[Callable[[], None]] = None
 
 
 def host_of(url: str) -> str:
@@ -24,6 +26,8 @@ def host_of(url: str) -> str:
 def record(kind: str, host: str, outcome: str = OK) -> None:
     with _lock:
         _counts[(kind, host, outcome)] += 1
+    if on_change is not None:
+        on_change()
 
 
 def caller_outside_clients() -> str:
@@ -59,3 +63,5 @@ def reset() -> None:
     with _lock:
         _counts.clear()
         _started = datetime.now(timezone.utc)
+# Called after each request is counted (from any thread), when something shows the counts.
+on_change: Optional[Callable[[], None]] = None

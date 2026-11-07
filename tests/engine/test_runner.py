@@ -207,3 +207,24 @@ def test_a_cached_parse_that_vanishes_mid_lookup_is_parsed_again():
 
     ok, _, parsed = match_release_to_show("[Grp] Sousou no Frieren - 01 (1080p).mkv", ["Sousou no Frieren"], parsed_cache=Vanishing())
     assert ok and parsed["episode"] == 1
+
+
+def test_a_topic_published_after_a_delay_reaches_subscribers_once_however_often_it_is_published():
+    from kisetsu.engine.runner import ChangeBus
+
+    async def go():
+        bus = ChangeBus()
+        bus.bind(asyncio.get_running_loop())
+        queue = bus.open_queue()
+        for _ in range(50):
+            bus.publish_after("requests", 0.05)
+        await asyncio.sleep(0.01)
+        early = queue.qsize()
+        await asyncio.sleep(0.1)
+        first = [queue.get_nowait()["changed"] for _ in range(queue.qsize())]
+        bus.publish_after("requests", 0.01)
+        await asyncio.sleep(0.05)
+        second = [queue.get_nowait()["changed"] for _ in range(queue.qsize())]
+        return early, first, second
+
+    assert run(go()) == (0, [["requests"]], [["requests"]])

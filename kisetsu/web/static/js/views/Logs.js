@@ -9,13 +9,10 @@ import { EmptyState } from '../components/EmptyState.js';
 import { toast } from '../components/Toast.js';
 
 const MARKS = { ERROR: ['ERROR', 'bad'], WARNING: ['WARN', 'warn'], DEBUG: ['DEBUG', 'info'] };
-const REFRESH_MS = 5000;
 
 // How many requests went to each site, by kind, since start or the last reset: to see what costs requests.
 function Requests() {
   const { data, reload } = useResource(requestsData);
-  // Feed reads write no log line, so the counts are refetched on a timer while the page is open.
-  useEffect(() => { const id = setInterval(reload, REFRESH_MS); return () => clearInterval(id); }, []);
   if (!data) return null;
   const reset = async (e) => {
     e.preventDefault();
