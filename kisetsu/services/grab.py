@@ -1,5 +1,6 @@
 """Deciding which stored feed item becomes which episode's download, and which episodes are missed."""
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Tuple
@@ -41,6 +42,8 @@ from kisetsu.services.facts import facts_for
 from kisetsu.services.feeds import Carrier
 from kisetsu.services.ingest import followed_shows
 
+logger = logging.getLogger("kisetsu.services.grab")
+
 EPOCH_YEAR = 2000
 
 
@@ -48,7 +51,10 @@ EPOCH_YEAR = 2000
 class GrabResult:
     started: int = 0
     missed: int = 0
+    # qBittorrent errors, which stop the pass.
     errors: List[str] = field(default_factory=list)
+    # Shows whose pass broke on something else ("Name: error"); the others were still grabbed for.
+    failed: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -344,12 +350,18 @@ def grab_pass(ctx: Context, only: Optional[Set[int]] = None, held: Optional[Set[
     for show in shows:
         if show.feed_state != FeedState.LOCKED and held and show.id in held:
             continue
+        name = show.title(ctx.settings.title_language)
         try:
             _grab_show(ctx, show, facts[show.id], all_feeds, result)
             ctx.checkpoint()
         except QbitError as e:
-            result.errors.append(f"{show.title(ctx.settings.title_language)}: {e}")
+            result.errors.append(f"{name}: {e}")
             break
+        except Exception as e:
+            # One show's bad data must not stop every other show from being grabbed for.
+            ctx.session.rollback()
+            logger.warning(f"Grabbing for '{name}' failed: {e}", exc_info=True)
+            result.failed.append(f"{name}: {e}")
     if result.started or result.missed:
         ctx.emit("shows", "history")
     return result

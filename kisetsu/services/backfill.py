@@ -94,6 +94,9 @@ def due(
         last = ctx.caches.searched.get(show.id)
         if not force and last and last[0] == signature and ctx.now - last[1] < REPEAT:
             continue
+        if not force and last is None and show.last_backfill_at is not None and ctx.now - show.last_backfill_at < REPEAT:
+            # Searched before a restart, which forgot what was searched for: the stored time stands in for it.
+            continue
         air_times = ctx.session.exec(select(Episode.air_at).where(Episode.show_id == show.id, Episode.air_at.is_not(None))).all()
         result.append(Due(show.id, show.title(ctx.settings.title_language), terms, show_feeds, missing, signature, min(air_times, default=None)))
     return result
@@ -222,7 +225,8 @@ def apply(ctx: Context, item: Due, found: Searched) -> int:
         # A finished show is not followed, so an episode it never fetched would not be grabbed.
         show.completed = False
     if found.stopped is None:
+        # Only a search that ran to the end counts as done; one a site cut short is tried again.
         ctx.caches.searched[show.id] = (item.signature, ctx.now)
-    show.last_backfill_at = ctx.now
+        show.last_backfill_at = ctx.now
     ctx.session.add(show)
     return added

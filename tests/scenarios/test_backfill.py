@@ -218,3 +218,14 @@ def test_a_sequels_release_found_by_the_first_seasons_search_reaches_the_sequel(
     world.commit()
     assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {sequel.id}
     assert grab.covered_numbers(world.ctx(), sequel) == {1}
+
+
+def test_a_restart_does_not_search_again_a_show_searched_in_the_last_six_hours(world):
+    from kisetsu.services.context import Caches
+    world.feed("Nyaa", NYAA, 1)
+    show = airing(world, last_backfill_at=START - timedelta(hours=1))
+    world.caches = Caches()  # a fresh process remembers no searches
+    assert backfill.due(world.ctx()) == []
+    assert [d.show_id for d in backfill.due(world.ctx(), force=True)] == [show.id]
+    world.clock.advance(hours=6)
+    assert [d.show_id for d in backfill.due(world.ctx())] == [show.id]

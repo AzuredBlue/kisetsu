@@ -74,7 +74,13 @@ class Jobs:
         self.refresh_all = False
         # When the hunt will next read a feed (None: nothing is due to air), for the UI's countdown.
         self.hunt_read_at: Optional[datetime] = None
-        self.health: Dict[str, Any] = {"qbit": None, "anilist": None, "anilist_retry_in": None}
+        self.health: Dict[str, Any] = {"qbit": None, "anilist": None, "anilist_retry_in": None, "grab": None}
+        # Set once startup found qBittorrent away and handed AniList and the feeds to their own timers.
+        self.offline_started = False
+        # A direct call (startup, a new show, Search older) and the same job must never run at once.
+        self._feeds_lock = asyncio.Lock()
+        self._anilist_lock = asyncio.Lock()
+        self._search_locks: Dict[int, asyncio.Lock] = {}
 
     # -- wiring -------------------------------------------------------------
 
@@ -106,7 +112,8 @@ class Jobs:
             self.backoff = rss.Backoff()
             self.backfill_requests, self.backfill_all, self.refresh_all = set(), False, False
             self.hunt_read_at = None
-            self.health.update(qbit=None, anilist=None, anilist_retry_in=None)
+            self.offline_started = False
+            self.health.update(qbit=None, anilist=None, anilist_retry_in=None, grab=None)
             if running:
                 self.register()
                 self.scheduler.start()
@@ -117,15 +124,16 @@ class Jobs:
             return await self._fetcher(url)
         return await rss.fetch_feed(self.http, url)
 
-    def _set_health(self, qbit: Any = _KEEP, anilist: Any = _KEEP, anilist_retry_in: Any = _KEEP) -> None:
-        """Record what is wrong with qBittorrent or AniList; a new problem is logged and every change reaches the UI."""
-        changes = {"qbit": qbit, "anilist": anilist, "anilist_retry_in": anilist_retry_in}
+    def _set_health(self, qbit: Any = _KEEP, anilist: Any = _KEEP, anilist_retry_in: Any = _KEEP, grab: Any = _KEEP) -> None:
+        """Record what is wrong with qBittorrent, AniList or the grab; a new problem is logged and every change reaches the UI."""
+        changes = {"qbit": qbit, "anilist": anilist, "anilist_retry_in": anilist_retry_in, "grab": grab}
+        names = {"qbit": "qBittorrent", "anilist": "AniList", "grab": "Grab"}
         changed = False
         for key, value in changes.items():
             if value is _KEEP or self.health[key] == value:
                 continue
             if value is not None and key != "anilist_retry_in":
-                logger.warning(f"{'qBittorrent' if key == 'qbit' else 'AniList'}: {value}")
+                logger.warning(f"{names[key]}: {value}")
             if value is None and key == "qbit":
                 logger.info("qBittorrent connection restored.")
             self.health[key] = value
@@ -149,6 +157,11 @@ class Jobs:
         try:
             await self.engine.run(lambda ctx: ctx.qbit.sync(full=True))
         except QbitError as e:
+            if not self.offline_started:
+                # AniList and the feeds don't need qBittorrent: keep them current on their own timers while it is away.
+                self.offline_started = True
+                self.poke("sync_anilist")
+                self.poke("refresh_feeds")
             return self._qbit_failed(e)
         self._set_health(qbit=None)
         # What is downloading shows progress from here on, instead of after every backfill search has finished.
@@ -157,29 +170,36 @@ class Jobs:
         next_sync = await self.sync_anilist(startup=True)
         await self.refresh_feeds(everything=True)
         await self.engine.run(adoption.adopt_existing)
-        await self.backfill()
         await self.engine.run(adoption.reattribute)
         await self.engine.run(tags.sync_tags)
-        await self.search_saved_files()
+        # Shows whose saved files no feed accounts for yet are held, so nothing guesses their feed before the search below.
+        _, unmatched = await self.engine.run(cycle.lock_saved_files)
+        # Adoption has seen what qBittorrent holds: grabbing what the feeds already carry need not wait for the searches.
         self.ready.set()
         self.engine.bus.publish(["status"])
         for name in ("grab", "settle", "hunt", "palette"):
             self.poke(name)
         self.scheduler.delay("sync_anilist", next_sync)
         self.scheduler.delay("refresh_feeds", await self._next_read())
+        await self.backfill()
+        await self._search_held(unmatched)
         self.scheduler.delay("backfill", BACKFILL_INTERVAL)
         return None
 
     async def search_saved_files(self, only: Optional[List[int]] = None) -> None:
         """Match shows to the feed their saved files came from; shows no feed accounts for are searched for first."""
         _, unmatched = await self.engine.run(cycle.lock_saved_files)
-        targets = [i for i in unmatched if only is None or i in only]
+        await self._search_held([i for i in unmatched if only is None or i in only])
+
+    async def _search_held(self, targets: List[int]) -> None:
+        """Search for the held shows' releases, release each one searched, then lock what the saved files now prove."""
         for show_id in targets:
             await self._backfill_show(show_id, force=True)
             if await self.engine.run(lambda ctx, i=show_id: backfill.search_completed(ctx, i)):
                 await self.engine.run(cycle.release_hold, [show_id])
         if targets:
             await self.engine.run(cycle.lock_saved_files)
+            self.poke("grab")
 
     async def on_new_shows(self, show_ids: List[int]) -> None:
         """Fill the stores for shows that were only just added, so the same pass can discover their feed."""
@@ -233,11 +253,12 @@ class Jobs:
         """Fetch the feeds a show needs, or all of them, and store what is new."""
         if not await self._configured():
             return None
-        everything, self.refresh_all = everything or self.refresh_all, False
-        refs = await self.engine.run(feedsync.plan_fetch, everything)
-        results = await self._read_feeds(refs)
-        if results:
-            await self._apply(results)
+        async with self._feeds_lock:
+            everything, self.refresh_all = everything or self.refresh_all, False
+            refs = await self.engine.run(feedsync.plan_fetch, everything)
+            results = await self._read_feeds(refs)
+            if results:
+                await self._apply(results)
         return await self._next_read()
 
     async def _next_read(self) -> float:
@@ -254,9 +275,10 @@ class Jobs:
             return None
         info = await self.engine.run(feedsync.plan_hunt)
         if info.show_ids and info.feeds:
-            results = await self._read_feeds(info.feeds)
-            if results:
-                await self._apply(results)
+            async with self._feeds_lock:
+                results = await self._read_feeds(info.feeds)
+                if results:
+                    await self._apply(results)
             self.hunt_read_at = self.engine.clock() + timedelta(minutes=info.interval_minutes)
             return info.interval_minutes * 60.0
         start = info.plan.next_start
@@ -268,6 +290,10 @@ class Jobs:
     # -- AniList ------------------------------------------------------------
 
     async def sync_anilist(self, startup: bool = False) -> Optional[float]:
+        async with self._anilist_lock:
+            return await self._sync_anilist(startup)
+
+    async def _sync_anilist(self, startup: bool) -> Optional[float]:
         info = await self.engine.run(cycle.sync_input)
         if not info.username:
             return NO_USER_WAIT
@@ -340,7 +366,10 @@ class Jobs:
             result = await self.engine.run(cycle.grab_cycle)
         except QbitError as e:
             return self._qbit_failed(e)
-        self._set_health(qbit=result.errors[0] if result.errors else None)
+        if result.errors:
+            # Only a failed call says qBittorrent is away; a pass with nothing to add never asked it, so settle gives the all-clear.
+            self._set_health(qbit=result.errors[0])
+        self._set_health(grab=result.failed[0] if result.failed else None)
         if result.started or result.adopted:
             self.poke("settle")
         return result.next_candidate_in
@@ -399,9 +428,11 @@ class Jobs:
     async def _search(self, due: "List[backfill.Due]") -> int:
         added = 0
         for item in due:
-            matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i)))
-            found = await backfill.search(self.http, item, matcher, self.engine.clock(), searcher=self.searcher)
-            added += await self.engine.run(backfill.apply, item, found)
+            # The backfill job and Search older never search one show twice at once.
+            async with self._search_locks.setdefault(item.show_id, asyncio.Lock()):
+                matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i)))
+                found = await backfill.search(self.http, item, matcher, self.engine.clock(), searcher=self.searcher)
+                added += await self.engine.run(backfill.apply, item, found)
             if found.stopped:
                 logger.warning(f"Past-release search stopped: {found.stopped}")
                 break

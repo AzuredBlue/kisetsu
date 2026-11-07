@@ -55,6 +55,7 @@ class CycleResult:
     missed: int = 0
     adopted: int = 0
     errors: List[str] = field(default_factory=list)
+    failed: List[str] = field(default_factory=list)
     next_candidate_in: Optional[float] = None
 
 
@@ -124,7 +125,7 @@ def grab_cycle(ctx: Context) -> CycleResult:
     adoption.reattribute(ctx)
     ctx.checkpoint()
     outcome = grab.grab_pass(ctx)
-    result.started, result.missed, result.errors = outcome.started, outcome.missed, outcome.errors
+    result.started, result.missed, result.errors, result.failed = outcome.started, outcome.missed, outcome.errors, outcome.failed
     due = feeds.next_candidate_due(ctx)
     if due is not None:
         result.next_candidate_in = max(1.0, (due - ctx.now).total_seconds())

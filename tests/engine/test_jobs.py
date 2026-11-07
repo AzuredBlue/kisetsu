@@ -442,7 +442,7 @@ def _running(env):
     return first
 
 
-def test_downloads_are_followed_as_soon_as_qbit_is_read_not_after_the_backfill(env):
+def test_downloads_are_followed_and_grabbed_before_the_backfill_searches(env):
     _running(env)
 
     async def go():
@@ -467,11 +467,12 @@ def test_downloads_are_followed_as_soon_as_qbit_is_read_not_after_the_backfill(e
         return seen
 
     seen = run(env, go)
-    assert seen["status"] == "completed" and seen["ready"] is False and seen["delay"] is not None
+    # Adoption has looked at what qBittorrent holds, so grabbing need not wait for the slow searches.
+    assert seen["status"] == "completed" and seen["ready"] is True and seen["delay"] is not None
     assert env.jobs.ready.is_set() and env.jobs.synced.is_set()
 
 
-def test_a_retry_is_not_added_while_startup_has_not_finished_but_is_after(env):
+def test_a_retry_waits_for_adoption_but_not_for_the_backfill_searches(env):
     from kisetsu.clients.qbittorrent import QbitRejected
 
     _running(env)
@@ -486,6 +487,8 @@ def test_a_retry_is_not_added_while_startup_has_not_finished_but_is_after(env):
         env.jobs.ready.clear()
         env.jobs.synced.clear()
         before = len(env.qbit.calls_named("add_torrent"))
+        assert await env.jobs.settle() is None
+        assert len(env.qbit.calls_named("add_torrent")) == before
         during = {}
         original = env.jobs.backfill
 
@@ -496,9 +499,93 @@ def test_a_retry_is_not_added_while_startup_has_not_finished_but_is_after(env):
 
         env.jobs.backfill = slow_backfill
         await env.jobs.startup()
-        await env.jobs.settle()
-        return during, len(env.qbit.calls_named("add_torrent")) - before
+        return during
 
-    during, after = run(env, go)
-    assert during["adds"] == 0
-    assert after == 3 and env.statuses()[3] == "downloading"
+    during = run(env, go)
+    assert during["adds"] == 3 and env.statuses()[3] == "downloading"
+
+
+def test_a_grab_that_never_reached_qbit_keeps_the_unreachable_warning(env):
+    airing(env)
+    env.add_feed()
+
+    async def go():
+        await env.jobs.startup()
+        env.qbit.unavailable = QbitUnavailable("down")
+        await env.jobs.settle()
+        await env.jobs.grab()
+        return env.jobs.health["qbit"]
+
+    assert run(env, go) == "down"
+
+
+def test_one_show_that_breaks_does_not_stop_the_grab_for_the_others(env, monkeypatch):
+    from kisetsu.services import grab as grab_service
+
+    first = airing(env)
+    env.anilist.shows.append(anilist_show(2, "Dandadan", total_episodes=12, next_airing_episode=4, next_airing_at=START + timedelta(days=7)))
+    env.anilist.set_schedule(2, first, 3)
+    env.add_feed()
+    env.feeds.post(TOP, "[Grp] Dandadan - 03 (1080p).mkv", START)
+    env.feeds.post(TOP, title(3), START)
+    real = grab_service._grab_show
+
+    def flaky(ctx, show, *args):
+        if show.anilist_id == 1:
+            raise RuntimeError("boom")
+        return real(ctx, show, *args)
+
+    monkeypatch.setattr(grab_service, "_grab_show", flaky)
+
+    async def go():
+        await env.jobs.startup()
+        await env.jobs.grab()
+
+    run(env, go)
+    assert env.statuses(2)[3] == "downloading"
+    assert env.jobs.health["grab"] == "Sousou no Frieren: boom"
+
+
+def test_startup_keeps_anilist_and_the_feeds_current_while_qbit_is_away(env):
+    airing(env)
+    env.add_feed()
+    env.qbit.unavailable = QbitUnavailable("down")
+
+    async def go():
+        await env.jobs.startup()
+        await env.jobs.startup()
+
+    run(env, go)
+    assert env.pokes.count("sync_anilist") == 1 and env.pokes.count("refresh_feeds") == 1
+
+
+def test_two_reads_of_the_feeds_never_run_at_once(env):
+    airing(env)
+    env.add_feed()
+    env.feeds.post(TOP, title(3), START)
+    state = {"now": 0, "most": 0}
+    real = env.feeds.fetch
+
+    async def slow(url):
+        state["now"] += 1
+        state["most"] = max(state["most"], state["now"])
+        await asyncio.sleep(0.01)
+        state["now"] -= 1
+        return await real(url)
+
+    env.jobs._fetcher = slow
+
+    async def yes():
+        return True
+
+    async def later():
+        return 60.0
+
+    # The in-memory test database has one shared connection, so the two reads around the fetch are kept out of the race.
+    env.jobs._configured, env.jobs._next_read = yes, later
+
+    async def go():
+        await asyncio.gather(env.jobs.refresh_feeds(everything=True), env.jobs.refresh_feeds(everything=True))
+
+    run(env, go)
+    assert state["most"] == 1
