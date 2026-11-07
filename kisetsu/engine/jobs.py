@@ -300,12 +300,14 @@ class Jobs:
         """While shows are in their hunting window, fetch the feeds they may use more often."""
         if not await self._configured():
             return None
-        info = await self.engine.run(feedsync.plan_hunt)
-        if info.show_ids and info.feeds:
-            async with self._feeds_lock:
+        # Planned under the lock, so a read still running (the startup one) counts as done instead of being repeated.
+        async with self._feeds_lock:
+            info = await self.engine.run(feedsync.plan_hunt)
+            if info.show_ids and info.feeds:
                 results = await self._read_feeds(info.feeds)
                 if results:
                     await self._apply(results)
+        if info.show_ids and info.feeds:
             self.hunt_read_at = self.engine.clock() + timedelta(minutes=info.interval_minutes)
             return info.interval_minutes * 60.0
         if info.show_ids and info.wait_seconds is not None:
