@@ -292,6 +292,10 @@ class Jobs:
                     await self._apply(results)
             self.hunt_read_at = self.engine.clock() + timedelta(minutes=info.interval_minutes)
             return info.interval_minutes * 60.0
+        if info.show_ids and info.wait_seconds is not None:
+            # Their feeds were just read by another job: hunt once the first of them is an interval old.
+            self.hunt_read_at = self.engine.clock() + timedelta(seconds=info.wait_seconds)
+            return max(5.0, info.wait_seconds)
         start = info.plan.next_start
         self.hunt_read_at = start
         if start is None:

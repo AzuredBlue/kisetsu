@@ -44,6 +44,8 @@ class HuntInfo:
     feeds: List[FeedRef]
     plan: HuntPlan
     interval_minutes: int = 5
+    # Hunted shows whose feeds were all read less than an interval ago: the seconds until the first is due again.
+    wait_seconds: Optional[float] = None
 
 
 def _ref(feed: Feed) -> FeedRef:
@@ -156,4 +158,11 @@ def plan_hunt(ctx: Context) -> HuntInfo:
             chosen = all_feeds
         for feed in chosen:
             wanted[feed.id] = feed
-    return HuntInfo(list(plan.hunting), [_ref(f) for f in wanted.values()], plan, max(1, ctx.settings.hunt_interval_minutes))
+    interval = max(1, ctx.settings.hunt_interval_minutes)
+    # A feed another read fetched moments ago (the startup read, say) has nothing new yet.
+    due_at = {f.id: f.last_fetch_at + timedelta(minutes=interval) if f.last_fetch_at else ctx.now for f in wanted.values()}
+    due = [_ref(f) for f in wanted.values() if due_at[f.id] <= ctx.now]
+    wait = None
+    if wanted and not due:
+        wait = (min(due_at.values()) - ctx.now).total_seconds()
+    return HuntInfo(list(plan.hunting), due, plan, interval, wait)

@@ -54,6 +54,18 @@ def test_hunting_reads_only_the_feeds_the_hunted_shows_may_use(world):
     assert {r.id for r in feedsync.plan_hunt(world.ctx()).feeds} == {top.id, low.id}
 
 
+def test_hunting_skips_a_feed_read_less_than_an_interval_ago(world):
+    top = world.feed("Top", URL, 1)
+    world.show(1, "Free", episodes=1, first_air=START - timedelta(hours=1))
+    feedsync.apply_fetch(world.ctx(), {top.id: []})
+    world.commit()
+    # The startup read just fetched it: the hunt waits until it is an interval old.
+    info = feedsync.plan_hunt(world.ctx())
+    assert info.feeds == [] and len(info.show_ids) == 1 and info.wait_seconds == info.interval_minutes * 60
+    world.clock.advance(minutes=info.interval_minutes)
+    assert [r.id for r in feedsync.plan_hunt(world.ctx()).feeds] == [top.id]
+
+
 def test_with_nothing_airing_the_plan_says_when_hunting_starts(world):
     world.feed("Top", URL, 1)
     world.show(episodes=2, first_air=START + timedelta(days=2))
