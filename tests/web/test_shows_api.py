@@ -543,3 +543,13 @@ def test_a_folder_outside_the_download_folder_is_never_removed(tmp_path):
     assert library.remove_folder(str(base), str(base), pause=lambda s: None) is not None
     assert library.remove_folder(str(base), "", pause=lambda s: None) is not None
     assert outside.exists() and base.exists()
+
+
+async def test_resetting_a_locked_show_needs_release_lock(web):
+    feed = web.feed()
+    show = web.show(feed_id=feed, feed_state=FeedState.LOCKED)
+    refused = await web.client.post(f"/api/shows/{show}/rediscover")
+    assert refused.status_code == 409 and refused.json()["code"] == "feed_locked"
+    assert web.load(Show, show).feed_state == FeedState.LOCKED
+    assert (await web.client.post(f"/api/shows/{show}/rediscover", params={"release_lock": "true"})).status_code == 200
+    assert web.load(Show, show).feed_state == FeedState.NONE

@@ -209,3 +209,71 @@ def test_putting_a_show_back_leaves_pinned_locked_and_downloaded_shows_alone(wor
     world.commit()
     assert feeds.unwind_unreleased(world.ctx()) == []
     assert [s.feed_state for s in (pinned, locked, downloaded)] == [FeedState.PINNED, FeedState.LOCKED, FeedState.ASSIGNED]
+
+
+def _pending_add(world, show, feed, number=3):
+    from kisetsu.services.ingest import _new_item
+    from tests.fakes import article
+    ep = world.episode(show, number)
+    item = _new_item(feed, article(f"[Grp] Sousou no Frieren - 0{number} (1080p).mkv", START), world.clock())
+    world.session.add(item)
+    world.session.flush()
+    dl = Download(episode_id=ep.id, feed_id=feed.id, title=item.title, torrent_url=item.torrent_url, tag="kisetsu-op-" + "1" * 32,
+                  state=DownloadState.RETRY_WAIT, attempts=1, next_retry_at=world.clock(), created_at=world.clock(), updated_at=world.clock())
+    world.session.add(dl)
+    world.session.commit()
+    return dl
+
+
+def test_lock_never_moves_a_show_locked_to_another_feed(world):
+    top, low = two_feeds(world)
+    show = world.show(feed=top, feed_state=FeedState.LOCKED)
+    assert not feeds.lock(world.ctx(), show, low, Evidence.GRAB)
+    assert (show.feed_id, show.feed_state) == (top.id, FeedState.LOCKED)
+
+
+def test_a_retried_add_from_another_feed_is_canceled_once_the_show_is_locked_elsewhere(world):
+    from kisetsu.services import downloads
+    top, low = two_feeds(world)
+    show = world.show(episodes=3, first_air=START - timedelta(days=14))
+    dl = _pending_add(world, show, top)
+    feeds.lock(world.ctx(), show, low, Evidence.ADOPTED_UNIQUE)
+    world.commit()
+    downloads.settle(world.ctx())
+    world.commit()
+    world.session.refresh(show)
+    assert (show.feed_id, show.feed_state) == (low.id, FeedState.LOCKED)
+    assert dl.state == DownloadState.CANCELED and not world.qbit.calls_named("add_torrent")
+
+
+def test_a_lock_the_saved_files_prove_survives_a_canceled_grab_from_its_feed(world, tmp_path):
+    from kisetsu.services import downloads, ingest
+    from tests.fakes import article
+    top, _ = two_feeds(world)
+    folder = tmp_path / "Frieren"
+    folder.mkdir()
+    saved = "[Grp] Sousou no Frieren - 01 (1080p).mkv"
+    (folder / saved).write_text("x")
+    show = world.show(episodes=3, first_air=START - timedelta(days=14), save_folder=str(folder))
+    ingest.ingest(world.ctx(), top, [article(saved, START - timedelta(days=14))])
+    feeds.lock(world.ctx(), show, top, Evidence.SAVED_FILES_UNIQUE, learned_name="Sousou no Frieren")
+    world.commit()
+    dl = _pending_add(world, show, top)
+    downloads.cancel_download(world.ctx(), dl, "user canceled")
+    world.commit()
+    world.session.refresh(show)
+    assert (show.feed_id, show.feed_state, show.learned_name) == (top.id, FeedState.LOCKED, "Sousou no Frieren")
+
+
+def test_releasing_a_feed_cancels_adds_qbittorrent_has_not_shown_so_they_cannot_lock_it_again(world):
+    from kisetsu.services import downloads, shows
+    top, _ = two_feeds(world)
+    show = world.show(episodes=3, first_air=START - timedelta(days=14), feed=top, feed_state=FeedState.LOCKED)
+    dl = _pending_add(world, show, top)
+    shows.edit_show(world.ctx(), show, feed_id=0, release_lock=True)
+    world.commit()
+    downloads.settle(world.ctx())
+    world.commit()
+    world.session.refresh(show)
+    assert dl.state == DownloadState.CANCELED
+    assert (show.feed_id, show.feed_state) == (None, FeedState.NONE)

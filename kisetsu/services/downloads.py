@@ -276,6 +276,11 @@ def _retry(ctx: Context, dl: Download, episode: Episode, error: str, delay: time
 
 
 def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, paused: bool) -> None:
+    if show.feed_state in FIXED_FEED_STATES and dl.feed_id is not None and dl.feed_id != show.feed_id:
+        # The show was locked or pinned to another feed while this add waited: it downloads only from that one now.
+        feed = ctx.session.get(Feed, show.feed_id) if show.feed_id else None
+        _cancel(ctx, dl, episode, f"Not added: the show now downloads only from '{feed.name if feed else 'its feed'}'.")
+        return
     settings = ctx.settings
     category = show.category or settings.default_category
     ratio = show.seed_ratio if show.seed_ratio is not None else settings.default_seed_ratio

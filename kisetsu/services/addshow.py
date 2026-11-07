@@ -251,7 +251,7 @@ def _feed_from_files(ctx: Context, show: Show, files: List[str]) -> Optional[Fee
     Files a batch put there name no release of the feed; their release group then points at
     the one feed with a batch from that group.
     """
-    found = adoption._feed_from_saved_files(ctx, show, files, [])
+    found = adoption.feed_from_saved_files(ctx, show, files, [])
     if found is not None:
         return found[0]
     groups = {g for g in (_group_of(name) for name in files) if g}
@@ -353,7 +353,7 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
     ingest.rematch(ctx, [show.id])
     feeds.pin(ctx, show, feed)
     if folder is not None:
-        found = adoption._feed_from_saved_files(ctx, show, folder["files"], [])
+        found = adoption.feed_from_saved_files(ctx, show, folder["files"], [])
         if found is not None and found[0].id == feed.id:
             # The user kept the feed the files on disk came from: that is the evidence a lock needs.
             feeds.lock(ctx, show, feed, Evidence.SAVED_FILES_UNIQUE, learned_name=found[2], learned_group=found[1])

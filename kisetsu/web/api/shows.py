@@ -6,7 +6,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict
 
 from kisetsu.clients.qbittorrent import QbitError
-from kisetsu.db.schema import Episode
+from kisetsu.db.schema import Episode, FeedState
 from kisetsu.services import feeds as feeds_service, library, manual, shows
 from kisetsu.web import views
 from kisetsu.web.deps import NotFound, read, runtime, show_or_404, write
@@ -61,8 +61,11 @@ def _resume(ctx, show_id: int):
     shows.resume(ctx, show_or_404(ctx, show_id))
 
 
-def _rediscover(ctx, show_id: int):
-    feeds_service.release(ctx, show_or_404(ctx, show_id))
+def _rediscover(ctx, show_id: int, release_lock: bool):
+    show = show_or_404(ctx, show_id)
+    if show.feed_state == FeedState.LOCKED and not release_lock:
+        raise feeds_service.FeedLockedError(f"'{show.title()}' is locked to its feed")
+    shows.release_feed(ctx, show)
 
 
 def _preview(ctx, show_id: int):
@@ -166,8 +169,8 @@ async def resume(show_id: int, request: Request):
 
 
 @router.post("/{show_id}/rediscover")
-async def rediscover(show_id: int, request: Request):
-    await write(request, _rediscover, show_id)
+async def rediscover(show_id: int, request: Request, release_lock: bool = False):
+    await write(request, _rediscover, show_id, release_lock)
     runtime(request).jobs.poke("grab")
     return {"status": "released"}
 

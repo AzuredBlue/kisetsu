@@ -258,7 +258,7 @@ def _saved_file_candidates(ctx: Context) -> List[Tuple[Show, List[str]]]:
     return candidates
 
 
-def _feed_from_saved_files(
+def feed_from_saved_files(
     ctx: Context, show: Show, names: List[str], excluded: List[int]
 ) -> Optional[Tuple[Feed, Optional[str], Optional[str]]]:
     """(feed, release group, title) of the feed the newest saved file came from, if exactly one feed carries it.
@@ -287,7 +287,7 @@ def lock_from_saved_files(ctx: Context) -> List[Show]:
     """Lock a show to the feed its saved files came from, so a library carried over from another machine keeps its source."""
     locked: List[Show] = []
     for show, names in _saved_file_candidates(ctx):
-        found = _feed_from_saved_files(ctx, show, names, failed_feed_ids(ctx, show))
+        found = feed_from_saved_files(ctx, show, names, failed_feed_ids(ctx, show))
         if found is None:
             continue
         feed, group, title = found
@@ -301,7 +301,7 @@ def unmatched_saved_files(ctx: Context) -> List[Show]:
     """Shows with saved files that no feed's items account for yet; they are held until a search has run."""
     unmatched = []
     for show, names in _saved_file_candidates(ctx):
-        if _feed_from_saved_files(ctx, show, names, failed_feed_ids(ctx, show)) is None:
+        if feed_from_saved_files(ctx, show, names, failed_feed_ids(ctx, show)) is None:
             unmatched.append(show)
         else:
             library.release(ctx, show.id)

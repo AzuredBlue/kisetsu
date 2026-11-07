@@ -158,7 +158,8 @@ export function Show({ route }) {
       if (!ok) return;
     }
     try {
-      await apiFetch(`/api/shows/${id}/rediscover`, { method: 'POST' });
+      const locked = data.feed && data.feed.state === 'locked';
+      await apiFetch(`/api/shows/${id}/rediscover${locked ? '?release_lock=true' : ''}`, { method: 'POST' });
       toast('Set to auto-discover.', 'success');
       form.reset();
       page.reload();

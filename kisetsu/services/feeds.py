@@ -222,9 +222,10 @@ def lock(
 ) -> bool:
     """Make a feed the show's only source because a real release came from it.
 
-    A show pinned to another feed is not moved; returns whether the lock was set.
+    A show pinned or locked to another feed is not moved (only ``pin`` with ``release_lock`` does that);
+    returns whether the lock was set.
     """
-    if show.feed_state == FeedState.PINNED and show.feed_id != feed.id:
+    if show.feed_state in FIXED_FEED_STATES and show.feed_id != feed.id:
         return False
     if show.feed_state == FeedState.LOCKED and show.feed_id == feed.id:
         changed = False
@@ -289,6 +290,9 @@ def unwind_unproven(ctx: Context, show: Show, feed_id: Optional[int]) -> bool:
     ).first()
     if holder is not None:
         return False
+    if show.feed_state == FeedState.LOCKED and show.feed_id == feed_id and _saved_files_prove(ctx, show, feed_id):
+        # The files on disk still came from this feed: that evidence did not go away with the canceled grab.
+        return False
     _drop_offsets(ctx, show, feed_id, (OffsetSource.INFERRED, OffsetSource.CONFIRMED))
     if show.feed_state == FeedState.LOCKED and show.feed_id == feed_id:
         _clear(show)
@@ -296,6 +300,15 @@ def unwind_unproven(ctx: Context, show: Show, feed_id: Optional[int]) -> bool:
         ctx.emit("shows")
         return True
     return False
+
+
+def _saved_files_prove(ctx: Context, show: Show, feed_id: int) -> bool:
+    """Whether the show's saved files point to this one feed, the evidence a saved-files lock rests on."""
+    from kisetsu.services import adoption, library  # adoption imports this module
+
+    names = library.saved_release_names(show, ctx.settings)
+    found = adoption.feed_from_saved_files(ctx, show, names, []) if names else None
+    return found is not None and found[0].id == feed_id
 
 
 def unwind_unreleased(ctx: Context) -> List[Show]:

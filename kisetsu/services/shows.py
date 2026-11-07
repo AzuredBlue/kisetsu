@@ -14,6 +14,8 @@ from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.db.schema import (
     DismissedShow,
+    Download,
+    DownloadState,
     Episode,
     EpisodeOffset,
     EpisodeStatus,
@@ -414,9 +416,23 @@ def auto_discover_all(ctx: Context) -> int:
     """Return every hand-pinned show to automatic discovery; shows with a proven feed keep it."""
     count = 0
     for show in ctx.session.exec(select(Show).where(Show.feed_state == FeedState.PINNED)).all():
-        feeds.release(ctx, show)
+        release_feed(ctx, show)
         count += 1
     return count
+
+
+def release_feed(ctx: Context, show: Show) -> None:
+    """Back to automatic discovery. Adds qBittorrent has not shown yet are canceled: they come from the old feed and,
+    once they appeared, would lock the show to it again."""
+    feeds.release(ctx, show)
+    pending = ctx.session.exec(
+        select(Download)
+        .join(Episode, Episode.id == Download.episode_id)
+        .where(Episode.show_id == show.id, Download.state.in_((DownloadState.ADDING, DownloadState.RETRY_WAIT)))
+    ).all()
+    for dl in pending:
+        if downloads.locate(ctx, dl) is None:
+            downloads.cancel_download(ctx, dl, "Canceled: the show went back to auto-discover.", leave_torrent=True)
 
 
 # -- editing ------------------------------------------------------------------
@@ -489,7 +505,7 @@ def edit_show(
     result = EditResult("Saved.")
     if feed_id is not None:
         if feed is None:
-            feeds.release(ctx, show)
+            release_feed(ctx, show)
             result.message = f"'{show.title(ctx.settings.title_language)}' set to Auto-Discover."
         else:
             feeds.pin(ctx, show, feed, release_lock=release_lock)
