@@ -40,11 +40,8 @@ class Web:
         async def hues(*urls):
             return True, None
 
-        async def edge(url):
-            return True, None
-
         jobs = Jobs(
-            engine, scheduler, anilist=self.anilist, fetcher=self.feeds.fetch, searcher=search, fetch_hues=hues, fetch_edge=edge,
+            engine, scheduler, anilist=self.anilist, fetcher=self.feeds.fetch, searcher=search, fetch_hues=hues,
         )
         self.probe_result = {"app_version": "v5.3.0", "api_version": "2.16.2"}
 

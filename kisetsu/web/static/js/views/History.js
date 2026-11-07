@@ -9,6 +9,7 @@ import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
 import { confirmDialog } from '../components/Modal.js';
 import { Poster, posterVars } from '../components/ShowSummary.js';
+import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
 import { toast } from '../components/Toast.js';
 import { go } from '../router.js';
@@ -36,6 +37,7 @@ function Row({ item, now }) {
   const title = item.show || item.title || 'Unknown show';
   const problem = PROBLEMS.includes(item.kind);
   const { resolved } = useTheme();
+  useEdges();
   const poster = html`<div class="sr-poster"><${Poster} show=${{ id: item.show_id, title, cover: item.cover }} dim=${false} /></div>`;
   return html`<div class="history-row" style=${posterVars(item, resolved)}>
     ${item.show_id ? html`<a href=${`#show/${item.show_id}`} tabindex="-1" aria-hidden="true">${poster}</a>` : poster}

@@ -6,6 +6,7 @@ import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
+import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
 
 const WEEK = 7 * 86400000;
@@ -94,6 +95,7 @@ const weekName = (offset) => offset === 0 ? 'This week' : offset === 1 ? 'Next w
 
 function Slot({ slot }) {
   const { resolved } = useTheme();
+  useEdges();
   return html`<div class="cal-slot">
     <div class=${`cal-time${slot.passed ? ' passed' : ''}`}>${slot.label}</div>
     <div class="cal-items">

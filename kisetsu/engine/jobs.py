@@ -67,7 +67,6 @@ class Jobs:
         fetcher: Optional[Fetcher] = None,
         searcher: Callable[..., Awaitable[Any]] = sites.search_feed,
         fetch_hues: Callable[..., Awaitable[Any]] = palette_client.fetch_hues,
-        fetch_edge: Callable[..., Awaitable[Any]] = palette_client.fetch_edge,
     ) -> None:
         self.engine = engine
         self.scheduler = scheduler
@@ -84,7 +83,6 @@ class Jobs:
         self._schedule: Optional[List[str]] = None
         self._schedule_at: Optional[datetime] = None
         self.fetch_hues = fetch_hues
-        self.fetch_edge = fetch_edge
         self.ready = asyncio.Event()
         # Set once the first full qBittorrent sync is in. Downloads can be followed from then on (but not added to, deleted
         # or forgotten: see ``settle``); grabbing waits for ``ready``.
@@ -573,34 +571,26 @@ class Jobs:
     # -- upkeep -------------------------------------------------------------
 
     async def palette(self) -> Optional[float]:
-        """Read the colours of the covers that changed, a few at a time, and store them all as one change."""
+        """Read the colours of the banners that changed, a few at a time, and store them all as one change.
+
+        The colour along each poster's bottom edge is read by the browser, from the cover it shows (``edges.js``).
+        """
         hue_targets = await self.engine.run(cycle.palette_targets)
-        edge_targets = await self.engine.run(cycle.edge_targets)
         gate = asyncio.Semaphore(PALETTE_CONCURRENCY)
 
         async def hues(banner: str, cover: str):
             async with gate:
                 return await self.fetch_hues(banner, cover)
 
-        async def edge(cover: str):
-            async with gate:
-                return await self.fetch_edge(cover)
-
-        got_hues, got_edges = await asyncio.gather(
-            asyncio.gather(*(hues(banner, cover) for _, _, banner, cover in hue_targets)),
-            asyncio.gather(*(edge(cover) for _, _, cover in edge_targets)),
-        )
+        got_hues = await asyncio.gather(*(hues(banner, cover) for _, _, banner, cover in hue_targets))
 
         def store(ctx) -> None:
             # A failed download is not remembered, so it is tried again next time.
             for (show_id, key, _, _), (ok, found) in zip(hue_targets, got_hues):
                 if ok:
                     cycle.store_palette(ctx, show_id, key, found)
-            for (show_id, key, _), (ok, color) in zip(edge_targets, got_edges):
-                if ok:
-                    cycle.store_edge(ctx, show_id, key, color)
 
-        if hue_targets or edge_targets:
+        if hue_targets:
             await self.engine.run(store)
         return None
 

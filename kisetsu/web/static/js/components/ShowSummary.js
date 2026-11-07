@@ -2,6 +2,7 @@
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
+import { edgeOf, readEdge, useEdges } from '../edges.js';
 import { countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
@@ -51,11 +52,17 @@ export function StatusTag({ show }) {
 }
 
 // The cover, or the show's initials when it has none or it does not load.
+// The cover is asked for with CORS, so its edge colour can be read from it (``edges.js``); should that ever be
+// refused, it is shown without.
 export function Poster({ show, dim: dimmedOverride }) {
   const [broken, setBroken] = useState(false);
+  const [plain, setPlain] = useState(false);
   const dim = (dimmedOverride === undefined ? dimmed(show) : dimmedOverride) ? ' dim' : '';
   const art = show.cover && !broken
-    ? html`<img src=${show.cover} alt=${show.title} loading="lazy" class=${dim.trim()} onError=${() => setBroken(true)} />`
+    ? html`<img key=${plain ? 'plain' : 'cors'} src=${show.cover} alt=${show.title} loading="lazy" class=${dim.trim()}
+        crossorigin=${plain ? undefined : 'anonymous'}
+        onLoad=${(e) => { if (!plain) readEdge(e.currentTarget, show.cover); }}
+        onError=${() => (plain ? setBroken(true) : setPlain(true))} />`
     : html`<div class=${`no-art${dim}`}>${initials(show.title)}</div>`;
   return html`<div class="poster on-art" data-poster-id=${show.id}>${art}</div>`;
 }
@@ -164,9 +171,9 @@ function RowActions({ show }) {
 const feedName = (show) => (show.feed ? show.feed.name : 'No feed');
 
 // The poster's own bottom edge colours what it sits on; AniList's cover colour stands in for the title until
-// the edge is read, or when the edge is too grey to give it a hue.
-export function posterVars({ cover_edge, cover_color }, mode) {
-  const edge = posterEdgeColors(cover_edge, mode);
+// the edge is read, or when the edge is too grey to give it a hue. A component using it calls useEdges().
+export function posterVars({ cover, cover_color }, mode) {
+  const edge = posterEdgeColors(edgeOf(cover) || null, mode);
   const text = (edge && edge.text) || posterTextColor(cover_color, mode);
   return [text && `--show-text:${text}`, edge && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
 }
@@ -176,6 +183,7 @@ export function ShowCard({ show, now }) {
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
   const hasAir = !!(air.ep || air.info);
   const { resolved } = useTheme();
+  useEdges();
   return html`<div class="show-card" role="link" tabindex="0" style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
     <div class="poster-frame">
       <${Poster} show=${show} />

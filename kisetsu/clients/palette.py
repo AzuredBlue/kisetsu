@@ -4,7 +4,6 @@ import asyncio
 import colorsys
 import io
 import logging
-import math
 from typing import Callable, Optional, Tuple, TypeVar
 from urllib.parse import urlparse
 
@@ -24,9 +23,6 @@ MIN_COLOURFULNESS = 0.03
 FAMILIES = 12
 SECONDARY_MIN_DISTANCE = 60
 SECONDARY_MIN_SCORE = 0.15
-EDGE_FRACTION = 0.08
-EDGE_SAMPLE = (96, 12)
-EDGE_MIN_WEIGHT = 0.02
 
 T = TypeVar("T")
 
@@ -99,70 +95,6 @@ def dominant_hues(data: bytes) -> Optional[Hues]:
     )
 
 
-def _srgb_to_linear(v: float) -> float:
-    return v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
-
-
-def _linear_to_srgb(v: float) -> float:
-    v = min(1.0, max(0.0, v))
-    return v * 12.92 if v <= 0.0031308 else 1.055 * v ** (1 / 2.4) - 0.055
-
-
-def _oklab(r: int, g: int, b: int) -> Tuple[float, float, float]:
-    lr, lg, lb = (_srgb_to_linear(c / 255) for c in (r, g, b))
-    l_ = (0.4122214708 * lr + 0.5363325363 * lg + 0.0514459929 * lb) ** (1 / 3)
-    m_ = (0.2119034982 * lr + 0.6806995451 * lg + 0.1073969566 * lb) ** (1 / 3)
-    s_ = (0.0883024619 * lr + 0.2817188376 * lg + 0.6299787005 * lb) ** (1 / 3)
-    return (
-        0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
-        1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
-        0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
-    )
-
-
-def _oklab_to_hex(L: float, a: float, b: float) -> str:
-    l_ = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
-    m_ = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
-    s_ = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
-    rgb = (
-        4.0767416621 * l_ - 3.3077115913 * m_ + 0.2309699292 * s_,
-        -1.2684380046 * l_ + 2.6097574011 * m_ - 0.3413193965 * s_,
-        -0.0041960863 * l_ - 0.7034186147 * m_ + 1.7076147010 * s_,
-    )
-    return "#" + "".join(f"{round(_linear_to_srgb(c) * 255):02x}" for c in rgb)
-
-
-def edge_color(data: bytes) -> Optional[str]:
-    """The colour along a poster's bottom edge as "#rrggbb", for the panel under it on the shows grid.
-
-    An OKLab average of the bottom strip, weighted by how colourful each pixel is: a few vivid
-    pixels do not take over (as the most common cluster would), and grey areas do not wash the
-    colour out. Near-black and near-white pixels are left out; None when nothing else is left.
-    """
-    from PIL import Image
-
-    with Image.open(io.BytesIO(data)) as image:
-        image = image.convert("RGB")
-        width, height = image.size
-        strip = image.crop((0, int(height * (1 - EDGE_FRACTION)), width, height))
-        strip.thumbnail(EDGE_SAMPLE)
-        pixels = [strip.getpixel((x, y)) for y in range(strip.height) for x in range(strip.width)]
-
-    total = sum_l = sum_a = sum_b = 0.0
-    for r, g, b in pixels:
-        L, a, bb = _oklab(r, g, b)
-        if L < 0.10 or L > 0.95:
-            continue
-        weight = math.hypot(a, bb) + EDGE_MIN_WEIGHT
-        total += weight
-        sum_l += weight * L
-        sum_a += weight * a
-        sum_b += weight * bb
-    if not total:
-        return None
-    return _oklab_to_hex(sum_l / total, sum_a / total, sum_b / total)
-
-
 def is_allowed_image_url(url: str) -> bool:
     parsed = urlparse(url)
     host = parsed.hostname or ""
@@ -195,11 +127,6 @@ async def _read(url: str, measure: Callable[[bytes], Optional[T]]) -> Tuple[bool
 
 async def _fetch_hues(url: str) -> Tuple[bool, Optional[Hues]]:
     return await _read(url, dominant_hues)
-
-
-async def fetch_edge(url: str) -> Tuple[bool, Optional[str]]:
-    """The bottom-edge colour of the poster at ``url``: (ok, colour), with ``ok`` as in fetch_hues."""
-    return await _read(url, edge_color)
 
 
 async def fetch_hues(*urls: str) -> Tuple[bool, Optional[Hues]]:
