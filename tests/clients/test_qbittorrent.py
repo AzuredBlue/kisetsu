@@ -387,3 +387,37 @@ def test_rss_feeds_walk_folders_with_backslash_paths():
     feeds = {feed.url: feed.path for feed in qbit.rss_feeds()}
     assert feeds == {"https://a/rss": "Plain", "https://b/rss": "Group\\Nested"}
     assert api.calls[-1][1]["include_feed_data"] is False
+
+
+RAW_REFUSED = (
+    "Failed to connect to qBittorrent. Connection Error: ConnectionError(MaxRetryError(\"HTTPConnectionPool(host='127.0.0.1', port=1): "
+    "Max retries exceeded with url: /api/v2/auth/login (Caused by NewConnectionError('Failed to establish a new connection: "
+    "[WinError 10061] No connection could be made because the target machine actively refused it'))\"))"
+)
+
+
+@pytest.mark.parametrize("error, says", [
+    (qbittorrentapi.APIConnectionError(RAW_REFUSED), "Nothing answered at http://q"),
+    (requests.exceptions.ConnectTimeout("timed out"), "did not answer in time"),
+    (qbittorrentapi.APIConnectionError("Failed to resolve: [Errno 11001] getaddrinfo failed"), "could not be found. Check the host name"),
+])
+def test_an_unreachable_qbit_is_explained_in_plain_words(error, says):
+    api = Api()
+    api.auth_log_in = lambda: (_ for _ in ()).throw(error)
+    qbit, *_ = make(api)
+    with pytest.raises(QbitUnavailable) as caught:
+        qbit.versions()
+    assert says in str(caught.value) and "MaxRetryError" not in str(caught.value)
+
+
+def test_a_rejected_login_and_a_banned_address_are_explained_in_plain_words():
+    api = Api()
+    api.auth_log_in = lambda: (_ for _ in ()).throw(qbittorrentapi.LoginFailed("Login authorization failed"))
+    qbit, *_ = make(api)
+    with pytest.raises(QbitAuthError, match="username or password"):
+        qbit.versions()
+    api = Api()
+    api.auth_log_in = lambda: (_ for _ in ()).throw(http_error(qbittorrentapi.Forbidden403Error, 403))
+    qbit, *_ = make(api)
+    with pytest.raises(QbitAuthError, match="too many failed logins"):
+        qbit.versions()

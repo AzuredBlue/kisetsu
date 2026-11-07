@@ -131,6 +131,21 @@ class RssStoreFeed:
     url: str
 
 
+def _unreachable_text(host: str, e: BaseException) -> str:
+    """Why qBittorrent could not be reached, in plain words instead of the transport library's exception dump."""
+    text = str(e)
+    low = text.lower()
+    if isinstance(e, requests.exceptions.Timeout) or "timed out" in low or "read timeout" in low:
+        return f"qBittorrent at {host} did not answer in time."
+    if "getaddrinfo" in low or "11001" in text or "name or service not known" in low or "nodename nor servname" in low or "failed to resolve" in low:
+        return f"The address of {host} could not be found. Check the host name."
+    if "refused" in low or "10061" in text or "failed to establish a new connection" in low:
+        return f"Nothing answered at {host}. Check that qBittorrent is running with its Web UI on (Options, Web UI) and that the address and port are right."
+    if "ssl" in low or "certificate" in low:
+        return f"The secure connection to {host} failed. Try http:// instead of https://."
+    return f"Cannot reach qBittorrent at {host}: {e}"
+
+
 def _is_auth_failure(exc: BaseException) -> bool:
     if isinstance(exc, qbittorrentapi.LoginFailed):
         return True
@@ -210,7 +225,12 @@ class Qbit:
         if isinstance(e, QbitError):
             return e
         if _is_auth_failure(e):
-            error = QbitAuthError(f"qBittorrent rejected the login: {e}")
+            logger.debug(f"qBittorrent login failed: {e}")
+            if isinstance(e, qbittorrentapi.Forbidden403Error):
+                text = "qBittorrent refused this address, usually after too many failed logins. Wait a while or restart qBittorrent, then try again."
+            else:
+                text = "qBittorrent rejected the username or password."
+            error = QbitAuthError(text)
             self._backoff(AUTH_BACKOFF_SECONDS, error)
             return error
         if isinstance(e, qbittorrentapi.Conflict409Error):
@@ -226,7 +246,8 @@ class Qbit:
 
     def _unavailable(self, e: BaseException) -> QbitUnavailable:
         steps = UNAVAILABLE_BACKOFF_SECONDS
-        error = QbitUnavailable(f"Cannot reach qBittorrent at {self.host}: {e}")
+        logger.debug(f"qBittorrent at {self.host} is unreachable: {e}")
+        error = QbitUnavailable(_unreachable_text(self.host, e))
         self._backoff(steps[min(self._failures, len(steps) - 1)], error)
         self._failures += 1
         return error
