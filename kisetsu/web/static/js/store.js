@@ -3,7 +3,8 @@
 import { useEffect, useState } from './ui.js';
 import { apiFetch } from './api.js';
 
-const listeners = new Set();
+// Components that show the connection state; each resource keeps its own listeners.
+const connectionListeners = new Set();
 let connection = { online: true };
 
 export class Resource {
@@ -17,7 +18,10 @@ export class Resource {
     this.users = 0;
     this.inflight = null;
     this.again = false;
+    this.listeners = new Set();
   }
+
+  notify() { this.listeners.forEach(fn => fn()); }
 
   async load() {
     if (this.inflight) { this.again = true; return this.inflight; }
@@ -27,7 +31,7 @@ export class Resource {
       .catch((err) => { this.error = err; this.stale = true; })
       .finally(() => {
         this.inflight = null;
-        notify();
+        this.notify();
         if (this.again) { this.again = false; this.load(); }
       });
     return this.inflight;
@@ -60,17 +64,17 @@ export function keyedResource(path, topics) {
   return r;
 }
 
-function notify() { listeners.forEach(fn => fn()); }
+function notifyConnection() { connectionListeners.forEach(fn => fn()); }
 
 export function useResource(r) {
   const [, rerender] = useState(0);
   useEffect(() => {
     const fn = () => rerender(n => n + 1);
-    listeners.add(fn);
+    r.listeners.add(fn);
     r.users += 1;
     if (r.stale) r.load();
     return () => {
-      listeners.delete(fn);
+      r.listeners.delete(fn);
       r.users -= 1;
       if (r.users === 0 && keyed.get(r.path) === r) { keyed.delete(r.path); resources.delete(r); }
     };
@@ -82,8 +86,8 @@ export function useConnection() {
   const [, rerender] = useState(0);
   useEffect(() => {
     const fn = () => rerender(n => n + 1);
-    listeners.add(fn);
-    return () => listeners.delete(fn);
+    connectionListeners.add(fn);
+    return () => connectionListeners.delete(fn);
   }, []);
   return connection;
 }
@@ -104,11 +108,11 @@ export function connect() {
   source.onmessage = (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch (err) { return; }
-    if (!connection.online) { connection = { online: true }; notify(); }
+    if (!connection.online) { connection = { online: true }; notifyConnection(); }
     invalidate(message.changed || ['*']);
   };
   source.onerror = () => {
-    if (connection.online) { connection = { online: false }; notify(); }
+    if (connection.online) { connection = { online: false }; notifyConnection(); }
   };
   return source;
 }

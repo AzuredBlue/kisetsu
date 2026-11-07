@@ -3,7 +3,7 @@ import { useResource } from '../store.js';
 import { go, useNow } from '../router.js';
 import { shows as showsData } from '../data.js';
 import { Seg } from '../components/Controls.js';
-import { Icon } from '../components/Icon.js';
+import { Icon, Spinner } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { ShowCard, ShowRow } from '../components/ShowSummary.js';
 import { Checklist, NeedsAttention } from '../components/Attention.js';
@@ -55,7 +55,7 @@ export function Shows() {
       completed: sortShows(list.filter(s => s.section === 'completed'), at),
     };
   }, [data, minute]);
-  if (loading) return html`<div class="page"></div>`;
+  if (loading) return html`<div class="page"><div class="empty"><${Spinner} /></div></div>`;
   if (!data) return html`<div class="page"><${LoadError} what="your shows" error=${error} reload=${reload} /></div>`;
 
   const changeView = (value) => { setSwap(n => n + 1); setView(value); write('show_view_mode', value); };

@@ -1,10 +1,10 @@
-import { html, render, useEffect, useMemo, useState } from './ui.js';
+import { html, render, useEffect, useState } from './ui.js';
 import { setErrorHandler, apiFetch } from './api.js';
 import { connect, useResource } from './store.js';
 import { applyTheme, applyUserAccent, toggleTheme, resolvedTheme, useTheme } from './theme.js';
 import { go, useNow, useRoute } from './router.js';
 import { wait } from './format.js';
-import { history, settings, setupStatus, shows, status } from './data.js';
+import { settings, setupStatus, status } from './data.js';
 import { Icon, Spinner } from './components/Icon.js';
 import { LoadError } from './components/LoadError.js';
 import { ModalHost } from './components/Modal.js';
@@ -12,7 +12,7 @@ import { toast, Toasts } from './components/Toast.js';
 import { Shows } from './views/Shows.js';
 import { Show } from './views/Show.js';
 import { Add } from './views/Add.js';
-import { Calendar, buildWeek } from './views/Calendar.js';
+import { Calendar } from './views/Calendar.js';
 import { History } from './views/History.js';
 import { Feeds } from './views/Feeds.js';
 import { Logs } from './views/Logs.js';
@@ -69,9 +69,6 @@ function NextCheck({ info, at }) {
 function Sidebar({ route, open, onClose, info, at }) {
   useTheme();
   const [busy, setBusy] = useState(false);
-  const showList = useResource(shows).data;
-  const rows = useResource(history).data;
-  const week = useMemo(() => (showList ? buildWeek(showList, new Date()).days.reduce((n, day) => n + day.slots.reduce((m, slot) => m + slot.items.length, 0), 0) : null), [showList]);
   const running = (info && (info.running || []).some(name => CHECK_JOBS.includes(name))) || busy;
   const paused = info && info.all_paused;
   const sync = async () => {

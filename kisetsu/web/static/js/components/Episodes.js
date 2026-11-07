@@ -65,7 +65,11 @@ export function useRowAction(showId, done) {
   return { pending, tryAnother: (episodeId) => run(`another:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/try-another`, undefined, 'Trying another release.'), download: (title) => run(title, `/api/shows/${showId}/download`, { title }, 'Download started.'), restore: (episodeId) => run(`restore:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/restore`, undefined, 'Restored.'), want: (episodeId) => run(`want:${episodeId}`, `/api/shows/${showId}/episodes/${episodeId}/want`, undefined, 'It will be downloaded.') };
 }
 
+// Finished episodes shown before "Show all": a long-running show has hundreds of them.
+const DONE_SHOWN = 50;
+
 export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, searching }) {
+  const [allDone, setAllDone] = useState(false);
   const usable = (groups || []).filter(g => g.usable).flatMap(g => g.matches);
   const replacements = new Map();
   usable.forEach(m => { const best = replacements.get(m.episode); if (m.replaces && (!best || m.version > best.version)) replacements.set(m.episode, m); });
@@ -75,9 +79,11 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
     ? html`<span class="muted row"><${Spinner} small /> Searching…</span>`
     : html`<button type="button" class="link" onClick=${onSearch} title="Ask the feeds' sites for the episodes that are no longer in their RSS">Search older</button>`;
   const body = GROUPS.map(([name, title]) => {
-    const entries = rows.filter(r => r.group === name).sort((a, b) => b.ep.number - a.ep.number);
-    if (!entries.length) return null;
-    return html`<li class="list-head" key=${`g:${name}`}><span>${title}</span><span class="muted tabular">${entries.length}</span><span class="push">${search(name)}</span></li>
+    const sorted = rows.filter(r => r.group === name).sort((a, b) => b.ep.number - a.ep.number);
+    if (!sorted.length) return null;
+    const folded = name === 'done' && !allDone && sorted.length > DONE_SHOWN ? sorted.length - DONE_SHOWN : 0;
+    const entries = folded ? sorted.slice(0, DONE_SHOWN) : sorted;
+    return html`<li class="list-head" key=${`g:${name}`}><span>${title}</span><span class="muted tabular">${sorted.length}</span><span class="push">${search(name)}</span></li>
       ${entries.map(({ ep, label, tone }) => {
         const release = ep.release;
         const unmanaged = ep.status === 'completed' && release && !release.tracked;
@@ -97,7 +103,8 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
           </span>
           ${note ? html`<span class="row-note">${note}</span>` : null}
         </li>`;
-      })}`;
+      })}
+      ${folded ? html`<li class="list-empty" key="g:done-more"><button type="button" class="link" onClick=${() => setAllDone(true)}>Show ${folded} older completed episode${folded === 1 ? '' : 's'}</button></li>` : null}`;
   });
   return html`<ul class="list">${body.some(Boolean) ? body : html`<li class="list-empty">No episode records yet.</li>`}</ul>`;
 }
