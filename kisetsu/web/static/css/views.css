@@ -161,7 +161,9 @@
 .list { max-height: 60vh; overflow-y: auto; scrollbar-color: rgb(var(--line-strong)) transparent; padding: 0 .75rem; background: rgb(var(--bg)); border: 1px solid rgb(var(--line-soft)); border-radius: var(--r-sm); }
 .list > li + li { border-top: 1px solid rgb(var(--line-soft)); }
 .list-head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: .5rem; padding: .5rem 0; font-size: .75rem; background: rgb(var(--field)); & > :first-child { font-weight: 500; color: rgb(var(--text-2)); } & .push { margin-left: auto; } }
-.list-row { display: flex; align-items: center; gap: .75rem; padding: .375rem 0; font-size: .75rem; }
+.list-row { display: flex; align-items: center; gap: .75rem; padding: .375rem 0; font-size: .75rem; &.has-note { flex-wrap: wrap; row-gap: .125rem; } }
+/* A reason under a row: why it failed, or why a release was not used. Lined up with the release name. */
+.row-note { flex-basis: 100%; padding-left: 5.75rem; color: rgb(var(--text-2)); overflow-wrap: anywhere; }
 .list-empty { padding: .75rem 0; text-align: center; font-size: .75rem; color: rgb(var(--text-3)); }
 .ep-no { flex: none; width: 5rem; color: rgb(var(--ac-soft)); font-variant-numeric: tabular-nums; }
 .release-name { flex: 1; min-width: 0; color: rgb(var(--text-3)); }

@@ -83,7 +83,8 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
         const unmanaged = ep.status === 'completed' && release && !release.tracked;
         const retry = ep.status === 'failed' ? usable.find(m => m.episode === ep.number && m.downloadable) : null;
         const swap = ep.status === 'completed' && release && release.tracked ? replacements.get(ep.number) : null;
-        return html`<li class="list-row" key=${`e:${ep.id}`}>
+        const note = (tone === 'bad' || tone === 'warn') && !ep.stalled ? ep.last_error : null;
+        return html`<li class=${`list-row${note ? ' has-note' : ''}`} key=${`e:${ep.id}`}>
           <span class="ep-no">Ep ${ep.number}${release ? version(release.version) : ''}</span>
           <span class="release-name mono truncate" title=${release ? release.title : ''}>${release ? release.title : ''}</span>
           <span class="row-end">
@@ -94,15 +95,32 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
             ${unmanaged ? html`<${RowButton} pending=${actions.pending.has(`restore:${ep.id}`)} onClick=${() => actions.restore(ep.id)} title="Restore: find this torrent in qBittorrent and manage it, or add it again from the feed." />` : null}
             ${swap ? html`<${RowButton} icon="swap" pending=${actions.pending.has(swap.title)} onClick=${() => actions.download(swap.title)} title=${`Replace Ep ${ep.number} with this release. The current copy${release.feed ? ` from ${release.feed}` : ''} is deleted with its files once this one has finished.`} />` : null}
           </span>
+          ${note ? html`<span class="row-note">${note}</span>` : null}
         </li>`;
       })}`;
   });
   return html`<ul class="list">${body.some(Boolean) ? body : html`<li class="list-empty">No episode records yet.</li>`}</ul>`;
 }
 
+function NotUsed({ group }) {
+  const [open, setOpen] = useState(false);
+  const rows = group.rejected || [];
+  if (!rows.length) return null;
+  return html`
+    <li class="list-head" key=${`r:${group.feed_id}`}>
+      <button type="button" class="link" aria-expanded=${String(open)} onClick=${() => setOpen(!open)}>${open ? 'Hide' : 'Show'} ${rows.length} release${rows.length === 1 ? '' : 's'} not used</button>
+      <span class="muted">Why a release of this show was not taken</span>
+    </li>
+    ${open ? rows.map(r => html`<li class="list-row has-note" key=${`r:${group.feed_id}:${r.title}`}>
+      <span class="ep-no muted">Not used</span>
+      <span class="release-name mono truncate" title=${r.title}>${r.title}</span>
+      <span class="row-note">${r.reason}</span>
+    </li>`) : null}`;
+}
+
 export function ReleaseList({ groups, actions, loading, onUseFeed }) {
   if (loading) return html`<ul class="list"><li class="list-empty">Checking the feed…</li></ul>`;
-  const any = (groups || []).some(g => g.matches.length);
+  const any = (groups || []).some(g => g.matches.length || (g.rejected && g.rejected.length));
   return html`<ul class="list">
     ${any ? groups.map(g => html`<li class="list-head" key=${`h:${g.feed_id}`}>
         <span class="truncate">${g.feed_name}</span>
@@ -119,7 +137,8 @@ export function ReleaseList({ groups, actions, loading, onUseFeed }) {
                 title=${m.replaces ? `Replace Ep ${m.episode} with this release. The current copy is deleted with its files once this one has finished.` : m.restore ? 'Restore: add this release to qBittorrent, or tag the copy already there, so Kisetsu manages it.' : 'Download this release now. It is tracked like any other episode.'} />`
             : html`<span class="muted">${m.episode_status}</span>`}
         </span>
-      </li>`)}`)
+      </li>`)}
+      <${NotUsed} group=${g} />`)
       : html`<li class="list-empty">Nothing in any feed matches this show right now. Try Search older.</li>`}
   </ul>`;
 }
