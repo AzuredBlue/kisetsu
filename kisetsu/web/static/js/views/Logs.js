@@ -1,7 +1,7 @@
 import { html, useEffect, useRef } from '../ui.js';
 import { useResource } from '../store.js';
 import { apiFetch } from '../api.js';
-import { logs as logsData, requests as requestsData } from '../data.js';
+import { logs as logsData, requests as requestsData, status as statusData } from '../data.js';
 import { localTime } from '../format.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
@@ -37,6 +37,8 @@ function Requests() {
 
 export function Logs() {
   const { data, error, reload } = useResource(logsData);
+  // The request counts are for measuring in the sandbox; the normal app does not show them.
+  const { data: info } = useResource(statusData);
   const box = useRef(null);
   const atBottom = useRef(true);
   useEffect(() => { if (box.current && atBottom.current) box.current.scrollTop = box.current.scrollHeight; }, [data]);
@@ -55,7 +57,7 @@ export function Logs() {
         <button type="button" class="btn sm" onClick=${copy}><${Icon} name="copy" small />Copy</button>
       </div>
     </div>
-    <${Requests} />
+    ${info && info.sandbox ? html`<${Requests} />` : null}
     <div class="log-pane">
       <div class="log-head muted">${data ? data.length : 0} entries</div>
       <div class="log-lines mono" ref=${box} onScroll=${onScroll}>
