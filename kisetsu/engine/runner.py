@@ -141,7 +141,8 @@ class Engine:
     def _read(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         with Session(self.db, expire_on_commit=False) as session:
             try:
-                ctx = make_context(session, _NoQbit(), self.clock(), Caches(stalled=self.caches.stalled))
+                # Parsed titles never change, so a read shares the engine's cache instead of parsing every item again.
+                ctx = make_context(session, _NoQbit(), self.clock(), Caches(stalled=self.caches.stalled, parsed=self.caches.parsed))
                 return fn(ctx, *args, **kwargs)
             finally:
                 session.rollback()

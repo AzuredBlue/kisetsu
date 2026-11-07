@@ -559,8 +559,10 @@ def match_release_to_show(
     release. Callers that choose which torrents to download leave it ``False`` so a
     release belonging to a different cour of the same arc is never claimed.
     """
-    if parsed_cache is not None and raw_title in parsed_cache:
-        parsed = dict(parsed_cache[raw_title])
+    # Read once with .get: the cache is shared with read requests, and another thread may clear it at any moment.
+    cached = parsed_cache.get(raw_title) if parsed_cache is not None else None
+    if cached is not None:
+        parsed = dict(cached)
     else:
         parsed = parse_release_title(raw_title)
         if parsed_cache is not None:

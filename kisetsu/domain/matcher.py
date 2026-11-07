@@ -7,6 +7,8 @@ marker the show's aliases insist on, and on a feed the show is locked to it narr
 name and season that feed has been delivering.
 """
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -161,9 +163,13 @@ def newest_raw_episode(
     return newest
 
 
-def signature(entries: Iterable[Tuple[int, Sequence[str], str]]) -> int:
-    """Changes whenever a show is added or removed, or its aliases or learned name change."""
-    return hash(tuple(sorted((show_id, tuple(aliases), learned or "") for show_id, aliases, learned in entries)))
+def signature(entries: Iterable[Tuple[int, Sequence[str], str]]) -> str:
+    """Changes whenever a show is added or removed, or its aliases or learned name change.
+
+    It is stored, so it must not change between runs: a hash of the JSON text, never Python's per-process ``hash()``.
+    """
+    rows = sorted((show_id, list(aliases), learned or "") for show_id, aliases, learned in entries)
+    return hashlib.sha1(json.dumps(rows, ensure_ascii=False).encode("utf-8")).hexdigest()
 
 
 def matching_show_ids(

@@ -185,3 +185,25 @@ def test_shutting_the_bus_down_ends_every_subscription():
         return seen, engine.bus.subscribers
 
     assert run(go()) == ([], 0)
+
+
+def test_a_read_reuses_the_titles_the_engine_already_parsed():
+    async def go():
+        engine, _ = make()
+        await engine.start()
+        engine.caches.parsed["[Grp] Show - 01 (1080p).mkv"] = {"title": "Show", "episode": 1}
+        seen = await engine.read(lambda ctx: dict(ctx.caches.parsed_cache()))
+        assert "[Grp] Show - 01 (1080p).mkv" in seen
+
+    run(go())
+
+
+def test_a_cached_parse_that_vanishes_mid_lookup_is_parsed_again():
+    from kisetsu.domain.parsing import match_release_to_show
+
+    class Vanishing(dict):
+        def __contains__(self, key):
+            return True  # another thread clears the cache right after this check
+
+    ok, _, parsed = match_release_to_show("[Grp] Sousou no Frieren - 01 (1080p).mkv", ["Sousou no Frieren"], parsed_cache=Vanishing())
+    assert ok and parsed["episode"] == 1

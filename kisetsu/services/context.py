@@ -10,7 +10,7 @@ from kisetsu.db.schema import AppState, Settings
 from kisetsu.domain.matcher import Matcher
 
 # The parsed-title cache is dropped once it grows past this many titles.
-PARSED_CACHE_LIMIT = 20_000
+PARSED_CACHE_LIMIT = 50_000
 
 
 @dataclass
@@ -18,7 +18,8 @@ class Caches:
     """In-memory state that outlives a single job. Everything here can be rebuilt from the database."""
 
     known_items: Optional[Set[Tuple[int, str]]] = None
-    matchers: Optional[Tuple[int, List[Tuple[int, Matcher]]]] = None
+    # (key, signature by show id, matcher by show id) of the followed shows, rebuilt when the key changes.
+    matchers: Optional[Tuple[str, Dict[int, str], List[Tuple[int, Matcher]]]] = None
     parsed: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     # Settle passes in which a tracked torrent was missing from qBittorrent, and the list size then.
     absent: Dict[str, int] = field(default_factory=dict)
@@ -41,6 +42,7 @@ class Caches:
         self.__init__()
 
     def parsed_cache(self) -> Dict[str, Dict[str, Any]]:
+        """Title -> parse_release_title() result. Shared with read requests (see ``Engine.read``): only get, set and clear it."""
         if len(self.parsed) > PARSED_CACHE_LIMIT:
             self.parsed.clear()
         return self.parsed

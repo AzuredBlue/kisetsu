@@ -520,7 +520,7 @@ def edit_show(
     session.add(show)
     session.flush()
     if aliases is not None:
-        ingest.rematch(ctx, [show.id])
+        ingest.ensure_matches_current(ctx)
     ctx.emit("shows", f"show:{show.id}")
     if moves:
         ctx.checkpoint()

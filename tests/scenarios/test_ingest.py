@@ -215,3 +215,57 @@ def test_only_new_articles_announce_themselves_to_the_feed_items_list(world):
     world.commit()
     ingest.ingest(second, feed, [article("[Grp] Sousou no Frieren - 01 (1080p).mkv", START)])
     assert "feed_items" in first.topics and "feed_items" not in second.topics
+
+
+def test_the_match_signature_is_the_same_in_another_process():
+    import subprocess
+    import sys
+    from kisetsu.domain.matcher import signature
+    code = "from kisetsu.domain.matcher import signature; print(signature([(1, ('Sousou no Frieren', 'Frieren'), 'Frieren')]))"
+    other = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout.strip()
+    assert other == str(signature([(1, ("Sousou no Frieren", "Frieren"), "Frieren")]))
+
+
+def test_a_restart_does_not_redo_the_matches(world):
+    from kisetsu.services.context import Caches
+    feed = world.feed("A", "https://a/rss", 1)
+    world.show(1, "Sousou no Frieren", episodes=1, first_air=START)
+    run_ingest(world, feed, ["[SubsPlease] Sousou no Frieren - 01 (1080p).mkv"])
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    world.caches = Caches()  # what a new process starts with
+    assert not ingest.ensure_matches_current(world.ctx())
+
+
+def test_a_changed_show_is_rematched_without_reading_every_other_shows_matches(world, monkeypatch):
+    feed = world.feed("A", "https://a/rss", 1)
+    frieren = world.show(1, "Sousou no Frieren", episodes=1, first_air=START)
+    world.show(2, "Dandadan", episodes=1, first_air=START)
+    run_ingest(world, feed, ["[SubsPlease] Sousou no Frieren - 01 (1080p).mkv", "[SubsPlease] Dandadan - 05 (1080p).mkv",
+                             "[Erai-raws] Frieren - Beyond Journey's End - 05 [1080p].mkv"])
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    frieren.custom_aliases = ["Frieren - Beyond Journey's End"]
+    world.session.add(frieren)
+    world.commit()
+    checked = []
+    real = ingest.matching.broad_match
+    monkeypatch.setattr(ingest.matching, "broad_match", lambda m, t, c=None: checked.append(t) or real(m, t, c))
+    assert ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    assert len(matches(world)) == 3
+    # Only the changed show is tried against every item; Dandadan is asked only about the items Frieren touches.
+    assert checked.count("[SubsPlease] Dandadan - 05 (1080p).mkv") == 1
+
+
+def test_a_new_show_takes_over_the_releases_its_season_names(world):
+    feed = world.feed("A", "https://a/rss", 1)
+    first = world.show(1, "Foo", episodes=1, first_air=START)
+    run_ingest(world, feed, ["[Grp] Foo 2nd Season - 01 (1080p).mkv"])
+    ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    assert [m[0] for m in matches(world)] == [first.id]
+    second = world.show(2, "Foo 2nd Season", episodes=1, first_air=START)
+    assert ingest.ensure_matches_current(world.ctx())
+    world.commit()
+    assert [m[0] for m in matches(world)] == [second.id]

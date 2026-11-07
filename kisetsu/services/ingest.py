@@ -1,8 +1,9 @@
 """Keeping what the feeds publish: store each new article once, and match it to the followed shows."""
 
+import json
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from sqlalchemy import delete, func
 from sqlmodel import select
@@ -38,16 +39,17 @@ def followed_shows(ctx: Context) -> List[Show]:
     return [show for show in shows if not premiere_out_of_reach(facts[show.id], ctx.now)]
 
 
-def _matchers(ctx: Context) -> Tuple[int, List[Tuple[int, matching.Matcher]]]:
+def _matchers(ctx: Context) -> Tuple[Dict[int, str], List[Tuple[int, matching.Matcher]]]:
+    """Each followed show's matcher, and the signature of what it was built from, by show id."""
     shows = followed_shows(ctx)
-    entries = [(show.id, show.effective_aliases, show.learned_name or "") for show in shows]
-    current = matching.signature(entries)
+    signatures = {show.id: matching.signature([(show.id, show.effective_aliases, show.learned_name or "")]) for show in shows}
+    key = json.dumps(sorted(signatures.items()))
     cached = ctx.caches.matchers
-    if cached is not None and cached[0] == current:
-        return cached
+    if cached is not None and cached[0] == key:
+        return cached[1], cached[2]
     built = [(show.id, matching.build_matcher(show.effective_aliases, show.learned_name)) for show in shows]
-    ctx.caches.matchers = (current, built)
-    return ctx.caches.matchers
+    ctx.caches.matchers = (key, signatures, built)
+    return signatures, built
 
 
 def _known(ctx: Context) -> Set[Tuple[int, str]]:
@@ -77,7 +79,7 @@ def ingest(ctx: Context, feed: Feed, articles: Sequence[FeedArticle]) -> IngestR
     """Store the articles this feed has not shown before and match them to the followed shows."""
     result = IngestResult()
     known = _known(ctx)
-    signature, matchers = _matchers(ctx)
+    _, matchers = _matchers(ctx)
     cache = ctx.caches.parsed_cache()
     fresh: List[FeedItem] = []
     for article in articles:
@@ -108,7 +110,7 @@ def rematch(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> int:
     With ``show_ids`` only those shows' matches are redone, after an alias edit.
     """
     only = None if show_ids is None else set(show_ids)
-    signature, matchers = _matchers(ctx)
+    signatures, matchers = _matchers(ctx)
     if only is None:
         # A completed show is not matched any more, so its Releases tab lives on what it has until ``prune`` ages that out.
         completed = select(Show.id).where(Show.completed == True)  # noqa: E712
@@ -124,18 +126,65 @@ def rematch(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> int:
             ctx.session.add(FeedItemMatch(item_id=item.id, show_id=show_id))
             made += 1
     if only is None:
-        set_state(ctx, SIGNATURE_KEY, str(signature))
+        set_state(ctx, SIGNATURE_KEY, json.dumps(signatures))
     ctx.emit("shows")
     return made
 
 
 def ensure_matches_current(ctx: Context) -> bool:
-    """Redo all matches when the followed shows, their aliases or learned names changed since they were made."""
-    signature, _ = _matchers(ctx)
-    if get_state(ctx, SIGNATURE_KEY) == str(signature):
+    """Redo the matches of the shows that were added, removed, or whose aliases or learned name changed since they were made.
+
+    Only those shows are tried against every stored item; the items they touch are then matched again against every
+    followed show, so a title several shows compete for still goes to the right one. Returns whether anything was redone.
+    """
+    signatures, matchers = _matchers(ctx)
+    try:
+        stored = json.loads(get_state(ctx, SIGNATURE_KEY) or "null")
+    except ValueError:
+        stored = None
+    if not isinstance(stored, dict):
+        # Nothing to compare with (a new database, or one from before signatures were kept per show).
+        rematch(ctx)
+        return True
+    stored = {int(show_id): value for show_id, value in stored.items()}
+    changed = {show_id for show_id, value in signatures.items() if stored.get(show_id) != value}
+    removed = set(stored) - set(signatures)
+    if not changed and not removed:
         return False
-    rematch(ctx)
+    _rematch_affected(ctx, matchers, changed, removed)
+    set_state(ctx, SIGNATURE_KEY, json.dumps(signatures))
+    ctx.emit("shows")
     return True
+
+
+def _rematch_affected(ctx: Context, matchers: List[Tuple[int, matching.Matcher]], changed: Set[int], removed: Set[int]) -> None:
+    """``rematch`` limited to the items the changed or removed shows matched before or match now."""
+    completed = set(ctx.session.exec(select(Show.id).where(Show.completed == True)).all())  # noqa: E712
+    touched = changed | removed
+    affected = set(ctx.session.exec(select(FeedItemMatch.item_id).where(FeedItemMatch.show_id.in_(touched))).all())
+    by_id = dict(matchers)
+    newcomers = [by_id[show_id] for show_id in changed if show_id in by_id]
+    cache = ctx.caches.parsed_cache()
+    titles = dict(ctx.session.exec(select(FeedItem.id, FeedItem.title)).all())
+    for item_id, title in titles.items():
+        if item_id not in affected and any(matching.broad_match(m, title, cache) for m in newcomers):
+            affected.add(item_id)
+    gone = removed - completed
+    if gone:
+        # A completed show keeps its matches for its Releases tab, as ``rematch`` does.
+        ctx.session.execute(delete(FeedItemMatch).where(FeedItemMatch.show_id.in_(gone)))
+    ordered = sorted(affected)
+    for start in range(0, len(ordered), 500):
+        chunk = ordered[start:start + 500]
+        ctx.session.execute(delete(FeedItemMatch).where(FeedItemMatch.item_id.in_(chunk), FeedItemMatch.show_id.not_in(completed)))
+    for item_id in ordered:
+        title = titles.get(item_id)
+        if title is None:
+            continue
+        for show_id in matching.matching_show_ids(matchers, title, cache):
+            if show_id not in completed:
+                ctx.session.add(FeedItemMatch(item_id=item_id, show_id=show_id))
+    ctx.session.flush()
 
 
 def prune(ctx: Context) -> int:

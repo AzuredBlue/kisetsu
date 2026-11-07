@@ -147,7 +147,7 @@ def _draft(ctx: Context, entry: Dict[str, Any], folder: Optional[Dict[str, Any]]
     ctx.session.flush()
     shows.ensure_episodes(ctx, show)
     ctx.session.flush()
-    ingest.rematch(ctx, [show.id])
+    ingest.ensure_matches_current(ctx)
     return show
 
 
@@ -350,7 +350,7 @@ def confirm(ctx: Context, entry: Dict[str, Any], feed_id: int, item_ids: List[in
         ctx.session.delete(dismissed)
     episodes = shows.ensure_episodes(ctx, show)
     ctx.session.flush()
-    ingest.rematch(ctx, [show.id])
+    ingest.ensure_matches_current(ctx)
     feeds.pin(ctx, show, feed)
     if folder is not None:
         found = adoption.feed_from_saved_files(ctx, show, folder["files"], [])
