@@ -3,9 +3,10 @@
 import logging
 import os
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, Iterator, List, Optional, Tuple
 from uuid import uuid4
 
 from sqlalchemy import func
@@ -340,18 +341,49 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     dl.state = DownloadState.ADDING
     ctx.session.add(dl)
     ctx.checkpoint()
+    if ctx.pending_adds is not None:
+        ctx.pending_adds.append((dl, episode))
+        recompute_episode(ctx, episode)
+        return
+    _find_added(ctx, [(dl, episode)])
+
+
+@contextmanager
+def batched_adds(ctx: Context) -> Iterator[None]:
+    """The adds made inside are looked for in qBittorrent with one sync at the end, instead of a sync each."""
+    if ctx.pending_adds is not None:
+        yield
+        return
+    ctx.pending_adds = []
+    try:
+        yield
+    except BaseException:
+        # Not looked for now: settle finds them by their tag.
+        ctx.pending_adds = None
+        raise
+    pending, ctx.pending_adds = ctx.pending_adds, None
+    if pending:
+        _find_added(ctx, pending)
+
+
+def _find_added(ctx: Context, added: List[Tuple[Download, Episode]]) -> None:
+    """Sync once and take up each torrent just added; one qBittorrent does not show yet waits for settle."""
     try:
         ctx.qbit.sync()
     except QbitError:
-        dl.last_error = "Waiting for qBittorrent to show the new torrent."
-        recompute_episode(ctx, episode)
-        return
-    torrent = locate(ctx, dl)
-    if torrent is None:
-        dl.last_error = "Waiting for qBittorrent to show the new torrent."
-        recompute_episode(ctx, episode)
-        return
-    _exposed(ctx, dl, episode, torrent)
+        torrents_seen = False
+    else:
+        torrents_seen = True
+    for dl, episode in added:
+        if dl.state != DownloadState.ADDING:
+            continue
+        torrent = locate(ctx, dl) if torrents_seen else None
+        if torrent is None:
+            dl.last_error = "Waiting for qBittorrent to show the new torrent."
+            ctx.session.add(dl)
+            recompute_episode(ctx, episode)
+            continue
+        _exposed(ctx, dl, episode, torrent)
 
 
 def _learned_name(dl: Download) -> Optional[str]:

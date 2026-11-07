@@ -392,21 +392,23 @@ def grab_pass(ctx: Context, only: Optional[Set[int]] = None, held: Optional[Set[
     if held is None:
         held = library.held_ids(ctx)
     facts = facts_for(ctx, shows)
-    for show in shows:
-        if show.feed_state != FeedState.LOCKED and held and show.id in held:
-            continue
-        name = show.title(ctx.settings.title_language)
-        try:
-            _grab_show(ctx, show, facts[show.id], all_feeds, result)
-            ctx.checkpoint()
-        except QbitError as e:
-            result.errors.append(f"{name}: {e}")
-            break
-        except Exception as e:
-            # One show's bad data must not stop every other show from being grabbed for.
-            ctx.session.rollback()
-            logger.warning(f"Grabbing for '{name}' failed: {e}", exc_info=True)
-            result.failed.append(f"{name}: {e}")
+    # Every torrent the pass adds is looked for with one qBittorrent sync at the end, not one sync per add.
+    with downloads.batched_adds(ctx):
+        for show in shows:
+            if show.feed_state != FeedState.LOCKED and held and show.id in held:
+                continue
+            name = show.title(ctx.settings.title_language)
+            try:
+                _grab_show(ctx, show, facts[show.id], all_feeds, result)
+                ctx.checkpoint()
+            except QbitError as e:
+                result.errors.append(f"{name}: {e}")
+                break
+            except Exception as e:
+                # One show's bad data must not stop every other show from being grabbed for.
+                ctx.session.rollback()
+                logger.warning(f"Grabbing for '{name}' failed: {e}", exc_info=True)
+                result.failed.append(f"{name}: {e}")
     if result.started or result.missed:
         ctx.emit("shows", "history")
     return result

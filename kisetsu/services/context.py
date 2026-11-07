@@ -58,6 +58,8 @@ class Context:
     # Parts of the UI whose data changed; the engine publishes them after the job commits.
     topics: Set[str] = field(default_factory=set)
     notify: Optional[Callable[[str, str, Optional[str]], None]] = None
+    # While set (see ``downloads.batched_adds``), the torrents just added, which one sync looks for together afterwards.
+    pending_adds: Optional[List[Any]] = None
 
     def emit(self, *topics: str) -> None:
         self.topics.update(topics)

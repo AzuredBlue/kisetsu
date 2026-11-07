@@ -108,6 +108,22 @@ def test_a_release_published_before_its_episode_aired_is_an_earlier_season(world
     assert run(world).started == 0 and world.episode(show, 3).status == EpisodeStatus.WANTED
 
 
+def test_a_pass_looks_for_every_torrent_it_added_with_one_sync(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    other = world.show(2, "Dandadan", episodes=1, first_air=START)
+    for n in (1, 2, 3):
+        post(world, top, f"[Grp] Sousou no Frieren - {n:02d} (1080p).mkv", START - timedelta(days=7 * (3 - n)))
+    post(world, top, "[Grp] Dandadan - 01 (1080p).mkv")
+    world.qbit.sync()  # startup's first sync
+    world.qbit.calls.clear()
+    assert run(world).started == 4
+    assert len(world.qbit.calls_named("add_torrent")) == 4 and len(world.qbit.calls_named("sync")) == 1
+    # Each was found in qBittorrent by that one sync and is downloading.
+    assert [d[2] for d in downloaded(world, show)] == [DownloadState.DOWNLOADING] * 4
+    assert [world.episode(show, n).status for n in (1, 2, 3)] + [world.episode(other, 1).status] == [EpisodeStatus.DOWNLOADING] * 4
+
+
 def test_an_older_wanted_episode_is_missed_and_still_grabbed_when_it_turns_up(world):
     top = world.feed("Top", "https://top/rss", 1)
     top.last_ok_at = START
