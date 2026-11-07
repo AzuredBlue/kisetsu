@@ -1,10 +1,11 @@
 import asyncio
+from collections import deque
 from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional, Set
+from typing import Any, Callable, Deque, Dict, List, Mapping, Optional, Set
 import httpx2
 
 from kisetsu.clients import traffic
@@ -19,6 +20,8 @@ MAX_SCHEDULE_PAGES = 20
 DEFAULT_RATE_LIMIT = 30
 # Requests per minute left unused, for actions the user starts by hand.
 RATE_LIMIT_RESERVE = 5
+# The shortest gap between two requests, so a burst still reaches AniList one request at a time.
+MIN_REQUEST_GAP_SECONDS = 0.5
 # The longest one request waits for its turn; a longer wait is reported to the caller.
 MAX_PACING_WAIT_SECONDS = 5.0
 # How long to stop asking after a 429 that names no wait, and the most a 429 may impose.
@@ -203,14 +206,16 @@ class RateGovernor:
     def reset(self) -> None:
         self.limit = DEFAULT_RATE_LIMIT
         self._next_slot = 0.0
+        # When each request of the last minute went (or will go) out, oldest first.
+        self._sent: Deque[float] = deque()
         self._blocked_until = 0.0
         self._blocked_by = ""
         self._failures = 0
 
     @property
-    def interval(self) -> float:
-        """Seconds between two requests: the limit minus the reserve, spread over a minute."""
-        return 60.0 / max(1, self.limit - RATE_LIMIT_RESERVE)
+    def budget(self) -> int:
+        """Requests allowed in any minute: the limit minus the reserve."""
+        return max(1, self.limit - RATE_LIMIT_RESERVE)
 
     def retry_in(self) -> float:
         return max(0.0, self._blocked_until - self._clock())
@@ -231,15 +236,24 @@ class RateGovernor:
         return AniListRateLimited(f"AniList is rate limiting this client; retry in {wait:.0f}s.", retry_in=wait)
 
     async def acquire(self) -> None:
-        """Wait for this request's turn; raise AniListDeferred when AniList is blocked or the wait is too long."""
+        """Wait for this request's turn; raise AniListDeferred when AniList is blocked or the wait is too long.
+
+        Requests go out a short gap apart until the minute's budget is spent; then the next waits until the oldest of
+        them is a minute old. No minute ever holds more than the budget, yet a burst (a first sync) is not spread out.
+        """
         now = self._clock()
         if now < self._blocked_until:
             raise self._deferral(self._blocked_until - now)
+        while self._sent and now - self._sent[0] >= 60.0:
+            self._sent.popleft()
         slot = max(now, self._next_slot)
+        if len(self._sent) >= self.budget:
+            slot = max(slot, self._sent[len(self._sent) - self.budget] + 60.0)
         wait = slot - now
         if wait > MAX_PACING_WAIT_SECONDS:
             raise AniListRateLimited(f"AniList request budget used up; retry in {wait:.0f}s.", retry_in=wait)
-        self._next_slot = slot + self.interval
+        self._sent.append(slot)
+        self._next_slot = slot + MIN_REQUEST_GAP_SECONDS
         if wait > 0:
             await asyncio.sleep(wait)
 
