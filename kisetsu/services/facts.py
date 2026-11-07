@@ -12,10 +12,12 @@ def facts_for(ctx: Context, shows: Iterable[Show]) -> Dict[int, ShowFacts]:
     """Plain-data views of shows for the pure scheduling and status rules."""
     shows = list(shows)
     ids = [show.id for show in shows]
-    episodes: Dict[int, List[Episode]] = defaultdict(list)
+    episodes: Dict[int, List[EpisodeFacts]] = defaultdict(list)
     if ids:
-        for episode in ctx.session.exec(select(Episode).where(Episode.show_id.in_(ids))).all():
-            episodes[episode.show_id].append(episode)
+        # Only the columns the rules read: loading every episode as a full row costs far more on a big library.
+        columns = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status, Episode.retry_after)
+        for show_id, number, air_at, status, retry_after in ctx.session.exec(columns.where(Episode.show_id.in_(ids))).all():
+            episodes[show_id].append(EpisodeFacts(number, air_at, status, retry_after))
     result: Dict[int, ShowFacts] = {}
     for show in shows:
         rows = episodes.get(show.id, [])
@@ -31,8 +33,6 @@ def facts_for(ctx: Context, shows: Iterable[Show]) -> Dict[int, ShowFacts]:
             anilist_status=show.anilist_status,
             next_airing_episode=show.next_airing_episode,
             next_airing_at=show.next_airing_at,
-            episodes=tuple(
-                EpisodeFacts(e.number, e.air_at, e.status, e.retry_after) for e in sorted(rows, key=lambda e: e.number)
-            ),
+            episodes=tuple(sorted(rows, key=lambda e: e.number)),
         )
     return result
