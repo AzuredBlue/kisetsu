@@ -372,10 +372,6 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
         show.next_airing_episode == 1 and show.next_airing_at is not None and show.next_airing_at > state.horizon
     ):
         return
-    newest_wanted = max(
-        (e.number for e in state.episodes if e.status == EpisodeStatus.WANTED and (state.newest_aired is None or e.number <= state.newest_aired)),
-        default=None,
-    )
     candidates = _candidate_feeds(ctx, show, all_feeds)
     # Choosing a feed reads every candidate without learning from it; only the feed taken is read again with learning.
     resolved_by_feed = {f.id: resolve(ctx, state, f, learn=False) for f in candidates}
@@ -385,7 +381,7 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
         resolved, best = resolve(ctx, state, chosen)
         resolved_by_feed[chosen.id] = (resolved, best)
         for entry in resolved:
-            if _take(ctx, state, chosen, entry, best, newest_wanted):
+            if _take(ctx, state, chosen, entry, best):
                 grabbed_from = chosen.id
                 result.started += 1
     if any(f.last_ok_at is not None and f.failing_since is None for f in candidates):
@@ -414,7 +410,7 @@ def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolve
     return feeds.assign(ctx, show, carriers)
 
 
-def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dict[int, int], newest_wanted: Optional[int]) -> bool:
+def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dict[int, int]) -> bool:
     episode, version, item = entry.episode, entry.version, entry.item
     # The user chose to go without this one: only taking that back, or grabbing it by hand, gets it.
     if episode.status == EpisodeStatus.SKIPPED:
@@ -428,8 +424,8 @@ def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dic
         # An episode that came in a batch keeps it: replacing it would delete the whole batch with its files.
         return False
     air_at = episode.air_at
-    if not upgrade and air_at is None and newest_wanted is not None and entry.number < newest_wanted:
-        return False
+    # An episode with no air time is taken like any other (the whole season is eligible); map_episode already
+    # refuses numbers past the newest aired one.
     if not upgrade and air_at is not None and _undated(item) and ctx.now - air_at > timedelta(days=HUNTING_RECENT_DAYS):
         return False
     if episode.retry_after is not None and episode.retry_after > ctx.now:

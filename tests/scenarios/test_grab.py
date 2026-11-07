@@ -214,10 +214,27 @@ def test_an_undated_item_does_not_fill_an_old_episode(world):
     assert run(world).started == 0
 
 
-def test_an_episode_without_an_air_time_takes_only_the_newest_wanted(world):
+def test_episodes_without_an_air_time_are_all_taken_in_one_pass(world):
     top = world.feed("Top", "https://top/rss", 1)
-    world.show(episodes=3, total_episodes=3, next_airing_episode=4)
-    post(world, top, "[Grp] Sousou no Frieren - 01 (1080p).mkv")
+    show = world.show(episodes=3, total_episodes=12, next_airing_episode=4)
+    for n in (1, 2, 3):
+        post(world, top, f"[Grp] Sousou no Frieren - {n:02d} (1080p).mkv")
+    assert run(world).started == 3
+    assert set(world.statuses(show).values()) == {EpisodeStatus.DOWNLOADING}
+
+
+def test_an_episode_without_an_air_time_that_has_not_aired_is_still_not_taken(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=3, total_episodes=12, next_airing_episode=4)
+    post(world, top, "[Grp] Sousou no Frieren - 05 (1080p).mkv")
+    assert run(world).started == 0
+    assert 5 not in world.statuses(show) or world.statuses(show)[5] == EpisodeStatus.WANTED
+
+
+def test_an_older_seasons_release_is_still_refused_for_episodes_without_an_air_time(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    world.show(episodes=3, total_episodes=12, next_airing_episode=4, title="Sousou no Frieren 2nd Season")
+    post(world, top, "[Grp] Sousou no Frieren S1 - 02 (1080p).mkv")
     assert run(world).started == 0
 
 
