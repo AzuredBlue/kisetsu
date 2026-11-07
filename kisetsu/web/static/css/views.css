@@ -370,6 +370,15 @@ section + section { margin-top: .5rem; }
 .test-wait { color: rgb(var(--text-3)); font-size: .75rem; }
 .danger-zone { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; }
 .page.medium { & .adv { display: block; } }
+/* Settings: the main sections side by side when there is room, so they read at a glance; Advanced and Clear all span both. */
+.settings { container-type: inline-size; & .adv { display: block; } }
+.settings-cols { display: grid; gap: 1.25rem; align-items: start; }
+.settings-col { display: grid; gap: 1.25rem; align-content: start; min-width: 0; }
+@container (min-width: 60rem) {
+  .settings-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; }
+  /* Half a page is too narrow for a long field beside its name: it goes under it at full width. */
+  .settings-cols .set-ctl.wide { flex: 1 1 100%; width: auto; }
+}
 .backup-compare { width: 100%; border-collapse: collapse; font-size: .8125rem;
   & th, & td { padding: .3125rem .5rem; text-align: left; vertical-align: top; font-weight: 400; }
   & thead th { color: rgb(var(--text-3)); font-size: .75rem; }

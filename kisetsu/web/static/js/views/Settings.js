@@ -34,7 +34,7 @@ export function Settings() {
   const [test, setTest] = useState({ state: '', text: '' });
   const [exporting, setExporting] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  if (!data) return html`<div class="page medium">${error ? html`<${LoadError} what="the settings" error=${error} reload=${reload} />` : null}</div>`;
+  if (!data) return html`<div class="page wide settings">${error ? html`<${LoadError} what="the settings" error=${error} reload=${reload} />` : null}</div>`;
   const bind = (key) => form.bind(key);
 
   const save = async () => {
@@ -104,48 +104,52 @@ export function Settings() {
   };
 
   const accent = currentAccent();
-  return html`<div class="page medium">
-    <section>
-      <h3 class="section-title section-gap">Downloads</h3>
-      <div class="card card-divided">
-        <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
-        <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
-        <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
-        <${SetRow} name="Preferred quality" hint="Downloaded when the feed has it, otherwise the closest resolution above it. Lower resolutions are never downloaded."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
-        <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
-      </div>
-    </section>
-
-    <section>
-      <h3 class="section-title section-gap">Connections</h3>
-      <div class="card card-divided">
-        <div class="set-row">
-          <div class="set-text">
-            <div class="set-name">qBittorrent</div>
-            <p class="field-hint">Leave the password blank to keep the saved one.</p>
-            <div class="row" style="margin-top:.5rem"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`mono test-${test.state}`}>${test.text}</span></div>
+  return html`<div class="page wide settings">
+    <div class="settings-cols">
+      <div class="settings-col">
+        <section>
+          <h3 class="section-title section-gap">Downloads</h3>
+          <div class="card card-divided">
+            <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
+            <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(blank)" ...${bind('default_category')} /><//>
+            <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
+            <${SetRow} name="Preferred quality" hint="Downloaded when the feed has it, otherwise the closest resolution above it. Lower resolutions are never downloaded."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
+            <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
           </div>
-          <div class="set-ctl wide set-stack">
-            <input class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${bind('qbit_host')} />
-            <div class="set-pair">
-              <input class="field" placeholder="Username" aria-label="qBittorrent username" ...${bind('qbit_username')} />
-              <input class="field" type="password" placeholder="Password" aria-label="qBittorrent password" autocomplete="new-password" ...${bind('qbit_password')} />
+        </section>
+      </div>
+      <div class="settings-col">
+        <section>
+          <h3 class="section-title section-gap">Connections</h3>
+          <div class="card card-divided">
+            <div class="set-row">
+              <div class="set-text">
+                <div class="set-name">qBittorrent</div>
+                <p class="field-hint">Leave the password blank to keep the saved one.</p>
+                <div class="row" style="margin-top:.5rem"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`mono test-${test.state}`}>${test.text}</span></div>
+              </div>
+              <div class="set-ctl wide set-stack">
+                <input class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${bind('qbit_host')} />
+                <div class="set-pair">
+                  <input class="field" placeholder="Username" aria-label="qBittorrent username" ...${bind('qbit_username')} />
+                  <input class="field" type="password" placeholder="Password" aria-label="qBittorrent password" autocomplete="new-password" ...${bind('qbit_password')} />
+                </div>
+              </div>
             </div>
+            <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Whose list to follow: what airs this season or next on Watching and Planning. Add anything else from Shows, Add show." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
           </div>
-        </div>
-        <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Whose list to follow: what airs this season or next on Watching and Planning. Add anything else from Shows, Add show." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
+        </section>
+        <section>
+          <h3 class="section-title section-gap">Appearance</h3>
+          <div class="card card-divided">
+            <${SetRow} name="Theme" hint="Saved in this browser only. System follows your OS setting."><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
+            <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
+            <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
+            <${SetRow} name="Colour tint" hint="How much the accent colours the backgrounds."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
+          </div>
+        </section>
       </div>
-    </section>
-
-    <section>
-      <h3 class="section-title section-gap">Appearance</h3>
-      <div class="card card-divided">
-        <${SetRow} name="Theme" hint="Saved in this browser only. System follows your OS setting."><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
-        <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
-        <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
-        <${SetRow} name="Colour tint" hint="How much the accent colours the backgrounds."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
-      </div>
-    </section>
+    </div>
 
     <details class="adv">
       <summary class="section-title">Advanced</summary>
