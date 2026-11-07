@@ -42,6 +42,8 @@ HUNT_IDLE_MAX = 3600.0
 FOUND_KEEP_SECONDS = 3600.0
 # The list the setup check fetched is taken by the sync that follows within this time, instead of asking again.
 LIST_REUSE_SECONDS = 120.0
+# A burst of pokes (a search finishing every second or so) runs the job at most once in this time; a lone poke runs it at once.
+BURST_GAP_SECONDS = 1.0
 # SubsPlease's schedule of the shows it airs is read again for a past-release search after this long.
 SCHEDULE_KEEP = timedelta(hours=1)
 # Where what the searches learned of each site (``sites.Grouping``) is kept across restarts.
@@ -82,6 +84,8 @@ class Jobs:
         self.read_schedule = sites.subsplease_schedule
         self._schedule: Optional[List[str]] = None
         self._schedule_at: Optional[datetime] = None
+        # When ``_poke_soon`` last let each job run.
+        self._poked_at: Dict[str, float] = {}
         self.fetch_hues = fetch_hues
         self.ready = asyncio.Event()
         # Set once the first full qBittorrent sync is in. Downloads can be followed from then on (but not added to, deleted
@@ -119,6 +123,17 @@ class Jobs:
 
     def poke(self, name: str, delay: float = 0.0) -> None:
         self.scheduler.poke(name, delay)
+
+    def _poke_soon(self, name: str, gap: float = BURST_GAP_SECONDS) -> None:
+        """Poke the job now, or ``gap`` after the run the last such poke asked for, so a burst makes one run in that time.
+
+        A poke while that run is still to come asks for it again (in case it ran early on another poke), not for a later one.
+        """
+        now = self.scheduler.clock()
+        last = self._poked_at.get(name, now - gap)
+        at = last if last > now else max(now, last + gap)
+        self._poked_at[name] = at
+        self.poke(name, at - now)
 
     @asynccontextmanager
     async def stopped(self) -> AsyncIterator[None]:
@@ -407,7 +422,8 @@ class Jobs:
             self._set_health(qbit=result.errors[0])
         self._set_health(grab=result.failed[0] if result.failed else None)
         if result.started or result.adopted:
-            self.poke("settle")
+            # The grab already took up the torrents qBittorrent shows; settle follows them as often as it does a busy queue.
+            self._poke_soon("settle", SETTLE_BUSY)
         return result.next_candidate_in
 
     async def settle(self) -> Optional[float]:
@@ -509,7 +525,7 @@ class Jobs:
                     stopped.append(found.stopped)
                     return added
                 # Whatever it found, a finished search lets the grab mark what is still not there as missed.
-                self.poke("grab")
+                self._poke_soon("grab")
                 return added
 
         added = sum(await asyncio.gather(*(one(item) for item in due)))

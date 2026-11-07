@@ -615,3 +615,20 @@ def test_subsplease_schedule_is_read_once_and_only_with_a_subsplease_feed(env):
 
     run(env, go)
     assert len(reads) == 1
+
+
+def test_a_burst_of_pokes_runs_the_job_at_most_once_a_second(env):
+    now = [100.0]
+    asked = []
+    env.jobs.scheduler.clock = lambda: now[0]
+    env.jobs.scheduler.poke = lambda name, delay=0.0: asked.append((name, round(now[0] + delay, 3)))
+    for t in (100.0, 100.2, 100.5, 100.9, 101.3, 105.0):
+        now[0] = t
+        env.jobs._poke_soon("grab")
+    # The first runs at once; the rest of the burst share one run a second, and a lone poke later runs at once.
+    assert asked == [("grab", 100.0), ("grab", 101.0), ("grab", 101.0), ("grab", 101.0), ("grab", 102.0), ("grab", 105.0)]
+    asked.clear()
+    for t in (110.0, 111.0, 112.0):
+        now[0] = t
+        env.jobs._poke_soon("settle", 4.0)
+    assert asked == [("settle", 110.0), ("settle", 114.0), ("settle", 114.0)]
