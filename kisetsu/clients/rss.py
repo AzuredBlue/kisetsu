@@ -14,6 +14,8 @@ from urllib.parse import parse_qsl, unquote, urlparse
 
 import httpx2
 
+from kisetsu.clients import traffic
+
 USER_AGENT = "Kisetsu (feed reader)"
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 10.0
@@ -146,17 +148,23 @@ def _retry_after(response: httpx2.Response) -> float:
     return RATE_LIMIT_WAIT_SECONDS
 
 
-async def fetch_bytes(client: httpx2.AsyncClient, url: str) -> bytes:
-    """GET ``url``, waiting out and retrying a 429 as long as its host asks. Every failure becomes a FeedFetchError."""
+async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed read") -> bytes:
+    """GET ``url``, waiting out and retrying a 429 as long as its host asks. Every failure becomes a FeedFetchError.
+
+    Each attempt is counted under ``kind`` (see ``traffic``).
+    """
     host = urlparse(url).hostname or url
     for attempt in range(RATE_LIMIT_RETRIES + 1):
         await _host_gate.wait(host)
         try:
             response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
         except httpx2.TimeoutException as e:
+            traffic.record(kind, host, traffic.ERROR)
             raise FeedFetchError(f"{host} did not answer in time") from e
         except httpx2.RequestError as e:
+            traffic.record(kind, host, traffic.ERROR)
             raise FeedFetchError(f"{host} could not be reached ({e})") from e
+        traffic.record(kind, host, traffic.outcome_of(response.status_code))
         if response.status_code != 429:
             break
         wait = _retry_after(response)

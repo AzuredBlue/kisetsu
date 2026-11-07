@@ -361,6 +361,16 @@ section + section { margin-top: .5rem; }
 .log-line { display: flex; align-items: flex-start; gap: .75rem; padding: .125rem .375rem; border-radius: var(--r-xs); line-height: 1.6; &:hover { background: rgb(var(--chrome)); } }
 .log-time { flex: none; color: rgb(var(--text-3)); user-select: none; }
 .log-msg { flex: 1; color: rgb(var(--text-2)); overflow-wrap: anywhere; & b.bad { color: rgb(var(--bad)); } & b.warn { color: rgb(var(--warn)); } & b.info { color: rgb(var(--info)); } }
+.requests-card { margin-bottom: .75rem; padding: .5rem 1rem; font-size: .8125rem;
+  & summary { cursor: pointer; gap: .5rem; min-height: 2rem; & .btn { margin-left: auto; } }
+  & p { margin: .5rem 0; }
+}
+.requests-table { margin: .25rem 0 .5rem; overflow-x: auto; display: block;
+  & th, & td { padding: .3125rem .5rem; text-align: left; white-space: nowrap; font-weight: 400; }
+  & thead th { color: rgb(var(--text-3)); font-size: .75rem; }
+  & tbody tr { border-top: 1px solid rgb(var(--line-soft)); }
+  & .num { text-align: right; } & .warn { color: rgb(var(--warn)); } & .bad { color: rgb(var(--bad)); }
+}
 
 /* ---- Settings ------------------------------------------------------------------------------- */
 

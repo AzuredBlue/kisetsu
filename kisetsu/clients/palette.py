@@ -10,6 +10,8 @@ from urllib.parse import urlparse
 
 import httpx2
 
+from kisetsu.clients import traffic
+
 logger = logging.getLogger(__name__)
 
 # accent hue, accent saturation, secondary hue, tint hue, tint saturation
@@ -170,10 +172,13 @@ def is_allowed_image_url(url: str) -> bool:
 async def _read(url: str, measure: Callable[[bytes], Optional[T]]) -> Tuple[bool, Optional[T]]:
     if not is_allowed_image_url(url):
         return False, None
+    answered = False
     try:
         # Redirects stay off: the host allow-list only covers the URL asked for.
         async with httpx2.AsyncClient(timeout=10.0, follow_redirects=False) as client:
             async with client.stream("GET", url) as resp:
+                answered = True
+                traffic.record("Cover art", traffic.host_of(url), traffic.outcome_of(resp.status_code))
                 resp.raise_for_status()
                 data = bytearray()
                 async for chunk in resp.aiter_bytes():
@@ -182,6 +187,8 @@ async def _read(url: str, measure: Callable[[bytes], Optional[T]]) -> Tuple[bool
                         return False, None
         return True, await asyncio.to_thread(measure, bytes(data))
     except Exception as exc:
+        if not answered:
+            traffic.record("Cover art", traffic.host_of(url), traffic.ERROR)
         logger.debug("Could not read colours from %s: %s", url, exc)
         return False, None
 

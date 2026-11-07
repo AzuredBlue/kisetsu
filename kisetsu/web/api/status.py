@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy import delete, func
 from sqlmodel import select
 
+from kisetsu.clients import traffic
 from kisetsu.clients.anilist import rate_limit_status
 from kisetsu.db.schema import Download, Event, Feed
 from kisetsu.services.context import get_state, set_state
@@ -99,6 +100,18 @@ async def dismiss_attention(request: Request, body: Dismiss):
 @router.get("/logs")
 async def get_logs(request: Request, limit: int = 100):
     return runtime(request).logs.recent(limit)
+
+
+@router.get("/requests")
+async def get_requests():
+    """The requests sent to each site since start (or the last reset), by kind."""
+    return traffic.snapshot()
+
+
+@router.delete("/requests")
+async def reset_requests():
+    traffic.reset()
+    return {"status": "success"}
 
 
 @router.get("/history")

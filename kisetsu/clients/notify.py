@@ -10,6 +10,7 @@ from typing import Optional
 
 import httpx2
 
+from kisetsu.clients import traffic
 from kisetsu.clients.palette import MAX_IMAGE_BYTES, is_allowed_image_url
 from kisetsu.config import CONFIG_DIR
 
@@ -29,7 +30,12 @@ def _cached_cover(url: str) -> Optional[Path]:
     try:
         # Redirects stay off: the host allow-list only covers the URL asked for.
         with httpx2.Client(timeout=10.0, follow_redirects=False) as client:
-            resp = client.get(url)
+            try:
+                resp = client.get(url)
+            except httpx2.RequestError:
+                traffic.record("Notification cover", traffic.host_of(url), traffic.ERROR)
+                raise
+            traffic.record("Notification cover", traffic.host_of(url), traffic.outcome_of(resp.status_code))
             resp.raise_for_status()
             if len(resp.content) > MAX_IMAGE_BYTES:
                 return None

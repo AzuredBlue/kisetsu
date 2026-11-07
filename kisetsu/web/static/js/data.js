@@ -9,6 +9,8 @@ export const history = resource('/api/history?limit=100', ['history']);
 // Episodes across every show that need the user's eye (Shows page).
 export const attention = resource('/api/attention', ['shows', 'history']);
 export const logs = resource('/api/logs?limit=300', ['logs']);
+// Requests sent to each site since start (Logs page).
+export const requests = resource('/api/requests', ['logs', 'status', 'feeds', 'shows']);
 export const setupStatus = resource('/api/setup/status', ['settings', 'status']);
 export const showPage = (id) => keyedResource(`/api/shows/${id}`, [`show:${id}`, 'shows']);
 export const feedMatches = (id) => keyedResource(`/api/shows/${id}/feed-matches`, [`show:${id}`, 'shows', 'feeds']);

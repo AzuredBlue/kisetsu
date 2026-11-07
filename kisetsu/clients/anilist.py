@@ -7,7 +7,9 @@ import time
 from typing import Any, Callable, Dict, List, Mapping, Optional, Set
 import httpx2
 
-logger = logging.getLogger("kisetsu.clients.anilist")
+from kisetsu.clients import traffic
+
+logger =logging.getLogger("kisetsu.clients.anilist")
 
 ANILIST_GRAPHQL_URL = "https://graphql.anilist.co"
 
@@ -105,6 +107,14 @@ query ($ids: [Int], $page: Int, $after: Int) {
   }
 }
 """
+
+ANILIST_HOST = "graphql.anilist.co"
+# What each query is called in the request counts (``traffic``).
+QUERY_KINDS = {
+    USER_SEASONAL_QUERY: "AniList list sync",
+    AIRING_SCHEDULE_QUERY: "AniList full schedule",
+    AIRING_UPCOMING_QUERY: "AniList upcoming schedule",
+}
 
 
 def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, Any]:
@@ -377,15 +387,21 @@ class AniListClient:
         """
         backoff = 2.0
         problem = "AniList did not answer."
+        kind = QUERY_KINDS.get(query, "AniList")
         async with httpx2.AsyncClient(timeout=self.timeout) as client:
             for attempt in range(max_retries):
                 await rate_governor.acquire()
                 try:
-                    resp = await client.post(
-                        ANILIST_GRAPHQL_URL,
-                        json={"query": query, "variables": variables},
-                        headers={"Content-Type": "application/json", "Accept": "application/json"},
-                    )
+                    try:
+                        resp = await client.post(
+                            ANILIST_GRAPHQL_URL,
+                            json={"query": query, "variables": variables},
+                            headers={"Content-Type": "application/json", "Accept": "application/json"},
+                        )
+                    except httpx2.RequestError:
+                        traffic.record(kind, ANILIST_HOST, traffic.ERROR)
+                        raise
+                    traffic.record(kind, ANILIST_HOST, traffic.outcome_of(resp.status_code))
                     rate_governor.note_response(resp.headers)
                     if resp.status_code == 429:
                         wait = rate_governor.note_rate_limited(resp.headers)
@@ -435,7 +451,9 @@ class AniListClient:
                     headers={"Content-Type": "application/json", "Accept": "application/json"},
                 )
         except httpx2.RequestError as e:
+            traffic.record("AniList user check", ANILIST_HOST, traffic.ERROR)
             raise AniListError(f"AniList network connection failed: {e}") from e
+        traffic.record("AniList user check", ANILIST_HOST, traffic.outcome_of(resp.status_code) if resp.status_code != 404 else traffic.OK)
         if resp.status_code == 404:
             return False
         if resp.status_code != 200:

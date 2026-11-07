@@ -171,6 +171,22 @@ async def test_logs_are_returned_newest_last(web):
     assert [line["message"] for line in (await web.client.get("/api/logs", params={"limit": 1})).json()] == ["second"]
 
 
+async def test_the_request_counts_are_reported_and_can_be_reset(web):
+    from kisetsu.clients import traffic
+
+    traffic.reset()
+    traffic.record("Feed read", "nyaa.si")
+    traffic.record("Feed read", "nyaa.si", traffic.ERROR)
+    traffic.record("AniList list sync", "graphql.anilist.co")
+    body = (await web.client.get("/api/requests")).json()
+    assert body["total"] == 3
+    assert [(r["kind"], r["host"], r["requests"], r["error"]) for r in body["rows"]] == [
+        ("Feed read", "nyaa.si", 2, 1), ("AniList list sync", "graphql.anilist.co", 1, 0),
+    ]
+    assert (await web.client.delete("/api/requests")).status_code == 200
+    assert (await web.client.get("/api/requests")).json()["rows"] == []
+
+
 async def test_a_manual_refresh_pokes_the_feed_read_and_the_anilist_sync(web):
     await web.client.post("/api/refresh")
     assert {"refresh_feeds", "sync_anilist"} <= set(web.pokes) and web.runtime.jobs.refresh_all

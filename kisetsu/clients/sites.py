@@ -136,9 +136,9 @@ async def search_feed(
     """The feed's releases for ``term``; None when this kind of feed cannot be searched."""
     site = site_of(feed_url)
     if site == "nyaa":
-        return parse_feed(await fetch_bytes(client, nyaa_search_url(feed_url, term)))
+        return parse_feed(await fetch_bytes(client, nyaa_search_url(feed_url, term), "Search"))
     if site == "subsplease":
-        body = await fetch_bytes(client, subsplease_search_url(term))
+        body = await fetch_bytes(client, subsplease_search_url(term), "Search")
         try:
             payload = json.loads(body)
         except ValueError:

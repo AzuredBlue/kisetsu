@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Set
 import qbittorrentapi
 import requests
 
+from kisetsu.clients import traffic
+
 
 logger = logging.getLogger("kisetsu.clients.qbittorrent")
 
@@ -215,7 +217,9 @@ class Qbit:
             client = self._factory()
             client.auth_log_in()
         except Exception as e:
+            traffic.record("qBittorrent login", traffic.host_of(self.host), traffic.ERROR)
             raise self._failed(e) from e
+        traffic.record("qBittorrent login", traffic.host_of(self.host))
         self._client = client
         return client
 
@@ -256,15 +260,19 @@ class Qbit:
         if write and self.read_only:
             raise QbitReadOnly("This instance is read-only; it never changes qBittorrent.")
         client = self._connect()
+        kind = "qBittorrent change" if write else "qBittorrent read"
         try:
             result = fn(client)
+            traffic.record(kind, traffic.host_of(self.host))
             self._failures = 0
             return result
         except QbitError:
             raise
         except qbittorrentapi.Conflict409Error as e:
+            traffic.record(kind, traffic.host_of(self.host), traffic.ERROR)
             raise QbitConflict(str(e)) from e
         except Exception as e:
+            traffic.record(kind, traffic.host_of(self.host), traffic.ERROR)
             error = self._failed(e)
             if isinstance(error, QbitError) and not isinstance(error, (QbitUnavailable, QbitAuthError)):
                 # A refused request says nothing about the connection; keep it.

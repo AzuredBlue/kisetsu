@@ -98,6 +98,16 @@ def _search(handler, feed_url):
     return asyncio.run(run())
 
 
+def test_every_search_attempt_is_counted_with_its_outcome():
+    from kisetsu.clients import traffic
+
+    traffic.reset()
+    answers = [httpx2.Response(429, headers={"Retry-After": "0"}), httpx2.Response(200, content=NYAA_BODY)]
+    _search(lambda request: answers.pop(0), NYAA_FEED)
+    [row] = traffic.snapshot()["rows"]
+    assert (row["kind"], row["host"], row["requests"], row["ok"], row["rate_limited"]) == ("Search", "nyaa.si", 2, 1, 1)
+
+
 def test_a_nyaa_search_requests_the_extended_query_and_parses_the_items():
     seen = []
 
