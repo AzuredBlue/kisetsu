@@ -28,27 +28,18 @@ DEFAULT_SEED_RATIO = 1.0
 # Releases marked below this many lines ("720p") are skipped; 0 takes any. Unmarked releases always count.
 DEFAULT_MIN_RESOLUTION = 1080
 MIN_RESOLUTIONS = (0, 480, 720, 1080, 2160)
-DEFAULT_REFRESH_INTERVAL_MINUTES = 360
 DEFAULT_ANILIST_SYNC_MINUTES = 360
 # How often every feed is read for new releases.
 DEFAULT_FEED_REFRESH_MINUTES = 15
 MIN_FEED_REFRESH_MINUTES = 5
 MAX_FEED_REFRESH_MINUTES = 240
-DEFAULT_STALL_WAIT_HOURS = 24
 
-DEFAULT_DOWNLOAD_MODE = "direct"
-# Stored for old settings files; nothing reads it any more (the whole season is eligible).
-DEFAULT_BACKFILL_WINDOW_DAYS = 14
 # How long after an air time the scheduler keeps polling at the fast hunting interval.
 HUNTING_RECENT_DAYS = 14
-# How long the newest aired episode may stay unfound before it counts as missed.
-MISSED_AFTER_HOURS = 24
 DEFAULT_EARLY_AIR_TOLERANCE_HOURS = 6
 # How often the direct engine refreshes the feeds of the shows it is hunting.
 DEFAULT_HUNT_INTERVAL_MINUTES = 5
 MIN_HUNT_INTERVAL_MINUTES = 2
 MAX_HUNT_INTERVAL_MINUTES = 60
-
-RULE_OBSERVER_INTERVAL_SECONDS = 300
 
 FUZZY_MATCH_THRESHOLD = 85.0

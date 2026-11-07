@@ -206,7 +206,6 @@ def test_a_read_only_client_reads_but_never_writes():
         lambda: qbit.add_torrent("magnet:x"),
         lambda: qbit.pause(["h"]),
         lambda: qbit.delete(["h"], delete_files=True),
-        lambda: qbit.rss_remove_rule("r"),
         lambda: qbit.ensure_category("Seasonal2"),
     ):
         with pytest.raises(QbitReadOnly):

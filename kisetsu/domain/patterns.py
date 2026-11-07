@@ -221,13 +221,6 @@ def compress_home_path(path: Optional[str]) -> str:
     return str(path)
 
 
-def effective_title(show, title_language: str = "english") -> str:
-    """The show's name in the configured language, falling back to romaji and then display_name."""
-    if title_language == "english" and show.title_english:
-        return show.title_english
-    return show.title_romaji or show.display_name
-
-
 def resolve_save_path(base_dir: str, display_name: str, custom_save_folder: Optional[str] = None) -> str:
     """
     Resolves the final absolute filesystem save path for an anime show.

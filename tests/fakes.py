@@ -88,7 +88,6 @@ class FakeQbit:
         self.categories = set()
         self.tag_names: set = set()
         self.rss: List[RssStoreFeed] = []
-        self.rules: Dict[str, Any] = {}
         self._hidden: Dict[str, Torrent] = {}
 
     # -- plumbing -------------------------------------------------------------
@@ -284,13 +283,6 @@ class FakeQbit:
         self._enter("rss_feeds")
         return [RssStoreFeed(f.path, f.url) for f in self.rss]
 
-    def rss_rules(self) -> Dict[str, Any]:
-        self._enter("rss_rules")
-        return dict(self.rules)
-
-    def rss_remove_rule(self, name: str) -> None:
-        self._enter("rss_remove_rule", name, write=True)
-        self.rules.pop(name, None)
 
 
 def anilist_show(

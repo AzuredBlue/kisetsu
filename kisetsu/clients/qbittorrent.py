@@ -424,11 +424,6 @@ class Qbit:
         walk(tree, "")
         return feeds
 
-    def rss_rules(self) -> Dict[str, Any]:
-        return self._call(lambda c: c.rss_rules())
-
-    def rss_remove_rule(self, name: str) -> None:
-        self._call(lambda c: c.rss_remove_rule(rule_name=name), write=True)
 
 
 def _add_failed(result: Any) -> bool:
