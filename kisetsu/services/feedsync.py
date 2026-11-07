@@ -33,6 +33,8 @@ class FeedRef:
 class Outcome:
     new: int = 0
     matched_show_ids: Set[int] = field(default_factory=set)
+    # Shows a feed their searches left out turned out to carry (``ingest.IngestResult.reconsider``).
+    reconsider: Set[int] = field(default_factory=set)
     # Feeds whose read had nothing in common with what was stored: items may have scrolled past unseen.
     gaps: List[int] = field(default_factory=list)
     failed: Dict[int, str] = field(default_factory=dict)
@@ -142,6 +144,7 @@ def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:
         stored = ingest.ingest(ctx, feed, result)
         outcome.new += stored.new
         outcome.matched_show_ids |= stored.show_ids
+        outcome.reconsider |= stored.reconsider
     return outcome
 
 

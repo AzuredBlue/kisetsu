@@ -535,3 +535,32 @@ def test_a_schedule_that_leaves_out_a_show_the_feed_carries_is_not_used(world, c
     assert {item.show_id: item.feeds for item in backfill.due(world.ctx())}[other.id] == [subs]
     assert [item.feeds for item in backfill.due(world.ctx())] == [[subs], [subs]]
     assert "leaves out" in caplog.text
+
+
+def test_a_skipped_feed_that_lists_the_show_later_has_it_searched_again(world):
+    feed = world.feed("Nyaa", NYAA, 1)
+    show = weekly_now(world)
+    feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), other(2, 0)]})
+    world.commit()
+    assert backfill.due(world.ctx()) == []
+    # Its release turns up after all (a late one, or one the schedule did not yet list): the show is searched again.
+    out = feedsync.apply_fetch(world.ctx(), {feed.id: [other(1, 30), article(title(4), START)]})
+    world.commit()
+    assert out.reconsider == {show.id}
+    assert backfill.due(world.ctx(), show_id=show.id, force=True)[0].feeds == [feed]
+    assert feedsync.apply_fetch(world.ctx(), {feed.id: [article(title(5), START)]}).reconsider == set()
+
+
+def test_subsplease_is_asked_first_for_the_name_its_schedule_gives_the_show(world):
+    subs = world.feed("SubsPlease", SUBS, 1)
+    show = world.show(1, "Mezametara Saikyou Soubi", aliases=["Saikyosoubi"], episodes=5, first_air=START - timedelta(days=21))
+    backfill.note_schedule(world.ctx(), ["Some Other Show", "Saikyosoubi"])
+    [item] = backfill.due(world.ctx())
+    asked = []
+
+    async def searcher(client, url, term, now=None):
+        asked.append(term)
+        return []
+
+    asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=searcher))
+    assert item.feeds == [subs] and asked[0] == "Saikyosoubi"

@@ -42,8 +42,8 @@ HUNT_IDLE_MAX = 3600.0
 FOUND_KEEP_SECONDS = 3600.0
 # The list the setup check fetched is taken by the sync that follows within this time, instead of asking again.
 LIST_REUSE_SECONDS = 120.0
-# SubsPlease's schedule of the shows it airs is read again after this long.
-SCHEDULE_KEEP = timedelta(hours=12)
+# SubsPlease's schedule of the shows it airs is read again for a past-release search after this long.
+SCHEDULE_KEEP = timedelta(hours=1)
 # Where what the searches learned of each site (``sites.Grouping``) is kept across restarts.
 GROUPING_KEY = "search_grouping"
 # With no AniList user set there is nothing to sync until the settings change.
@@ -269,6 +269,9 @@ class Jobs:
         if outcome.gaps:
             self.backfill_all = True
             self.poke("backfill", 5.0)
+        if outcome.reconsider:
+            # A feed their searches left out has just shown it carries them: what it holds may be what they miss.
+            self.request_backfill(sorted(outcome.reconsider))
         return outcome
 
     def request_refresh(self) -> None:

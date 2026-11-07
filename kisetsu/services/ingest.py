@@ -30,6 +30,8 @@ class IngestResult:
     new: int = 0
     matched: int = 0
     show_ids: Set[int] = field(default_factory=set)
+    # Shows matched on a feed their searches had left out as not carrying them: they are to be searched again.
+    reconsider: Set[int] = field(default_factory=set)
 
 
 def followed_shows(ctx: Context) -> List[Show]:
@@ -105,6 +107,8 @@ def ingest(ctx: Context, feed: Feed, articles: Sequence[FeedArticle]) -> IngestR
             ctx.session.add(FeedItemMatch(item_id=item.id, show_id=show_id))
             result.show_ids.add(show_id)
             result.matched += 1
+            if feed.id in ctx.caches.skipped.get(show_id, ()):
+                result.reconsider.add(show_id)
     if result.matched:
         ctx.emit("shows")
     return result

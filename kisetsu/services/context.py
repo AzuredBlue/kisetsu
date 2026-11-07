@@ -36,8 +36,11 @@ class Caches:
     searched: Dict[int, Tuple[int, datetime, FrozenSet[int], int]] = field(default_factory=dict)
     # By feed: the oldest release date its last successful read listed, and when that read was.
     read_windows: Dict[int, Tuple[datetime, datetime]] = field(default_factory=dict)
-    # Airing shows SubsPlease's schedule leaves out, as of the last past-release search (``backfill.note_schedule``).
+    # Airing shows SubsPlease's schedule leaves out, and the schedule's name of those it lists (``backfill.note_schedule``).
     off_schedule: Set[int] = field(default_factory=set)
+    schedule_names: Dict[int, str] = field(default_factory=dict)
+    # By show: the feeds its searches leave out as not carrying it (``backfill._lacking``).
+    skipped: Dict[int, Set[int]] = field(default_factory=dict)
     # Downloads whose torrent has not moved for a long time, found by the last settle pass. A read cannot ask qBittorrent,
     # so it is given this set; a pass replaces it whole and nothing edits it in place.
     stalled: Set[int] = field(default_factory=set)

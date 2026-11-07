@@ -44,6 +44,8 @@ class Due:
     target_count: Optional[int] = None
     latest_aired: Optional[int] = None
     tolerance_hours: int = 0
+    # The name SubsPlease's schedule gives the show, searched for first on SubsPlease.
+    subsplease_name: Optional[str] = None
 
     def numbers(self, releases: List[Tuple[int, Optional[datetime]]], now: datetime) -> Set[int]:
         """The show's episodes that one feed's releases (raw number, published) are for.
@@ -123,19 +125,19 @@ def note_schedule(ctx: Context, titles: Optional[List[str]]) -> None:
     schedule's title would be. The schedule is not assumed complete: when it leaves out a
     show airing now that a SubsPlease feed carries, it is not used at all.
     """
-    ctx.caches.off_schedule = set()
+    ctx.caches.off_schedule, ctx.caches.schedule_names = set(), {}
     feeds_on = subsplease_feeds(ctx)
     if not titles or not feeds_on:
         return
     airing_ids = set(ctx.session.exec(select(Episode.show_id).where(Episode.air_at > ctx.now - WEEK, Episode.air_at <= ctx.now)).all())
     airing_ids &= set(ctx.session.exec(select(Episode.show_id).where(Episode.air_at > ctx.now)).all())
     _, matchers = ingest._matchers(ctx)
-    releases = [f"[SubsPlease] {title} - 01 (1080p).mkv" for title in titles]
     cache = ctx.caches.parsed_cache()
-    off = {
-        show_id for show_id, matcher in matchers
-        if show_id in airing_ids and not any(broad_match(matcher, release, cache) for release in releases)
-    }
+    for show_id, matcher in matchers:
+        named = next((title for title in titles if broad_match(matcher, f"[SubsPlease] {title} - 01 (1080p).mkv", cache)), None)
+        if named is not None:
+            ctx.caches.schedule_names[show_id] = named
+    off = {show_id for show_id, _ in matchers if show_id in airing_ids and show_id not in ctx.caches.schedule_names}
     carried = set(ctx.session.exec(
         select(FeedItemMatch.show_id).join(FeedItem, FeedItem.id == FeedItemMatch.item_id).where(FeedItem.feed_id.in_(feeds_on))
     ).all())
@@ -192,6 +194,11 @@ def due(
             # Saved files may come from a feed that has since stopped carrying the show, so they are looked for everywhere.
             lacking = _lacking(ctx, show, show_feeds)
             show_feeds = [f for f in show_feeds if f.id not in lacking]
+            # A release from one of them later has the show searched again (``ingest.IngestResult.reconsider``).
+            if lacking:
+                ctx.caches.skipped[show.id] = lacking
+            else:
+                ctx.caches.skipped.pop(show.id, None)
             if not show_feeds:
                 continue
         signature = hash((tuple(terms), tuple(f.id for f in show_feeds), tuple(missing)))
@@ -204,7 +211,7 @@ def due(
         state = grab.show_state(ctx, show, facts_for(ctx, [show])[show.id])
         result.append(Due(
             show.id, show.title(ctx.settings.title_language), terms, show_feeds, missing, signature, state.first_air,
-            state.air_times, state.target_count, state.newest_aired, ctx.tolerance_hours,
+            state.air_times, state.target_count, state.newest_aired, ctx.tolerance_hours, ctx.caches.schedule_names.get(show.id),
         ))
     return result
 
@@ -310,6 +317,8 @@ async def _search_site(
         works = grouping.works(host) if groupable else None
         grouped = sites.any_of(item.terms)
         queries = [grouped, *item.terms] if groupable and works else list(item.terms)
+        if item.subsplease_name and sites.site_of(feed.url) == "subsplease":
+            queries = [item.subsplease_name, *(q for q in queries if q.casefold() != item.subsplease_name.casefold())]
         # The search that checks the host asks for every name alone, so the grouped search can be compared with them.
         claimed = groupable and works is None and grouping.claim(host)
         checking = claimed
