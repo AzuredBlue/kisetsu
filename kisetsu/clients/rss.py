@@ -20,8 +20,11 @@ USER_AGENT = "Kisetsu (feed reader)"
 CONNECT_TIMEOUT_SECONDS = 5.0
 READ_TIMEOUT_SECONDS = 10.0
 MAX_BODY_BYTES = 8 * 1024 * 1024
-# Requests are not spaced apart; a 429 is honoured instead. A 429 naming no wait leaves the host
-# alone this long, it is retried this many times, and a wait longer than the most is not sat out.
+# Requests to one host (feed reads and searches alike) leave at least this long between them, so a burst such as a first
+# run's searches never trips the site's rate limit.
+MIN_REQUEST_INTERVAL_SECONDS = 1.0
+# A 429 is still honoured: one naming no wait leaves the host alone this long, it is retried this many
+# times, and a wait longer than the most is not sat out.
 RATE_LIMIT_WAIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 2
 MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
@@ -112,19 +115,27 @@ def parse_feed(body: bytes) -> List[FeedArticle]:
 
 
 class HostGate:
-    """Holds back every request to a host that answered 429 until the wait it asked for is over."""
+    """Spaces the requests to each host, and holds back every request to a host that answered 429 until the wait it asked for is over.
 
-    def __init__(self, sleep=asyncio.sleep, clock=time.monotonic):
+    Each request takes the next free slot of its host before it waits, so requests started together still go one interval apart.
+    """
+
+    def __init__(self, sleep=asyncio.sleep, clock=time.monotonic, interval: float = MIN_REQUEST_INTERVAL_SECONDS):
         self._sleep = sleep
         self._clock = clock
+        self.interval = interval
         self._open_at: Dict[str, float] = {}
+        self._next_slot: Dict[str, float] = {}
 
     async def wait(self, host: str) -> None:
-        remaining = self._open_at.get(host, 0.0) - self._clock()
+        now = self._clock()
+        remaining = self._open_at.get(host, 0.0) - now
         if remaining > MAX_RATE_LIMIT_WAIT_SECONDS:
             raise FeedFetchError(f"{host} is rate limiting requests; it can be asked again in {remaining:.0f}s")
-        if remaining > 0:
-            await self._sleep(remaining)
+        slot = max(now, self._open_at.get(host, 0.0), self._next_slot.get(host, 0.0))
+        self._next_slot[host] = slot + self.interval
+        if slot > now:
+            await self._sleep(slot - now)
 
     def close(self, host: str, seconds: float) -> None:
         self._open_at[host] = max(self._open_at.get(host, 0.0), self._clock() + seconds)

@@ -167,11 +167,22 @@ def _answers(*responses):
     return handler, calls
 
 
-def test_requests_to_one_host_are_not_spaced_apart(monkeypatch):
+def test_requests_to_one_host_are_spaced_apart(monkeypatch):
     clock = _gate(monkeypatch)
     for _ in range(3):
         _fetch(lambda request: httpx2.Response(200, content=NYAA))
-    assert clock.slept == []
+    assert clock.slept == [rss.MIN_REQUEST_INTERVAL_SECONDS] * 2
+
+
+def test_requests_started_together_take_turns_and_other_hosts_do_not_wait(monkeypatch):
+    clock = _Clock()
+    gate = HostGate(sleep=clock.sleep, clock=clock, interval=2.0)
+
+    async def run():
+        await asyncio.gather(gate.wait("nyaa.si"), gate.wait("nyaa.si"), gate.wait("subsplease.org"), gate.wait("nyaa.si"))
+
+    asyncio.run(run())
+    assert clock.slept == [2.0, 2.0]
 
 
 def test_a_429_is_waited_out_for_as_long_as_the_site_asks_then_retried(monkeypatch):
