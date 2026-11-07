@@ -173,9 +173,10 @@ class SandboxQbit(Qbit):
         s = self.state
         title, known_hash = s.release_for(url)
         info_hash = _hash_of(url, known_hash)
-        if info_hash in s.fakes or (info_hash in self._view and info_hash not in s.hidden):
-            raise QbitDuplicate(f"qBittorrent already has '{url}'")
         name = title or _fallback_name(url)
+        if info_hash in s.fakes or (info_hash in self._view and info_hash not in s.hidden):
+            logger.info(f"[sandbox] Would add '{name}', but qBittorrent already has it, so it would refuse; the existing torrent is used.")
+            raise QbitDuplicate(f"qBittorrent already has '{url}'")
         now = s.clock()
         s.hidden.discard(info_hash)
         s.fakes[info_hash] = Fake(

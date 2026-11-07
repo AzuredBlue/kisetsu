@@ -138,10 +138,11 @@ def test_a_download_and_its_v2_play_out_through_the_sandbox(world):
     assert v1.info_hash not in world.qbit.torrents
 
 
-def test_an_add_of_a_release_qbittorrent_already_holds_is_refused_by_its_known_hash():
+def test_an_add_of_a_release_qbittorrent_already_holds_is_refused_by_its_known_hash(caplog):
     state = SandboxState(clock=Clock(), release_for=lambda url: ("Real Show - 01", REAL.upper()))
-    qbit, _ = client(state=state)
+    qbit, api = client(state=state)
     qbit.sync()
-    with pytest.raises(QbitDuplicate):
+    with caplog.at_level("INFO", logger="kisetsu.sandbox"), pytest.raises(QbitDuplicate):
         qbit.add_torrent("https://x/1.torrent")
-    assert state.fakes == {}
+    assert state.fakes == {} and api.called == []
+    assert "[sandbox] Would add 'Real Show - 01', but qBittorrent already has it" in caplog.text
