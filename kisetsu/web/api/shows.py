@@ -225,10 +225,11 @@ async def delete(show_id: int, request: Request, delete_torrents: bool = False, 
         error = plan["reason"]
         if plan["remove"]:
             # qBittorrent removes the files in the background; the folder goes once it lists none of the torrents.
-            error = None
+            error = "qBittorrent is still removing the torrents, so the folder was kept. Delete it yourself once they are gone."
             for _ in range(GONE_CHECKS):
                 try:
                     if await write(request, library.torrents_gone, hashes):
+                        error = None
                         break
                 except QbitError as e:
                     error = f"qBittorrent could not confirm the torrents are gone ({e}), so the folder was kept."

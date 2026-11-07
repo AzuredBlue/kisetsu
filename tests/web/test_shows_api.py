@@ -553,3 +553,14 @@ async def test_resetting_a_locked_show_needs_release_lock(web):
     assert web.load(Show, show).feed_state == FeedState.LOCKED
     assert (await web.client.post(f"/api/shows/{show}/rediscover", params={"release_lock": "true"})).status_code == 200
     assert web.load(Show, show).feed_state == FeedState.NONE
+
+
+async def test_the_folder_is_kept_when_qbittorrent_never_confirms_the_torrents_are_gone(web, tmp_path, monkeypatch):
+    from kisetsu.web.api import shows as shows_api
+
+    show, folder, torrent = _library(web, tmp_path)
+    monkeypatch.setattr(shows_api, "GONE_CHECKS", 2)
+    monkeypatch.setattr(shows_api.library, "torrents_gone", lambda ctx, hashes: False)
+    body = (await web.client.delete(f"/api/shows/{show}", params={"delete_torrents": "true", "delete_files": "true"})).json()
+    assert not body["folder"]["removed"] and "still removing" in body["folder"]["reason"]
+    assert folder.exists()
