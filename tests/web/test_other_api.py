@@ -236,3 +236,11 @@ async def test_the_minimum_resolution_is_a_setting_with_known_values(web):
     assert (await web.client.post("/api/settings", json={"min_resolution": 900})).status_code == 422
     assert (await web.client.post("/api/settings", json={"min_resolution": 720})).status_code == 200
     assert web.load(Settings, 1).min_resolution == 720 and "grab" in web.pokes
+
+
+async def test_during_setup_a_new_host_can_be_tested_without_typing_a_password(web):
+    web.query(lambda s: (s.delete(s.get(AppState, "setup_completed")), s.commit()))
+    ok = await web.client.post("/api/settings/test-qbit", json={"qbit_host": "http://127.0.0.1:9090"})
+    assert ok.status_code == 200 and web.probed[-1] == ("http://127.0.0.1:9090", "admin", "adminadmin")
+    saved = await web.client.post("/api/setup/save", json={"qbit_host": "http://127.0.0.1:9090"})
+    assert saved.status_code == 200 and web.load(Settings, 1).qbit_host == "http://127.0.0.1:9090"

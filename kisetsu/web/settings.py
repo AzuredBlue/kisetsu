@@ -11,7 +11,7 @@ from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, 
 from kisetsu.db.schema import Settings, Show
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.services import library, tags
-from kisetsu.services.context import Context
+from kisetsu.services.context import Context, setup_completed
 
 ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
 TINTS = ("off", "subtle", "full")
@@ -114,8 +114,15 @@ def settings_view(settings: Settings) -> Dict[str, Any]:
     }
 
 
-def check_password_travels_with_host(settings: Settings, host: str, password: Optional[str]) -> None:
-    """The stored password may only go to the stored host, so a new host needs it typed again."""
+def check_password_travels_with_host(ctx: Context, host: str, password: Optional[str]) -> None:
+    """The stored password may only go to the stored host, so a new host needs it typed again.
+
+    Until the first-run wizard is finished nothing the user chose is stored yet (only the default login), so the wizard can
+    try a new address without a password, for a qBittorrent that needs none on this machine.
+    """
+    settings = ctx.settings
+    if not setup_completed(ctx):
+        return
     if host.rstrip("/") != (settings.qbit_host or "").rstrip("/") and settings.qbit_password and not password:
         raise SettingsError("Enter the password to use a different qBittorrent host.")
 
@@ -127,7 +134,7 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
     plan, unreachable = patch_moves(ctx, given)
     if "qbit_host" in given:
         host = given["qbit_host"].strip()
-        check_password_travels_with_host(s, host, given.get("qbit_password"))
+        check_password_travels_with_host(ctx, host, given.get("qbit_password"))
         s.qbit_host = host
     if "qbit_username" in given:
         s.qbit_username = given["qbit_username"].strip()

@@ -41,7 +41,7 @@ def _credentials(ctx, body: QbitTest):
     username = (body.qbit_username or "").strip() or s.qbit_username
     password = body.qbit_password or ""
     if not password:
-        settings_model.check_password_travels_with_host(s, host, None)
+        settings_model.check_password_travels_with_host(ctx, host, None)
         password = s.qbit_password
     return host, username, password
 
