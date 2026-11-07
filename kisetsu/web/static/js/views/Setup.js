@@ -133,7 +133,7 @@ export function Setup({ sandbox, done, setDone }) {
         </div>` : null}
       ${name === 'anilist' ? html`
         <h2>AniList</h2>
-        <p class="page-sub">Your username. Kisetsu follows the shows on your Watching list.</p>
+        <p class="page-sub">Your username. Kisetsu follows what airs this season or next on your Watching and Planning lists; anything else can be added later from Shows, Add show.</p>
         <input class="field" placeholder="AniList username" aria-label="AniList username" autofocus ...${form.bind('anilist_username')} onKeyDown=${(e) => { if (e.key === 'Enter' && !blocked && !busy) next(); }} />` : null}
       ${error ? html`<p class="setup-error" role="alert">${error}</p>` : null}
       <div class="setup-foot">
