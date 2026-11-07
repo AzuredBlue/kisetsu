@@ -26,7 +26,7 @@ from kisetsu.domain.parsing import parse_release_title, release_key
 from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK, air_horizon, latest_aired
 from kisetsu.services import events, feeds, library, tags
 from kisetsu.services.context import Context
-from kisetsu.services.downloads import MANAGED_TAG, recompute_episode
+from kisetsu.services.downloads import MANAGED_TAG, final_failure_clause, recompute_episode
 from kisetsu.services.facts import facts_for
 from kisetsu.services.feeds import Evidence
 from kisetsu.services.ingest import followed_shows
@@ -240,7 +240,7 @@ def failed_feed_ids(ctx: Context, show: Show) -> List[int]:
         ctx.session.exec(
             select(Download.feed_id)
             .join(Episode, Episode.id == Download.episode_id)
-            .where(Episode.show_id == show.id, Download.state == DownloadState.FAILED, Download.feed_id.is_not(None))
+            .where(Episode.show_id == show.id, final_failure_clause(), Download.feed_id.is_not(None))
             .distinct()
         ).all()
     )

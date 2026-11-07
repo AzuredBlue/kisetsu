@@ -12,7 +12,6 @@ from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.db.schema import (
     ACTIVE_DOWNLOAD_STATES,
     Download,
-    DownloadState,
     Episode,
     EpisodeOffset,
     EpisodeStatus,
@@ -96,7 +95,7 @@ def _state(ctx: Context, show: Show, facts) -> ShowState:
         for episode in episodes:
             current[episode.id] = by_id.get(episode.current_download_id)
         for dl in by_id.values():
-            if dl.state == DownloadState.FAILED:
+            if downloads.is_final_failure(dl):
                 failed.setdefault(dl.episode_id, set()).add(dl.version)
     canonical_max = max((e.number for e in episodes), default=0)
     target_count = show.total_episodes or max(show.next_airing_episode or 0, canonical_max, 1)

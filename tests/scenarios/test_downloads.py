@@ -694,3 +694,12 @@ def test_observing_only_follows_qbit_but_forgets_deletes_and_adds_nothing(world)
     settle(world)
     settle(world)
     assert gone.state == DownloadState.CANCELED
+
+
+def test_an_errored_torrent_is_not_a_version_that_failed_for_good(world):
+    feed, show, ep = setup(world)
+    dl, row = grab(world, show, feed, ep)
+    world.qbit.fail(row.torrent_url, "missingFiles")
+    settle(world)
+    assert dl.state == DownloadState.FAILED and dl.info_hash is not None
+    assert downloads.failed_versions(world.ctx(), world.episode(show, 1)) == set()

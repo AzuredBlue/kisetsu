@@ -274,3 +274,14 @@ def test_saved_release_names_is_empty_without_a_folder(world, tmp_path):
     show = airing(world, save_folder=str(tmp_path / "missing"))
     assert library.saved_release_names(show, world.ctx().settings) == []
     assert library.saved_release_names(airing(world, anilist_id=2), world.ctx().settings) == []
+
+
+def test_an_errored_torrent_does_not_rule_its_feed_out_of_the_saved_files_lock(world, tmp_path):
+    from kisetsu.db.schema import Download, DownloadState
+    one = world.feed("A", "https://a/rss", 1)
+    show = airing(world, save_folder=saved_folder(tmp_path, TITLE))
+    post(world, one, TITLE)
+    ep = world.episode(show, 2)
+    world.session.add(Download(episode_id=ep.id, feed_id=one.id, title="x", state=DownloadState.FAILED, info_hash="ab" * 20))
+    world.commit()
+    assert adoption.lock_from_saved_files(world.ctx()) == [show]

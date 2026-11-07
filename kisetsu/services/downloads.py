@@ -93,6 +93,11 @@ def is_final_failure(dl: Download) -> bool:
     return dl.state == DownloadState.FAILED and dl.info_hash is None
 
 
+def final_failure_clause():
+    """``is_final_failure`` as a query condition."""
+    return (Download.state == DownloadState.FAILED) & Download.info_hash.is_(None)
+
+
 def _tag() -> str:
     return f"{TAG_PREFIX}{uuid4().hex}"
 
@@ -134,7 +139,7 @@ def failed_versions(ctx: Context, episode: Episode) -> set:
     """Versions of this episode that failed for good; they are not offered again."""
     return set(
         ctx.session.exec(
-            select(Download.version).where(Download.episode_id == episode.id, Download.state == DownloadState.FAILED)
+            select(Download.version).where(Download.episode_id == episode.id, final_failure_clause())
         ).all()
     )
 
