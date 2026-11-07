@@ -66,6 +66,17 @@ def test_a_finished_torrent_completes_the_episode_and_notifies_once(world):
     assert len(world.notifications) == 1
 
 
+def test_a_finished_download_tells_the_ui_of_its_show_and_episodes_but_not_of_every_show(world):
+    feed, show, ep = setup(world)
+    dl, row = grab(world, show, feed, ep)
+    world.qbit.finish(row.torrent_url)
+    ctx = world.ctx()
+    downloads.settle(ctx)
+    world.commit()
+    assert dl.state == DownloadState.DONE
+    assert {"episodes", f"show:{show.id}", "history"} <= ctx.topics and "shows" not in ctx.topics
+
+
 def test_a_v2_is_added_paused_rechecked_and_the_v1_stays_until_it_has_finished(world):
     feed, show, ep = setup(world)
     v1, row1 = grab(world, show, feed, ep)

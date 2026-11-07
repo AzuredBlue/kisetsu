@@ -6,7 +6,7 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Set, Tuple
 from uuid import uuid4
 
 from sqlalchemy import func
@@ -133,7 +133,8 @@ def recompute_episode(ctx: Context, episode: Episode) -> None:
     if cur is not None:
         episode.attempts = cur.attempts
     ctx.session.add(episode)
-    ctx.emit("shows", f"show:{episode.show_id}")
+    # Only the episode changed: the views of other shows and of the feeds need not refetch.
+    ctx.emit("episodes", f"show:{episode.show_id}")
 
 
 def failed_versions(ctx: Context, episode: Episode) -> set:
@@ -679,6 +680,8 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
     missing = [d for d in tracked if d.info_hash and d.info_hash not in ctx.qbit.torrents]
     loading = len(missing) >= LOADING_GUESS and listed == 0
     judged: Dict[str, bool] = {}
+    # The shows whose page shows something new: a release that moved on, or one that stalled or got going again.
+    touched: Set[int] = set()
     for dl in tracked:
         episode = ctx.session.get(Episode, dl.episode_id)
         if episode is None:
@@ -687,6 +690,7 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
         _advance(ctx, dl, episode, judged, loading, observe_only)
         if (dl.state, dl.info_hash) != before:
             result.changed = True
+            touched.add(episode.show_id)
         if dl.state in ACTIVE_DOWNLOAD_STATES:
             result.active = True
         if (dl.state in (DownloadState.ADDING, DownloadState.VERIFYING) and ctx.now - dl.updated_at < FAST_WINDOW) or (
@@ -703,10 +707,14 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
         and is_stalled(ctx.qbit.torrents[dl.info_hash], ctx.now)
     }
     if stalled != ctx.caches.stalled:
+        flipped = stalled ^ ctx.caches.stalled
+        touched.update(ctx.session.exec(
+            select(Episode.show_id).join(Download, Download.episode_id == Episode.id).where(Download.id.in_(flipped))
+        ).all())
         ctx.caches.stalled = stalled
         result.changed = True
     if result.changed:
-        ctx.emit("shows", "history")
+        ctx.emit("episodes", "history", *(f"show:{show_id}" for show_id in touched))
     return result
 
 

@@ -52,6 +52,16 @@ def test_a_torrent_with_no_activity_for_six_hours_is_stalled(world):
     assert world.caches.stalled == {dl.id}
 
 
+def test_a_stall_tells_the_page_of_its_show(world):
+    _, show, dl = begin(world, A)
+    world.clock.advance(hours=7)
+    ctx = world.ctx()
+    downloads.settle(ctx)
+    world.commit()
+    assert world.caches.stalled == {dl.id}
+    assert {"episodes", f"show:{show.id}"} <= ctx.topics and "shows" not in ctx.topics
+
+
 def test_recent_activity_a_stopped_state_or_a_finish_is_not_stalled(world):
     _, _, dl = begin(world, A)
     world.clock.advance(hours=7)

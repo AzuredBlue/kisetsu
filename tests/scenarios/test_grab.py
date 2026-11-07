@@ -147,6 +147,17 @@ def test_the_newest_episode_is_missed_only_after_a_day(world):
     assert run(world).missed == 1 and world.episode(show, 1).status == EpisodeStatus.MISSED
 
 
+def test_a_missed_episode_tells_the_page_of_its_show(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    top.last_ok_at = START
+    world.commit()
+    show = airing(world, episodes=1)
+    world.clock.advance(hours=25)
+    ctx = world.ctx()
+    assert grab.grab_pass(ctx).missed == 1
+    assert {"episodes", f"show:{show.id}", "history"} <= ctx.topics
+
+
 def test_an_episode_a_stored_item_can_supply_is_never_missed(world):
     top = world.feed("Top", "https://top/rss", 1)
     top.last_ok_at = START

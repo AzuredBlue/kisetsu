@@ -410,7 +410,7 @@ def grab_pass(ctx: Context, only: Optional[Set[int]] = None, held: Optional[Set[
                 logger.warning(f"Grabbing for '{name}' failed: {e}", exc_info=True)
                 result.failed.append(f"{name}: {e}")
     if result.started or result.missed:
-        ctx.emit("shows", "history")
+        ctx.emit("episodes", "history")
     return result
 
 
@@ -522,6 +522,7 @@ def _mark_missed(ctx: Context, state: ShowState, facts, resolved_by_feed) -> int
             ctx, EventKind.MISSED, "Not in the feed", show=state.show, episode=number,
         )
         marked += 1
+    ctx.emit(f"show:{state.show.id}")
     return marked
 
 
