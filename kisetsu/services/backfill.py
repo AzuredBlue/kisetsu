@@ -23,8 +23,10 @@ from kisetsu.services.facts import facts_for
 
 logger = logging.getLogger("kisetsu.services.backfill")
 
-# The same search is not repeated for the same missing episodes within this time.
+# The same search is not repeated for the same missing episodes within this time,
 REPEAT = timedelta(hours=6)
+# which doubles, up to this, for each search in a row that found nothing (a show no feed carries).
+REPEAT_MAX = timedelta(hours=24)
 
 
 @dataclass
@@ -120,7 +122,7 @@ def due(
             continue
         signature = hash((tuple(terms), tuple(f.id for f in show_feeds), tuple(missing)))
         last = ctx.caches.searched.get(show.id)
-        if not force and last and last[0] == signature and ctx.now - last[1] < REPEAT:
+        if not force and last and last[0] == signature and ctx.now - last[1] < _repeat(last[3]):
             continue
         if not force and last is None and show.last_backfill_at is not None and ctx.now - show.last_backfill_at < REPEAT:
             # Searched before a restart, which forgot what was searched for: the stored time stands in for it.
@@ -131,6 +133,11 @@ def due(
             state.air_times, state.target_count, state.newest_aired, ctx.tolerance_hours,
         ))
     return result
+
+
+def _repeat(fruitless: int) -> timedelta:
+    """How long the same search waits: longer after each one in a row that found nothing."""
+    return min(REPEAT * 2 ** max(0, fruitless - 1), REPEAT_MAX)
 
 
 def _outstanding(ctx: Context, show: Show, unmanaged: bool) -> List[int]:
@@ -354,7 +361,9 @@ def apply(ctx: Context, item: Due, found: Searched) -> int:
         show.completed = False
     if found.stopped is None:
         # Only a search that ran to the end counts as done; one a site cut short is tried again.
-        ctx.caches.searched[show.id] = (item.signature, ctx.now, frozenset(item.missing))
+        last = ctx.caches.searched.get(show.id)
+        fruitless = 0 if added else (last[3] + 1 if last and last[0] == item.signature else 1)
+        ctx.caches.searched[show.id] = (item.signature, ctx.now, frozenset(item.missing), fruitless)
         show.last_backfill_at = ctx.now
     ctx.session.add(show)
     return added

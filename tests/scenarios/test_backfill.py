@@ -372,6 +372,39 @@ def test_an_episode_is_missed_only_once_the_search_for_it_found_nothing(world):
     assert [world.episode(show, n).status for n in (1, 2, 3)] == [EpisodeStatus.MISSED, EpisodeStatus.DOWNLOADING, EpisodeStatus.MISSED]
 
 
+def test_a_show_whose_searches_keep_finding_nothing_is_searched_less_often(world):
+    world.feed("Nyaa", NYAA, 1)
+    show = airing(world)
+    world.feeds.searchable[NYAA] = []
+
+    def search_when_due():
+        due = [i for i in backfill.due(world.ctx()) if i.show_id == show.id]
+        if due:
+            run_search(world, due[0], show)
+        return bool(due)
+
+    assert search_when_due()
+    waits = []
+    for _ in range(4):
+        hours = 0
+        while not search_when_due():
+            world.clock.advance(hours=1)
+            hours += 1
+        waits.append(hours)
+    assert waits == [6, 12, 24, 24]
+    # Something found starts the waits over (what is still missing is searched for at once).
+    world.feeds.searchable[NYAA] = [world.feeds.post(NYAA, title(2), START - timedelta(days=14))]
+    world.clock.advance(hours=24)
+    assert search_when_due()
+    world.feeds.searchable[NYAA] = []
+    assert search_when_due()
+    hours = 0
+    while not search_when_due():
+        world.clock.advance(hours=1)
+        hours += 1
+    assert hours == 6
+
+
 def test_a_restart_does_not_search_again_a_show_searched_in_the_last_six_hours(world):
     from kisetsu.services.context import Caches
     world.feed("Nyaa", NYAA, 1)

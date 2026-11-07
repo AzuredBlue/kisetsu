@@ -32,8 +32,8 @@ class Caches:
     misplaced: Set[int] = field(default_factory=set)
     # Batch torrents whose finish the desktop notification already told of.
     announced_batches: Set[str] = field(default_factory=set)
-    # Past-release searches already run: show id -> (what was searched for, when, the episodes looked for).
-    searched: Dict[int, Tuple[int, datetime, FrozenSet[int]]] = field(default_factory=dict)
+    # By show: (search signature, when, the episodes searched for, how many searches in a row found nothing).
+    searched: Dict[int, Tuple[int, datetime, FrozenSet[int], int]] = field(default_factory=dict)
     # Downloads whose torrent has not moved for a long time, found by the last settle pass. A read cannot ask qBittorrent,
     # so it is given this set; a pass replaces it whole and nothing edits it in place.
     stalled: Set[int] = field(default_factory=set)
