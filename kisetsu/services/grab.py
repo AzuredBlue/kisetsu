@@ -25,6 +25,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain import matcher as matching
 from kisetsu.domain.numbering import LedgerRow, inferred_offset, map_episode, rebase_plan
+from kisetsu.domain.parsing import names_something_else
 from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
     air_horizon,
@@ -171,9 +172,13 @@ def resolve(ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True) -
 
         return check
 
+    names = [*show.effective_aliases, *([show.learned_name] if show.learned_name else [])]
     for item in items:
         matched, parsed = matching.decide_dated(matcher, item.title, cache, on_schedule(item))
         if not matched:
+            continue
+        # A movie, special or side story under the show's name ("… - Coleus no Yume - 01") is not one of its episodes.
+        if names_something_else(item.title, names):
             continue
         raw = parsed.get("episode")
         if raw is None and state.target_count == 1:

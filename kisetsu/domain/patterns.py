@@ -64,6 +64,18 @@ def name_end_guard(name: str) -> str:
     return ""
 
 
+WORD_START = r"(?<![A-Za-z0-9])"
+# An alias this short (an acronym like "SBR") is only trusted as a whole word.
+SHORT_ALIAS_CHARS = 4
+
+
+def _short_end_guard(alias: str) -> str:
+    stripped = (alias or "").strip()
+    if len(re.sub(r"[^A-Za-z0-9]", "", stripped)) <= SHORT_ALIAS_CHARS and stripped[-1:].isalpha():
+        return r"(?![A-Za-z0-9])"
+    return ""
+
+
 def sanitize_regex_token(title: str) -> str:
     """Escape true regex metacharacters while keeping spaces and hyphens clean and human-readable."""
     if not title:
@@ -152,11 +164,16 @@ def build_regex_pattern(
     expanded_aliases: List[str] = []
     for a in target_aliases:
         expanded_aliases.extend(generate_season_variants(a))
+        # "[Oshi no Ko] 3rd Season" is written "Oshi no Ko S3" by release groups: the brackets are part of the name only.
+        unbracketed = re.sub(r"\s+", " ", a.replace("[", " ").replace("]", " ")).strip()
+        if unbracketed != a and len(unbracketed) >= MIN_PATTERN_CHARS:
+            expanded_aliases.extend(generate_season_variants(unbracketed))
 
     # A variant ending in a season number ("Foo 3", "Foo S03", "Foo II") must not
     # match a longer one ("Foo 30", "Foo III"). A lookahead rather than \b, so
     # "Foo S03E01" still matches; it is appended after escaping so it stays a regex.
-    tokens = [sanitize_regex_token(a) + name_end_guard(a) for a in expanded_aliases]
+    # A name never starts inside another word, and a short one ("SBR") never ends inside one either.
+    tokens = [WORD_START + sanitize_regex_token(a) + name_end_guard(a) + _short_end_guard(a) for a in expanded_aliases]
     unique_tokens = list(dict.fromkeys(tokens))
     alternation = "|".join(unique_tokens)
 

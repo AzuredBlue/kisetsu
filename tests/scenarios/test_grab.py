@@ -409,3 +409,29 @@ def test_two_unrelated_shows_a_title_matches_both_stay_matched(world):
     b = world.show(2, "Another Show", aliases=["Medalist Movie"], episodes=1, first_air=START - timedelta(hours=1))
     post(world, feed, "[Grp] Medalist Movie S01E01 (1080p).mkv")
     assert {m.show_id for m in world.session.exec(select(FeedItemMatch)).all()} == {a.id, b.id}
+
+
+def test_a_special_carrying_an_episode_number_is_not_grabbed(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="Tensei shitara Slime Datta Ken 3rd Season")
+    post(world, top, "[SubsPlease] Tensei shitara Slime Datta Ken - Coleus no Yume - 01 (1080p).mkv")
+    assert run(world).started == 0
+    assert world.episode(show, 1).status == EpisodeStatus.WANTED
+
+
+def test_a_half_numbered_recap_is_not_grabbed_as_the_episode(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, episodes=3, title="Shangri-La Frontier")
+    post(world, top, "[SubsPlease] Shangri-La Frontier - 02.5 (1080p) [ABCDEF12].mkv")
+    assert run(world).started == 0
+    assert world.episode(show, 2).status == EpisodeStatus.WANTED
+
+
+def test_a_bracketed_title_does_not_grab_another_shows_season(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="[Oshi no Ko] 3rd Season", aliases=["OSHI NO KO Season 3", "[OSHI NO KO] Season 3"])
+    post(world, top, "[Erai-raws] Kimi ni Todoke 3rd Season - 03 [1080p][Multiple Subtitle].mkv")
+    assert run(world).started == 0
+    post(world, top, "[SubsPlease] Oshi no Ko S3 - 03 (1080p).mkv")
+    assert run(world).started == 1
+    assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

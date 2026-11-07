@@ -14,9 +14,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 from kisetsu.domain.parsing import (
     alias_arc_requirement,
     match_release_to_show,
+    meaningful_words,
+    normalize_title,
+    parse_release_title,
     prepare_aliases,
     release_arc_qualifier,
     release_season,
+    season_conflict,
 )
 from kisetsu.domain.patterns import show_match_patterns
 
@@ -59,8 +63,17 @@ def narrow_to_feed(matcher: Matcher, learned_name: Optional[str], held_titles: I
     return replace(matcher, strict=True, season_known=bool(held))
 
 
+def _other_season(matcher: Matcher, title: str) -> bool:
+    """Whether the release names a season the show's names don't. The feed's own naming (the learned name) is trusted."""
+    if matcher.learned_pattern and re.search(matcher.learned_pattern, title, re.IGNORECASE):
+        return False
+    return season_conflict(title, list(matcher.aliases))
+
+
 def broad_match(matcher: Matcher, title: str, parsed_cache: Optional[ParsedCache] = None) -> bool:
     """Whether the title could be one of the show's releases; the arc marker is not enforced."""
+    if _other_season(matcher, title):
+        return False
     return match_release_to_show(
         title,
         list(matcher.aliases),
@@ -95,6 +108,8 @@ def decide(
         allow_fuzzy=not matcher.strict,
     )
     if matched and matcher.season_known and release_season(title) != matcher.season:
+        return False, parsed
+    if matched and not matcher.strict and _other_season(matcher, title):
         return False, parsed
     return matched, parsed
 
@@ -160,8 +175,34 @@ def matching_show_ids(
     matched = [(show_id, matcher) for show_id, matcher in matchers if broad_match(matcher, title, parsed_cache)]
     if len(matched) > 1:
         matched = _of_the_named_season(matched, title)
+    if len(matched) > 1:
+        matched = _closest_names(matched, title, parsed_cache)
     wanted = None if only is None else set(only)
     return [show_id for show_id, _ in matched if wanted is None or show_id in wanted]
+
+
+def _closest_names(matched: List[Tuple[int, Matcher]], title: str, parsed_cache: Optional[ParsedCache]) -> List[Tuple[int, Matcher]]:
+    """Of several shows one title matched, those whose name adds the fewest words the title lacks.
+
+    "Boku no Hero Academia - 160" fits "Boku no Hero Academia: FINAL SEASON" (only season words added) better than
+    "Vigilante: Boku no Hero Academia Illegals", which names a different show. Equally close shows all stay.
+    """
+    parsed = parsed_cache.get(title) if parsed_cache is not None else None
+    name = (parsed or parse_release_title(title)).get("title") or ""
+    words = set(normalize_title(name).split())
+    if not words:
+        return matched
+
+    def extra(matcher: Matcher) -> int:
+        counts = [
+            len([w for w in meaningful_words(normalized) - words if not w.isdigit()])
+            for _, normalized in matcher.prepared
+        ]
+        return min(counts, default=0)
+
+    distances = [(extra(matcher), show_id, matcher) for show_id, matcher in matched]
+    best = min(d for d, _, _ in distances)
+    return [(show_id, matcher) for d, show_id, matcher in distances if d == best]
 
 
 def _of_the_named_season(matched: List[Tuple[int, Matcher]], title: str) -> List[Tuple[int, Matcher]]:

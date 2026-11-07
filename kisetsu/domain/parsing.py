@@ -15,6 +15,8 @@ GUESSIT_OPTIONS: Dict[str, Any] = {"excludes": ["country", "language"]}
 
 
 STOPWORDS: set = {"the", "a", "an", "no", "wa", "ga", "to", "de", "ni", "la", "le", "el"}
+# Words that only say which season or part a title is; two titles sharing nothing else are not one show.
+SEASON_WORDS: set = {"season", "part", "cour", "final", "stage"}
 
 
 def prepare_aliases(aliases: List[str]) -> List[Tuple[str, str]]:
@@ -22,10 +24,26 @@ def prepare_aliases(aliases: List[str]) -> List[Tuple[str, str]]:
     for alias in aliases:
         if not alias:
             continue
-        normalized = normalize_title(alias)
+        normalized = normalize_alias(alias)
         if normalized:
             prepared.append((alias, normalized))
     return prepared
+
+
+def normalize_alias(alias: str) -> str:
+    """``normalize_title`` for a show's own name: square brackets there are part of it ("[Oshi no Ko]"), not a tag."""
+    return normalize_title((alias or "").replace("[", " ").replace("]", " "))
+
+
+def meaningful_words(normalized: str) -> set:
+    """The words of a normalized title that name the show: no stopwords, season words or the season's number."""
+    words: set = set()
+    previous = ""
+    for word in normalized.split():
+        if word not in STOPWORDS and word not in SEASON_WORDS and not (word.isdigit() and previous in SEASON_WORDS):
+            words.add(word)
+        previous = word
+    return words
 
 
 _ROMAN_NUMERALS = {"x": "10", "ix": "9", "viii": "8", "vii": "7", "vi": "6", "v": "5", "iv": "4", "iii": "3", "ii": "2"}
@@ -45,6 +63,9 @@ def normalize_title(title: str) -> str:
     t = re.sub(r"\bs(\d+)\b", r"season \1", t)
 
     t = re.sub(r"[:\-_/\\.|+~'\"`]", " ", t)
+    # "SPY×FAMILY" is "Spy x Family"; marks like the "△" of "Yuru Camp△" are not part of any word.
+    t = re.sub(r"[×✕]", " x ", t)
+    t = re.sub(r"[^\w\s]", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
     return t
 
@@ -103,6 +124,13 @@ def extract_release_version(raw_title: str) -> int:
 
 
 _COUNTS_SOMETHING_ELSE = re.compile(r"\b(?:season|part|cour|vol(?:ume)?)\.?$", re.IGNORECASE)
+# A standalone episode number. A "." after it is a file extension, never a fraction ("12.5" is a recap, not episode 12).
+# "more" is set when an episode title (" - The Hero's Party") or a language tag ("VOSTFR") follows the number.
+_EPISODE_NUMBER = re.compile(
+    r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL))?"
+    r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+[^\d\s]|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
+    re.IGNORECASE,
+)
 
 
 def parse_release_title(raw_title: str) -> Dict[str, Any]:
@@ -170,14 +198,13 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
                 title_candidate = primary_segment[:m_s_ep.start()].strip()
             else:
                 # Exclude 4-digit years from standalone episode matching unless prefixed by EP/E/#
-                ep_matches = list(re.finditer(
-                    r"(?:\s*-\s*|\s+)(?:EP?|#)?(\d{1,4})(?:\s+(?:END|FINAL))?(?:\s*\(|\s*\[|\s*\.|\s*$)",
-                    primary_segment,
-                    re.IGNORECASE,
-                ))
+                ep_matches = list(_EPISODE_NUMBER.finditer(primary_segment))
                 valid_ep_matches = []
                 for m in ep_matches:
-                    val = int(m.group(1))
+                    val = int(m.group("num"))
+                    # An episode title or a language tag may follow the number only when " - " sets it apart.
+                    if m.group("more") is not None and "-" not in m.group("pre"):
+                        continue
                     is_prefixed = bool(re.match(r"(?:EP?|#)", m.group(0).strip(" -_")))
                     if 1950 <= val <= 2050 and not is_prefixed:
                         continue
@@ -188,7 +215,7 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
 
                 if valid_ep_matches:
                     m_ep = valid_ep_matches[-1]
-                    episode_num = int(m_ep.group(1))
+                    episode_num = int(m_ep.group("num"))
                     title_candidate = primary_segment[:m_ep.start()].strip()
                 else:
                     m_s_only = re.search(r"\b(?:S|Season\s*)(\d{1,2})\b", primary_segment, re.IGNORECASE)
@@ -282,6 +309,7 @@ def calculate_match_score(
     tokens_parsed = [w for w in norm_parsed.split() if w not in STOPWORDS]
     if not tokens_parsed:
         return 0.0, None
+    named = meaningful_words(norm_parsed)
 
     best_score = 0.0
     best_alias = None
@@ -293,6 +321,10 @@ def calculate_match_score(
 
         if norm_parsed == norm_alias:
             return 100.0, alias
+
+        # Sharing only "season 3" or "final season" says nothing about being the same show.
+        if not named & meaningful_words(norm_alias):
+            continue
 
         score = float(fuzz.token_set_ratio(norm_parsed, norm_alias))
 
@@ -355,12 +387,24 @@ def names_something_else(raw_title: str, aliases: List[str]) -> bool:
     if any(word.group().lower() not in known for word in _OTHER_FORMAT.finditer(title)):
         return True
     core = normalize_title(_SEASON_WORDS.sub(" ", title))
-    if not any(fuzz.token_set_ratio(core, normalize_title(_SEASON_WORDS.sub(" ", alias))) >= FUZZY_MATCH_THRESHOLD for alias in aliases):
+    if not any(fuzz.token_set_ratio(core, normalize_alias(_SEASON_WORDS.sub(" ", alias))) >= FUZZY_MATCH_THRESHOLD for alias in aliases):
         return True
     if " - " not in title:
         return False
     norm = normalize_title(title)
-    return not any(fuzz.token_sort_ratio(norm, normalize_title(alias)) >= _SAME_NAME_SCORE for alias in aliases)
+    return not any(fuzz.token_sort_ratio(norm, normalize_alias(alias)) >= _SAME_NAME_SCORE for alias in aliases)
+
+
+def season_conflict(raw_title: str, aliases: List[str]) -> bool:
+    """Whether a release names a season none of the show's names does ("Kingdom 5th Season" for "Kingdom 6th Season").
+
+    A show whose names give no season, or a release that names none, never conflicts.
+    """
+    named = release_season(raw_title)
+    if named is None:
+        return False
+    seasons = {season for season in (release_season(alias) for alias in aliases) if season is not None}
+    return bool(seasons) and named not in seasons
 
 
 def is_batch(raw_title: str) -> bool:
