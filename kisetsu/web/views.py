@@ -78,33 +78,40 @@ def _episode_counts(ctx: Context) -> Dict[int, Dict[EpisodeStatus, int]]:
     return counts
 
 
-def _replacing(ctx: Context) -> Dict[int, int]:
-    rows = ctx.session.exec(
+def _replacing(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
+    query = (
         select(Episode.show_id, func.count(Download.id))
         .join(Episode, Episode.id == Download.episode_id)
         .where(Download.supersedes_id.is_not(None), Download.state.in_(IN_FLIGHT))
-        .group_by(Episode.show_id)
     )
-    return dict(rows.all())
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
 
 
-def _last_done(ctx: Context) -> Dict[int, int]:
-    rows = ctx.session.exec(
-        select(Episode.show_id, func.max(Episode.number)).where(Episode.status == EpisodeStatus.COMPLETED).group_by(Episode.show_id)
-    )
-    return dict(rows.all())
+def _last_done(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
+    query = select(Episode.show_id, func.max(Episode.number)).where(Episode.status == EpisodeStatus.COMPLETED)
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
 
 
-def _aired(ctx: Context) -> Dict[int, int]:
-    rows = ctx.session.exec(
-        select(Episode.show_id, func.count(Episode.id)).where(Episode.air_at <= ctx.now).group_by(Episode.show_id)
-    )
-    return dict(rows.all())
+def _aired(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
+    query = select(Episode.show_id, func.count(Episode.id)).where(Episode.air_at <= ctx.now)
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
+
+
+# Air dates older than this are not sent: a long-running show would otherwise send hundreds of years-old dates on every refresh.
+AIRINGS_KEEP = timedelta(days=365)
 
 
 def _airings(ctx: Context, show_id: Optional[int] = None) -> Dict[int, List[Dict[str, Any]]]:
-    """Each show's known episode air times, for the calendar: breaks between episodes are real gaps, not every week."""
-    query = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status).where(Episode.air_at.is_not(None))
+    """Each show's known episode air times of the last year, for the calendar: breaks between episodes are real gaps, not every week."""
+    query = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status).where(
+        Episode.air_at.is_not(None), Episode.air_at >= ctx.now - AIRINGS_KEEP,
+    )
     if show_id is not None:
         query = query.where(Episode.show_id == show_id)
     airings: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
@@ -210,9 +217,18 @@ def _stalled(ctx: Context, show: Show, episode: Episode, active: Optional[Downlo
     return {"alternatives": len(manual.alternatives(ctx, show, episode, active, memo["found"]))}
 
 
-def episode_row(ctx: Context, episode: Episode, feed_names: Dict[int, str], show: Optional[Show] = None, memo: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    current = downloads.current(ctx, episode)
-    active = downloads.active_download(ctx, episode)
+def episode_row(
+    ctx: Context, episode: Episode, feed_names: Dict[int, str], show: Optional[Show] = None, memo: Optional[Dict[str, Any]] = None,
+    loaded: Optional[Tuple[Dict[int, Download], Dict[int, Download]]] = None,
+) -> Dict[str, Any]:
+    """One episode's row. ``loaded`` is (downloads by id, newest active download by episode id) read once for the whole show."""
+    if loaded is None:
+        current = downloads.current(ctx, episode)
+        active = downloads.active_download(ctx, episode)
+    else:
+        by_id, active_by_episode = loaded
+        current = by_id.get(episode.current_download_id) if episode.current_download_id else None
+        active = active_by_episode.get(episode.id)
     release = current or active
     return {
         "stalled": None if show is None or memo is None else _stalled(ctx, show, episode, active, memo),
@@ -245,9 +261,16 @@ def show_view(ctx: Context, show: Show) -> Dict[str, Any]:
     episodes = ctx.session.exec(select(Episode).where(Episode.show_id == show.id).order_by(Episode.number)).all()
     offsets = ctx.session.exec(select(EpisodeOffset).where(EpisodeOffset.show_id == show.id)).all()
     memo: Dict[str, Any] = {}
+    # Every download of the show at once, instead of two queries per episode.
+    rows = ctx.session.exec(
+        select(Download).join(Episode, Episode.id == Download.episode_id).where(Episode.show_id == show.id)
+        .order_by(Download.created_at, Download.id)
+    ).all()
+    by_id = {dl.id: dl for dl in rows}
+    active_by_episode = {dl.episode_id: dl for dl in rows if dl.state in IN_FLIGHT}
     return {
         **card,
-        "episodes": [episode_row(ctx, episode, feed_names, show, memo) for episode in episodes],
+        "episodes": [episode_row(ctx, episode, feed_names, show, memo, (by_id, active_by_episode)) for episode in episodes],
         "episode_offsets": [
             {"feed_id": o.feed_id, "feed": feed_names.get(o.feed_id), "offset": o.offset, "source": o.source.value, "evidence": o.evidence_count}
             for o in sorted(offsets, key=lambda o: o.feed_id)
@@ -261,7 +284,7 @@ def card_for(ctx: Context, show: Show) -> Dict[str, Any]:
     counts = _episode_counts_for(ctx, show.id)
     return show_card(
         ctx, show, show_status(facts, ctx.now), counts, feed,
-        replacing=_replacing(ctx).get(show.id, 0), aired=_aired(ctx).get(show.id, 0), last_done=_last_done(ctx).get(show.id),
+        replacing=_replacing(ctx, show.id).get(show.id, 0), aired=_aired(ctx, show.id).get(show.id, 0), last_done=_last_done(ctx, show.id).get(show.id),
         released=not is_unreleased(facts, ctx.now), airings=_airings(ctx, show.id).get(show.id),
     )
 
