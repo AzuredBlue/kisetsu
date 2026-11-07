@@ -228,3 +228,21 @@ def test_a_topic_published_after_a_delay_reaches_subscribers_once_however_often_
         return early, first, second
 
     assert run(go()) == (0, [["requests"]], [["requests"]])
+
+
+def test_changes_published_close_together_reach_subscribers_as_one_message():
+    from kisetsu.engine.runner import ChangeBus
+
+    async def go():
+        bus = ChangeBus(batch_seconds=0.05)
+        bus.bind(asyncio.get_running_loop())
+        queue = bus.open_queue()
+        bus.publish(["shows", "show:1"])
+        bus.publish(["shows", "show:2"])
+        bus.publish(["logs"])
+        await asyncio.sleep(0.01)
+        early = queue.qsize()
+        await asyncio.sleep(0.1)
+        return early, [queue.get_nowait()["changed"] for _ in range(queue.qsize())]
+
+    assert run(go()) == (0, [["logs", "show:1", "show:2", "shows"]])

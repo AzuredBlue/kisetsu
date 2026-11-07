@@ -17,16 +17,21 @@ logger = logging.getLogger("kisetsu.engine")
 
 # How many changes a slow subscriber may lag behind before it is told to refetch everything.
 SUBSCRIBER_BACKLOG = 64
+# Changes published this close together reach the UI as one message, so a burst (a colour stored for every
+# show, say) makes it refetch once instead of once per change.
+BATCH_SECONDS = 0.25
 
 
 class ChangeBus:
     """Tells the UI which of its views changed. Publishing is safe from any thread."""
 
-    def __init__(self) -> None:
+    def __init__(self, batch_seconds: float = BATCH_SECONDS) -> None:
         self.rev = 0
+        self.batch_seconds = batch_seconds
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._subscribers: Set[asyncio.Queue] = set()
         self._held: Set[str] = set()
+        self._batch: Set[str] = set()
 
     def bind(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
@@ -36,9 +41,23 @@ class ChangeBus:
         if not names or self._loop is None:
             return
         try:
-            self._loop.call_soon_threadsafe(self._deliver, names)
+            self._loop.call_soon_threadsafe(self._collect, names)
         except RuntimeError:
             pass
+
+    def _collect(self, names: list) -> None:
+        if self.batch_seconds <= 0:
+            self._deliver(names)
+            return
+        if not self._batch:
+            self._loop.call_later(self.batch_seconds, self._flush)
+        self._batch.update(names)
+
+    def _flush(self) -> None:
+        names = sorted(self._batch)
+        self._batch.clear()
+        if names:
+            self._deliver(names)
 
     def publish_after(self, topic: str, seconds: float) -> None:
         """Publish ``topic`` once, ``seconds`` from the first call; the calls made meanwhile add nothing.

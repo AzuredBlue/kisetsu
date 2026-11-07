@@ -21,6 +21,8 @@ class Env:
         self.anilist = FakeAniList()
         self.feeds = FakeFeeds()
         self.engine = Engine(self.db, clock=self.clock, qbit_factory=lambda *a, **k: self.qbit)
+        # The tests read what was published straight away.
+        self.engine.bus.batch_seconds = 0
         self.scheduler = Scheduler()
 
         async def search(client, url, term, now=None):
