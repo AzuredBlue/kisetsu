@@ -47,6 +47,13 @@ const visible = (el) => {
   return frame && frame.getClientRects().length ? frame : null;
 };
 
+// The corner radius and shadow the poster is drawn with: its own, or those of the frame around it.
+const styleOf = (el, prop, none) => [el, el.parentElement].map(e => e ? getComputedStyle(e)[prop] : none).find(v => v !== none && v !== '0px') || none;
+const shape = (el, end) => {
+  document.documentElement.style.setProperty(`--vt-r-${end}`, styleOf(el, 'borderTopLeftRadius', '0px'));
+  document.documentElement.style.setProperty(`--vt-s-${end}`, styleOf(el, 'boxShadow', 'none'));
+};
+
 // Starts loading a show's page, so that opening it can start at once.
 export function prefetch(id) {
   [showPage(id), feedMatches(id)].filter(r => r.data === null && !r.inflight).forEach(r => r.load());
@@ -81,7 +88,10 @@ export async function go(target) {
     returnTab = parseHash().name === 'calendar' ? 'calendar' : 'shows';
   }
   if (opening) await decoded(document.querySelector('.content'));
-  if (from) from.style.viewTransitionName = POSTER_NAME;
+  if (from) {
+    from.style.viewTransitionName = POSTER_NAME;
+    shape(from, 'from');
+  }
   root.classList.add(`vt-${kind}`);
   const current = document.startViewTransition(async () => {
     if (from) from.style.viewTransitionName = '';
@@ -94,6 +104,7 @@ export async function go(target) {
     if (to) {
       await decoded(to, opening ? 200 : 60, true);
       to.style.viewTransitionName = POSTER_NAME;
+      shape(to, 'to');
     } else await appear(() => document.querySelector('.content > *'), 120);
   });
   current.ready.catch(() => {});
@@ -110,6 +121,7 @@ export async function go(target) {
     transition = null;
     if (from) from.style.viewTransitionName = '';
     if (to) to.style.viewTransitionName = '';
+    ['--vt-r-from', '--vt-r-to', '--vt-s-from', '--vt-s-to'].forEach(v => root.style.removeProperty(v));
   });
 }
 

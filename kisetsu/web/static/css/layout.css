@@ -59,6 +59,13 @@ html.vt-open::view-transition-new(content) { animation: vt-rise .28s var(--ease)
 html.vt-close::view-transition-old(content) { animation: vt-drop .28s var(--ease) both; }
 html.vt-close::view-transition-new(content) { animation: vt-fade-in .28s var(--ease) both; }
 ::view-transition-group(show-poster) { animation-duration: .32s; animation-timing-function: var(--ease); }
+/* The snapshots are square (the card's poster is rounded by its frame), so the pair is clipped, which also cuts off
+   the shadow; the pair draws the shadow itself, and both corners and shadow morph between the two posters. */
+::view-transition-image-pair(show-poster) { overflow: hidden; animation: vt-round .32s var(--ease) both; }
+@keyframes vt-round {
+  from { border-radius: var(--vt-r-from, 0px); box-shadow: var(--vt-s-from, none); }
+  to { border-radius: var(--vt-r-to, var(--vt-r-from, 0px)); box-shadow: var(--vt-s-to, var(--vt-s-from, none)); }
+}
 ::view-transition-group(root), ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
 ::view-transition-old(root) { display: none; }
 ::view-transition-old(content), ::view-transition-new(content) { mix-blend-mode: normal; }
