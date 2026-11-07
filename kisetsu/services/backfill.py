@@ -4,7 +4,7 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 import httpx2
 from sqlmodel import select
@@ -14,10 +14,11 @@ from kisetsu.clients.rss import FeedArticle, FeedFetchError
 from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
 from kisetsu.config import DEFAULT_MIN_RESOLUTION
 from kisetsu.domain.matcher import broad_match, build_matcher, decide
-from kisetsu.domain.parsing import parse_release_title
+from kisetsu.domain.numbering import map_episode
 from kisetsu.domain.schedule import plausible_for_show
 from kisetsu.services import downloads, feeds, grab, ingest
 from kisetsu.services.context import Context
+from kisetsu.services.facts import facts_for
 
 logger = logging.getLogger("kisetsu.services.backfill")
 
@@ -34,6 +35,31 @@ class Due:
     missing: List[int]
     signature: int
     first_air: Optional[datetime] = None
+    # What maps a feed's episode numbers onto the show's, as the grab does.
+    air_times: Dict[int, datetime] = field(default_factory=dict)
+    target_count: Optional[int] = None
+    latest_aired: Optional[int] = None
+    tolerance_hours: int = 0
+
+    def numbers(self, releases: List[Tuple[int, Optional[datetime]]], now: datetime) -> Set[int]:
+        """The show's episodes that one feed's releases (raw number, published) are for.
+
+        A feed counting on from an earlier season ("49" for episode 1) is mapped, so its
+        releases count as found. Without the show's schedule the numbers are taken as they are.
+        """
+        if self.target_count is None:
+            return {raw for raw, _ in releases}
+        newest_raw = max((raw for raw, _ in releases), default=None)
+        found: Set[int] = set()
+        for raw, published_at in releases:
+            local = map_episode(
+                raw, offset=None, latest_aired=self.latest_aired, target_count=self.target_count,
+                air_times=self.air_times, published_at=published_at, tolerance_hours=self.tolerance_hours,
+                now=now, newest_raw=newest_raw,
+            ).local
+            if local is not None:
+                found.add(local)
+        return found
 
 
 @dataclass
@@ -98,8 +124,11 @@ def due(
         if not force and last is None and show.last_backfill_at is not None and ctx.now - show.last_backfill_at < REPEAT:
             # Searched before a restart, which forgot what was searched for: the stored time stands in for it.
             continue
-        air_times = ctx.session.exec(select(Episode.air_at).where(Episode.show_id == show.id, Episode.air_at.is_not(None))).all()
-        result.append(Due(show.id, show.title(ctx.settings.title_language), terms, show_feeds, missing, signature, min(air_times, default=None)))
+        state = grab.show_state(ctx, show, facts_for(ctx, [show])[show.id])
+        result.append(Due(
+            show.id, show.title(ctx.settings.title_language), terms, show_feeds, missing, signature, state.first_air,
+            state.air_times, state.target_count, state.newest_aired, ctx.tolerance_hours,
+        ))
     return result
 
 
@@ -168,12 +197,14 @@ async def _search_site(
     """
     found = Searched()
     cache: Dict[str, dict] = {}
-    covered: set = set()
+    covered: Set[int] = set()
     for feed in site_feeds:
         if not across_feeds:
             covered = set()
         elif covered.issuperset(item.missing):
             break
+        before = covered
+        releases: List[Tuple[int, Optional[datetime]]] = []
         for term in item.terms:
             try:
                 articles = await searcher(client, feed.url, term, now=now)
@@ -187,8 +218,13 @@ async def _search_site(
                 continue
             found.articles.setdefault(feed.id, []).extend(articles)
             for article in articles:
-                if plausible_for_show(article.published_at, item.first_air, now) and decide(show_matcher, article.title, cache)[0]:
-                    covered.add(parse_release_title(article.title).get("episode"))
+                if not plausible_for_show(article.published_at, item.first_air, now):
+                    continue
+                matched, parsed = decide(show_matcher, article.title, cache)
+                raw = parsed.get("episode")
+                if matched and raw is not None and raw > 0:
+                    releases.append((int(raw), article.published_at))
+            covered = before | item.numbers(releases, now)
             if covered.issuperset(item.missing):
                 break
     return found

@@ -242,6 +242,24 @@ def test_a_search_that_stops_when_found_skips_the_lower_feeds_once_everything_is
     assert searched_with() == {top, NYAA}
 
 
+def test_releases_a_feed_numbers_from_an_earlier_season_count_as_found(world):
+    top = "https://subsplease.org/rss/?t&r=1080"
+    world.feed("SubsPlease", top, 1)
+    world.feed("Nyaa", NYAA, 2)
+    show = airing(world)
+    # The feed counts on from the first season: episodes 1-4 are its 29-32.
+    world.feeds.searchable[top] = [world.feeds.post(top, title(28 + n), START - timedelta(days=7 * (4 - n))) for n in (1, 2, 3, 4)]
+    world.feeds.searchable[NYAA] = []
+    [item] = backfill.due(world.ctx())
+
+    async def fake(client, url, term, now=None):
+        return await world.feeds.search(url, term)
+
+    world.feeds.searched.clear()
+    asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=fake, stop_when_found=True))
+    assert {url for url, _ in world.feeds.searched} == {top}
+
+
 def test_an_episode_is_missed_only_once_the_search_for_it_found_nothing(world):
     feed = world.feed("Nyaa", NYAA, 1)
     feed.last_ok_at = START
