@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from kisetsu.clients.rss import FeedArticle
 from kisetsu.db.schema import FIXED_FEED_STATES, Episode, EpisodeStatus, Feed, FeedState, Show
-from kisetsu.domain.schedule import HuntPlan, hunt_plan
+from kisetsu.domain.schedule import HUNT_WINDOW, HuntPlan, hunt_plan
 from kisetsu.services import ingest
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
@@ -19,9 +19,11 @@ FetchResult = Union[List[FeedArticle], str]
 # A feed no show needs is still read this often, for v2s, batches and releases ahead of their air time
 # (only the feeds of locked and pinned shows while every followed show has one: see ``_idle_read``).
 IDLE_FEED_REFRESH = timedelta(hours=6)
-# An aired episode still missing keeps its show's feeds on every routine read this long; then only the idle read looks.
+# An aired episode still missing keeps its show's feeds read this long; then only the idle read looks.
 MISSING_FOR = timedelta(days=3)
-# A needed feed is read again this much before a routine interval has passed since its last read, since a read is
+# Past the day it is hunted for, a still missing episode's feeds are read this often instead of on every routine read.
+LATE_READ_EVERY = timedelta(hours=1)
+# A needed feed is read again this much before its interval has passed since its last read, since a read is
 # stamped a little after the routine read was planned; a feed the hunt read more recently than that is left to it.
 READ_SLACK = timedelta(minutes=2)
 
@@ -58,10 +60,12 @@ def _ref(feed: Feed) -> FeedRef:
     return FeedRef(feed.id, feed.name, feed.url)
 
 
-def _needed(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
-    """The feeds a show with a recently aired, still missing episode reads: its own, or every feed while it has none."""
+def _needed(ctx: Context, all_feeds: List[Feed]) -> Dict[int, timedelta]:
+    """The feeds a show with a recently aired, still missing episode reads (its own, or every feed while it has none),
+    and how often: every routine read while that episode is hunted for, then every ``LATE_READ_EVERY``.
+    """
     rows = ctx.session.exec(
-        select(Show.feed_id, Show.feed_state)
+        select(Show.feed_id, Show.feed_state, Episode.air_at)
         .join(Episode, Episode.show_id == Show.id)
         .where(
             Show.completed == False,  # noqa: E712
@@ -71,14 +75,18 @@ def _needed(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
             Episode.air_at <= ctx.now,
             Episode.air_at >= ctx.now - MISSING_FOR,
         )
-        .distinct()
     ).all()
-    needed: Set[int] = set()
-    for feed_id, state in rows:
+    routine = timedelta(minutes=ctx.settings.feed_refresh_minutes)
+    late = max(routine, LATE_READ_EVERY)
+    needed: Dict[int, timedelta] = {}
+    for feed_id, state, air_at in rows:
+        every = routine if ctx.now - air_at <= HUNT_WINDOW else late
         if state in (FeedState.LOCKED, FeedState.PINNED, FeedState.ASSIGNED) and feed_id is not None:
-            needed.add(feed_id)
+            ids = [feed_id]
         else:
-            return {f.id for f in all_feeds}
+            ids = [f.id for f in all_feeds]
+        for feed in ids:
+            needed[feed] = min(needed.get(feed, every), every)
     return needed
 
 
@@ -130,11 +138,10 @@ def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:
         return [_ref(feed) for feed in all_feeds]
     needed = _needed(ctx, all_feeds)
     idle = _idle_read(ctx, all_feeds)
-    routine = timedelta(minutes=ctx.settings.feed_refresh_minutes) - READ_SLACK
     return [
         _ref(feed) for feed in all_feeds
         if feed.last_fetch_at is None
-        or (feed.id in needed and ctx.now - feed.last_fetch_at >= routine)
+        or (feed.id in needed and ctx.now - feed.last_fetch_at >= needed[feed.id] - READ_SLACK)
         or (feed.id in idle and ctx.now - feed.last_fetch_at >= IDLE_FEED_REFRESH)
     ]
 

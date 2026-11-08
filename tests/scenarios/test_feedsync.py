@@ -93,16 +93,16 @@ def test_a_feed_no_show_needs_is_read_again_only_after_the_idle_wait(world):
     assert _planned(world) == [top.id]
 
 
-def test_a_missing_episode_keeps_its_shows_own_feed_on_every_read_for_three_days(world):
+def test_a_missing_episode_keeps_its_shows_own_feed_read_for_three_days(world):
     top = world.feed("Top", URL, 1)
     low = world.feed("Low", "https://low/rss", 2)
     world.show(episodes=2, first_air=START - timedelta(days=8), feed=low, feed_state=FeedState.LOCKED)
     _read(world, top, low)
-    world.clock.advance(minutes=15)
+    world.clock.advance(hours=1)
     assert _planned(world) == [low.id]
-    world.clock.advance(days=1, hours=23, minutes=30)
+    world.clock.advance(days=1, hours=22)
     _read(world, top, low)
-    world.clock.advance(minutes=15)
+    world.clock.advance(hours=1)
     assert _planned(world) == [low.id]
     world.clock.advance(minutes=1)
     assert _planned(world) == []
@@ -111,7 +111,7 @@ def test_a_missing_episode_keeps_its_shows_own_feed_on_every_read_for_three_days
 def test_a_show_without_its_feed_needs_every_feed_while_an_episode_is_missing(world):
     top = world.feed("Top", URL, 1)
     low = world.feed("Low", "https://low/rss", 2)
-    world.show(episodes=1, first_air=START - timedelta(days=1))
+    world.show(episodes=1, first_air=START - timedelta(hours=1))
     _read(world, top, low)
     world.clock.advance(minutes=15)
     assert _planned(world) == [top.id, low.id]
@@ -192,4 +192,17 @@ def test_the_routine_read_leaves_a_needed_feed_the_hunt_just_read_to_the_hunt(wo
     world.clock.advance(minutes=12)
     assert _planned(world) == []
     world.clock.advance(minutes=1)
+    assert _planned(world) == [top.id]
+
+
+def test_past_its_first_day_a_missing_episode_has_its_feed_read_hourly(world):
+    top = world.feed("Top", URL, 1)
+    world.show(episodes=1, first_air=START - timedelta(hours=23, minutes=45), feed=top, feed_state=FeedState.LOCKED)
+    _read(world, top)
+    world.clock.advance(minutes=15)
+    assert _planned(world) == [top.id]
+    _read(world, top)
+    world.clock.advance(minutes=15)
+    assert _planned(world) == []
+    world.clock.advance(minutes=43)
     assert _planned(world) == [top.id]
