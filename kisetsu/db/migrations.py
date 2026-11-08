@@ -169,10 +169,12 @@ def migrate(engine: Engine, path: Optional[Path] = None) -> None:
     if version == 0 and inspect(engine).get_table_names():
         raise SchemaError("This database has tables but no Kisetsu schema version; refusing to touch it.")
 
+    # A new database holds nothing worth a backup, also after its first steps.
+    existing = version > 0
     for target, step in MIGRATIONS:
         if target <= version:
             continue
-        if version > 0 and path is not None and path.exists():
+        if existing and path is not None and path.exists():
             _backup(path, version)
         step(engine)
         _set_user_version(engine, target)

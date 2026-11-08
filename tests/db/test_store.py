@@ -346,3 +346,9 @@ def test_a_version_9_database_reads_the_subsplease_rss_dates_as_pacific_time():
         "nyaa": winter.replace(tzinfo=utc),
     }
     assert [i.guid for i in after] == ["winter"]
+
+
+def test_a_new_database_is_not_backed_up_while_it_is_created(tmp_path):
+    path = tmp_path / "k.db"
+    migrate(make_engine(path), path)
+    assert list(tmp_path.glob("*.bak")) == []
