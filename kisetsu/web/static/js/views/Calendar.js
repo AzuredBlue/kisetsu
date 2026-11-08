@@ -16,6 +16,8 @@ const time = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2
 const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
+// Air times are Japanese and never move for daylight saving, so a guessed week is exactly 7 days of time on.
+const airsWeeksAfter = (date, weeks) => new Date(date.getTime() + weeks * WEEK);
 
 // A show's episodes airing between `from` and `to`. Known air dates are used as they are, so a break week stays empty.
 // Past the last known date (or with none at all) a still-airing show is assumed weekly, up to its last episode.
@@ -31,13 +33,13 @@ function airingsBetween(show, from, to) {
     anchor = { episode: show.next_airing.episode || (show.last_done || 0) + 1, at };
     // With no schedule, weeks before the next episode are guesses too.
     for (let k = Math.ceil((from - at) / WEEK) - 1; k < 0; k++) {
-      const guess = { episode: anchor.episode + k, at: weeksAfter(at, k) };
+      const guess = { episode: anchor.episode + k, at: airsWeeksAfter(at, k) };
       if (guess.episode >= 1 && guess.at >= from && guess.at <= to) found.push(guess);
     }
     if (anchor.at >= from && anchor.at <= to) found.push(anchor);
   }
   for (let k = Math.max(1, Math.floor((from - anchor.at) / WEEK)); ; k++) {
-    const guess = { episode: anchor.episode + k, at: weeksAfter(anchor.at, k) };
+    const guess = { episode: anchor.episode + k, at: airsWeeksAfter(anchor.at, k) };
     if (guess.at > to || (total && guess.episode > total)) break;
     if (guess.at >= from) found.push(guess);
   }
