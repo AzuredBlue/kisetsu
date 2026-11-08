@@ -246,3 +246,22 @@ def test_changes_published_close_together_reach_subscribers_as_one_message():
         return early, [queue.get_nowait()["changed"] for _ in range(queue.qsize())]
 
     assert run(go()) == (0, [["logs", "show:1", "show:2", "shows"]])
+
+
+def test_the_shutdown_signal_survives_a_subscriber_that_fell_behind():
+    from kisetsu.engine.runner import SUBSCRIBER_BACKLOG, ChangeBus
+
+    async def go():
+        bus = ChangeBus(batch_seconds=0)
+        bus.bind(asyncio.get_running_loop())
+        queue = bus.open_queue()
+        for _ in range(SUBSCRIBER_BACKLOG - 1):
+            bus._deliver(["shows"])
+        bus.shutdown()
+        bus._deliver(["status"])
+        drained = []
+        while not queue.empty():
+            drained.append(queue.get_nowait())
+        return drained
+
+    assert None in asyncio.run(go())

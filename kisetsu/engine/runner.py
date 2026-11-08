@@ -118,6 +118,8 @@ class ChangeBus:
             while queue.full():
                 queue.get_nowait()
             queue.put_nowait(None)
+            # Nothing may follow the end: a later change would push it out of a full queue.
+            self._subscribers.discard(queue)
 
     @property
     def subscribers(self) -> int:
