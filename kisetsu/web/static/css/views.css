@@ -8,6 +8,9 @@
 @media (prefers-reduced-motion: reduce) { .show-swap > * { animation: none; } }
 .show-grid { display: grid; gap: 1.5rem 1.25rem; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 @media (min-width: 1024px) { .show-grid { grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); } }
+/* A narrow card has no room for the usual release time next to its countdown. */
+.show-card .air-expected { display: none; }
+@media (min-width: 1024px) { .show-card .air-expected { display: inline; } }
 
 /* A poster, and the text below. */
 .show-card { display: flex; flex-direction: column; min-width: 0; cursor: pointer; isolation: isolate; }

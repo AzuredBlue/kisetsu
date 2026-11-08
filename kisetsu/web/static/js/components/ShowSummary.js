@@ -20,11 +20,14 @@ const TAGS = {
 // usually come out. Without a learned time, an aired episode not found yet is worth a look at once.
 function airedInfo(show, at, now) {
   const state = releaseState(at, show.release_delay_minutes, now);
-  if (state === 'early') {
-    const expected = shownExpected(at, show.release_delay_minutes);
-    return { info: 'Aired', tone: '', expected: expected ? `~${localTime(expected.toISOString())}` : null };
-  }
+  if (state === 'early') return { info: 'Aired', tone: '', expected: expectedShort(show, at) };
   return { info: state === 'late' ? 'Late' : 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
+}
+
+// "~15:35": when the release usually comes out, for an episode airing within a day or aired and still due.
+function expectedShort(show, at) {
+  const expected = shownExpected(at, show.release_delay_minutes);
+  return expected ? `~${localTime(expected.toISOString())}` : null;
 }
 
 // The air line's tooltip: the air time, and when the release usually comes out once the show has learned it.
@@ -60,7 +63,8 @@ function summarize(show, now) {
       return { ep: `Ep ${show.last_done}`, info: 'Downloaded', tone: 'ok', at: null };
     }
     if (cd === 'Aired') return { ep: `Ep ${next.episode}`, ...airedInfo(show, next.at, now), at: next.at };
-    return { ep: `Ep ${next.episode}`, info: `in ${cd}`, tone: '', at: next.at };
+    const soon = Date.parse(next.at) - now < 86400000;
+    return { ep: `Ep ${next.episode}`, info: `in ${cd}`, tone: '', at: next.at, expected: soon ? expectedShort(show, next.at) : null };
   }
   if (show.last_done) return { ep: `Ep ${show.last_done}`, info: '', tone: '', at: null };
   return { ep: '', info: '', tone: '', at: null };
@@ -217,7 +221,7 @@ export function ShowCard({ show, now }) {
     <div class="show-text">
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       ${hasAir || hasCount ? html`<div class="meta">
-        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></div>` : html`<${Problems} show=${show} />`}
+        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span>${air.expected ? html`<span class="muted air-expected" title=${air.title}>${air.expected}</span>` : null}</div>` : html`<${Problems} show=${show} />`}
         ${hasCount ? html`<span class="count" title=${`${countText(show)} downloaded`}>${countText(show)}</span>` : null}
       </div>` : null}
       ${hasAir ? html`<${Problems} show=${show} />` : hasCount ? null : html`<${Problems} show=${show} />`}
