@@ -12,7 +12,6 @@ import { useDraft } from '../components/useDraft.js';
 import { toast } from '../components/Toast.js';
 import { EpisodeList, ReleaseList, useRowAction } from '../components/Episodes.js';
 import { airSummary, deleteShow, dimmed, Poster, ProgressBar, StatusTag, togglePause } from '../components/ShowSummary.js';
-import { localDateTime } from '../format.js';
 
 // The values the side form starts from.
 function initialForm(page) {
@@ -57,7 +56,7 @@ function Header({ page, now }) {
     </div>
     <div class="show-facts">
       <span class=${`pill ${{ working: 'pill-ok', testing: 'pill-info', waiting: 'pill-info', upcoming: 'pill-info', paused: 'pill-idle', completed: 'pill-done' }[page.status]}`}>${page.status_label}</span>
-      ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${`when ${air.tone}`} title=${air.at ? localDateTime(air.at) : undefined}>${air.info}</span></span>` : null}
+      ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></span>` : null}
       <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} · ${page.feed.state_label}` : 'Auto-discover'}</span></span>
     </div>
     ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${done}/${total || '?'} downloaded</span></div>` : null}
@@ -205,7 +204,7 @@ export function Show({ route }) {
         </div>
         <div class="card list-card">
           ${listTab === 'episodes'
-            ? html`<${EpisodeList} episodes=${data.episodes} groups=${matchData} paused=${data.paused} now=${new Date(now)} actions=${actions} onSearch=${searchOlder} searching=${searching} />`
+            ? html`<${EpisodeList} episodes=${data.episodes} groups=${matchData} paused=${data.paused} delay=${data.release_delay_minutes} now=${new Date(now)} actions=${actions} onSearch=${searchOlder} searching=${searching} />`
             : !matchData && matches.error ? html`<${LoadError} what="the releases" error=${matches.error} reload=${matches.reload} />`
             : html`<${ReleaseList} groups=${matchData} loading=${!matchData} actions=${actions} onUseFeed=${(feedId) => save({ feed_id: feedId })} />`}
         </div>

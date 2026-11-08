@@ -3,7 +3,7 @@ from datetime import timedelta
 from sqlalchemy import event
 from sqlmodel import select
 
-from kisetsu.db.schema import Download, DownloadState, Episode, EpisodeStatus
+from kisetsu.db.schema import Download, DownloadState, Episode, EpisodeStatus, FeedItem, FeedState
 from kisetsu.web import views
 from tests.fakes import START
 
@@ -37,3 +37,26 @@ def test_the_show_list_sends_only_the_last_years_air_dates(world):
     [card] = views.shows_view(world.ctx())
     assert 50 <= len(card["airings"]) <= 54
     assert card["airings"][-1]["episode"] == 80
+
+
+def test_a_show_learns_how_long_after_airing_its_feed_releases_it(world):
+    feed = world.feed("Grp", "https://nyaa.si/?page=rss&u=Grp", 1)
+    other = world.feed("Other", "https://nyaa.si/?page=rss&u=Other", 2)
+    show = world.show(episodes=4, first_air=START - timedelta(days=28), feed=feed, feed_state=FeedState.LOCKED)
+
+    def grab(number, minutes, source=feed, **fields):
+        episode = world.episode(show, number)
+        guid = f"{source.name}-{number}-{fields.get('version', 1)}"
+        world.session.add(FeedItem(feed_id=source.id, guid=guid, title=guid, published_at=episode.air_at + timedelta(minutes=minutes)))
+        world.session.add(Download(episode_id=episode.id, feed_id=source.id, feed_item_guid=guid, title=guid, state=DownloadState.DONE, **fields))
+        world.commit()
+
+    grab(1, 35)
+    [card] = views.shows_view(world.ctx())
+    assert card["release_delay_minutes"] is None
+    grab(2, 300, version=2)  # a v2 days later says nothing about when the show comes out
+    grab(2, 600, source=other)  # nor does a release from a feed the show no longer uses
+    assert views.shows_view(world.ctx())[0]["release_delay_minutes"] is None
+    grab(3, 37)
+    assert views.shows_view(world.ctx())[0]["release_delay_minutes"] == 36
+    assert views.card_for(world.ctx(), show)["release_delay_minutes"] == 36

@@ -4,6 +4,7 @@ Everything here is a pure function of plain data and an explicit ``now``.
 """
 
 from dataclasses import dataclass
+from statistics import median
 from datetime import datetime, timedelta
 from typing import Collection, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -26,6 +27,13 @@ FUTURE_SLACK = timedelta(days=1)
 PREMIERE_LEAD_TIME = timedelta(days=7)
 # The usual gap between episodes, used to guess when the previous one aired.
 WEEK = timedelta(days=7)
+
+# A show's usual release delay is learned from its newest releases on its feed, once at least two of them agree.
+DELAY_SAMPLES = 3
+DELAY_AGREEMENT = timedelta(hours=1)
+# A release further from its air time than this is not a normal weekly release (a re-upload, a late find) and is not learned from.
+DELAY_EARLIEST = timedelta(hours=-12)
+DELAY_LATEST = timedelta(hours=24)
 
 # Statuses of an episode that already has, or is getting, a release.
 RELEASE_HOLDING = (EpisodeStatus.COMPLETED, EpisodeStatus.DOWNLOADING)
@@ -314,3 +322,20 @@ def plausible_for_show(published_at: Optional[datetime], first_air: Optional[dat
     if published_at > now + FUTURE_SLACK:
         return False
     return first_air is None or published_at >= first_air - PREMIERE_SLACK
+
+
+def release_delay(samples: Iterable[Tuple[datetime, datetime]]) -> Optional[timedelta]:
+    """How long after its air time a show's release usually comes out, from (air time, published) pairs, one per episode.
+
+    The newest ``DELAY_SAMPLES`` releases are looked at, and the largest group of them within ``DELAY_AGREEMENT``
+    of each other decides; None until at least two agree.
+    """
+    newest = sorted(samples, key=lambda pair: pair[0], reverse=True)
+    delays = [published - air for air, published in newest if DELAY_EARLIEST <= published - air <= DELAY_LATEST]
+    ordered = sorted(delays[:DELAY_SAMPLES])
+    best: List[timedelta] = []
+    for start, low in enumerate(ordered):
+        group = [d for d in ordered[start:] if d - low <= DELAY_AGREEMENT]
+        if len(group) > len(best):
+            best = group
+    return median(best) if len(best) >= 2 else None

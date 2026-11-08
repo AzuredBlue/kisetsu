@@ -8,10 +8,12 @@ import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
+import { releaseState, shownExpected } from '../format.js';
 
 const WEEK = 7 * 86400000;
 const SEASON_WEEKS = 4;
 const time = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
 
@@ -51,6 +53,8 @@ export function buildWeek(shows, today, offset = 0) {
   const airing = shows.flatMap(show => airingsBetween(show, monday, sunday).map(a => ({
     show, at: a.at, episode: a.episode, passed: a.at <= today, status: a.status,
     done: a.done ?? (show.last_done || 0) >= a.episode,
+    expected: shownExpected(a.at, show.release_delay_minutes),
+    release: releaseState(a.at, show.release_delay_minutes, today),
     minutes: a.at.getHours() * 60 + a.at.getMinutes(),
   })));
   // Weekdays something airs on this season, from the weeks around this one, so a quiet day can take less room
@@ -82,12 +86,23 @@ export function buildWeek(shows, today, offset = 0) {
 
 // Where an aired episode stands, in the words the show cards use. One on disk is settled: it dims and gets a check.
 // One still being looked for stays bright, since it is the one worth a look.
-function outcome({ show, passed, done, status }) {
+// With a learned release time, one still on its way is plain "Aired" until it is "Late".
+function outcome({ show, passed, done, status, release }) {
   if (!passed) return null;
   if (done) return { settled: true };
   if (status === 'downloading') return { text: 'Downloading', tone: 'info' };
   if (status === 'failed') return { text: 'Failed', tone: 'bad' };
-  return { text: 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
+  if (status !== 'missed' && release === 'early') return { text: 'Aired', tone: '' };
+  return { text: status !== 'missed' && release === 'late' ? 'Late' : 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
+}
+
+// "out ~3:35 PM" while a release is still to come.
+function expectedTag(entry, state) {
+  const { show, expected } = entry;
+  if (!expected || (state && (state.settled || state.tone === 'info' || state.tone === 'bad'))) return null;
+  const delay = show.release_delay_minutes;
+  const note = delay < 0 ? `${span(-delay)} before airing` : `${span(delay)} after airing`;
+  return html`<span class="when muted" title=${`Usually out ~${time(expected)}, ${note}`}>out ~${time(expected)}</span>`;
 }
 
 const weekName = (offset) => offset === 0 ? 'This week' : offset === 1 ? 'Next week' : offset === -1 ? 'Last week'
@@ -108,7 +123,7 @@ function Slot({ slot }) {
             <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
             <div class="row wrap"><span class="ep">Ep ${episode}</span>${!state ? null : state.settled
               ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>`
-              : html`<span class=${`when ${state.tone}`}>${state.text}</span>`}<${StatusTag} show=${show} /></div>
+              : html`<span class=${`when ${state.tone}`}>${state.text}</span>`}${expectedTag(entry, state)}<${StatusTag} show=${show} /></div>
           </div>
         </button>`;
       })}

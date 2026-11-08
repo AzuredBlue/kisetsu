@@ -109,3 +109,35 @@ export function episodeLabel(numbers) {
   });
   return runs.map(([a, b]) => (a === b ? a : `${a}–${b}`)).join(', ');
 }
+
+// A show's `release_delay_minutes` is a duration added to an instant, so expected times follow the viewer's timezone.
+const FIVE_MINUTES = 5 * 60000;
+// A delay shorter than this is not worth a second time next to the air time.
+const EXPECTED_SHOWN_FROM = 10;
+// An aired episode is late once this long past its expected time.
+const LATE_AFTER = 30 * 60000;
+
+// When the release of an episode airing at `iso` usually comes out, to the nearest 5 minutes; null without a learned delay.
+export function expectedAt(iso, delayMinutes) {
+  const d = toDate(iso);
+  if (!d || delayMinutes == null) return null;
+  return new Date(Math.round((d.getTime() + delayMinutes * 60000) / FIVE_MINUTES) * FIVE_MINUTES);
+}
+
+// The expected time, but only when it says something the air time does not.
+export function shownExpected(iso, delayMinutes) {
+  return delayMinutes != null && Math.abs(delayMinutes) >= EXPECTED_SHOWN_FROM ? expectedAt(iso, delayMinutes) : null;
+}
+
+// For an aired episode not found yet: 'late' once well past its expected time, 'early' before that, null without a learned delay.
+export function releaseState(iso, delayMinutes, now = Date.now()) {
+  const expected = expectedAt(iso, delayMinutes);
+  if (!expected) return null;
+  return now - expected.getTime() > LATE_AFTER ? 'late' : 'early';
+}
+
+// "usually out ~15:35" for an episode airing at `iso`; empty when there is nothing worth saying.
+export function expectedNote(iso, delayMinutes) {
+  const expected = shownExpected(iso, delayMinutes);
+  return expected ? `usually out ~${localTime(expected.toISOString())}` : '';
+}

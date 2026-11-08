@@ -28,7 +28,7 @@ from kisetsu.domain.schedule import is_unreleased
 from kisetsu.domain.status import ShowStatus, show_status
 from kisetsu.services import downloads, manual, shows as shows_service
 from kisetsu.services.context import Context, get_state
-from kisetsu.services.facts import facts_for
+from kisetsu.services.facts import facts_for, release_delays
 
 STATUS_LABELS = {
     ShowStatus.PAUSED: "Paused",
@@ -142,6 +142,7 @@ def show_card(
     last_done: Optional[int] = None,
     released: bool = True,
     airings: Optional[List[Dict[str, Any]]] = None,
+    release_delay: Optional[timedelta] = None,
 ) -> Dict[str, Any]:
     language = ctx.settings.title_language
     title = show.title(language)
@@ -184,6 +185,8 @@ def show_card(
         },
         "next_airing": None if not show.next_airing_at else {"episode": show.next_airing_episode, "at": iso(show.next_airing_at)},
         "airings": airings or [],
+        # How long after its air time a release usually comes out; the UI adds it to each air time in the viewer's timezone.
+        "release_delay_minutes": None if release_delay is None else round(release_delay.total_seconds() / 60),
         "save_folder": show.save_folder,
         "save_path": compress_home_path(resolve_save_path(ctx.settings.base_dir, title, show.save_folder)),
         "category": show.category,
@@ -200,11 +203,12 @@ def shows_view(ctx: Context) -> List[Dict[str, Any]]:
     facts = facts_for(ctx, shows)
     counts, replacing, aired, last = _episode_counts(ctx), _replacing(ctx), _aired(ctx), _last_done(ctx)
     airings = _airings(ctx)
+    delays = release_delays(ctx)
     return [
         show_card(
             ctx, show, show_status(facts[show.id], ctx.now), counts.get(show.id, {}), feeds.get(show.feed_id),
             replacing=replacing.get(show.id, 0), aired=aired.get(show.id, 0), last_done=last.get(show.id),
-            released=not is_unreleased(facts[show.id], ctx.now), airings=airings.get(show.id),
+            released=not is_unreleased(facts[show.id], ctx.now), airings=airings.get(show.id), release_delay=delays.get(show.id),
         )
         for show in shows
     ]
@@ -288,6 +292,7 @@ def card_for(ctx: Context, show: Show) -> Dict[str, Any]:
         ctx, show, show_status(facts, ctx.now), counts, feed,
         replacing=_replacing(ctx, show.id).get(show.id, 0), aired=_aired(ctx, show.id).get(show.id, 0), last_done=_last_done(ctx, show.id).get(show.id),
         released=not is_unreleased(facts, ctx.now), airings=_airings(ctx, show.id).get(show.id),
+        release_delay=release_delays(ctx, [show.id]).get(show.id),
     )
 
 

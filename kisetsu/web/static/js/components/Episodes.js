@@ -1,7 +1,7 @@
 // The episode ledger and the releases the feeds carry, as two lists of the show page.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { airTime, relativeTime, localTime } from '../format.js';
+import { airTime, expectedNote, relativeTime, localTime, releaseState } from '../format.js';
 import { Icon, Spinner } from './Icon.js';
 import { toast } from './Toast.js';
 
@@ -12,14 +12,16 @@ const stalledNote = (stalled) => `The torrent has moved no data for hours.${stal
 
 const version = (v) => (v > 1 ? ` v${v}` : '');
 
-// "airs Sat 16:30" for an episode still to come, with the date once it is a week or more away.
-function airsLabel(ep, now) {
+// "airs Sat 16:30 · usually out ~17:05" for an episode still to come, with the date once it is a week or more away.
+function airsLabel(ep, now, delay) {
   if (ep.status !== 'wanted' || !ep.air_at || new Date(ep.air_at) <= now) return '';
-  return `airs ${airTime(ep.air_at, now)}`;
+  const label = `airs ${airTime(ep.air_at, now)}`;
+  const note = new Date(ep.air_at) - now < 6 * 86400000 ? expectedNote(ep.air_at, delay) : '';
+  return note ? `${label} · ${note}` : label;
 }
 
-// What an episode row says and which group it belongs to.
-export function describe(ep, { paused, now }) {
+// What an episode row says and which group it belongs to. `delay` is the show's `release_delay_minutes`.
+export function describe(ep, { paused, now, delay }) {
   const aired = ep.status === 'wanted' && ep.air_at && new Date(ep.air_at) <= now;
   const retryAt = ep.retry_after ? new Date(ep.retry_after) : null;
   const retrying = aired && retryAt && retryAt > now && ep.last_error;
@@ -31,15 +33,17 @@ export function describe(ep, { paused, now }) {
   else if (ep.status === 'missed') { label = 'missed'; tone = 'warn'; }
   else if (ep.status === 'skipped') label = 'skipped';
   else if (retrying) { label = `retry ${localTime(ep.retry_after)}`; tone = 'warn'; }
+  else if (aired && !paused && releaseState(ep.air_at, delay, now) === 'late') { label = 'late, searching'; tone = 'warn'; }
   else if (aired) { label = paused ? 'aired, paused' : 'aired, searching'; tone = paused ? '' : 'info'; }
   else if (ep.status === 'downloading') { label = ep.replacing ? 'replacing' : 'downloading'; tone = 'info'; }
-  else label = airsLabel(ep, now) || ep.status;
+  else label = airsLabel(ep, now, delay) || ep.status;
+  const hint = aired && !retrying ? expectedNote(ep.air_at, delay).replace(/^u/, 'U') : '';
   const group = ep.stalled ? 'attention'
     : ep.status === 'completed' ? 'done'
     : ep.status === 'skipped' ? 'skipped'
     : ep.status === 'failed' || ep.status === 'missed' || retrying ? 'attention'
     : ep.status === 'downloading' ? 'active' : 'waiting';
-  return { label, tone, group };
+  return { label, tone, group, hint };
 }
 
 function RowButton({ pending, onClick, title, icon = 'download' }) {
@@ -68,12 +72,12 @@ export function useRowAction(showId, done) {
 // Finished episodes shown before "Show all": a long-running show has hundreds of them.
 const DONE_SHOWN = 50;
 
-export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, searching }) {
+export function EpisodeList({ episodes, groups, paused, delay, now, actions, onSearch, searching }) {
   const [allDone, setAllDone] = useState(false);
   const usable = (groups || []).filter(g => g.usable).flatMap(g => g.matches);
   const replacements = new Map();
   usable.forEach(m => { const best = replacements.get(m.episode); if (m.replaces && (!best || m.version > best.version)) replacements.set(m.episode, m); });
-  const rows = episodes.map(ep => ({ ep, ...describe(ep, { paused, now }) }));
+  const rows = episodes.map(ep => ({ ep, ...describe(ep, { paused, now, delay }) }));
   const missedAny = (group) => rows.some(r => r.group === group && r.ep.status === 'missed');
   const search = (group) => !missedAny(group) ? null : searching
     ? html`<span class="muted row"><${Spinner} small /> Searching…</span>`
@@ -84,7 +88,7 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
     const folded = name === 'done' && !allDone && sorted.length > DONE_SHOWN ? sorted.length - DONE_SHOWN : 0;
     const entries = folded ? sorted.slice(0, DONE_SHOWN) : sorted;
     return html`<li class="list-head" key=${`g:${name}`}><span>${title}</span><span class="muted tabular">${sorted.length}</span><span class="push">${search(name)}</span></li>
-      ${entries.map(({ ep, label, tone }) => {
+      ${entries.map(({ ep, label, tone, hint }) => {
         const release = ep.release;
         const unmanaged = ep.status === 'completed' && release && !release.tracked;
         const retry = ep.status === 'failed' ? usable.find(m => m.episode === ep.number && m.downloadable) : null;
@@ -94,7 +98,7 @@ export function EpisodeList({ episodes, groups, paused, now, actions, onSearch, 
           <span class="ep-no">Ep ${ep.number}${release ? version(release.version) : ''}</span>
           <span class="release-name mono truncate" title=${release ? release.title : ''}>${release ? release.title : ''}</span>
           <span class="row-end">
-            <span class=${`state ${tone}`} title=${ep.stalled ? stalledNote(ep.stalled) : ep.last_error || undefined}>${label}${unmanaged ? ', unmanaged' : ''}</span>
+            <span class=${`state ${tone}`} title=${ep.stalled ? stalledNote(ep.stalled) : ep.last_error || hint || undefined}>${label}${unmanaged ? ', unmanaged' : ''}</span>
             ${ep.stalled && ep.stalled.alternatives ? html`<${RowButton} icon="swap" pending=${actions.pending.has(`another:${ep.id}`)} onClick=${() => actions.tryAnother(ep.id)} title="Try another release: drop this torrent from qBittorrent and download the best other release of this episode from the show's feed." />` : null}
             ${retry ? html`<${RowButton} pending=${actions.pending.has(retry.title)} onClick=${() => actions.download(retry.title)} title="Try this release again" />` : null}
             ${ep.status === 'skipped' ? html`<${RowButton} pending=${actions.pending.has(`want:${ep.id}`)} onClick=${() => actions.want(ep.id)} title="Download this episode after all" />` : null}

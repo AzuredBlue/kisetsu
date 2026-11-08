@@ -13,6 +13,7 @@ from kisetsu.domain.schedule import (
     missed_numbers,
     next_hunt_start,
     published_before_air,
+    release_delay,
     waiting_for_release,
 )
 
@@ -308,3 +309,27 @@ def test_a_premiere_with_no_date_or_a_far_date_is_out_of_reach_until_it_is_near(
     assert premiere_out_of_reach(undated, NOW) and premiere_out_of_reach(far, NOW)
     assert not premiere_out_of_reach(near, NOW)
     assert not premiere_out_of_reach(show(anilist_status="RELEASING", next_airing_episode=1, next_airing_at=NOW + timedelta(days=30)), NOW)
+
+
+def _pairs(*hours):
+    """(air, published) for weekly episodes, oldest first, each released ``hours`` after airing."""
+    return [(AIR + timedelta(days=7 * k), AIR + timedelta(days=7 * k, hours=h)) for k, h in enumerate(hours)]
+
+
+def test_a_release_delay_needs_two_releases_that_agree():
+    assert release_delay([]) is None
+    assert release_delay(_pairs(0.6)) is None
+    assert release_delay(_pairs(0.5, 3.0)) is None
+    assert release_delay(_pairs(1.71, 1.09)) == timedelta(hours=1.4)
+
+
+def test_a_release_delay_ignores_the_odd_week_and_releases_far_from_the_air_time():
+    assert release_delay(_pairs(0.6, 5.0, 0.6)) == timedelta(hours=0.6)
+    # A re-upload days later, or one dated long before airing, is not a weekly release.
+    assert release_delay(_pairs(0.6, 0.6, 76.0)) == timedelta(hours=0.6)
+    assert release_delay(_pairs(0.6, 0.6, -20.0)) == timedelta(hours=0.6)
+
+
+def test_a_release_delay_follows_the_newest_releases():
+    # The group moved from about 30 minutes to about 2 hours after airing: the last three decide.
+    assert release_delay(_pairs(0.5, 0.5, 0.5, 2.0, 2.1)) == timedelta(hours=2.05)

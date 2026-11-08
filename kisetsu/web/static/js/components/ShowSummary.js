@@ -3,7 +3,7 @@ import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
 import { edgeOf, readEdge, useEdges } from '../edges.js';
-import { countdown, initials, localDateTime, plural, progressFraction } from '../format.js';
+import { countdown, expectedNote, initials, localDateTime, plural, progressFraction, releaseState } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
@@ -16,8 +16,28 @@ const TAGS = {
   paused: ['pill-idle', 'Downloads are paused for this show.'],
 };
 
-// "Ep n" plus a countdown or outcome.
+// "Aired" while the release can still be on its way; "Late" once it is well past the time the show's releases
+// usually come out. Without a learned time, an aired episode not found yet is worth a look at once.
+function airedInfo(show, at, now) {
+  const state = releaseState(at, show.release_delay_minutes, now);
+  if (state === 'early') return { info: 'Aired', tone: '' };
+  return { info: state === 'late' ? 'Late' : 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
+}
+
+// The air line's tooltip: the air time, and when the release usually comes out once the show has learned it.
+function airTitle(show, at) {
+  if (!at) return undefined;
+  const note = expectedNote(at, show.release_delay_minutes);
+  return note ? `${localDateTime(at)}, ${note}` : localDateTime(at);
+}
+
+// "Ep n" plus a countdown or outcome, and the tooltip that goes with it.
 export function airSummary(show, now) {
+  const summary = summarize(show, now);
+  return { ...summary, title: airTitle(show, summary.at) };
+}
+
+function summarize(show, now) {
   if (show.status === 'completed') {
     return { ep: show.progress.total ? `${show.progress.total} eps` : '', info: 'Completed', tone: 'muted', at: null };
   }
@@ -26,7 +46,8 @@ export function airSummary(show, now) {
   const aired = (show.airings || []).filter(a => Date.parse(a.at) <= now);
   const newest = aired[aired.length - 1];
   if (newest && newest.status === 'downloading') return { ep: `Ep ${newest.episode}`, info: 'Downloading', tone: '', at: null };
-  if (newest && (newest.status === 'wanted' || newest.status === 'missed')) {
+  if (newest && newest.status === 'wanted') return { ep: `Ep ${newest.episode}`, ...airedInfo(show, newest.at, now), at: newest.at };
+  if (newest && newest.status === 'missed') {
     return { ep: `Ep ${newest.episode}`, info: 'Aired', tone: show.status !== 'waiting' ? 'warn' : '', at: newest.at };
   }
   const next = show.next_airing;
@@ -35,7 +56,8 @@ export function airSummary(show, now) {
     if (cd === 'Aired' && show.last_done && show.last_done >= next.episode) {
       return { ep: `Ep ${show.last_done}`, info: 'Downloaded', tone: 'ok', at: null };
     }
-    return { ep: `Ep ${next.episode}`, info: cd === 'Aired' ? 'Aired' : `in ${cd}`, tone: cd === 'Aired' && show.status !== 'waiting' ? 'warn' : '', at: next.at };
+    if (cd === 'Aired') return { ep: `Ep ${next.episode}`, ...airedInfo(show, next.at, now), at: next.at };
+    return { ep: `Ep ${next.episode}`, info: `in ${cd}`, tone: '', at: next.at };
   }
   if (show.last_done) return { ep: `Ep ${show.last_done}`, info: '', tone: '', at: null };
   return { ep: '', info: '', tone: '', at: null };
@@ -192,7 +214,7 @@ export function ShowCard({ show, now }) {
     <div class="show-text">
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       ${hasAir || hasCount ? html`<div class="meta">
-        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.at ? localDateTime(air.at) : undefined}>${air.info}</span></div>` : html`<${Problems} show=${show} />`}
+        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></div>` : html`<${Problems} show=${show} />`}
         ${hasCount ? html`<span class="count" title=${`${countText(show)} downloaded`}>${countText(show)}</span>` : null}
       </div>` : null}
       ${hasAir ? html`<${Problems} show=${show} />` : hasCount ? null : html`<${Problems} show=${show} />`}
@@ -209,7 +231,7 @@ export function ShowRow({ show, now }) {
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       <div class="sr-feed-sub truncate" title=${feedName(show)}>${feedName(show)}${show.counts.failed ? html`<span class="bad"> ${show.counts.failed} failed</span>` : null}${show.counts.missed ? html`<span class="warn"> ${show.counts.missed} missed</span>` : null}</div>
     </div>
-    <div class="sr-air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.at ? localDateTime(air.at) : undefined}>${air.info}</span></div>
+    <div class="sr-air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></div>
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
     <div class="sr-progress" title=${`${countText(show)} downloaded`}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
