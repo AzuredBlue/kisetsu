@@ -143,7 +143,26 @@ def _set_user_version(engine: Engine, version: int) -> None:
         conn.exec_driver_sql(f"PRAGMA user_version = {int(version)}")
 
 
-def _backup(path: Path, version: int) -> None:
+# The migration backups kept next to the database: every one a migration just made, and the newest of
+# the earlier ones up to this many in all. A run through several steps keeps the copy from before its first.
+BACKUPS_KEPT = 3
+
+
+def _prune_backups(path: Path, made: List[Path]) -> None:
+    earlier = []
+    for candidate in path.parent.glob(f"{path.name}.v*.*.bak"):
+        version, _, stamp = candidate.name[len(path.name) + 2:-len(".bak")].partition(".")
+        if version.isdigit() and candidate not in made:
+            earlier.append((stamp, candidate))
+    earlier.sort()
+    for _, old in earlier[:max(0, len(earlier) - max(0, BACKUPS_KEPT - len(made)))]:
+        try:
+            old.unlink()
+        except OSError as e:
+            logger.warning("Could not delete the old backup %s: %s", old.name, e)
+
+
+def _backup(path: Path, version: int) -> Path:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     target = path.with_name(f"{path.name}.v{version}.{stamp}.bak")
     # The database runs in WAL mode, so copying the file alone would miss what has not been checkpointed yet.
@@ -156,6 +175,7 @@ def _backup(path: Path, version: int) -> None:
         copy.close()
         source.close()
     logger.info("Backed up %s to %s before migrating.", path.name, target.name)
+    return target
 
 
 def migrate(engine: Engine, path: Optional[Path] = None) -> None:
@@ -171,14 +191,17 @@ def migrate(engine: Engine, path: Optional[Path] = None) -> None:
 
     # A new database holds nothing worth a backup, also after its first steps.
     existing = version > 0
+    made: List[Path] = []
     for target, step in MIGRATIONS:
         if target <= version:
             continue
         if existing and path is not None and path.exists():
-            _backup(path, version)
+            made.append(_backup(path, version))
         step(engine)
         _set_user_version(engine, target)
         version = target
+    if made:
+        _prune_backups(path, made)
 
     with Session(engine) as session:
         if session.get(Settings, 1) is None:

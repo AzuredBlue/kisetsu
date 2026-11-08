@@ -348,6 +348,38 @@ def test_a_version_9_database_reads_the_subsplease_rss_dates_as_pacific_time():
     assert [i.guid for i in after] == ["winter"]
 
 
+def test_a_migration_keeps_its_own_backups_and_only_the_newest_earlier_ones(tmp_path, monkeypatch):
+    from kisetsu.db import migrations
+
+    path = tmp_path / "k.db"
+    engine = make_engine(path)
+    migrate(engine, path)
+    for day in range(1, 6):
+        (tmp_path / f"k.db.v{20 + day}.202601{day:02d}T000000Z.bak").write_bytes(b"")
+    (tmp_path / "k.db.pre-import.bak").write_bytes(b"")
+    latest = migrations.LATEST_VERSION
+    monkeypatch.setattr(migrations, "MIGRATIONS", migrations.MIGRATIONS + [(latest + n, lambda engine: None) for n in (1, 2, 3, 4)])
+    monkeypatch.setattr(migrations, "LATEST_VERSION", latest + 4)
+    migrate(engine, path)
+    kept = sorted(p.name.split(".")[2] for p in tmp_path.glob("k.db.v*.bak"))
+    # The copy from before the run's first step is the one that matters most, though its version is the lowest.
+    assert kept == sorted(f"v{latest + n}" for n in (0, 1, 2, 3))
+    assert (tmp_path / "k.db.pre-import.bak").exists()
+
+
+def test_a_migration_keeps_the_newest_earlier_backups_up_to_the_limit(tmp_path):
+    from kisetsu.db.migrations import _prune_backups
+
+    path = tmp_path / "k.db"
+    for day in range(1, 6):
+        (tmp_path / f"k.db.v{day}.202601{day:02d}T000000Z.bak").write_bytes(b"")
+    made = tmp_path / "k.db.v1.20261108T000000Z.bak"
+    made.write_bytes(b"")
+    _prune_backups(path, [made])
+    assert sorted(p.name for p in tmp_path.glob("*.bak")) == [
+        "k.db.v1.20261108T000000Z.bak", "k.db.v4.20260104T000000Z.bak", "k.db.v5.20260105T000000Z.bak",
+    ]
+
 def test_a_new_database_is_not_backed_up_while_it_is_created(tmp_path):
     path = tmp_path / "k.db"
     migrate(make_engine(path), path)
