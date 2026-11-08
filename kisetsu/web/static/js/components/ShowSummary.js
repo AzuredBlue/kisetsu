@@ -3,7 +3,7 @@ import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
 import { edgeOf, readEdge, useEdges } from '../edges.js';
-import { countdown, expectedNote, initials, localDateTime, plural, progressFraction, releaseState } from '../format.js';
+import { countdown, expectedNote, initials, localDateTime, localTime, plural, progressFraction, releaseState, shownExpected } from '../format.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
@@ -20,7 +20,10 @@ const TAGS = {
 // usually come out. Without a learned time, an aired episode not found yet is worth a look at once.
 function airedInfo(show, at, now) {
   const state = releaseState(at, show.release_delay_minutes, now);
-  if (state === 'early') return { info: 'Aired', tone: '' };
+  if (state === 'early') {
+    const expected = shownExpected(at, show.release_delay_minutes);
+    return { info: 'Aired', tone: '', expected: expected ? `~${localTime(expected.toISOString())}` : null };
+  }
   return { info: state === 'late' ? 'Late' : 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
 }
 
@@ -231,7 +234,7 @@ export function ShowRow({ show, now }) {
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       <div class="sr-feed-sub truncate" title=${feedName(show)}>${feedName(show)}${show.counts.failed ? html`<span class="bad"> ${show.counts.failed} failed</span>` : null}${show.counts.missed ? html`<span class="warn"> ${show.counts.missed} missed</span>` : null}</div>
     </div>
-    <div class="sr-air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></div>
+    <div class="sr-air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span>${air.expected ? html`<span class="muted" title=${air.title}>${air.expected}</span>` : null}</div>
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
     <div class="sr-progress" title=${`${countText(show)} downloaded`}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
