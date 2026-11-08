@@ -73,7 +73,7 @@ git pull
 pip install -e .    # only needed when the dependencies changed
 ```
 
-The database is migrated by itself the first time the new version starts. Before each migration step, a copy of it (`kisetsu.db.v<version>.<date>.bak`) is saved next to it. A database made by a newer version is refused rather than touched, so go back to that version or point Kisetsu at another database.
+The database is migrated by itself the first time the new version starts. Before each migration step, a copy of it (`kisetsu.db.v<version>.<date>.bak`) is saved next to it. The copies a migration makes are all kept, along with the newest earlier ones up to three in all; older ones are deleted. A database made by a newer version is refused rather than touched, so go back to that version or point Kisetsu at another database.
 
 ## Command line
 
