@@ -7,7 +7,7 @@ from sqlmodel import Session, select
 from kisetsu.clients.anilist import AniListDeferred, AniListError
 from kisetsu.clients.qbittorrent import QbitUnavailable
 from kisetsu.config import DEFAULT_EARLY_AIR_TOLERANCE_HOURS
-from kisetsu.db.schema import AppState, Download, DownloadState, Event, EventKind, Feed, FeedItem, FeedState, Show
+from kisetsu.db.schema import AppState, Download, DownloadState, Episode, Event, EventKind, Feed, FeedItem, FeedState, Show
 from kisetsu.engine.jobs import SETUP_WAIT, Jobs
 from tests.fakes import START, anilist_show
 
@@ -634,3 +634,29 @@ def test_a_burst_of_pokes_runs_the_job_at_most_once_a_second(env):
         now[0] = t
         env.jobs._poke_soon("settle", 4.0)
     assert asked == [("settle", 110.0), ("settle", 114.0), ("settle", 114.0)]
+
+
+def test_shows_owed_a_full_schedule_when_anilist_defers_it_are_fetched_on_the_next_pass(env):
+    env.anilist.shows.append(anilist_show(1, "Long Show", next_airing_episode=30, next_airing_at=START + timedelta(days=7)))
+    env.anilist.set_schedule(1, START - timedelta(days=196), 29)
+    real_full = env.anilist.fetch_media_airing_schedules
+    calls = []
+
+    async def full(media_ids):
+        calls.append(list(media_ids))
+        if len(calls) == 1:
+            raise AniListDeferred("budget used", retry_in=30)
+        return await real_full(media_ids)
+
+    env.anilist.fetch_media_airing_schedules = full
+
+    async def go():
+        wait = await env.jobs.sync_anilist()
+        env.clock.advance(seconds=60)
+        await env.jobs.refresh_schedules()
+        return wait
+
+    assert run(env, go) == 30.0
+    assert len(calls) == 2
+    undated = env.query(lambda s: [e.number for e in s.exec(select(Episode).where(Episode.number <= 3, Episode.air_at.is_(None))).all()])
+    assert undated == []

@@ -383,19 +383,25 @@ class Jobs:
         now = self.engine.clock()
         schedules: Dict[int, Any] = {}
         full = list(plan.full)
+        # The shows still owed their whole schedule; if AniList defers, they are left undated for the next pass.
+        owed: List[int] = []
         deferral: Optional[AniListDeferred] = None
         try:
             if plan.windowed:
                 schedules.update(await self.anilist.fetch_upcoming_airing_schedules(plan.windowed, now - SCHEDULE_REFRESH_LOOKBACK))
             if full:
+                owed = full
                 covering = await self.anilist.fetch_upcoming_airing_schedules(full, now - SCHEDULE_FULL_LOOKBACK)
                 schedules.update(covering)
-                full = await self.engine.run(cycle.uncovered, full, covering)
+                full = owed = await self.engine.run(cycle.uncovered, full, covering)
             if full:
                 schedules.update(await self.anilist.fetch_media_airing_schedules(full))
+                owed = []
         except AniListDeferred as e:
             deferral = e
             schedules.update(e.partial)
+            for media_id in owed:
+                schedules.pop(media_id, None)
         except AniListError as e:
             logger.warning(f"Could not refresh episode airing schedules: {e}")
             return ANILIST_ERROR_RETRY
