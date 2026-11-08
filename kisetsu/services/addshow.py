@@ -372,6 +372,11 @@ def confirm(
         raise ValueError("Selected feed not found")
     if found:
         store_found(ctx, found)
+    if feed is not None:
+        known = {item_key(FeedItem(feed_id=feed.id, guid=guid)) for guid in ctx.session.exec(select(FeedItem.guid).where(FeedItem.feed_id == feed.id))}
+        if any(key.startswith(f"{feed.id}:") and key not in known for key in item_keys):
+            # The search that offered them is gone (it is kept an hour); adding the show now would quietly start none of them.
+            raise ValueError("Some of the chosen releases are no longer known. Search again.")
     folder = existing_folder(ctx, entry)
     paused_all = shows.all_paused(ctx)
     show = shows.show_from_entry(entry, paused_all)

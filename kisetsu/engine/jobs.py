@@ -571,9 +571,12 @@ class Jobs:
         return result
 
     def found_for(self, anilist_id: int) -> Dict[int, Any]:
-        """What the last search for this entry found, to store when the show is added."""
-        kept = self._found.pop(anilist_id, None)
+        """What the last search for this entry found, to store when the show is added; kept until ``forget_found``."""
+        kept = self._found.get(anilist_id)
         return kept[1] if kept and time.monotonic() - kept[0] < FOUND_KEEP_SECONDS else {}
+
+    def forget_found(self, anilist_id: int) -> None:
+        self._found.pop(anilist_id, None)
 
     async def after_manual_add(self) -> None:
         """Date the episodes of a show the user just added, then let the grab and settle passes follow it."""

@@ -61,6 +61,8 @@ async def confirm(body: Confirm, request: Request):
     entry = _entry(request, body.anilist_id)
     found = runtime(request).jobs.found_for(body.anilist_id)
     result = await write(request, addshow.confirm, entry, body.feed_id, body.item_keys, found)
+    # Dropped only once the add went through, so a refused confirm can be tried again.
+    runtime(request).jobs.forget_found(body.anilist_id)
     task = asyncio.create_task(runtime(request).jobs.after_manual_add())
     _background.add(task)
     task.add_done_callback(_background.discard)

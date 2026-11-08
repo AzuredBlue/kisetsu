@@ -398,3 +398,31 @@ async def test_add_show_offers_the_preferred_quality_when_the_feed_has_it(web):
     await web.anilist.fetch_user_list("user")
     preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
     assert [e["title"] for e in preview["feeds"][0]["episodes"]] == ["[Grp] Sousou no Frieren - 01 (720p).mkv"]
+
+
+async def test_a_confirm_that_fails_keeps_the_search_for_the_next_try(web):
+    _user(web)
+    _finished(web)
+    _releases(web)
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    keys = [e["item_key"] for e in preview["feeds"][0]["episodes"]]
+    wrong = await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": 999, "item_keys": keys})
+    assert wrong.status_code == 400
+    body = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": keys})).json()
+    assert body["started"] == 3 and body["errors"] == []
+
+
+async def test_a_confirm_after_the_search_was_forgotten_adds_nothing_and_asks_to_search_again(web):
+    _user(web)
+    _finished(web)
+    _releases(web)
+    feed = web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    preview = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    keys = [e["item_key"] for e in preview["feeds"][0]["episodes"]]
+    web.runtime.jobs.forget_found(7)
+    body = await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": keys})
+    assert body.status_code == 400 and "Search again" in body.json()["detail"]
+    assert web.query(lambda s: s.exec(select(Show)).all()) == []
