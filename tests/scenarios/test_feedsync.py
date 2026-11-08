@@ -98,12 +98,13 @@ def test_a_missing_episode_keeps_its_shows_own_feed_on_every_read_for_three_days
     low = world.feed("Low", "https://low/rss", 2)
     world.show(episodes=2, first_air=START - timedelta(days=8), feed=low, feed_state=FeedState.LOCKED)
     _read(world, top, low)
+    world.clock.advance(minutes=15)
     assert _planned(world) == [low.id]
-    world.clock.advance(days=2)
+    world.clock.advance(days=1, hours=23, minutes=30)
     _read(world, top, low)
+    world.clock.advance(minutes=15)
     assert _planned(world) == [low.id]
-    world.clock.advance(days=1, minutes=1)
-    _read(world, top, low)
+    world.clock.advance(minutes=1)
     assert _planned(world) == []
 
 
@@ -112,6 +113,7 @@ def test_a_show_without_its_feed_needs_every_feed_while_an_episode_is_missing(wo
     low = world.feed("Low", "https://low/rss", 2)
     world.show(episodes=1, first_air=START - timedelta(days=1))
     _read(world, top, low)
+    world.clock.advance(minutes=15)
     assert _planned(world) == [top.id, low.id]
 
 
@@ -175,3 +177,19 @@ def test_with_no_feed_to_read_the_next_read_waits_for_the_next_episode_or_has_no
     spare = world.feed("Spare", URL, 1)
     _read(world, spare)
     assert feedsync.next_read_at(world.ctx(), timedelta(minutes=15)) is None
+
+
+def test_the_routine_read_leaves_a_needed_feed_the_hunt_just_read_to_the_hunt(world):
+    top = world.feed("Top", URL, 1)
+    world.show(episodes=1, first_air=START - timedelta(hours=1), feed=top, feed_state=FeedState.LOCKED)
+    _read(world, top)
+    world.clock.advance(minutes=13)
+    assert _planned(world) == [top.id]
+    _read(world, top)
+    world.clock.advance(minutes=5)
+    assert _planned(world) == []
+    _read(world, top)
+    world.clock.advance(minutes=12)
+    assert _planned(world) == []
+    world.clock.advance(minutes=1)
+    assert _planned(world) == [top.id]

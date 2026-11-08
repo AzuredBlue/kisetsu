@@ -21,6 +21,9 @@ FetchResult = Union[List[FeedArticle], str]
 IDLE_FEED_REFRESH = timedelta(hours=6)
 # An aired episode still missing keeps its show's feeds on every routine read this long; then only the idle read looks.
 MISSING_FOR = timedelta(days=3)
+# A needed feed is read again this much before a routine interval has passed since its last read, since a read is
+# stamped a little after the routine read was planned; a feed the hunt read more recently than that is left to it.
+READ_SLACK = timedelta(minutes=2)
 
 
 @dataclass(frozen=True)
@@ -127,9 +130,11 @@ def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:
         return [_ref(feed) for feed in all_feeds]
     needed = _needed(ctx, all_feeds)
     idle = _idle_read(ctx, all_feeds)
+    routine = timedelta(minutes=ctx.settings.feed_refresh_minutes) - READ_SLACK
     return [
         _ref(feed) for feed in all_feeds
-        if feed.id in needed or feed.last_fetch_at is None
+        if feed.last_fetch_at is None
+        or (feed.id in needed and ctx.now - feed.last_fetch_at >= routine)
         or (feed.id in idle and ctx.now - feed.last_fetch_at >= IDLE_FEED_REFRESH)
     ]
 
