@@ -51,7 +51,7 @@ def test_a_show_learns_how_long_after_airing_its_feed_releases_it(world):
         world.session.add(Download(episode_id=episode.id, feed_id=source.id, feed_item_guid=guid, title=guid, state=DownloadState.DONE, **fields))
         world.commit()
 
-    grab(1, 35)
+    grab(1, 35, adopted=True)  # adopted, but it came from an item of the show's feed
     [card] = views.shows_view(world.ctx())
     assert card["release_delay_minutes"] is None
     grab(2, 300, version=2)  # a v2 days later says nothing about when the show comes out

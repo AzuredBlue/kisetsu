@@ -42,8 +42,9 @@ def facts_for(ctx: Context, shows: Iterable[Show]) -> Dict[int, ShowFacts]:
 def release_delays(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> Dict[int, timedelta]:
     """Each show's learned delay from air time to release (``schedule.release_delay``), for the shows that have one.
 
-    Learned from the releases Kisetsu took from the show's current feed: first versions of single episodes with an
-    AniList air time, dated by the feed itself, so when Kisetsu happened to read the feed does not count.
+    Learned from the show's downloads that came from an item of its current feed, adopted ones included: first
+    versions of single episodes with an AniList air time, dated by the feed itself, so when Kisetsu happened to read
+    the feed does not count.
     """
     query = (
         select(Episode.show_id, Episode.id, Episode.air_at, FeedItem.published_at)
@@ -54,7 +55,6 @@ def release_delays(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> Di
             Download.feed_id == Show.feed_id,
             Download.version == 1,
             Download.batch == False,  # noqa: E712
-            Download.adopted == False,  # noqa: E712
             Download.supersedes_id.is_(None),
             Episode.air_at.is_not(None),
             FeedItem.published_at.is_not(None),
