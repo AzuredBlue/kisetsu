@@ -714,3 +714,22 @@ def test_an_errored_torrent_is_not_a_version_that_failed_for_good(world):
     settle(world)
     assert dl.state == DownloadState.FAILED and dl.info_hash is not None
     assert downloads.failed_versions(world.ctx(), world.episode(show, 1)) == set()
+
+
+def test_a_retry_cut_off_during_the_add_is_tried_again(world):
+    feed, show, ep = setup(world)
+    world.qbit.reject_adds = QbitRejected("bad link")
+    dl, _ = grab(world, show, feed, ep)
+    assert dl.state == DownloadState.RETRY_WAIT
+    world.qbit.reject_adds = RuntimeError("the app stopped during the add")
+    world.clock.advance(minutes=16)
+    with pytest.raises(RuntimeError):
+        downloads.settle(world.ctx())
+    world.session.rollback()
+    world.session.expire_all()
+    world.qbit.reject_adds = None
+    for _ in range(3):
+        settle(world, minutes=20)
+    world.session.expire_all()
+    assert dl.state in (DownloadState.DOWNLOADING, DownloadState.DONE), (dl.state, dl.next_retry_at)
+
