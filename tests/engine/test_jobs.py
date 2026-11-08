@@ -357,6 +357,7 @@ def test_a_routine_read_skips_an_idle_feed_but_startup_and_a_manual_refresh_read
 
 
 def test_with_nothing_missing_the_routine_read_sleeps_until_a_feed_is_idle_and_the_hunt_reports_no_read(env):
+    env.anilist.shows.append(anilist_show(1, "Sousou no Frieren"))
     env.add_feed()
 
     async def go():

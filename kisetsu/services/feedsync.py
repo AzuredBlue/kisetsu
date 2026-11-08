@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from kisetsu.clients.rss import FeedArticle
-from kisetsu.db.schema import Episode, EpisodeStatus, Feed, FeedState, Show
+from kisetsu.db.schema import FIXED_FEED_STATES, Episode, EpisodeStatus, Feed, FeedState, Show
 from kisetsu.domain.schedule import HuntPlan, hunt_plan
 from kisetsu.services import ingest
 from kisetsu.services.context import Context
@@ -16,7 +16,8 @@ from kisetsu.services.facts import facts_for
 
 FetchResult = Union[List[FeedArticle], str]
 
-# A feed no show needs is still read this often, for v2s, batches and releases ahead of their air time.
+# A feed no show needs is still read this often, for v2s, batches and releases ahead of their air time
+# (only the feeds of locked and pinned shows while every followed show has one: see ``_idle_read``).
 IDLE_FEED_REFRESH = timedelta(hours=6)
 # An aired episode still missing keeps its show's feeds on every routine read this long; then only the idle read looks.
 MISSING_FOR = timedelta(days=3)
@@ -78,16 +79,30 @@ def _needed(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
     return needed
 
 
+def _idle_read(ctx: Context, all_feeds: List[Feed]) -> Set[int]:
+    """The feeds the idle read keeps up: every feed while a followed show may still take its releases from any,
+    else only the feeds the locked and pinned shows read, since nothing another feed carries can be theirs.
+    """
+    shows = [s for s in ingest.followed_shows(ctx) if not s.paused]
+    if any(s.feed_state not in FIXED_FEED_STATES or s.feed_id is None for s in shows):
+        return {f.id for f in all_feeds}
+    return {s.feed_id for s in shows}
+
+
 def next_read_at(ctx: Context, interval: timedelta) -> Optional[datetime]:
     """When the routine read next has a feed to read: after ``interval`` while a show needs one,
-    else when the first feed has been idle long enough or the next wanted episode airs (None: no feeds).
+    else when the first feed has been idle long enough or the next wanted episode airs (None: neither).
     """
     all_feeds = list(ctx.session.exec(select(Feed)).all())
     if not all_feeds:
         return None
     if _needed(ctx, all_feeds):
         return ctx.now + interval
-    times = [ctx.now if f.last_fetch_at is None else f.last_fetch_at + IDLE_FEED_REFRESH for f in all_feeds]
+    idle = _idle_read(ctx, all_feeds)
+    times = [
+        ctx.now if f.last_fetch_at is None else f.last_fetch_at + IDLE_FEED_REFRESH
+        for f in all_feeds if f.last_fetch_at is None or f.id in idle
+    ]
     airs = ctx.session.exec(
         select(func.min(Episode.air_at))
         .join(Show, Show.id == Episode.show_id)
@@ -100,6 +115,8 @@ def next_read_at(ctx: Context, interval: timedelta) -> Optional[datetime]:
     ).first()
     if airs is not None:
         times.append(airs)
+    if not times:
+        return None
     return max(ctx.now, min(times))
 
 
@@ -109,9 +126,11 @@ def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:
     if everything:
         return [_ref(feed) for feed in all_feeds]
     needed = _needed(ctx, all_feeds)
+    idle = _idle_read(ctx, all_feeds)
     return [
         _ref(feed) for feed in all_feeds
-        if feed.id in needed or feed.last_fetch_at is None or ctx.now - feed.last_fetch_at >= IDLE_FEED_REFRESH
+        if feed.id in needed or feed.last_fetch_at is None
+        or (feed.id in idle and ctx.now - feed.last_fetch_at >= IDLE_FEED_REFRESH)
     ]
 
 

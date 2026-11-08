@@ -84,6 +84,7 @@ def _planned(world):
 
 def test_a_feed_no_show_needs_is_read_again_only_after_the_idle_wait(world):
     top = world.feed("Top", URL, 1)
+    world.show(1, "Free Show")
     _read(world, top)
     assert _planned(world) == []
     world.clock.advance(hours=5)
@@ -127,6 +128,7 @@ def test_a_caught_up_paused_or_unaired_show_needs_no_feed(world):
 
 def test_the_next_read_waits_for_the_first_idle_feed_or_the_next_episode_to_air(world):
     top = world.feed("Top", URL, 1)
+    world.show(2, "Free Show")
     interval = timedelta(minutes=15)
     assert feedsync.next_read_at(world.ctx(), interval) == START
     _read(world, top)
@@ -135,3 +137,41 @@ def test_the_next_read_waits_for_the_first_idle_feed_or_the_next_episode_to_air(
     assert feedsync.next_read_at(world.ctx(), interval) == START + timedelta(hours=2)
     world.clock.advance(hours=3)
     assert feedsync.next_read_at(world.ctx(), interval) == world.clock() + interval
+
+
+def test_while_every_followed_show_has_its_feed_fixed_the_idle_read_skips_the_feeds_none_of_them_use(world):
+    top = world.feed("Top", URL, 1)
+    low = world.feed("Low", "https://low/rss", 2)
+    spare = world.feed("Spare", "https://spare/rss", 3)
+    world.show(1, "Locked Show", feed=top, feed_state=FeedState.LOCKED)
+    world.show(2, "Pinned Show", feed=low, feed_state=FeedState.PINNED)
+    world.show(3, "Done Show", feed=spare, feed_state=FeedState.LOCKED, completed=True)
+    world.show(4, "Paused Show", paused=True)
+    world.show(5, "Far Show", anilist_status="NOT_YET_RELEASED", next_airing_episode=1, next_airing_at=START + timedelta(days=60))
+    assert _planned(world) == [top.id, low.id, spare.id]
+    _read(world, top, low, spare)
+    world.clock.advance(hours=6)
+    assert _planned(world) == [top.id, low.id]
+    assert feedsync.next_read_at(world.ctx(), timedelta(minutes=15)) == START + feedsync.IDLE_FEED_REFRESH
+    _read(world, top, low)
+    assert feedsync.next_read_at(world.ctx(), timedelta(minutes=15)) == world.clock() + feedsync.IDLE_FEED_REFRESH
+
+
+def test_a_followed_show_without_a_fixed_feed_brings_every_feed_back_to_the_idle_read(world):
+    top = world.feed("Top", URL, 1)
+    spare = world.feed("Spare", "https://spare/rss", 2)
+    world.show(1, "Locked Show", feed=top, feed_state=FeedState.LOCKED)
+    soon = world.show(2, "Soon Show", feed=top, feed_state=FeedState.ASSIGNED, anilist_status="NOT_YET_RELEASED",
+                      next_airing_episode=1, next_airing_at=START + timedelta(days=3))
+    _read(world, top, spare)
+    world.clock.advance(hours=6)
+    assert _planned(world) == [top.id, spare.id]
+    soon.feed_state = FeedState.LOCKED
+    world.commit()
+    assert _planned(world) == [top.id]
+
+
+def test_with_no_feed_to_read_the_next_read_waits_for_the_next_episode_or_has_no_time(world):
+    spare = world.feed("Spare", URL, 1)
+    _read(world, spare)
+    assert feedsync.next_read_at(world.ctx(), timedelta(minutes=15)) is None
