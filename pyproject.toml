@@ -20,6 +20,8 @@ dependencies = [
     "uvicorn>=0.28.0",
     "pillow>=10.0.0",
     "desktop-notifier>=6.0.0",
+    # The IANA zones zoneinfo reads; Windows has none of its own.
+    "tzdata; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

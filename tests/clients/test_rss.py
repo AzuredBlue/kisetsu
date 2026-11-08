@@ -53,6 +53,14 @@ def test_a_subsplease_item_takes_its_hash_from_the_base32_guid():
     assert a.guid == "HWYV3VXS4V2Y5IZX5AALSWZ6S2VJ7VTH"
 
 
+def test_a_subsplease_feed_date_is_read_as_us_pacific_time():
+    zone = rss.feed_wall_zone("https://subsplease.org/rss/?t&r=1080")
+    assert parse_feed(SUBSPLEASE, zone)[0].published_at == datetime(2026, 10, 26, 14, 32, 2, tzinfo=timezone.utc)
+    assert parse_date("Sat, 07 Nov 2026 17:32:05 +0000", zone) == datetime(2026, 11, 8, 1, 32, 5, tzinfo=timezone.utc)
+    assert rss.feed_wall_zone("https://nyaa.si/?page=rss&u=subsplease.org") is None
+    assert _fetch(lambda request: httpx2.Response(200, content=SUBSPLEASE), "https://subsplease.org/rss/?t&r=1080")[0].published_at.hour == 14
+
+
 def test_a_magnet_link_supplies_the_hash():
     body = (
         b"<rss><channel><item><title>x - 01</title>"

@@ -308,3 +308,41 @@ def test_a_version_8_database_gains_the_minimum_resolution_at_1080p():
     with engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT min_resolution FROM settings").scalar() == 1080
         assert conn.exec_driver_sql("PRAGMA user_version").scalar() == LATEST_VERSION
+
+
+def test_a_version_9_database_reads_the_subsplease_rss_dates_as_pacific_time():
+    engine = make_engine()
+    migrate(engine)
+    summer = datetime(2026, 10, 26, 7, 32, 2)  # Pacific daylight time: 7h behind UTC
+    winter = datetime(2026, 11, 7, 17, 32, 5)  # Pacific standard time: 8h behind UTC
+    with Session(engine) as session:
+        subsplease = Feed(name="SubsPlease", url="https://subsplease.org/rss/?t&r=1080")
+        nyaa = Feed(name="nyaa", url="https://nyaa.si/?page=rss&u=Erai-raws")
+        session.add(subsplease)
+        session.add(nyaa)
+        session.flush()
+        for feed, guid, url, published in (
+            (subsplease, "summer", "https://nyaa.si/view/1/torrent", summer),
+            (subsplease, "winter", "https://nyaa.si/view/2/torrent", winter),
+            (subsplease, "searched", "magnet:?xt=urn:btih:AAAA", winter),
+            (subsplease, "undated", "https://nyaa.si/view/3/torrent", None),
+            (nyaa, "nyaa", "https://nyaa.si/download/4.torrent", winter),
+        ):
+            session.add(FeedItem(feed_id=feed.id, guid=guid, title=guid, torrent_url=url, published_at=published))
+        session.commit()
+    with engine.begin() as conn:
+        conn.exec_driver_sql("PRAGMA user_version = 9")
+    migrate(engine)
+    with Session(engine) as session:
+        dates = {i.guid: i.published_at for i in session.exec(select(FeedItem)).all()}
+        # Stored in the same form as before, so it still sorts and compares against the other rows.
+        after = session.exec(select(FeedItem).where(FeedItem.published_at > datetime(2026, 11, 8, tzinfo=timezone.utc))).all()
+    utc = timezone.utc
+    assert dates == {
+        "summer": datetime(2026, 10, 26, 14, 32, 2, tzinfo=utc),
+        "winter": datetime(2026, 11, 8, 1, 32, 5, tzinfo=utc),
+        "searched": winter.replace(tzinfo=utc),
+        "undated": None,
+        "nyaa": winter.replace(tzinfo=utc),
+    }
+    assert [i.guid for i in after] == ["winter"]

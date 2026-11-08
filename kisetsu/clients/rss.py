@@ -7,10 +7,11 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from email.utils import parsedate_to_datetime
 from typing import Dict, List, Optional
 from urllib.parse import parse_qsl, unquote, urlparse
+from zoneinfo import ZoneInfo
 
 import httpx2
 
@@ -28,6 +29,9 @@ MIN_REQUEST_INTERVAL_SECONDS = 1.0
 RATE_LIMIT_WAIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 2
 MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
+
+# SubsPlease's RSS writes its pubDate in US Pacific time but marks it +0000.
+_PACIFIC = ZoneInfo("America/Los_Angeles")
 
 _HEX_HASH = re.compile(r"^[0-9a-fA-F]{40}$")
 _BASE32_HASH = re.compile(r"^[A-Za-z2-7]{32}$")
@@ -66,14 +70,19 @@ def magnet_parts(magnet: str):
     return btih, unquote(query.get("dn", "")) or None
 
 
-def parse_date(text: Optional[str]) -> Optional[datetime]:
-    """A feed date as aware UTC. Dates without a weekday or with a '-0000' zone are accepted."""
+def parse_date(text: Optional[str], wall_zone: Optional[tzinfo] = None) -> Optional[datetime]:
+    """A feed date as aware UTC. Dates without a weekday or with a '-0000' zone are accepted.
+
+    With ``wall_zone`` the stated zone is ignored and the time is read as a wall time there.
+    """
     if not text:
         return None
     try:
         value = parsedate_to_datetime(text.strip())
     except (TypeError, ValueError, IndexError):
         return None
+    if wall_zone is not None:
+        return value.replace(tzinfo=wall_zone).astimezone(timezone.utc)
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
     return value.astimezone(timezone.utc)
@@ -83,8 +92,14 @@ def _local(tag: str) -> str:
     return tag.rsplit("}", 1)[-1]
 
 
-def parse_feed(body: bytes) -> List[FeedArticle]:
-    """The items of an RSS 2.0 body, as nyaa and SubsPlease write them."""
+def feed_wall_zone(url: str) -> Optional[tzinfo]:
+    """The zone a feed's dates are really in when it marks them wrongly, else None."""
+    host = (urlparse(url).hostname or "").lower()
+    return _PACIFIC if host == "subsplease.org" or host.endswith(".subsplease.org") else None
+
+
+def parse_feed(body: bytes, wall_zone: Optional[tzinfo] = None) -> List[FeedArticle]:
+    """The items of an RSS 2.0 body, as nyaa and SubsPlease write them. ``wall_zone``: see ``parse_date``."""
     try:
         root = ET.fromstring(body)
     except ET.ParseError as e:
@@ -110,7 +125,7 @@ def parse_feed(body: bytes) -> List[FeedArticle]:
             info_hash = normalize_info_hash(magnet_parts(torrent_url)[0])
         if info_hash is None:
             info_hash = normalize_info_hash(guid)
-        articles.append(FeedArticle(guid, title, torrent_url, parse_date(fields.get("pubDate")), info_hash))
+        articles.append(FeedArticle(guid, title, torrent_url, parse_date(fields.get("pubDate"), wall_zone), info_hash))
     return articles
 
 
@@ -192,7 +207,7 @@ async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed re
 
 async def fetch_feed(client: httpx2.AsyncClient, url: str) -> List[FeedArticle]:
     """Fetch and parse one feed."""
-    return parse_feed(await fetch_bytes(client, url))
+    return parse_feed(await fetch_bytes(client, url), feed_wall_zone(url))
 
 
 def new_client() -> httpx2.AsyncClient:

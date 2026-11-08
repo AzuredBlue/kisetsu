@@ -200,7 +200,7 @@ def parse_subsplease_search(payload: Any, resolution: str, now: Optional[datetim
     """SubsPlease search results as feed articles.
 
     The guids are the ones the RSS uses (the magnet's hash), so an item found by both is one
-    item. The API's ``release_date`` runs some hours later than the RSS's (seen: 7h), which
+    item. The API's ``release_date`` can be an hour off, which
     is harmless for the day-sized checks it feeds, but it must never be in the future, so it
     is capped at ``now``.
     """

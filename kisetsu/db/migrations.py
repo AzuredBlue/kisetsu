@@ -4,6 +4,8 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
+from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
@@ -89,6 +91,31 @@ def _v9(engine: Engine) -> None:
             conn.exec_driver_sql("ALTER TABLE settings ADD COLUMN min_resolution INTEGER NOT NULL DEFAULT 1080")
 
 
+def _v10(engine: Engine) -> None:
+    # SubsPlease's RSS writes US Pacific time marked +0000, and its items were stored that way. Items its search API
+    # gave (their torrent is a magnet) had nearly right dates, so they stay.
+    pacific = ZoneInfo("America/Los_Angeles")
+    with engine.begin() as conn:
+        feeds = [
+            feed_id for feed_id, url in conn.exec_driver_sql("SELECT id, url FROM feeds").all()
+            if (urlparse(url).hostname or "").lower().removeprefix("www.") == "subsplease.org"
+        ]
+        for feed_id in feeds:
+            rows = conn.exec_driver_sql(
+                "SELECT id, published_at FROM feed_items WHERE feed_id = ? AND published_at IS NOT NULL "
+                "AND (torrent_url IS NULL OR torrent_url NOT LIKE 'magnet:%')",
+                (feed_id,),
+            ).all()
+            for item_id, stored in rows:
+                wall = datetime.fromisoformat(str(stored))
+                if wall.year <= 2000:
+                    continue
+                fixed = wall.replace(tzinfo=pacific).astimezone(timezone.utc).replace(tzinfo=None)
+                conn.exec_driver_sql(
+                    "UPDATE feed_items SET published_at = ? WHERE id = ?", (fixed.strftime("%Y-%m-%d %H:%M:%S.%f"), item_id),
+                )
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -101,6 +128,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (7, _v7),
     (8, _v8),
     (9, _v9),
+    (10, _v10),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 
