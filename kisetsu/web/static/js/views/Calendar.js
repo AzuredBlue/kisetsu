@@ -5,7 +5,7 @@ import { shows as showsData } from '../data.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
-import { Poster, posterVars, StatusTag } from '../components/ShowSummary.js';
+import { Poster, posterVars, StatusTag, whenClass } from '../components/ShowSummary.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
 import { releaseState, shownExpected } from '../format.js';
@@ -125,7 +125,7 @@ function Slot({ slot }) {
             <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
             <div class="row wrap"><span class="ep">Ep ${episode}</span>${!state ? null : state.settled
               ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>`
-              : html`<span class=${`when ${state.tone}`}>${state.text}</span>`}${expectedTag(entry, state)}<${StatusTag} show=${show} /></div>
+              : html`<span class=${whenClass(state.tone)}>${state.text}</span>`}${expectedTag(entry, state)}<${StatusTag} show=${show} /></div>
           </div>
         </button>`;
       })}
@@ -141,8 +141,8 @@ export function Calendar() {
   const week = useMemo(() => buildWeek(data || [], new Date(minute * 60000), offset), [data, minute, offset]);
   if (!data && error) return html`<div class="page full"><${LoadError} what="the calendar" error=${error} reload=${reload} /></div>`;
   const nowLine = html`<div class="cal-now" key="now">Now</div>`;
-  // Quiet days get half a column; the grid only applies it when the week is laid out side by side.
-  const cols = week.days.map(day => day.quiet ? '.5fr' : '1fr').join(' ');
+  // Quiet days get a narrow column, about the width of their name; the grid only applies it when the week is laid out side by side.
+  const cols = week.days.map(day => day.quiet ? 'minmax(5.5rem, .35fr)' : '1fr').join(' ');
   return html`<div class="page full">
     <div class="cal-nav">
       <button type="button" class="btn plain icon-only sm" onClick=${() => setOffset(offset - 1)} aria-label="Previous week" title="Previous week"><${Icon} name="back" /></button>

@@ -11,7 +11,7 @@ import { SaveBar, Seg } from '../components/Controls.js';
 import { useDraft } from '../components/useDraft.js';
 import { toast } from '../components/Toast.js';
 import { EpisodeList, ReleaseList, useRowAction } from '../components/Episodes.js';
-import { airSummary, deleteShow, dimmed, Poster, ProgressBar, StatusTag, togglePause } from '../components/ShowSummary.js';
+import { airSummary, deleteShow, dimmed, Poster, ProgressBar, StatusTag, togglePause, whenClass } from '../components/ShowSummary.js';
 
 // The values the side form starts from.
 function initialForm(page) {
@@ -27,11 +27,11 @@ function initialForm(page) {
 // How the feed was chosen, in the words used everywhere: Auto-discover, Trying, Picked by you, Locked.
 function feedHint(page) {
   const feed = page.feed;
-  if (!feed) return page.released ? 'Auto-discover: the feeds are tried by priority until one carries a release.' : 'Auto-discover: the first feed to post an episode is used.';
-  if (feed.state === 'locked') return `Locked to ${feed.name}: a release of this show came from it, so every episode comes from there and they all match.`;
-  if (feed.state === 'pinned') return `Picked by you. It is locked once a release from ${feed.name} is downloaded.`;
-  if (feed.state === 'candidate') return `Trying ${feed.name}, which posted first. A higher feed that posts within a few minutes still wins.`;
-  return `Trying ${feed.name}. It is locked once a release from it is downloaded.`;
+  if (!feed) return page.released ? 'Auto-discover: feeds are tried in priority order.' : 'Auto-discover: the first feed to post is used.';
+  if (feed.state === 'locked') return 'Locked: every episode comes from this feed.';
+  if (feed.state === 'pinned') return 'Picked by you. Locks after its first download.';
+  if (feed.state === 'candidate') return 'Trying: posted first; a higher feed can still win.';
+  return 'Trying. Locks after its first download.';
 }
 
 function Header({ page, now }) {
@@ -44,20 +44,19 @@ function Header({ page, now }) {
     <div class="show-head-top">
       <div class="grow">
         <div class="row">
-          <h2 class="show-title truncate" title=${page.title}>${page.title}</h2>
+          <h2 class="show-title clamp-2" title=${page.title}>${page.title}</h2>
           <a href=${`https://anilist.co/anime/${page.anilist_id}`} target="_blank" rel="noopener noreferrer" class="ext" title="Open on AniList" aria-label="Open on AniList"><${Icon} name="link" /></a>
         </div>
         ${subtitle ? html`<p class="muted truncate" style="margin-top:.25rem">${subtitle}</p>` : null}
       </div>
       <div class="row">
         ${page.status !== 'completed' ? html`<button type="button" class="btn sm" onClick=${() => togglePause(page)} title=${page.paused ? 'Resume downloads for this show' : 'Pause downloads for this show'}><${Icon} name=${page.paused ? 'play' : 'pause'} small />${page.paused ? 'Resume' : 'Pause'}</button>` : null}
-        <button type="button" class="btn sm danger" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }}>Delete show</button>
       </div>
     </div>
     <div class="show-facts">
       <span class=${`pill ${{ working: 'pill-ok', testing: 'pill-info', waiting: 'pill-info', upcoming: 'pill-info', paused: 'pill-idle', completed: 'pill-done' }[page.status]}`}>${page.status_label}</span>
-      ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span></span>` : null}
-      <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} · ${page.feed.state_label}` : 'Auto-discover'}</span></span>
+      ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span></span>` : null}
+      <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} (${page.feed.state_label.toLowerCase()})` : 'Auto-discover'}</span></span>
     </div>
     ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${done}/${total || '?'} downloaded</span></div>` : null}
   </div>`;
@@ -199,7 +198,7 @@ export function Show({ route }) {
           <${Seg} label="List" value=${listTab} onChange=${setListTab} options=${[['episodes', 'Episodes'], ['releases', 'Releases']]} />
           <span class="row">
             <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} tracked` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : matches.error ? 'not loaded' : 'checking feed…'}</span>
-            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : html`<button type="button" class="link" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
+            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : html`<button type="button" class="btn sm" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
           </span>
         </div>
         <div class="card list-card">
@@ -212,7 +211,7 @@ export function Show({ route }) {
       <aside class="show-side">
         <div class="pane-head">
           <${Seg} label="Settings" value=${sideTab} onChange=${setSideTab} options=${[['feed', 'Feed'], ['download', 'Download']]} />
-          ${sideTab === 'feed' ? html`<button type="button" class="link" onClick=${rediscover} title="Let Kisetsu find the feed again by itself">Reset to auto-discover</button>` : null}
+          ${sideTab === 'feed' ? html`<button type="button" class="btn sm" onClick=${rediscover} title="Let Kisetsu find the feed again by itself">Reset to auto-discover</button>` : null}
         </div>
         <div class="card side-card">
           ${sideTab === 'feed' ? html`
@@ -222,18 +221,17 @@ export function Show({ route }) {
                 <option value="0">Auto-discover</option>
                 ${feedList.map(f => html`<option value=${f.id} selected=${f.id === value('feed_id')}>#${f.priority} ${f.name}</option>`)}
               </select>
-              <p class="field-hint">${feedHint(data)}</p>
-              ${numbering && numbering.offset > 0 ? html`<p class="field-hint">This feed numbers the season from episode ${numbering.offset + 1}.</p>` : null}
+              <p class="field-hint">${feedHint(data)}${numbering && numbering.offset > 0 ? ` It numbers the season from episode ${numbering.offset + 1}.` : ''}</p>
             </div>
             <div>
               <label for="show-aliases" class="field-label">Custom aliases</label>
               <input type="text" id="show-aliases" class="field mono" placeholder="Comma separated" ...${form.bind('aliases')} />
             </div>
-            <div>
+            <div class="matched-as">
               <span class="field-label">Matched as</span>
               ${data.learned_name
-                ? html`<input type="text" readonly class="field mono" value=${data.learned_name} title=${data.learned_name} onFocus=${(e) => e.target.select()} />`
-                : html`<p class="field-hint" style="margin-top:0">Matched by name and aliases until a release appears.</p>`}
+                ? html`<span class="mono truncate" title=${data.learned_name}>${data.learned_name}</span>`
+                : html`<span class="field-hint">Name and aliases, until a release appears.</span>`}
             </div>` : html`
             <div>
               <label for="show-save-path" class="field-label">Save path</label>
@@ -246,10 +244,11 @@ export function Show({ route }) {
               </div>
               <div>
                 <label for="show-ratio" class="field-label">Seed ratio</label>
-                <input type="number" step="0.1" min="0" id="show-ratio" class="field mono" ...${form.bind('seed_ratio')} placeholder=${settings.data ? settings.data.default_seed_ratio : ''} />
+                <input type="number" step="0.1" min="0" id="show-ratio" class="field num" ...${form.bind('seed_ratio')} placeholder=${settings.data ? settings.data.default_seed_ratio : ''} />
               </div>
             </div>`}
         </div>
+        <button type="button" class="btn sm plain show-delete" onClick=${async () => { if (await deleteShow(data)) go(leaveTarget()); }}>Delete show</button>
       </aside>
       <${SaveBar} open=${dirty} saving=${saving} onDiscard=${form.reset} onSave=${() => save()} />
     </div>

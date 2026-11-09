@@ -1,17 +1,36 @@
 // Accent and surface colours. Everything is an "r g b" triple string, so CSS can add alpha with rgb(var(--ac) / .5).
+// Colours are worked out in OKLCH: a colour keeps its hue as it lightens or darkens, and equal L reads as equally light,
+// so every accent and tint can be held to the same contrast with fixed lightness steps.
 
 export const DEFAULT_ACCENT = '#2dd4bf';
+// A saved accent is one of these hexes or a custom colour. It is the seed: the colours drawn come from its hue and chroma.
 export const ACCENT_PRESETS = [
   ['Teal', '#2dd4bf'], ['Sky', '#38bdf8'], ['Indigo', '#818cf8'], ['Violet', '#a78bfa'], ['Pink', '#f472b6'],
   ['Rose', '#fb7185'], ['Orange', '#fb923c'], ['Amber', '#fbbf24'], ['Lime', '#a3e635'], ['Emerald', '#34d399'],
 ];
-export const ACCENT_TINTS = { off: 0, subtle: 0.22, full: 0.5 };
-const STOCK_ACCENT = {
-  dark: { ac: '45 212 191', soft: '94 234 212', strong: '20 184 166', ink: '4 32 30', ac2: '56 189 248' },
-  light: { ac: '13 148 136', soft: '10 92 86', strong: '15 118 110', ink: '255 255 255', ac2: '2 132 199' },
+// The OKLCH chroma the surfaces and greys take from the tint hue (0 keeps them neutral).
+export const ACCENT_TINTS = { off: 0, subtle: 0.016, full: 0.034 };
+
+// Surface and text lightness per theme. Every text level holds 5.5:1 on every surface it can sit on, at any tint.
+// --line-field, a control's edge, is not held to 3:1: the control's own fill, its label and its focus ring mark it.
+const NEUTRAL_L = {
+  dark: {
+    sunken: 0.155, bg: 0.178, field: 0.165, chrome: 0.195, surface: 0.212, raised: 0.262, raised2: 0.300,
+    lineSoft: 0.268, line: 0.320, lineHover: 0.390, lineStrong: 0.550, lineField: 0.420,
+    text: 0.955, text2: 0.830, text3: 0.730, textBtn: 0.880, textSeg: 0.740, btn: 0.262, btnHover: 0.300,
+  },
+  light: {
+    sunken: 0.920, bg: 0.962, field: 0.995, chrome: 0.945, surface: 0.993, raised: 0.935, raised2: 0.900,
+    lineSoft: 0.905, line: 0.865, lineHover: 0.780, lineStrong: 0.580, lineField: 0.710,
+    text: 0.220, text2: 0.360, text3: 0.440, textBtn: 0.300, textSeg: 0.420, btn: 0.900, btnHover: 0.865,
+  },
 };
-// How strongly the page surfaces take the hue (0 keeps them grey).
-const THEME_TINT = 0.6;
+const NEUTRAL_VARS = {
+  sunken: ['--sunken'], bg: ['--bg'], field: ['--field'], chrome: ['--chrome'], surface: ['--surface'], raised: ['--raised'],
+  raised2: ['--raised2'], lineSoft: ['--line-soft'], line: ['--line'], lineHover: ['--line-hover'], lineStrong: ['--line-strong'],
+  lineField: ['--line-field'], text: ['--text'], text2: ['--text-2'], text3: ['--text-3', '--text-4'], textBtn: ['--text-btn'], textSeg: ['--text-seg'],
+  btn: ['--btn'], btnHover: ['--btn-h'],
+};
 
 export function hslToRgb(h, s, l) {
   const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -31,8 +50,6 @@ export function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-// Light-mode accents are worked out in OKLCH: darkening a colour in HSL drags its hue (a violet
-// at 40% lightness comes out blue), while in OKLCH a colour keeps its hue as it darkens.
 function srgbToLinear(v) {
   v /= 255;
   return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
@@ -81,86 +98,72 @@ function fitChroma(L, C, h) {
   return lo;
 }
 
+const oklch = (L, C, h) => oklchToRgb(L, fitChroma(L, C, h), h).join(' ');
+
 export function hexToRgb(hex) {
   const n = parseInt(hex.slice(1), 16);
   return [n >> 16 & 255, n >> 8 & 255, n & 255];
 }
 
-export function hexToHsl(hex) {
-  const [r, g, b] = hexToRgb(hex).map(v => v / 255);
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  const d = max - min;
-  if (d === 0) return [0, 0, l];
-  const sat = d / (1 - Math.abs(2 * l - 1));
-  let h;
-  if (max === r) h = ((g - b) / d) % 6;
-  else if (max === g) h = (b - r) / d + 2;
-  else h = (r - g) / d + 4;
-  return [(h * 60 + 360) % 360, sat, l];
-}
-
-// The accent roles on a light surface for OKLCH hue `h`, chroma `C` and secondary hue `h2`.
-// The light-mode primary sits at tone 40 (about 0.47 in OKLCH) with white on it, which keeps accent
-// text above 5:1 on white. `ac` is the main accent, `soft` the accent used for text and `strong`
-// the fill behind button text.
-function lightAccentRoles(h, C, h2) {
-  const c = Math.min(0.2, C);
-  const at = (hue, L, k = 1) => oklchToRgb(L, fitChroma(L, c * k, hue), hue);
-  return {
-    ac: at(h, 0.47).join(' '),
-    soft: at(h, 0.33, 0.9).join(' '),
-    strong: at(h, 0.47).join(' '),
-    ink: '255 255 255',
-    ac2: at(h2, 0.47).join(' '),
-  };
-}
-
-// The same from HSL values (hue, saturation, secondary hue). The hue is read from a pastel of the
-// colour, which is where OKLCH and HSL agree best.
-function lightAccentRolesFromHsl(h1, s, h2) {
-  const [, C, h] = rgbToOklch(hslToRgb(h1, s, 0.68));
-  return lightAccentRoles(h, C, rgbToOklch(hslToRgb(h2, s, 0.68))[2]);
-}
-
-// `hues` is [accent hue, accent saturation, secondary hue, tint hue, tint saturation].
-// Light keeps the tint weaker, since saturation reads stronger on pale surfaces, and uses darker
-// accents so accent text stays readable.
-export function paletteFromHues([h1, s1, h2, th, ts], mode = 'dark') {
+// The page greys for tint hue `h` (OKLCH) and chroma. Light pages take less of the hue, since it reads stronger on
+// pale surfaces, and warm hues less again, or they turn cream. Text takes half the chroma, lines a little less, a
+// control's edge a little more, and secondary buttons three times as much (up to .045, past which they compete with
+// the primary button and the selected controls), so with any tint on they read as tonal fills of the accent.
+function neutrals(h, chroma, mode) {
   const light = mode === 'light';
-  const s = Math.min(0.85, Math.max(0.4, s1));
-  const warm = th >= 10 && th <= 60 ? 0.7 : 1;
-  const t = Math.min(0.5, ts) * THEME_TINT * warm * (light ? 0.9 : 1);
-  const surface = (l, k = 1) => hslToRgb(th, t * k, l).join(' ');
-  const strong = hslToRgb(h1, s, 0.56);
-  const surfaces = light ? {
-    bg: surface(0.925), sunken: surface(0.875), chrome: surface(0.9), surface: surface(0.972), field: surface(0.99),
-    raised: surface(0.9), raised2: surface(0.86), line: surface(0.82, 0.9), lineSoft: surface(0.87, 0.9),
-    lineHover: surface(0.76, 0.9), lineStrong: surface(0.64, 0.9),
-  } : {
-    bg: surface(0.085), sunken: surface(0.065), chrome: surface(0.10), surface: surface(0.115), field: surface(0.07),
-    raised: surface(0.155), raised2: surface(0.19), line: surface(0.21, 0.9), lineSoft: surface(0.16, 0.9),
-    lineHover: surface(0.26, 0.9), lineStrong: surface(0.32, 0.9),
-  };
-  if (light) return { ...surfaces, ...lightAccentRolesFromHsl(h1, s, h2) };
+  let c = light ? chroma * 0.6 : chroma;
+  if (light && h >= 50 && h <= 110) c *= 0.6;
+  const steps = NEUTRAL_L[light ? 'light' : 'dark'];
+  const out = {};
+  Object.keys(steps).forEach(key => {
+    const btn = key.startsWith('btn');
+    const k = key.startsWith('text') ? 0.5 : key === 'lineField' ? 1.3 : key.startsWith('line') ? 0.9 : btn ? 3 : 1;
+    out[key] = oklch(steps[key], btn ? Math.min(c * k, 0.045) : c * k, h);
+  });
+  return out;
+}
+
+// The accent roles for a seed colour. Dark: the seed keeps its own lightness inside .68-.80, so each preset keeps its
+// character (yellows stay lighter than blues) while all clear the same contrast, with dark ink on the fill. Light: one
+// lightness for all, with white ink. `ac` is the main accent, `soft` the accent used for text, `strong` a filled
+// button at rest (it brightens to `ac` on hover), `art` the bright accent drawn over poster art in both themes.
+function accentRoles(seed, mode) {
+  const [L0, C0, h] = rgbToOklch(seed);
+  const L = Math.min(0.80, Math.max(0.68, L0));
+  const art = oklch(L, C0, h);
+  if (mode === 'light') {
+    const c = Math.min(0.2, C0);
+    return { ac: oklch(0.50, c, h), soft: oklch(0.40, c * 0.9, h), strong: oklch(0.44, c, h), ink: '255 255 255', ac2: oklch(0.50, c, (h + 40) % 360), art };
+  }
   return {
-    ...surfaces,
-    ac: hslToRgb(h1, s, 0.62).join(' '),
-    soft: brightEnough(h1, s, 0.76).join(' '),
-    strong: strong.join(' '),
-    ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
-    ac2: hslToRgb(h2, s, 0.62).join(' '),
+    ac: art, soft: oklch(Math.min(0.92, L + 0.10), C0 * 0.8, h), strong: oklch(L - 0.06, C0, h),
+    ink: oklch(0.18, 0.01, h), ac2: oklch(L, C0, (h + 40) % 360), art,
   };
 }
 
-// Accent text on the dark surfaces: blues and purples are dark at the same HSL lightness, so lighten until it reads.
-function brightEnough(h, s, lightness) {
-  let rgb = hslToRgb(h, s, lightness);
-  while (relativeLuminance(rgb) < 0.4 && lightness < 0.95) {
-    lightness += 0.02;
-    rgb = hslToRgb(h, s, lightness);
-  }
-  return rgb;
+// A swatch in the accent's bright colour, the same in both themes: the darker light-theme accents of neighbouring
+// presets (teal and emerald, pink and rose) are too alike to choose between.
+export function swatchColor(hex) {
+  return `rgb(${accentRoles(hexToRgb(hex), 'dark').art})`;
+}
+
+const ACCENT_VARS = { ac: '--ac', soft: '--ac-soft', strong: '--ac-strong', ink: '--ac-ink', ac2: '--ac2', art: '--ac-art' };
+
+function toVars(roles, neutral) {
+  const vars = {};
+  Object.keys(ACCENT_VARS).forEach(key => { vars[ACCENT_VARS[key]] = roles[key]; });
+  if (neutral) Object.keys(neutral).forEach(key => NEUTRAL_VARS[key].forEach(name => { vars[name] = neutral[key]; }));
+  return vars;
+}
+
+// The OKLCH hue of an HSL hue, read from a mid colour of it, where the two agree best.
+const hslHue = (h, s = 0.5) => rgbToOklch(hslToRgb(h, s, 0.6))[2];
+
+// A show's colours from its art: `hues` is [accent hue, accent saturation, secondary hue, tint hue, ...] in HSL.
+// The surfaces take the tint hue at `chroma`; with 0 they stay neutral.
+export function paletteFromHues([h1, s1, , th], mode = 'dark', chroma = 0) {
+  const roles = accentRoles(hslToRgb(h1, Math.min(0.85, Math.max(0.4, s1)), 0.62), mode);
+  return { ...neutrals(hslHue(th), chroma, mode), ...roles };
 }
 
 // A poster's AniList colour as title text: its hue at one OKLCH lightness per theme, so every hue
@@ -186,66 +189,28 @@ export function posterEdgeColors(hex, mode = 'dark') {
 }
 
 // The user's accent as one rule per theme; the light one is more specific, so it wins in light mode.
+// The default accent with no tint is exactly what tokens.css holds, so it needs no rule.
 export function userAccentCss(color, tint) {
-  const tintSat = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
-  if (color === DEFAULT_ACCENT && !tintSat) return '';
-  const [h, sat, l] = hexToHsl(color);
-  const hue = Math.round(h);
-  // Progress bars sit on dark poster art in both themes, so they use the bright accent.
-  const artAccent = color === DEFAULT_ACCENT
-    ? STOCK_ACCENT.dark.ac
-    : hslToRgb(h, Math.min(0.9, Math.max(0.4, sat)), Math.min(0.72, Math.max(0.55, l))).join(' ');
+  const chroma = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
+  if (color === DEFAULT_ACCENT && !chroma) return '';
+  const seed = hexToRgb(color);
+  const [, seedChroma, hue] = rgbToOklch(seed);
+  // A grey accent has no hue to lend the surfaces.
+  const tintChroma = seedChroma < 0.02 ? 0 : chroma;
   const rule = (mode) => {
-    const light = mode === 'light';
-    const pal = paletteFromHues([hue, sat, (hue + 40) % 360, hue, tintSat], mode);
-    let accent = STOCK_ACCENT[mode];
-    if (color !== DEFAULT_ACCENT && light) {
-      const [, seedChroma, seedHue] = rgbToOklch(hexToRgb(color));
-      accent = lightAccentRoles(seedHue, seedChroma, (seedHue + 40) % 360);
-    } else if (color !== DEFAULT_ACCENT) {
-      const s = Math.min(0.9, Math.max(0.4, sat));
-      const lightness = Math.min(0.72, Math.max(0.55, l));
-      const strong = hslToRgb(h, s, lightness - 0.08);
-      accent = {
-        ac: hslToRgb(h, s, lightness).join(' '),
-        soft: brightEnough(h, s, Math.min(0.88, lightness + 0.13)).join(' '),
-        strong: strong.join(' '),
-        ink: relativeLuminance(strong) < 0.2 ? '255 255 255' : '8 10 14',
-        ac2: pal.ac2,
-      };
-    }
-    const vars = {
-      '--ac': accent.ac, '--ac-soft': accent.soft, '--ac-strong': accent.strong, '--ac-ink': accent.ink, '--ac2': accent.ac2, '--ac-art': artAccent,
-    };
-    if (tintSat) {
-      Object.assign(vars, {
-        '--bg': pal.bg, '--sunken': pal.sunken, '--chrome': pal.chrome, '--surface': pal.surface, '--field': pal.field,
-        '--raised': pal.raised, '--raised2': pal.raised2, '--line': pal.line, '--line-soft': pal.lineSoft,
-        '--line-hover': pal.lineHover, '--line-strong': pal.lineStrong,
-      });
-    }
-    return (light ? ':root[data-theme="light"]' : ':root') + '{' + Object.keys(vars).map(k => k + ':' + vars[k]).join(';') + '}';
+    const vars = toVars(accentRoles(seed, mode), tintChroma ? neutrals(hue, tintChroma, mode) : null);
+    return (mode === 'light' ? ':root[data-theme="light"]' : ':root') + '{' + Object.keys(vars).map(k => k + ':' + vars[k]).join(';') + '}';
   };
   return rule('dark') + rule('light');
 }
 
-const SHOW_VARIABLES = {
-  '--ac': 'ac', '--ac-soft': 'soft', '--ac-strong': 'strong', '--ac-ink': 'ink', '--ac2': 'ac2', '--ac-art': 'ac',
-  '--bg': 'bg', '--sunken': 'sunken', '--chrome': 'chrome', '--surface': 'surface', '--field': 'field', '--raised': 'raised', '--raised2': 'raised2',
-  '--line': 'line', '--line-soft': 'lineSoft', '--line-hover': 'lineHover', '--line-strong': 'lineStrong',
-};
-
-// With the tint off the surfaces keep the theme's own colours; only the accent comes from the art.
-const ACCENT_ROLES = ['--ac', '--ac-soft', '--ac-strong', '--ac-ink', '--ac2', '--ac-art'];
-
 // The page colours for a show: the hues come from its art, how strongly the surfaces take them from the user's tint.
+// With the tint off the surfaces keep the theme's own colours; only the accent comes from the art.
 export function showPaletteVars(hues, tint, mode) {
-  const [h1, s1, h2, th] = hues;
-  const strength = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
-  const pal = paletteFromHues([h1, s1, h2, th, strength], mode);
-  const vars = {};
-  Object.keys(SHOW_VARIABLES).forEach(name => {
-    if (strength || ACCENT_ROLES.includes(name)) vars[name] = pal[SHOW_VARIABLES[name]];
-  });
-  return vars;
+  const chroma = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
+  const pal = paletteFromHues(hues, mode, chroma);
+  const neutral = {};
+  if (chroma) Object.keys(NEUTRAL_VARS).forEach(key => { neutral[key] = pal[key]; });
+  // On its own page the show's accent is drawn over the page as well as the art.
+  return toVars({ ...pal, art: pal.ac }, chroma ? neutral : null);
 }

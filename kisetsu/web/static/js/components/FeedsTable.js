@@ -109,7 +109,7 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
         <div class="row">
           <span class="feed-name truncate">${feed.name}</span>${feedHealth(feed)}
           ${inUse ? html`<span class=${`feed-use tabular${feed.shows > 0 ? '' : ' none'}`}>${feed.shows > 0
-            ? `${feed.shows} show${feed.shows === 1 ? '' : 's'}${feed.locked > 0 ? ` · ${feed.locked} locked` : ''}`
+            ? `${feed.shows} show${feed.shows === 1 ? '' : 's'}${feed.locked > 0 ? `, ${feed.locked} locked` : ''}`
             : 'No shows'}</span>` : null}
         </div>
         <div class="feed-url mono truncate" title=${feed.url}>${readableUrl(feed.url)}</div>

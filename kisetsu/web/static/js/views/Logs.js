@@ -2,7 +2,7 @@ import { html, useEffect, useRef } from '../ui.js';
 import { useResource } from '../store.js';
 import { apiFetch } from '../api.js';
 import { logs as logsData, requests as requestsData, status as statusData } from '../data.js';
-import { localTime } from '../format.js';
+import { localTime, plural } from '../format.js';
 import { Icon } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
@@ -48,15 +48,9 @@ export function Logs() {
     } catch (err) { toast('Failed to copy logs.', 'error'); }
   };
   return html`<div class="page wide">
-    <div class="page-head">
-      <p class="page-sub">What Kisetsu has been doing. New lines appear by themselves.</p>
-      <div class="row">
-        <button type="button" class="btn sm" onClick=${copy}><${Icon} name="copy" small />Copy</button>
-      </div>
-    </div>
     ${info && info.sandbox ? html`<${Requests} />` : null}
     <div class="log-pane">
-      <div class="log-head muted">${data ? data.length : 0} entries</div>
+      <div class="log-head muted">${plural(data ? data.length : 0, 'entry', 'entries')}<button type="button" class="btn sm plain" onClick=${copy}><${Icon} name="copy" small />Copy</button></div>
       <div class="log-lines mono" ref=${box} onScroll=${onScroll}>
         ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<${EmptyState} title="No activity logged yet" hint="What Kisetsu does is written here as it happens." />` : data.map((l) => {
           const mark = MARKS[l.level];

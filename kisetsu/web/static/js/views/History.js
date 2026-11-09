@@ -9,10 +9,10 @@ import { LoadError } from '../components/LoadError.js';
 import { EmptyState } from '../components/EmptyState.js';
 import { confirmDialog } from '../components/Modal.js';
 import { Poster, posterVars } from '../components/ShowSummary.js';
-import { useEdges } from '../edges.js';
-import { useTheme } from '../theme.js';
 import { toast } from '../components/Toast.js';
 import { go } from '../router.js';
+import { useEdges } from '../edges.js';
+import { useTheme } from '../theme.js';
 
 // A finished download is the normal case, so its word stays quiet and only its icon carries the colour.
 const KINDS = { grabbed: ['Queued', null], done: ['Downloaded', 'check'], replaced: ['Replaced', 'swap'], failed: ['Failed', null], missed: ['Missed', null] };
@@ -32,14 +32,12 @@ function collapseBatches(items) {
   return out;
 }
 
-function Row({ item, now }) {
+function Row({ item, now, mode }) {
   const [verb, icon] = KINDS[item.kind] || [item.kind, null];
   const title = item.show || item.title || 'Unknown show';
   const problem = PROBLEMS.includes(item.kind);
-  const { resolved } = useTheme();
-  useEdges();
   const poster = html`<div class="sr-poster"><${Poster} show=${{ id: item.show_id, title, cover: item.cover }} dim=${false} /></div>`;
-  return html`<div class="history-row" style=${posterVars(item, resolved)}>
+  return html`<div class="history-row" style=${posterVars(item, mode)}>
     ${item.show_id ? html`<a href=${`#show/${item.show_id}`} tabindex="-1" aria-hidden="true">${poster}</a>` : poster}
     <div class="history-main">
       <div class="history-title">
@@ -60,6 +58,8 @@ function Row({ item, now }) {
 export function History() {
   const { data, error, reload } = useResource(historyData);
   const now = useNow();
+  const { resolved } = useTheme();
+  useEdges();
   const minute = Math.floor(now / 60000);
   const groups = useMemo(() => {
     const out = [];
@@ -75,15 +75,11 @@ export function History() {
     try { await apiFetch('/api/history', { method: 'DELETE' }); toast('History cleared.', 'success'); } catch (err) { /* shown by apiFetch */ }
   };
   return html`<div class="page narrow history">
-    <div class="page-head">
-      <p class="page-sub">Episodes Kisetsu has queued, downloaded or replaced, and the ones that failed or never turned up.</p>
-      <button type="button" class="btn sm plain" onClick=${clear} disabled=${!data || !data.length}>Clear</button>
-    </div>
     ${!data ? (error ? html`<${LoadError} what="the history" error=${error} reload=${reload} />` : null) : !data.length
       ? html`<${EmptyState} card title="Nothing here yet" hint="Episodes show up here once Kisetsu queues them." />`
-      : groups.map(group => html`<section key=${group.label}>
-          <div class="section-title history-day">${group.label}</div>
-          <div class="card card-divided history-card">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} />`)}</div>
+      : groups.map((group, i) => html`<section key=${group.label}>
+          <div class="history-day"><div class="section-title">${group.label}</div>${i === 0 ? html`<button type="button" class="btn sm" onClick=${clear}>Clear</button>` : null}</div>
+          <div class="card card-divided history-card">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} mode=${resolved} />`)}</div>
         </section>`)}
   </div>`;
 }

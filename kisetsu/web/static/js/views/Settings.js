@@ -110,10 +110,10 @@ export function Settings() {
         <section class="sec-downloads">
           <h3 class="section-title section-gap">Downloads</h3>
           <div class="card card-divided form-grid">
-            <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Use a folder qBittorrent can see (with Docker, the path inside the container). Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" ...${bind('base_dir')} /><//>
+            <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" title="A folder as qBittorrent sees it (with Docker, the path inside the container)" ...${bind('base_dir')} /><//>
             <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(none)" ...${bind('default_category')} /><//>
             <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
-            <${SetRow} name="Preferred quality" hint="Used when the feed has it, otherwise the next resolution up. Lower ones are never downloaded."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
+            <${SetRow} name="Preferred quality" hint="Or the next one up when a feed lacks it. Never lower."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
             <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
           </div>
         </section>
@@ -146,10 +146,10 @@ export function Settings() {
         <section class="sec-appearance">
           <h3 class="section-title section-gap">Appearance</h3>
           <div class="card card-divided form-grid">
-            <${SetRow} name="Theme" hint="Saved in this browser. System follows your OS."><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
+            <${SetRow} name="Theme"><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
             <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
             <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
-            <${SetRow} name="Colour tint" hint="How much the accent colours the backgrounds."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
+            <${SetRow} name="Colour tint"><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
           </div>
         </section>
       </div>
@@ -165,9 +165,8 @@ export function Settings() {
       </div>
     </details>
 
-    <div class="card danger-zone">
-      <div><h3 class="section-title">Clear all shows</h3><p class="field-hint" style="margin-top:.125rem">Removes every show and the history. Downloads are kept. Shows on your AniList list come back with the next sync.</p></div>
-      <button type="button" class="btn danger sm" onClick=${clearAll}>Clear all</button>
+    <div class="card form-grid danger-zone">
+      <${SetRow} name="Clear all shows" hint="Removes every show and the history. Downloads are kept."><button type="button" class="btn danger sm" onClick=${clearAll}>Clear all</button><//>
     </div>
 
     <${SaveBar} open=${form.dirty} saving=${saving} onDiscard=${form.reset} onSave=${save} />

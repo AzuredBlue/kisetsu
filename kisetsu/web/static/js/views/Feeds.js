@@ -55,9 +55,9 @@ export function Feeds() {
     <div class="feeds-layout">
       <div class="feeds-col">
         <div class="feeds-tools">
-          <button type="button" class="btn sm" onClick=${() => openFeedDialog()}>Add feed</button>
+          <button type="button" class="btn sm primary" onClick=${() => openFeedDialog()}>Add feed</button>
           <button type="button" class="btn sm" onClick=${importFromQbit} title="Add the feeds qBittorrent has that Kisetsu does not">Import from qBittorrent</button>
-          <button type="button" class="btn sm plain" onClick=${autoDiscover} title="Clear the feed you picked for any show and let Kisetsu find it again. Locked shows keep their feed.">Reset picked feeds…</button>
+          <button type="button" class="btn sm" onClick=${autoDiscover} title="Clear the feed you picked for any show and let Kisetsu find it again. Locked shows keep their feed.">Reset picked feeds…</button>
           <button type="button" class="btn sm feeds-toggle" aria-expanded=${String(visible)} onClick=${() => show(!open)} title=${visible ? 'Hide what the feeds carry' : 'Show what the feeds carry'}>
             <span>Feed items</span><${Icon} name="down" small class="chev" />
           </button>

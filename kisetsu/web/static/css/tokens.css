@@ -1,75 +1,80 @@
-/* Colours are "r g b" triples so rules can add alpha: rgb(var(--ac) / .5). Dark is the default. */
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 400; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-400.woff2?v=3') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 500; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-500.woff2?v=3') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 600; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-600.woff2?v=3') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 700; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-700.woff2?v=3') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 400; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-ext-400.woff2?v=3') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 500; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-ext-500.woff2?v=3') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 600; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-ext-600.woff2?v=3') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
-@font-face { font-family: 'IBM Plex Sans'; font-weight: 700; font-display: swap; src: url('../fonts/ibm-plex-sans-latin-ext-700.woff2?v=3') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
-@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-display: swap; src: url('../fonts/ibm-plex-mono-latin-400.woff2?v=3') format('woff2'); }
-@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('../fonts/ibm-plex-mono-latin-500.woff2?v=3') format('woff2'); }
+/* Colours are "r g b" triples so rules can add alpha: rgb(var(--ac) / .5). Dark is the default.
+   The values here are what color.js derives for the default accent with no tint; a user's accent or tint replaces them. */
+@font-face { font-family: 'Inter'; font-weight: 100 900; font-display: swap; src: url('../fonts/inter-latin-opsz-wght.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-weight: 100 900; font-display: swap; src: url('../fonts/inter-latin-ext-opsz-wght.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400 450; font-display: swap; src: url('../fonts/plex-mono-latin-400.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('../fonts/plex-mono-latin-500.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400 450; font-display: swap; src: url('../fonts/plex-mono-latin-ext-400.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-display: swap; src: url('../fonts/plex-mono-latin-ext-500.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
 
 :root {
   color-scheme: dark;
-  --font-sans: 'IBM Plex Sans', ui-sans-serif, system-ui, sans-serif;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
+  /* Type: 13px is the floor for any text, 14px for rows and controls, 15px for prose. Release names are mono at 12.5px. */
+  --fs-xs: .8125rem; --fs-sm: .875rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-mono: .78125rem;
+
   /* Accent: the colour of progress, links and selected controls. */
-  --ac-art: 45 212 191; --ac: 45 212 191; --ac-soft: 94 234 212; --ac-strong: 20 184 166; --ac-ink: 4 32 30; --ac2: 56 189 248;
+  --ac-art: 45 212 191; --ac: 45 212 191; --ac-soft: 129 240 222; --ac-strong: 0 192 172; --ac-ink: 13 19 18; --ac2: 55 203 245;
 
-  /* Surfaces, darkest to lightest, and the lines between them. */
-  --bg: 14 21 20; --sunken: 10 16 15; --chrome: 18 26 25; --surface: 22 29 28; --field: 14 21 20;
-  --raised: 37 43 42; --raised2: 47 54 53;
-  --line: 63 73 71; --line-soft: 40 48 46; --line-hover: 85 96 93; --line-strong: 137 147 144;
+  /* Surfaces, darkest to lightest, and the lines between them. --line-field edges a control. */
+  --bg: 17 17 17; --sunken: 12 12 12; --chrome: 21 21 21; --surface: 25 25 25; --field: 14 14 14;
+  --raised: 36 36 36; --raised2: 46 46 46;
+  --line: 51 51 51; --line-soft: 38 38 38; --line-hover: 69 69 69; --line-strong: 113 113 113; --line-field: 77 77 77;
 
-  /* Text. */
-  --text: 250 250 250; --text-2: 212 212 216; --text-3: 139 139 151; --text-4: 128 128 141; --text-btn: 228 228 231; --text-seg: 154 154 166;
+  /* Text. --text-4 is the same as --text-3: two greys that close read as one. */
+  --text: 240 240 240; --text-2: 199 199 199; --text-3: 168 168 168; --text-4: 168 168 168; --text-btn: 215 215 215; --text-seg: 171 171 171;
 
-  /* Meaning: done, attention, problem, information, finished. */
-  --ok: 52 211 153; --warn: 251 191 36; --bad: 251 113 133; --info: 56 189 248; --done: 167 139 250;
-  --danger-bg: 42 24 24; --danger-fg: 240 134 139; --danger-bg-h: 56 29 29;
+  /* Meaning: done, attention, problem, information, finished. Each has a -fg for text on its own tinted fill. */
+  --ok: 97 218 146; --warn: 255 189 88; --bad: 255 136 142; --info: 100 193 255; --done: 196 163 255;
+  --ok-fg: 179 230 196; --warn-fg: 243 210 164; --bad-fg: 255 199 200; --info-fg: 177 222 255; --done-fg: 222 206 255;
 
-  /* Tonal containers mix the accent into the surface. */
+  /* A secondary button is a raised fill. With no tint it is grey; a tint gives it the accent's hue (color.js). */
+  --btn: 36 36 36; --btn-h: 46 46 46;
+
+  /* Tonal containers mix the accent into the surface: what is selected. */
   --tonal: color-mix(in srgb, rgb(var(--ac)) 16%, rgb(var(--surface)));
-  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 24%, rgb(var(--surface)));
+  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 30%, rgb(var(--surface)));
   --on-tonal: rgb(var(--ac-soft));
+  --danger: color-mix(in srgb, rgb(var(--bad)) 16%, rgb(var(--surface)));
+  --danger-h: color-mix(in srgb, rgb(var(--bad)) 24%, rgb(var(--surface)));
+  --selection: .35;
 
   /* Shape: pills are for values (tags, chips, switches, bars). Things you press or that hold things are rectangles. */
-  --r-xs: .25rem; --r-sm: .375rem; --r-md: .625rem; --r-lg: 1rem; --r-full: 999px;
+  --r-xs: .25rem; --r-sm: .375rem; --r-md: .5rem; --r-lg: .625rem; --r-full: 999px;
   --ease: cubic-bezier(.2, .8, .2, 1);
 }
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --ac: 13 148 136; --ac-soft: 10 92 86; --ac-strong: 15 118 110; --ac-ink: 255 255 255; --ac2: 2 132 199;
-  --bg: 236 247 244; --sunken: 208 224 220; --chrome: 220 236 232; --surface: 244 251 249; --field: 252 255 254;
-  --raised: 214 232 228; --raised2: 200 222 217;
-  --line: 190 201 198; --line-soft: 214 222 220; --line-hover: 160 172 169; --line-strong: 111 121 118;
-  --text: 17 17 20; --text-2: 63 63 70; --text-3: 82 82 92; --text-4: 112 112 122; --text-btn: 39 39 42; --text-seg: 90 90 99;
-  --ok: 3 105 74; --warn: 150 64 4; --bad: 190 18 60; --info: 2 94 148; --done: 109 40 217;
-  --danger-bg: 253 236 236; --danger-fg: 176 30 50; --danger-bg-h: 251 224 224;
-  --tonal: color-mix(in srgb, rgb(var(--ac)) 20%, rgb(var(--surface)));
-  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 30%, rgb(var(--surface)));
+  --ac-art: 45 212 191; --ac: 0 116 103; --ac-soft: 0 84 75; --ac-strong: 0 96 86; --ac-ink: 255 255 255; --ac2: 0 110 137;
+  --bg: 242 242 242; --sunken: 228 228 228; --chrome: 237 237 237; --surface: 253 253 253; --field: 253 253 253;
+  --raised: 233 233 233; --raised2: 222 222 222;
+  --line: 210 210 210; --line-soft: 223 223 223; --line-hover: 183 183 183; --line-strong: 122 122 122; --line-field: 161 161 161;
+  --text: 27 27 27; --text-2: 61 61 61; --text-3: 82 82 82; --text-4: 82 82 82; --text-btn: 46 46 46; --text-seg: 77 77 77;
+  --ok: 0 99 54; --warn: 119 79 0; --bad: 151 24 47; --info: 0 88 132; --done: 96 59 147;
+  --ok-fg: 0 80 43; --warn-fg: 91 59 0; --bad-fg: 120 25 39; --info-fg: 0 71 108; --done-fg: 76 49 116;
+  /* A raised fill alone barely shows on a pale page, so buttons sit one step darker. */
+  --btn: 222 222 222; --btn-h: 210 210 210;
+  --tonal: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--surface)));
+  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 26%, rgb(var(--surface)));
+  --danger: color-mix(in srgb, rgb(var(--bad)) 10%, rgb(var(--surface)));
+  --danger-h: color-mix(in srgb, rgb(var(--bad)) 16%, rgb(var(--surface)));
+  --selection: .3;
 }
 
 /* Anything drawn over cover art stays light-on-dark in both themes. */
 .on-art {
-  --text: 250 250 250; --text-2: 228 228 231; --text-3: 212 212 216;
-  --ok: 52 211 153; --warn: 251 191 36; --bad: 251 113 133; --info: 56 189 248; --done: 167 139 250;
+  --text: 240 240 240; --text-2: 215 215 215; --text-3: 199 199 199;
+  --ok: 97 218 146; --warn: 255 189 88; --bad: 255 136 142; --info: 100 193 255; --done: 196 163 255;
 }
 
-/* Tonal pills: a muted hue container with a lighter text on it. */
-.pill { display: inline-flex; align-items: center; padding: .125rem .5rem; border-radius: var(--r-full); font-size: .75rem; font-weight: 500; line-height: 1.25rem; white-space: nowrap; }
-.pill-ok { background: rgb(26 61 48); color: rgb(168 230 200); }
-.pill-warn { background: rgb(66 52 18); color: rgb(246 214 130); }
-.pill-info { background: rgb(28 52 84); color: rgb(179 211 250); }
-.pill-bad { background: rgb(86 36 40); color: rgb(255 200 200); }
-.pill-done { background: rgb(60 46 92); color: rgb(222 208 255); }
-.pill-idle { background: rgb(var(--raised)); color: rgb(165 170 170); }
-:root[data-theme="light"] .pill-ok { background: rgb(166 230 195); color: rgb(10 70 46); }
-:root[data-theme="light"] .pill-warn { background: rgb(255 215 120); color: rgb(92 56 0); }
-:root[data-theme="light"] .pill-info { background: rgb(176 212 255); color: rgb(10 52 100); }
-:root[data-theme="light"] .pill-bad { background: rgb(255 190 190); color: rgb(120 20 32); }
-:root[data-theme="light"] .pill-done { background: rgb(214 198 255); color: rgb(62 36 118); }
-:root[data-theme="light"] .pill-idle { color: rgb(90 98 98); }
+/* Tonal pills: the meaning's colour mixed into the surface, with its -fg on top. */
+.pill { display: inline-flex; align-items: center; padding: .125rem .5rem; border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 500; line-height: 1.25rem; white-space: nowrap; }
+.pill-ok { background: color-mix(in srgb, rgb(var(--ok)) 16%, rgb(var(--surface))); color: rgb(var(--ok-fg)); }
+.pill-warn { background: color-mix(in srgb, rgb(var(--warn)) 16%, rgb(var(--surface))); color: rgb(var(--warn-fg)); }
+.pill-info { background: color-mix(in srgb, rgb(var(--info)) 16%, rgb(var(--surface))); color: rgb(var(--info-fg)); }
+.pill-bad { background: color-mix(in srgb, rgb(var(--bad)) 16%, rgb(var(--surface))); color: rgb(var(--bad-fg)); }
+.pill-done { background: color-mix(in srgb, rgb(var(--done)) 16%, rgb(var(--surface))); color: rgb(var(--done-fg)); }
+.pill-idle { background: rgb(var(--raised)); color: rgb(var(--text-3)); }

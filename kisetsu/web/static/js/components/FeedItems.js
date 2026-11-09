@@ -116,7 +116,7 @@ export function FeedItems({ feeds, selected, onSelect }) {
       <h2 class="section-title">Feed items</h2>
       ${feed
         ? html`<button type="button" class="chip feed-filter" aria-pressed="true" onClick=${() => onSelect(null)} title="Show every feed's releases">${feed.name}<${Icon} name="x" small /></button>`
-        : html`<span class="page-sub feed-filter-hint truncate">All feeds · pick one on the left to filter</span>`}
+        : html`<span class="page-sub feed-filter-hint truncate">All feeds. Pick one on the left to see only its releases.</span>`}
       <${Seg} small label="Which releases" value=${mine ? 'mine' : 'all'} onChange=${(v) => { setMine(v === 'mine'); save(v === 'mine'); }} options=${[['mine', 'For my shows'], ['all', 'Everything']]} />
     </div>
     <${FeedPills} feeds=${feeds} selected=${selected} onSelect=${onSelect} />

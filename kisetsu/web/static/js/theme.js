@@ -3,7 +3,7 @@ import { useEffect, useState } from './ui.js';
 import { DEFAULT_ACCENT, showPaletteVars, userAccentCss } from './color.js';
 
 const THEME_KEY = 'kisetsu_theme';
-const ACCENT_CSS_KEY = 'kisetsu_accent_css4';
+const ACCENT_CSS_KEY = 'kisetsu_accent_css5';
 const listeners = new Set();
 
 export function themeMode() {

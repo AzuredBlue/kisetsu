@@ -13,7 +13,7 @@ const fold = (text) => String(text || '').normalize('NFKD').replace(/[̀-ͯ]/g, 
 const AIR_LABELS = { RELEASING: 'Releasing', FINISHED: 'Finished', NOT_YET_RELEASED: 'Not yet released', HIATUS: 'On hiatus', CANCELLED: 'Cancelled' };
 
 function EntryRow({ entry, onPick }) {
-  const facts = [entry.list_label, AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(' · ');
+  const facts = [entry.list_label, AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(', ');
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
   return html`<li><button type="button" class="add-entry" onClick=${() => (entry.followed ? go(entry.show_id) : onPick(entry))}>
     <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
@@ -111,7 +111,7 @@ function FeedOption({ group, active, picked, onFeed }) {
       <div class="row">
         <span class="feed-name truncate">${group.feed_name}</span>
         <span class="feed-use tabular">
-          ${onDisk ? html`<span class="state ok">${onDisk} on disk</span> · ` : null}${active ? `${covered.size} of ${offered.size}` : plural(offered.size, 'episode')}${batches.length ? ' · Batch' : ''}
+          ${onDisk ? html`<span class="state ok">${onDisk} on disk</span>, ` : null}${active ? `${covered.size} of ${offered.size}` : plural(offered.size, 'episode')}${batches.length ? ', with a batch' : ''}
         </span>
       </div>
       <div class="feed-url mono truncate" title=${sample}>${sample}</div>
@@ -198,7 +198,7 @@ function PickReleases({ entry, onBack }) {
       <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
       <div class="grow">
         <h2 class="section-title truncate" title=${entry.title}>${entry.title}</h2>
-        <p class="muted">${[entry.list_label, AIR_LABELS[entry.status] || null, entry.total_episodes ? `${entry.total_episodes} episodes` : null].filter(Boolean).join(' · ')}</p>
+        <p class="muted">${[entry.list_label, AIR_LABELS[entry.status] || null, entry.total_episodes ? `${entry.total_episodes} episodes` : null].filter(Boolean).join(', ')}</p>
       </div>
     </div>
     ${error ? html`<p class="error-text">${error}</p>` : null}
@@ -215,7 +215,7 @@ function PickReleases({ entry, onBack }) {
             </label></li>`)}
           </ul></div>
           <div class="card add-card"><div class="add-foot">
-            <span class="add-summary truncate">${summary}${feedName ? html`<span class="add-summary-feed"> · ${feedName}</span>` : null}</span>
+            <span class="add-summary truncate">${summary}${feedName ? html`<span class="add-summary-feed"> from ${feedName}</span>` : null}</span>
             <button type="button" class="btn primary" disabled=${feedId === null || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
           </div></div>
         </section>`
@@ -237,7 +237,7 @@ function PickReleases({ entry, onBack }) {
           <div class="card add-card">
             ${group ? html`<${Releases} key=${group.feed_id} group=${group} picked=${picked} onToggle=${toggle} />` : null}
             <div class="add-foot">
-              <span class="add-summary truncate">${summary}${group ? html`<span class="add-summary-feed"> · ${group.feed_name}</span>` : null}</span>
+              <span class="add-summary truncate">${summary}${group ? html`<span class="add-summary-feed"> from ${group.feed_name}</span>` : null}</span>
               <button type="button" class="btn primary" disabled=${!group || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>
             </div>
           </div>

@@ -12,12 +12,12 @@ const stalledNote = (stalled) => `The torrent has moved no data for hours.${stal
 
 const version = (v) => (v > 1 ? ` v${v}` : '');
 
-// "airs Sat 16:30 · usually out ~17:05" for an episode still to come, with the date once it is a week or more away.
+// "airs Sat 16:30, usually out ~17:05" for an episode still to come, with the date once it is a week or more away.
 function airsLabel(ep, now, delay) {
   if (ep.status !== 'wanted' || !ep.air_at || new Date(ep.air_at) <= now) return '';
   const label = `airs ${airTime(ep.air_at, now)}`;
   const note = new Date(ep.air_at) - now < 6 * 86400000 ? expectedNote(ep.air_at, delay) : '';
-  return note ? `${label} · ${note}` : label;
+  return note ? `${label}, ${note}` : label;
 }
 
 // What an episode row says and which group it belongs to. `delay` is the show's `release_delay_minutes`.

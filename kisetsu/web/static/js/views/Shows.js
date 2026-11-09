@@ -60,7 +60,7 @@ export function Shows() {
 
   const changeView = (value) => { setSwap(n => n + 1); setView(value); write('show_view_mode', value); };
   const tools = html`<div class="row wrap">
-    <button type="button" class="btn sm" onClick=${() => go('add')} title="Add a show from your AniList list and pick the feed to download it from"><${Icon} name="plus" small /><span>Add show</span></button>
+    <button type="button" class="btn sm primary" onClick=${() => go('add')} title="Add a show from your AniList list and pick the feed to download it from"><${Icon} name="plus" small /><span>Add show</span></button>
     <${Seg} small icons label="View" value=${view} onChange=${changeView} options=${[['grid', 'Grid view', 'grid', 'Poster grid'], ['list', 'List view', 'list', 'Compact list']]} />
   </div>`;
   return html`<div class="page full">

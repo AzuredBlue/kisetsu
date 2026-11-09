@@ -3,9 +3,11 @@
 html { -webkit-text-size-adjust: 100%; }
 body {
   display: flex; height: 100dvh; overflow: hidden; background: rgb(var(--bg)); color: rgb(var(--text));
-  font: 400 .875rem/1.5 var(--font-sans); -webkit-font-smoothing: antialiased;
+  font: 450 var(--fs-sm)/1.5 var(--font-sans);
+  /* The face's digits are proportional; counts and countdowns must not shift as they tick. */
+  font-variant-numeric: tabular-nums;
 }
-::selection { background: rgb(var(--ac) / .3); color: rgb(var(--text)); }
+::selection { background: rgb(var(--ac) / var(--selection)); color: rgb(var(--text)); }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 input, select, textarea { font: inherit; color: inherit; }
 ul, ol { padding: 0; list-style: none; }
@@ -16,7 +18,8 @@ img { display: block; max-width: 100%; }
 svg { flex: none; }
 [hidden] { display: none !important; }
 :focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
-.mono { font-family: var(--font-mono); }
+@media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
+.mono { font-family: var(--font-mono); font-size: var(--fs-mono); }
 .tabular { font-variant-numeric: tabular-nums; }
 .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .clamp-3 { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }

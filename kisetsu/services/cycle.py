@@ -16,7 +16,7 @@ logger = logging.getLogger("kisetsu.services.cycle")
 
 LAST_SYNC_KEY = "last_anilist_sync_at"
 # Version of the colour extraction; a stored result from another version is recomputed.
-ACCENT_VERSION = 2
+ACCENT_VERSION = 4
 EVENTS_KEEP = timedelta(days=90)
 
 

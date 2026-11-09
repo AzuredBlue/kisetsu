@@ -38,6 +38,9 @@ function airTitle(show, at) {
 }
 
 // "Ep n" plus a countdown or outcome, and the tooltip that goes with it.
+// The class of an air time, with its tone when it has one.
+export const whenClass = (tone) => (tone ? `when ${tone}` : 'when');
+
 export function airSummary(show, now) {
   const summary = summarize(show, now);
   return { ...summary, title: airTitle(show, summary.at) };
@@ -207,6 +210,7 @@ export function posterVars({ cover, cover_color }, mode) {
   return [text && `--show-text:${text}`, edge && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
 }
 
+// The air line comes before the title: every poster is the same height, so it lines up across a row whatever the title's length.
 export function ShowCard({ show, now }) {
   const air = airSummary(show, now);
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
@@ -219,11 +223,11 @@ export function ShowCard({ show, now }) {
       ${show.status !== 'waiting' ? html`<div class="tag-slot"><${StatusTag} show=${show} /></div>` : null}
     </div>
     <div class="show-text">
-      <h3 class="truncate" title=${show.title}>${show.title}</h3>
       ${hasAir || hasCount ? html`<div class="meta">
-        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span>${air.expected ? html`<span class="muted air-expected" title=${air.title}>${air.expected}</span>` : null}</div>` : html`<${Problems} show=${show} />`}
+        ${hasAir ? html`<div class="air"><span class="ep">${air.ep}</span>${' '}<span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span>${air.expected ? html`${' '}<span class="muted air-expected" title=${air.title}>${air.expected}</span>` : null}</div>` : html`<${Problems} show=${show} />`}
         ${hasCount ? html`<span class="count" title=${`${countText(show)} downloaded`}>${countText(show)}</span>` : null}
       </div>` : null}
+      <h3 class="clamp-2" title=${show.title}>${show.title}</h3>
       ${hasAir ? html`<${Problems} show=${show} />` : hasCount ? null : html`<${Problems} show=${show} />`}
       ${show.feed && show.feed.failing ? html`<div class="meta warn truncate" title=${`${show.feed.name} is failing`}>${show.feed.name} is failing</div>` : null}
     </div>
@@ -238,7 +242,7 @@ export function ShowRow({ show, now }) {
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       <div class="sr-feed-sub truncate" title=${feedName(show)}>${feedName(show)}${show.counts.failed ? html`<span class="bad"> ${show.counts.failed} failed</span>` : null}${show.counts.missed ? html`<span class="warn"> ${show.counts.missed} missed</span>` : null}</div>
     </div>
-    <div class="sr-air"><span class="ep">${air.ep}</span><span class=${`when ${air.tone}`} title=${air.title}>${air.info}</span>${air.expected ? html`<span class="muted" title=${air.title}>${air.expected}</span>` : null}</div>
+    <div class="sr-air"><span class="ep">${air.ep}</span>${' '}<span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span>${air.expected ? html`${' '}<span class="muted" title=${air.title}>${air.expected}</span>` : null}</div>
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
     <div class="sr-progress" title=${`${countText(show)} downloaded`}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
