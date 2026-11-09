@@ -1,5 +1,5 @@
 // The feed list with drag-to-reorder, shared by the Feeds page and the setup wizard.
-import { html, useState } from '../ui.js';
+import { html, useEffect, useRef, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { relativeTime } from '../format.js';
 import { Icon } from './Icon.js';
@@ -88,23 +88,38 @@ export async function importFromQbit() {
 
 export function FeedsTable({ feeds, editable = true, selected = null, onSelect = null }) {
   const [drag, setDrag] = useState({ from: null, over: null });
+  // A move shows at once. The list follows the server again when its order arrives, or when the move failed.
+  const [order, setOrder] = useState(null);
+  const sent = useRef({ seq: 0, saved: 0 });
+  useEffect(() => {
+    if (order && (feeds.map(f => f.id).join() === order.join() || sent.current.saved === sent.current.seq)) setOrder(null);
+  }, [feeds]);
+  const byId = new Map(feeds.map(f => [f.id, f]));
+  const list = order ? [...order.filter(id => byId.has(id)).map(id => byId.get(id)), ...feeds.filter(f => !order.includes(f.id))] : feeds;
   const move = async (from, to) => {
-    if (to < 0 || to >= feeds.length || from === to) return;
-    const ids = feeds.map(f => f.id);
+    if (to < 0 || to >= list.length || from === to) return;
+    const ids = list.map(f => f.id);
     ids.splice(to, 0, ids.splice(from, 1)[0]);
-    try { await apiFetch('/api/feeds/reorder', { method: 'POST', json: { ids } }); } catch (err) { /* shown by apiFetch */ }
+    const seq = ++sent.current.seq;
+    setOrder(ids);
+    try {
+      await apiFetch('/api/feeds/reorder', { method: 'POST', json: { ids } });
+      if (seq === sent.current.seq) sent.current.saved = seq;
+    } catch (err) {
+      if (seq === sent.current.seq) setOrder(null);
+    }
   };
   if (!feeds.length) return html`<${EmptyState} title="No feeds yet" hint="Add the RSS feed of a release group or site (for example a SubsPlease or nyaa.si RSS link), or import the feeds qBittorrent already has." />`;
   // Before any show follows a feed (the setup wizard) "No shows" on every row says nothing.
   const inUse = feeds.some(feed => feed.shows > 0);
   return html`<ul class="feed-list">
-    ${feeds.map((feed, index) => html`<li key=${feed.id} draggable=${editable} class=${`feed-row${drag.over === index ? ' over' : ''}${drag.from === index ? ' dragging' : ''}${selected === feed.id ? ' selected' : ''}`}
+    ${list.map((feed, index) => html`<li key=${feed.id} draggable=${editable} class=${`feed-row${drag.over === index ? ' over' : ''}${drag.from === index ? ' dragging' : ''}${selected === feed.id ? ' selected' : ''}`}
       onDragStart=${(e) => { setDrag({ from: index, over: null }); e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', String(index)); }}
       onDragOver=${(e) => { e.preventDefault(); if (drag.over !== index) setDrag(d => ({ ...d, over: index })); }}
       onDragEnd=${() => setDrag({ from: null, over: null })}
       onDrop=${(e) => { e.preventDefault(); const from = drag.from; setDrag({ from: null, over: null }); if (from !== null) move(from, index); }}>
       ${editable ? html`<span class="grip" aria-hidden="true"><${Icon} name="grip" /></span>` : null}
-      <span class="prio tabular" title="Priority">${feed.priority}</span>
+      <span class="prio tabular" title="Priority">${order ? index + 1 : feed.priority}</span>
       <div class=${`feed-main${onSelect ? ' pickable' : ''}`} onClick=${onSelect ? () => onSelect(selected === feed.id ? null : feed.id) : undefined}>
         <div class="row">
           <span class="feed-name truncate">${feed.name}</span>${feedHealth(feed)}
@@ -117,7 +132,7 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
       ${editable ? html`<div class="feed-actions">
         <span class="feed-move">
           <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === 0} onClick=${() => move(index, index - 1)} aria-label="Move up" title="Move up"><${Icon} name="up" small /></button>
-          <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === feeds.length - 1} onClick=${() => move(index, index + 1)} aria-label="Move down" title="Move down"><${Icon} name="down" small /></button>
+          <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === list.length - 1} onClick=${() => move(index, index + 1)} aria-label="Move down" title="Move down"><${Icon} name="down" small /></button>
         </span>
         <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${async () => { await openFeedDialog(feed); }} title="Edit feed" aria-label="Edit feed"><${Icon} name="edit" small /></button>
         <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${() => deleteFeed(feed)} title="Delete feed" aria-label="Delete feed"><${Icon} name="trash" small /></button>
