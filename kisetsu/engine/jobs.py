@@ -262,7 +262,7 @@ class Jobs:
             try:
                 return ref.id, await self._fetch(ref.url)
             except rss.FeedFetchError as e:
-                return ref.id, str(e)
+                return ref.id, feedsync.FetchFailure(str(e), e.transient)
             except Exception as e:
                 logger.warning(f"Reading '{ref.name}' failed: {e}")
                 return ref.id, f"{ref.name} could not be read ({e})"

@@ -1,5 +1,6 @@
 """Reading the feeds: what a read does to the stored items and the feeds' health."""
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set, Union
@@ -13,6 +14,18 @@ from kisetsu.domain.schedule import HUNT_WINDOW, HuntPlan, hunt_plan
 from kisetsu.services import ingest
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
+
+logger = logging.getLogger("kisetsu.services.feedsync")
+
+
+class FetchFailure(str):
+    """The error of a failed read; ``transient`` when it may pass on its own (see ``FeedFetchError``)."""
+
+    def __new__(cls, message: str, transient: bool = False):
+        failure = super().__new__(cls, message)
+        failure.transient = transient
+        return failure
+
 
 FetchResult = Union[List[FeedArticle], str]
 
@@ -147,22 +160,36 @@ def plan_fetch(ctx: Context, everything: bool = False) -> List[FeedRef]:
 
 
 def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:
-    """Store what the reads returned and record each feed's health. A string result is the error of a failed read."""
+    """Store what the reads returned and record each feed's health. A string result is the error of a failed read.
+
+    A feed a show reads that failed transiently is left unread, so the next routine read tries it again.
+    """
     outcome = Outcome()
     known = ingest._known(ctx)
     stored_feeds = {key[0] for key in known}
+    used: Optional[Set[int]] = None
     for feed_id, result in results.items():
         feed = ctx.session.get(Feed, feed_id)
         if feed is None:
             continue
         feed.last_fetch_at = ctx.now
         if isinstance(result, str):
-            feed.last_error = result
+            if getattr(result, "transient", False):
+                if used is None:
+                    all_feeds = list(ctx.session.exec(select(Feed)).all())
+                    used = set(_needed(ctx, all_feeds)) | _idle_read(ctx, all_feeds)
+                if feed.id in used:
+                    feed.last_fetch_at = None
+            if feed.failing_since is None:
+                logger.warning(f"Feed '{feed.name}' could not be read: {result}")
+            feed.last_error = str(result)
             feed.failing_since = feed.failing_since or ctx.now
             outcome.failed[feed_id] = result
             ctx.session.add(feed)
             ctx.emit("feeds")
             continue
+        if feed.failing_since is not None:
+            logger.info(f"Feed '{feed.name}' can be read again.")
         if feed.failing_since is not None or feed.last_error:
             ctx.emit("feeds")
         feed.last_ok_at, feed.failing_since, feed.last_error = ctx.now, None, None

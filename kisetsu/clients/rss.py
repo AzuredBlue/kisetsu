@@ -29,6 +29,8 @@ MIN_REQUEST_INTERVAL_SECONDS = 1.0
 RATE_LIMIT_WAIT_SECONDS = 10.0
 RATE_LIMIT_RETRIES = 2
 MAX_RATE_LIMIT_WAIT_SECONDS = 60.0
+# A host that refuses or cannot be found (no network yet at boot, say) is tried again after each of these waits.
+CONNECT_RETRY_WAITS = (2.0, 4.0, 8.0)
 
 # SubsPlease's RSS writes its pubDate in US Pacific time but marks it +0000.
 _PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -38,7 +40,14 @@ _BASE32_HASH = re.compile(r"^[A-Za-z2-7]{32}$")
 
 
 class FeedFetchError(Exception):
-    """A feed could not be read; the message says why in terms a user can act on."""
+    """A feed could not be read; the message says why in terms a user can act on.
+
+    ``transient`` when the cause may pass on its own: no connection, a timeout or a server error.
+    """
+
+    def __init__(self, message: str, transient: bool = False):
+        super().__init__(message)
+        self.transient = transient
 
 
 @dataclass(frozen=True)
@@ -175,30 +184,41 @@ def _retry_after(response: httpx2.Response) -> float:
 
 
 async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed read") -> bytes:
-    """GET ``url``, waiting out and retrying a 429 as long as its host asks. Every failure becomes a FeedFetchError.
+    """GET ``url``, waiting out and retrying a 429 as long as its host asks, and for a feed read a refused
+    connection a few times (``CONNECT_RETRY_WAITS``). Every failure becomes a FeedFetchError.
 
     Each attempt is counted under ``kind`` (see ``traffic``).
     """
     host = urlparse(url).hostname or url
-    for attempt in range(RATE_LIMIT_RETRIES + 1):
+    connect_waits = iter(CONNECT_RETRY_WAITS if kind == "Feed read" else ())
+    rate_limited = 0
+    while True:
         await _host_gate.wait(host)
         try:
             response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
         except httpx2.TimeoutException as e:
             traffic.record(kind, host, traffic.ERROR)
-            raise FeedFetchError(f"{host} did not answer in time") from e
+            raise FeedFetchError(f"{host} did not answer in time", transient=True) from e
+        except httpx2.ConnectError as e:
+            traffic.record(kind, host, traffic.ERROR)
+            wait = next(connect_waits, None)
+            if wait is None:
+                raise FeedFetchError(f"{host} could not be reached ({e})", transient=True) from e
+            _host_gate.close(host, wait)
+            continue
         except httpx2.RequestError as e:
             traffic.record(kind, host, traffic.ERROR)
-            raise FeedFetchError(f"{host} could not be reached ({e})") from e
+            raise FeedFetchError(f"{host} could not be reached ({e})", transient=True) from e
         traffic.record(kind, host, traffic.outcome_of(response.status_code))
         if response.status_code != 429:
             break
         wait = _retry_after(response)
         _host_gate.close(host, wait)
-        if attempt == RATE_LIMIT_RETRIES or wait > MAX_RATE_LIMIT_WAIT_SECONDS:
+        if rate_limited == RATE_LIMIT_RETRIES or wait > MAX_RATE_LIMIT_WAIT_SECONDS:
             raise FeedFetchError(f"{host} is rate limiting requests")
+        rate_limited += 1
     if response.status_code >= 400:
-        raise FeedFetchError(f"{host} answered HTTP {response.status_code}")
+        raise FeedFetchError(f"{host} answered HTTP {response.status_code}", transient=response.status_code >= 500)
     body = response.content
     if len(body) > MAX_BODY_BYTES:
         raise FeedFetchError(f"{host} sent a response larger than {MAX_BODY_BYTES // (1024 * 1024)} MB")
