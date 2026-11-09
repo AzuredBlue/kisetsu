@@ -1,4 +1,4 @@
-// Times arrive as UTC ISO strings; they are shown in the viewer's own timezone.
+// Times arrive as UTC ISO strings; they are shown in the viewer's own timezone and written in the browser's language.
 
 const toDate = (iso) => {
   if (!iso) return null;
@@ -61,6 +61,9 @@ export function relativeTime(iso, now = Date.now()) {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+// A heading starts with a capital, as some languages write weekdays and months in lower case.
+export const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1);
+
 export function dayLabel(iso, now = new Date()) {
   const d = toDate(iso);
   if (!d) return 'Earlier';
@@ -68,7 +71,7 @@ export function dayLabel(iso, now = new Date()) {
   const days = Math.round((startOf(now) - startOf(d)) / 86400000);
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
-  return d.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long' });
+  return capitalize(d.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }));
 }
 
 // "in 4m 12s" for a wait of `seconds`.

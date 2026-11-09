@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag, whenClass } from '../components/ShowSummary.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
-import { releaseState, shownExpected } from '../format.js';
+import { capitalize, releaseState, shownExpected } from '../format.js';
 
 const WEEK = 7 * 86400000;
 const SEASON_WEEKS = 4;
@@ -77,12 +77,11 @@ export function buildWeek(shows, today, offset = 0) {
     days.push({
       date, slots, today: date.getTime() === startOfToday.getTime(), past: date < startOfToday,
       quiet: !slots.length && busy.size > 0 && !busy.has(d),
-      name: date.toLocaleDateString('en-US', { weekday: 'short' }),
-      label: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+      name: capitalize(date.toLocaleDateString([], { weekday: 'short' })),
+      label: date.toLocaleDateString([], { month: 'short', day: 'numeric' }),
     });
   }
-  const sameMonth = monday.getMonth() === sunday.getMonth();
-  const range = `${monday.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${sunday.toLocaleDateString('en-US', sameMonth ? { day: 'numeric' } : { month: 'short', day: 'numeric' })}, ${sunday.getFullYear()}`;
+  const range = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' }).formatRange(monday, sunday);
   return { days, range };
 }
 
