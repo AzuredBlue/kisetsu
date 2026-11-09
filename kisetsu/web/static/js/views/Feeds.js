@@ -51,6 +51,8 @@ export function Feeds() {
     if (id !== null) setPicked(id);
     show(true);
   };
+  // Clicking the feed already shown again closes the panel.
+  const pickRow = (id) => (id === null ? show(false) : pick(id));
   return html`<div class=${`page full feeds-page${mounted ? ' with-side' : ''}${visible ? ' open' : ''}`}>
     <div class="feeds-layout">
       <div class="feeds-col">
@@ -63,7 +65,7 @@ export function Feeds() {
           </button>
         </div>
         <p class="page-sub feeds-hint">When several feeds carry a release, the higher one wins. Drag to reorder.</p>
-        <div class="card feeds-card">${data ? html`<${FeedsTable} feeds=${data} selected=${visible ? selected : null} onSelect=${pick} />` : error ? html`<${LoadError} what="the feeds" error=${error} reload=${reload} />` : null}</div>
+        <div class="card feeds-card">${data ? html`<${FeedsTable} feeds=${data} selected=${visible ? selected : null} onSelect=${pickRow} />` : error ? html`<${LoadError} what="the feeds" error=${error} reload=${reload} />` : null}</div>
       </div>
       ${data && mounted ? html`<div class="feeds-side"><${FeedItems} feeds=${data} selected=${selected} onSelect=${pick} /></div>` : null}
     </div>
