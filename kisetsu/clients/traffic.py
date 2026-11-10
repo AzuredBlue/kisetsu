@@ -63,5 +63,3 @@ def reset() -> None:
     with _lock:
         _counts.clear()
         _started = datetime.now(timezone.utc)
-# Called after each request is counted (from any thread), when something shows the counts.
-on_change: Optional[Callable[[], None]] = None

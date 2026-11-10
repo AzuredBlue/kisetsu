@@ -30,7 +30,6 @@ def _say(lines: List[str]) -> None:
 class SyncInput:
     username: str
     sync_minutes: int
-    hunt_minutes: int
     monitored_ids: Set[int]
     last_sync_ago: Optional[float]
 
@@ -65,7 +64,7 @@ def sync_input(ctx: Context) -> SyncInput:
     if last:
         ago = (ctx.now - datetime.fromisoformat(last)).total_seconds()
     ids = set(ctx.session.exec(select(Show.anilist_id)).all())
-    return SyncInput(s.anilist_username.strip(), s.anilist_sync_minutes, s.hunt_interval_minutes, ids, ago)
+    return SyncInput(s.anilist_username.strip(), s.anilist_sync_minutes, ids, ago)
 
 
 def apply_sync(ctx: Context, seasonal: List[Dict[str, Any]]) -> SyncApplied:
