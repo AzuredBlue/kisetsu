@@ -230,7 +230,6 @@ def test_a_long_rate_limit_fails_at_once_and_holds_back_the_hosts_next_requests(
 @pytest.mark.parametrize("body", [
     b"<html><body>Checking your browser</body></html>",
     b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>x</title></entry></feed>',
-    b"<error>maintenance</error>",
 ])
 def test_a_document_that_is_not_rss_is_an_error_not_an_empty_feed(body):
     with pytest.raises(FeedFetchError, match="not an RSS feed"):

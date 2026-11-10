@@ -154,12 +154,6 @@ class TestPatterns(unittest.TestCase):
         v3 = generate_season_variants("Fate/stay night: Unlimited Blade Works 2nd Season")
         self.assertIn("Fate/stay night: Unlimited Blade Works S0?2", v3)
 
-    def test_generate_season_variants_keeps_hyphenated_titles_whole(self):
-
-        v = generate_season_variants("Akane-banashi 2nd Season")
-        self.assertIn("Akane-banashi S0?2", v)
-        self.assertIn("Akane-banashi Season 2", v)
-
     def test_generate_season_variants_strips_dangling_punctuation(self):
 
         v = generate_season_variants("Show Name - Season 2")

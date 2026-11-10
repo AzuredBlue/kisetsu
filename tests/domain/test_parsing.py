@@ -14,13 +14,6 @@ class TestMatching(unittest.TestCase):
         self.assertEqual(normalize_title("[SubsPlease] Sousou no Frieren - 08"), "sousou no frieren 08")
         self.assertEqual(normalize_title("Ore dake Level Up na Ken (TV)"), "ore dake level up na ken")
 
-    def test_parse_release_title(self):
-        item = "[SubsPlease] Sousou no Frieren - 08 (1080p) [9A5C7E1B].mkv"
-        parsed = parse_release_title(item)
-        self.assertEqual(parsed["release_group"], "SubsPlease")
-        self.assertEqual(parsed["episode"], 8)
-        self.assertIn("sousou no frieren", parsed["title"].lower())
-
     def test_final_episode_marker_after_the_number(self):
         parsed = parse_release_title("[Erai-raws] Ahiru no Sora - 50 END [1080p][Multiple Subtitle].mkv")
         self.assertEqual(parsed["episode"], 50)

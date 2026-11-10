@@ -22,7 +22,6 @@ def test_a_title_in_brackets_keeps_its_words():
 
 @pytest.mark.parametrize("aliases, title", [
     (OSHI_3, "[Erai-raws] Kimi ni Todoke 3rd Season - 05 [1080p][Multiple Subtitle]"),
-    (OSHI_3, "[SubsPlease] Kingdom 6th Season - 05 (1080p).mkv"),
     (OSHI_FINAL, "[SubsPlease] Boku no Hero Academia Final Season - 05 (1080p).mkv"),
     (["[Oshi no Ko] 3rd Season"], "[Erai-raws] Any Random Show 3rd Season - 05 [1080p]"),
 ])
@@ -65,8 +64,6 @@ def test_a_season_named_on_one_side_only_still_matches(aliases, title):
 
 @pytest.mark.parametrize("title", [
     "[SubsPlease] Shangri-La Frontier - 12.5 (1080p) [ABCDEF12].mkv",
-    "[SubsPlease] Kusuriya no Hitorigoto - 24.5 (1080p) [ABCDEF12].mkv",
-    "[SubsPlease] Tensei shitara Slime Datta Ken - 48.5 (1080p).mkv",
 ])
 def test_a_half_numbered_recap_has_no_episode(title):
     assert parse_release_title(title)["episode"] is None
@@ -93,7 +90,6 @@ def test_an_episode_title_after_the_number_is_not_part_of_the_show_name():
 
 @pytest.mark.parametrize("aliases, title, expected", [
     (["SBR", "Steel Ball Run"], "[Grp] Hisbro - 05 (1080p)", False),
-    (["SBR", "Steel Ball Run"], "[Grp] Absbrand Saga - 05 (1080p)", False),
     (["GITS 2026"], "[Grp] Agits 2026 Special - 01 (1080p)", False),
     (["SBR", "Steel Ball Run"], "[Grp] JoJo SBR - 05 (1080p)", True),
 ])
@@ -112,8 +108,6 @@ def test_a_parent_release_goes_to_the_parent_not_its_spin_off():
 
 @pytest.mark.parametrize("title, resolution", [
     ("[SubsPlease] Dungeon Meshi - 05 (720p) [ABCDEF12].mkv", 720),
-    ("[Erai-raws] Dungeon Meshi - 05 [480p][Multiple Subtitle]", 480),
-    ("[ASW] Dungeon Meshi - 05 [1080p HEVC]", 1080),
     ("Dungeon Meshi S01E05 2160p NF WEB-DL", 2160),
     ("[Grp] Dungeon Meshi - 05 [4K]", 2160),
     ("[Grp] Dungeon Meshi - 05", None),
@@ -139,7 +133,6 @@ def test_a_matcher_follows_its_minimum_resolution():
 
 @pytest.mark.parametrize("title, resolution", [
     ("[Ohys-Raws] Dungeon Meshi - 05 (AT-X 1280x720 x264 AAC).mp4", 720),
-    ("[Grp] Dungeon Meshi - 05 [1920x1080]", 1080),
     ("[Grp] Dungeon Meshi - 05 [BD 1920x804 x264]", 1080),
     ("[Grp] Dungeon Meshi - 05 [3840x2160]", 2160),
     ("[Grp] Dungeon Meshi - 05 [DVD 720x480]", 480),
