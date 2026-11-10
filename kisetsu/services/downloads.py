@@ -344,7 +344,6 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
             _retry(ctx, dl, episode, str(tag_error), AMBIGUOUS_RETRY)
             return
         dl.info_hash = existing.hash
-        paused = False
     # qBittorrent accepted the release, so its feed is proven for this show.
     if dl.feed_id is not None:
         feed = ctx.session.get(Feed, dl.feed_id)
