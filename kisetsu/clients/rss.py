@@ -186,6 +186,18 @@ def _retry_after(response: httpx2.Response) -> float:
     return RATE_LIMIT_WAIT_SECONDS
 
 
+async def _read_capped(response: httpx2.Response) -> Optional[bytes]:
+    """The response's body, or None once it has grown past ``MAX_BODY_BYTES``; the rest is then left unread."""
+    chunks: List[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes():
+        size += len(chunk)
+        if size > MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed read") -> bytes:
     """GET ``url``, waiting out and retrying a 429 as long as its host asks, and for a feed read a refused
     connection a few times (``CONNECT_RETRY_WAITS``). Every failure becomes a FeedFetchError.
@@ -198,7 +210,8 @@ async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed re
     while True:
         await _host_gate.wait(host)
         try:
-            response = await client.get(url, headers={"User-Agent": USER_AGENT}, follow_redirects=True)
+            async with client.stream("GET", url, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as response:
+                body = await _read_capped(response)
         except httpx2.TimeoutException as e:
             traffic.record(kind, host, traffic.ERROR)
             raise FeedFetchError(f"{host} did not answer in time", transient=True) from e
@@ -222,8 +235,7 @@ async def fetch_bytes(client: httpx2.AsyncClient, url: str, kind: str = "Feed re
         rate_limited += 1
     if response.status_code >= 400:
         raise FeedFetchError(f"{host} answered HTTP {response.status_code}", transient=response.status_code >= 500)
-    body = response.content
-    if len(body) > MAX_BODY_BYTES:
+    if body is None:
         raise FeedFetchError(f"{host} sent a response larger than {MAX_BODY_BYTES // (1024 * 1024)} MB")
     return body
 

@@ -239,3 +239,17 @@ def test_a_document_that_is_not_rss_is_an_error_not_an_empty_feed(body):
 
 def test_an_rss_feed_without_items_is_just_empty():
     assert parse_feed(b'<rss version="2.0"><channel><title>t</title></channel></rss>') == []
+
+
+def test_an_oversized_feed_stops_being_read_once_it_is_too_large(monkeypatch):
+    monkeypatch.setattr("kisetsu.clients.rss.MAX_BODY_BYTES", 10)
+    sent = []
+
+    async def body():
+        for n in range(100):
+            sent.append(n)
+            yield b"x" * 8
+
+    with pytest.raises(FeedFetchError, match="larger"):
+        _fetch(lambda request: httpx2.Response(200, content=body()))
+    assert len(sent) < 100
