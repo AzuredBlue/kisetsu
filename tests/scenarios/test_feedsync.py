@@ -206,3 +206,11 @@ def test_past_its_first_day_a_missing_episode_has_its_feed_read_hourly(world):
     assert _planned(world) == []
     world.clock.advance(minutes=43)
     assert _planned(world) == [top.id]
+
+
+def test_a_feed_that_renames_its_guids_on_every_read_is_not_a_gap(world):
+    feed = world.feed("Top", URL, 1)
+    world.show(episodes=1, first_air=START - timedelta(days=1))
+    title = "[Grp] Sousou no Frieren - 01 (1080p).mkv"
+    assert feedsync.apply_fetch(world.ctx(), {feed.id: [article(title, START, guid="read-1")]}).gaps == []
+    assert feedsync.apply_fetch(world.ctx(), {feed.id: [article(title, START, guid="read-2")]}).gaps == []

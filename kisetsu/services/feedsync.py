@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from kisetsu.clients.rss import FeedArticle
-from kisetsu.db.schema import FIXED_FEED_STATES, Episode, EpisodeStatus, Feed, FeedState, Show
+from kisetsu.db.schema import FIXED_FEED_STATES, Episode, EpisodeStatus, Feed, FeedItem, FeedState, Show
 from kisetsu.domain.schedule import HUNT_WINDOW, HuntPlan, hunt_plan
 from kisetsu.services import ingest
 from kisetsu.services.context import Context
@@ -39,6 +39,8 @@ LATE_READ_EVERY = timedelta(hours=1)
 # A needed feed is read again this much before its interval has passed since its last read, since a read is
 # stamped a little after the routine read was planned; a feed the hunt read more recently than that is left to it.
 READ_SLACK = timedelta(minutes=2)
+# How many of a read's titles are looked up before it is called a gap (one query, well under SQLite's variable limit).
+GAP_TITLES_CHECKED = 500
 
 
 @dataclass(frozen=True)
@@ -194,7 +196,7 @@ def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:
             ctx.emit("feeds")
         feed.last_ok_at, feed.failing_since, feed.last_error = ctx.now, None, None
         ctx.session.add(feed)
-        if result and feed.id in stored_feeds and not any((feed.id, a.guid) in known for a in result):
+        if result and feed.id in stored_feeds and not any((feed.id, a.guid) in known for a in result) and not _titles_stored(ctx, feed, result):
             outcome.gaps.append(feed.id)
         dated = [a.published_at for a in result if a.published_at is not None]
         if dated:
@@ -204,6 +206,12 @@ def apply_fetch(ctx: Context, results: Dict[int, FetchResult]) -> Outcome:
         outcome.matched_show_ids |= stored.show_ids
         outcome.reconsider |= stored.reconsider
     return outcome
+
+
+def _titles_stored(ctx: Context, feed: Feed, articles: List[FeedArticle]) -> bool:
+    """Whether the feed already holds an item titled like one of these: the same releases under new guids, so nothing scrolled past."""
+    titles = list({a.title for a in articles})[:GAP_TITLES_CHECKED]
+    return ctx.session.exec(select(FeedItem.id).where(FeedItem.feed_id == feed.id, FeedItem.title.in_(titles)).limit(1)).first() is not None
 
 
 def plan_hunt(ctx: Context) -> HuntInfo:
