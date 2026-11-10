@@ -475,7 +475,12 @@ def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolve
     carriers: List[Carrier] = []
     for feed in candidates:
         resolved, best = resolved_by_feed[feed.id]
-        carried = [r for r in resolved if _wants(r.episode) and r.version >= best.get(r.number, r.version)]
+        carried = [
+            r for r in resolved
+            # A failed episode is still served by a version newer than the one that failed.
+            if (_wants(r.episode) or (r.episode.status == EpisodeStatus.FAILED and r.version > state.held_version(r.episode)))
+            and r.version >= best.get(r.number, r.version)
+        ]
         if carried:
             dates = [r.item.published_at for r in carried if not _undated(r.item)]
             carriers.append(Carrier(feed, min(dates) if dates else None))

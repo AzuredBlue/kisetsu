@@ -630,3 +630,20 @@ def test_a_release_named_by_a_shorter_form_with_a_subtitle_is_grabbed(world):
     show = airing(world, title="BLEACH: Thousand-Year Blood War - The Conflict", aliases=["BLEACH: Sennen Kessen-hen - Soukoku-tan"])
     post(world, top, "[SubsPlease] Bleach - Sennen Kessen-hen - 03 (1080p) [AAAA1111].mkv")
     assert run(world).started == 1 and world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+def test_a_newer_version_is_taken_for_a_failed_episode_of_a_show_with_no_proven_feed(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, episodes=1)
+    post(world, top, "[Grp] Sousou no Frieren - 01 (1080p).mkv")
+    episode = world.episode(show, 1)
+    gone = Download(episode_id=episode.id, feed_id=top.id, title="[Grp] Sousou no Frieren - 01 (1080p).mkv", version=1, state=DownloadState.FAILED)
+    world.session.add(gone)
+    world.session.flush()
+    episode.current_download_id, episode.status = gone.id, EpisodeStatus.FAILED
+    world.session.add(episode)
+    world.commit()
+    assert run(world).started == 0 and show.feed_state == FeedState.NONE
+    post(world, top, "[Grp] Sousou no Frieren - 01v2 (1080p).mkv")
+    assert run(world).started == 1
+    assert world.episode(show, 1).status == EpisodeStatus.DOWNLOADING
