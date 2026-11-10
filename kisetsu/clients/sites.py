@@ -59,7 +59,9 @@ def search_terms(titles: Iterable[Optional[str]]) -> List[str]:
                 continue
             seen.add(key)
             terms.append(term)
-    return terms[:MAX_TERMS]
+    # Release names are written in Latin letters, so a name in another script is only asked for when it is all there is.
+    latin = [term for term in terms if any(c.isascii() and c.isalpha() for c in term)]
+    return (latin or terms)[:MAX_TERMS]
 
 
 def any_of(terms: List[str]) -> str:

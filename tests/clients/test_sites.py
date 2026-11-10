@@ -46,6 +46,9 @@ def test_search_terms_split_titles_and_drop_season_markers():
         "Koori no Jouheki", "The Ramparts of Ice",
     ]
     assert sites.search_terms([None, "K", ""]) == []
+    # A name in another script finds nothing a Latin name does not; alone, it is all there is to ask for.
+    assert sites.search_terms(["Yasei no Last Boss", "野生のラスボスが現れた 第2期", "A Wild Last Boss Appeared"]) == ["Yasei no Last Boss", "A Wild Last Boss Appeared"]
+    assert sites.search_terms(["野生のラスボスが現れた"]) == ["野生のラスボスが現れた"]
 
 
 def test_nyaa_search_url_extends_the_feed_query():
