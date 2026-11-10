@@ -567,3 +567,26 @@ def test_a_double_episode_fills_only_the_episode_still_wanted(world):
     assert run(world).started == 1
     assert sorted((n, v) for n, v, _ in downloaded(world, show)) == [(1, 1), (2, 1)]
     assert len(world.qbit.calls_named("add_torrent")) == 2
+
+
+def test_a_feed_is_resolved_once_per_pass_unless_a_release_was_mapped_by_its_date(world, monkeypatch):
+    top = world.feed("Top", "https://top/rss", 1)
+    airing(world)
+    post(world, top, "[Grp] Sousou no Frieren - 03 (1080p).mkv")
+    calls = []
+    real = grab.resolve
+    monkeypatch.setattr(grab, "resolve", lambda *a, **k: (calls.append(k.get("learn", True)), real(*a, **k))[1])
+    assert run(world).started == 1
+    assert calls == [False]
+
+
+def test_a_feed_with_a_release_mapped_by_its_date_is_resolved_again_to_learn_from_it(world, monkeypatch):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world)
+    post(world, top, "[Grp] Sousou no Frieren - 51 (1080p).mkv", START + timedelta(hours=1))
+    calls = []
+    real = grab.resolve
+    monkeypatch.setattr(grab, "resolve", lambda *a, **k: (calls.append(k.get("learn", True)), real(*a, **k))[1])
+    world.clock.advance(hours=2)
+    assert run(world).started == 1
+    assert calls == [False, True] and world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

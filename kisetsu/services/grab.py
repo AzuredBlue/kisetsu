@@ -157,12 +157,14 @@ def _undated(item: FeedItem) -> bool:
 
 def resolve(
     ctx: Context, state: ShowState, feed: Feed, *, learn: bool = True, rejected: Optional[List[Tuple[FeedItem, str]]] = None,
+    dated: Optional[List[FeedItem]] = None,
 ) -> Tuple[List[Resolved], Dict[int, int]]:
     """Which episode each stored item of a feed is for, and the newest usable version of each.
 
     The one place that decides whether an item is this show's release of one of its episodes:
     the grab acts on the result and the missed rule asks the same question with ``learn=False``,
-    which never renumbers stored releases. ``rejected`` collects the items it turned down, each with why.
+    which never renumbers stored releases. ``rejected`` collects the items it turned down, each with why,
+    and ``dated`` the items numbered by their air date alone, the only ones a feed's numbering is learned from.
     """
     show = state.show
     matcher = _matcher_for(ctx, state, feed)
@@ -217,6 +219,8 @@ def resolve(
         if number is None:
             turn_down(item, f"Its episode {raw} does not fit this season's aired episodes (yet).")
             continue
+        if mapped.by_date and dated is not None:
+            dated.append(item)
         if mapped.by_date and learn:
             _learn_offset(ctx, state, feed, int(raw), number)
         episode = state.by_number.get(number)
@@ -435,13 +439,16 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
     ):
         return
     candidates = _candidate_feeds(ctx, show, all_feeds)
-    # Choosing a feed reads every candidate without learning from it; only the feed taken is read again with learning.
-    resolved_by_feed = {f.id: resolve(ctx, state, f, learn=False) for f in candidates}
+    # Choosing a feed reads every candidate without learning from it; only the feed taken is read again with learning,
+    # and only when it has something to learn from.
+    dated: Dict[int, List[FeedItem]] = {f.id: [] for f in candidates}
+    resolved_by_feed = {f.id: resolve(ctx, state, f, learn=False, dated=dated[f.id]) for f in candidates}
     chosen = _choose_feed(ctx, state, candidates, resolved_by_feed)
     grabbed_from: Optional[int] = None
     if chosen is not None:
-        resolved, best = resolve(ctx, state, chosen)
-        resolved_by_feed[chosen.id] = (resolved, best)
+        if dated[chosen.id]:
+            resolved_by_feed[chosen.id] = resolve(ctx, state, chosen)
+        resolved, best = resolved_by_feed[chosen.id]
         # Of an episode's releases the preferred quality goes first, then the closest above it; the first taken wins.
         preferred = ctx.settings.min_resolution
         # The torrents this pass added that hold a second episode, by item: that episode follows the same torrent.
