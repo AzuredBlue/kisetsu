@@ -28,6 +28,9 @@ class Caches:
     held: Dict[int, datetime] = field(default_factory=dict)
     # Torrents already reported as refused for adoption, so one that stays refused is mentioned once.
     refused: Set[str] = field(default_factory=set)
+    # (matcher key, (hash, name) of the torrents in qBittorrent that no followed show's names match): adoption does not try
+    # them again until a show, an alias or a learned name changes.
+    unnamed: Optional[Tuple[str, Set[Tuple[str, str]]]] = None
     # Shows already told that qBittorrent keeps their torrents outside the folder it was given.
     misplaced: Set[int] = field(default_factory=set)
     # Batch torrents whose finish the desktop notification already told of.

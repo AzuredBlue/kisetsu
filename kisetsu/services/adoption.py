@@ -29,7 +29,7 @@ from kisetsu.services.context import Context
 from kisetsu.services.downloads import MANAGED_TAG, final_failure_clause, recompute_episode
 from kisetsu.services.facts import facts_for
 from kisetsu.services.feeds import Evidence
-from kisetsu.services.ingest import followed_shows
+from kisetsu.services import ingest
 
 logger = logging.getLogger("kisetsu.services.adoption")
 
@@ -133,17 +133,24 @@ def adopt_existing(ctx: Context) -> AdoptResult:
     pending = [t for t in torrents if t.hash not in known and t.name]
     if not pending:
         return result
-    shows = [s for s in followed_shows(ctx) if not s.completed]
+    shows = [s for s in ingest.followed_shows(ctx) if not s.completed]
     facts = facts_for(ctx, shows)
-    matchers = [(s, matching.build_matcher(s.effective_aliases, s.learned_name, ctx.settings.min_resolution)) for s in shows]
     by_id = {s.id: s for s in shows}
+    _, built = ingest._matchers(ctx)
+    matchers = [(by_id[show_id], matcher) for show_id, matcher in built if show_id in by_id]
+    key = ctx.caches.matchers[0]
+    if ctx.caches.unnamed is None or ctx.caches.unnamed[0] != key:
+        ctx.caches.unnamed = (key, set())
+    unnamed = ctx.caches.unnamed[1]
     carried = _hash_owners(ctx, [t.hash for t in pending], set(by_id))
     tagged_shows = tags.owners(ctx)
     retired_tags = set(tags.retired(ctx))
     cache = ctx.caches.parsed_cache()
     states: Dict[int, Tuple[List[Episode], Optional[int], Optional[datetime]]] = {}
     for torrent in pending:
-        parsed = parse_release_title(torrent.name)
+        parsed = cache.get(torrent.name)
+        if parsed is None:
+            parsed = cache[torrent.name] = parse_release_title(torrent.name)
         raw = parsed.get("episode")
         if raw is None:
             continue
@@ -154,7 +161,11 @@ def adopt_existing(ctx: Context) -> AdoptResult:
         elif retired_tags & torrent.tags:
             show = None
         else:
-            show = by_id.get(carried.get(torrent.hash)) or _named_show(matchers, torrent.name, cache)
+            show = by_id.get(carried.get(torrent.hash))
+            if show is None and (torrent.hash, torrent.name) not in unnamed:
+                show = _named_show(matchers, torrent.name, cache)
+                if show is None:
+                    unnamed.add((torrent.hash, torrent.name))
         if show is None:
             continue
         if show.id not in states:

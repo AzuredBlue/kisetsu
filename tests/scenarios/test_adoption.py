@@ -296,3 +296,18 @@ def test_a_torrent_naming_the_second_season_is_not_adopted_by_the_first(world):
     assert adopt(world).imported == 1
     assert world.episode(first, 3).status == EpisodeStatus.WANTED
     assert world.episode(second, 3).status == EpisodeStatus.COMPLETED
+
+
+def test_a_torrent_no_show_names_is_not_tried_again_until_the_shows_names_change(world, monkeypatch):
+    show = airing(world)
+    world.qbit.seed("[Grp] Some Other Series - 03 (1080p).mkv", save_path="/d/Other", category="Seasonal")
+    world.qbit.sync()
+    tried = []
+    real = adoption.matching.decide
+    monkeypatch.setattr(adoption.matching, "decide", lambda matcher, name, *a, **k: (tried.append(name), real(matcher, name, *a, **k))[1])
+    assert adopt(world).imported == 0 and len(tried) == 1
+    assert adopt(world).imported == 0 and len(tried) == 1
+    show.custom_aliases = ["Some Other Series"]
+    world.commit()
+    assert adopt(world).imported == 1
+    assert world.episode(show, 3).status == EpisodeStatus.COMPLETED
