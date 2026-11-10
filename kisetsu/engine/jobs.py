@@ -6,6 +6,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, List, Optional, Set
+from urllib.parse import urlparse
 
 import httpx2
 
@@ -274,11 +275,14 @@ class Jobs:
                 return ref.id, f"{ref.name} could not be read ({e})"
 
         results = dict(await asyncio.gather(*(one(ref) for ref in due)))
+        urls = {ref.id: ref.url for ref in due}
         for feed_id, result in results.items():
             if isinstance(result, str):
                 self.backoff.failed(str(feed_id), now)
             else:
                 self.backoff.succeeded(str(feed_id))
+                # A feed is a page of its site's search: how many it lists says how many a search's page holds.
+                self.grouping.saw(urlparse(urls[feed_id]).hostname or urls[feed_id], len(result))
         return results
 
     async def _apply(self, results: Dict[int, feedsync.FetchResult]) -> feedsync.Outcome:

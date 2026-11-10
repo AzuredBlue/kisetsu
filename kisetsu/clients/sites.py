@@ -138,7 +138,9 @@ class Grouping:
         except (ValueError, TypeError, KeyError, AttributeError):
             return
         self._checked = {host: value for host, value in checked.items() if self._current(value[0])}
-        self._largest = {host: count for host, count in largest.items() if host in self._checked}
+        for host, count in largest.items():
+            if host in self._checked:
+                self.saw(host, count)
 
 
 def site_of(feed_url: str) -> Optional[str]:

@@ -671,3 +671,11 @@ def test_a_show_deleted_before_its_search_ran_is_skipped(env):
         return await env.jobs._search([gone])
 
     assert run(env, go) == 0
+
+
+def test_a_feed_read_teaches_how_many_results_its_sites_pages_hold(env):
+    env.add_feed("Nyaa", "https://nyaa.si/?page=rss&q=1080p")
+    for number in range(1, 4):
+        env.feeds.post("https://nyaa.si/?page=rss&q=1080p", f"[Grp] Show - {number:02d} (1080p).mkv")
+    run(env, lambda: env.jobs.refresh_feeds(everything=True))
+    assert env.jobs.grouping.complete("nyaa.si", 2) and not env.jobs.grouping.complete("nyaa.si", 3)

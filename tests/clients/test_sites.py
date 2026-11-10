@@ -199,6 +199,12 @@ def test_what_was_learned_of_a_host_is_kept_across_a_restart_until_it_is_due_aga
     later.load(before.dump())
     # Due again: checked anew, and its page size learned anew with it.
     assert later.works("nyaa.si") is None and not later.complete("nyaa.si", 74)
+    # A page size seen in this run is not forgotten for a smaller one that was kept.
+    seen = sites.Grouping(clock=clock)
+    seen.saw("nyaa.si", 100)
+    now[0] -= sites.GROUPING_RECHECK_SECONDS + 1
+    seen.load(before.dump())
+    assert seen.works("nyaa.si") is True and seen.complete("nyaa.si", 75)
     for broken in ("", "not json", "[]", '{"checked": 1}'):
         sites.Grouping(clock=clock).load(broken)
 
