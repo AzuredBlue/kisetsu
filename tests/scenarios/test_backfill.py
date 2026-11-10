@@ -564,3 +564,36 @@ def test_subsplease_is_asked_first_for_the_name_its_schedule_gives_the_show(worl
 
     asyncio.run(backfill.search(None, item, backfill.matcher_for(show), world.clock(), searcher=searcher))
     assert item.feeds == [subs] and asked[0] == "Saikyosoubi"
+
+
+def test_shows_that_start_on_one_nyaa_feed_share_a_search_and_those_it_does_not_cover_are_left_to_their_own(world):
+    from kisetsu.clients import sites
+    world.feed("Nyaa", NYAA, 1)
+    first_air = START - timedelta(days=7)
+    frieren = world.show(1, "Sousou no Frieren", episodes=2, first_air=first_air)
+    kusuriya = world.show(2, "Kusuriya no Hitorigoto", episodes=2, first_air=first_air)
+    lost = world.show(3, "Hotaru no Yomeiri", episodes=2, first_air=first_air)
+    world.feeds.searchable[NYAA] = [
+        world.feeds.post(NYAA, f"[Grp] {name} - {n:02d} (1080p).mkv", first_air + timedelta(days=7 * (n - 1)))
+        for name in ("Sousou no Frieren", "Kusuriya no Hitorigoto") for n in (1, 2)
+    ] + [world.feeds.post(NYAA, "[Grp] Hotaru no Yomeiri - 02 (1080p).mkv", START)]
+    due = backfill.due(world.ctx())
+    matchers = {item.show_id: backfill.matcher_for(show) for item, show in zip(due, (frieren, kusuriya, lost))}
+
+    async def fake(client, url, term, now=None):
+        return await world.feeds.search(url, term)
+
+    def shared(grouping):
+        world.feeds.searched.clear()
+        return asyncio.run(backfill.search_shared(None, due, matchers, world.clock(), searcher=fake, grouping=grouping))
+
+    grouping = sites.Grouping()
+    grouping.saw("nyaa.si", PAGE)
+    # Not shown to take several names at once: nothing is asked.
+    assert shared(grouping) == {} and world.feeds.searched == []
+    grouping.record("nyaa.si", True)
+    found = shared(grouping)
+    assert len(world.feeds.searched) == 1
+    # The show whose first episode the page lacks is not covered, so its own search still runs.
+    assert set(found) == {frieren.id, kusuriya.id}
+    assert backfill.apply(world.ctx(), due[0], found[frieren.id]) == 2

@@ -28,6 +28,9 @@ logger = logging.getLogger("kisetsu.services.backfill")
 REPEAT = timedelta(hours=6)
 # which doubles, up to this, for each search in a row that found nothing (a show no feed carries).
 REPEAT_MAX = timedelta(hours=24)
+# A search shared by several shows is sized to fill at most this share of a page, as the releases it will list are only
+# estimated (one per aired episode), and a page that comes back full has left the oldest of them out.
+SHARED_PAGE_SHARE = 0.6
 
 
 @dataclass
@@ -414,6 +417,83 @@ async def search(
             merged.articles.setdefault(feed_id, []).extend(articles)
         merged.stopped = merged.stopped or result.stopped
     return merged
+
+
+def _first_nyaa_feed(item: Due) -> Optional[Tuple[Feed, str]]:
+    """The feed a show's search starts with and its host, when that feed is on nyaa."""
+    feed = item.feeds[0] if item.feeds else None
+    if feed is None or sites.site_of(feed.url) != "nyaa":
+        return None
+    return feed, urlparse(feed.url).hostname or feed.url
+
+
+def unchecked(items: List[Due], grouping: sites.Grouping) -> Optional[Due]:
+    """A show whose own search would check whether its first feed's host takes several names at once, if any host is still to be checked."""
+    for item in items:
+        first = _first_nyaa_feed(item)
+        if first is not None and len(item.terms) > 1 and grouping.works(first[1]) is None:
+            return item
+    return None
+
+
+def _shared_groups(items: List[Due], room: int) -> List[List[Due]]:
+    """The shows in groups whose releases one page should hold, going by how many episodes of each have aired."""
+    groups: List[List[Due]] = [[]]
+    used = 0
+    for item in items:
+        expected = (item.latest_aired or len(item.missing)) + 1
+        if groups[-1] and used + expected > room:
+            groups.append([])
+            used = 0
+        groups[-1].append(item)
+        used += expected
+    return groups
+
+
+async def search_shared(
+    client: httpx2.AsyncClient, items: List[Due], matchers: Dict[int, object], now: datetime, searcher=sites.search_feed,
+    grouping: Optional[sites.Grouping] = None,
+) -> Dict[int, Searched]:
+    """Search for several shows with one request per nyaa feed they start on; returns, by show, what covered it.
+
+    Only for hosts shown to take several names in one search. A show counts as covered when the page supplies each of
+    its missing episodes, full or not: its own search would have stopped there too.
+    Every other show is left out and is searched for on its own, so a shared search can cost a request but never a release.
+    """
+    found: Dict[int, Searched] = {}
+    by_feed: Dict[int, Tuple[Feed, str, List[Due]]] = {}
+    for item in items:
+        first = _first_nyaa_feed(item)
+        if grouping is None or first is None or not grouping.works(first[1]) or matchers.get(item.show_id) is None:
+            continue
+        by_feed.setdefault(first[0].id, (first[0], first[1], []))[2].append(item)
+    for feed, host, sharing in by_feed.values():
+        for group in _shared_groups(sharing, int(grouping.page_size(host) * SHARED_PAGE_SHARE)):
+            if len(group) < 2:
+                continue
+            terms = list(dict.fromkeys(term for item in group for term in item.terms))
+            try:
+                articles = await searcher(client, feed.url, sites.any_of(terms), now=now)
+            except FeedFetchError as e:
+                # Each show's own search follows and reports what is wrong with the site.
+                logger.debug(f"A shared search of '{feed.name}' failed: {e}")
+                return found
+            if articles is None:
+                break
+            grouping.saw(host, len(articles))
+            for item in group:
+                cache: Dict[str, dict] = {}
+                releases: List[Tuple[int, Optional[datetime]]] = []
+                for article in articles:
+                    if not plausible_for_show(article.published_at, item.first_air, now):
+                        continue
+                    matched, parsed = decide(matchers[item.show_id], article.title, cache)
+                    raw = parsed.get("episode")
+                    if matched and raw is not None and raw > 0:
+                        releases.append((int(raw), article.published_at))
+                if item.numbers(releases, now).issuperset(item.missing):
+                    found[item.show_id] = Searched(articles={feed.id: list(articles)})
+    return found
 
 
 def matcher_for(show: Show, min_resolution: int = DEFAULT_MIN_RESOLUTION):

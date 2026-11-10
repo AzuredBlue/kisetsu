@@ -122,6 +122,10 @@ class Grouping:
         """
         return count == 0 or count < self._largest.get(host, 0)
 
+    def page_size(self, host: str) -> int:
+        """The most results one of the host's pages was seen to hold (0: none seen yet)."""
+        return self._largest.get(host, 0)
+
     def saw(self, host: str, count: int) -> None:
         """Note how many results one of the host's pages held."""
         self._largest[host] = max(count, self._largest.get(host, 0))

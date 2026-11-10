@@ -33,6 +33,8 @@ GRAB_FALLBACK = 15 * 60.0
 BACKFILL_INTERVAL = 6 * 3600.0
 # Shows whose past releases are searched for at the same time; each site still gets one request at a time.
 SEARCH_CONCURRENCY = 4
+# How many shows are searched for alone, one after another, to check a site before the others share their searches.
+SITE_CHECK_SEARCHES = 3
 # Cover images read at the same time for their colours (AniList's image server).
 PALETTE_CONCURRENCY = 4
 HOUSEKEEPING_INTERVAL = 24 * 3600.0
@@ -521,6 +523,8 @@ class Jobs:
         """
         gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
         stopped: List[str] = []
+        # What a search shared by several shows already found for each (``backfill.search_shared``).
+        shared: Dict[int, backfill.Searched] = {}
         await self._load_grouping()
 
         async def one(item: "backfill.Due") -> int:
@@ -532,7 +536,7 @@ class Jobs:
                     matcher = await self.engine.run(_matcher_of, item.show_id)
                     if matcher is None:
                         return 0
-                    found = await backfill.search(
+                    found = shared.pop(item.show_id, None) or await backfill.search(
                         self.http, item, matcher, self.engine.clock(), searcher=self.searcher, stop_when_found=not exhaustive,
                         grouping=self.grouping,
                     )
@@ -546,7 +550,21 @@ class Jobs:
                 self._poke_soon("grab")
                 return added
 
-        added = sum(await asyncio.gather(*(one(item) for item in due)))
+        due, added = list(due), 0
+        if not exhaustive and len(due) > 1:
+            # A site not yet checked for taking several names at once is checked by one show's own search.
+            for _ in range(SITE_CHECK_SEARCHES):
+                first = backfill.unchecked(due, self.grouping)
+                if first is None or stopped:
+                    break
+                due.remove(first)
+                added += await one(first)
+            if not stopped:
+                matchers = await self.engine.run(lambda ctx: {item.show_id: _matcher_of(ctx, item.show_id) for item in due})
+                shared.update(await backfill.search_shared(
+                    self.http, due, matchers, self.engine.clock(), searcher=self.searcher, grouping=self.grouping,
+                ))
+        added += sum(await asyncio.gather(*(one(item) for item in due)))
         await self._keep_grouping()
         return added
 

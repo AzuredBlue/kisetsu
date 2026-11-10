@@ -679,3 +679,30 @@ def test_a_feed_read_teaches_how_many_results_its_sites_pages_hold(env):
         env.feeds.post("https://nyaa.si/?page=rss&q=1080p", f"[Grp] Show - {number:02d} (1080p).mkv")
     run(env, lambda: env.jobs.refresh_feeds(everything=True))
     assert env.jobs.grouping.complete("nyaa.si", 2) and not env.jobs.grouping.complete("nyaa.si", 3)
+
+
+def test_a_first_search_checks_the_site_with_one_show_and_the_others_share_one_search(env):
+    nyaa = "https://nyaa.si/?page=rss&q=1080p"
+    env.add_feed("Nyaa", nyaa)
+    names = [("Sousou no Frieren", "Frieren"), ("Kusuriya no Hitorigoto", "Apothecary Diaries"), ("Hotaru no Yomeiri", "Firefly Wedding")]
+    first = START - timedelta(days=14)
+    for index, (romaji, english) in enumerate(names, start=1):
+        env.anilist.shows.append(anilist_show(index, english, romaji=romaji, total_episodes=12, next_airing_episode=4, next_airing_at=START + timedelta(days=7)))
+        env.anilist.set_schedule(index, first, 3)
+    # The feed lists only other shows by now; its site still finds the three.
+    for number in range(20):
+        env.feeds.post(nyaa, f"[Grp] Another Show {number} - 01 (1080p).mkv", START)
+    env.feeds.searchable[nyaa] = [
+        env.feeds.post("unlisted", f"[Grp] {romaji} - {n:02d} (1080p).mkv", first + timedelta(days=7 * (n - 1)))
+        for romaji, _ in names for n in (1, 2, 3)
+    ]
+
+    async def go():
+        await env.jobs.sync_anilist()
+        await env.jobs.refresh_feeds(everything=True)
+        await env.jobs.backfill()
+
+    run(env, go)
+    # One show asks for each of its two names and then for both at once, which checks the site; the other two share one search.
+    assert len(env.feeds.searched) == 4
+    assert env.query(lambda s: len(s.exec(select(FeedItem).where(FeedItem.title.not_like("%Another Show%"))).all())) == 9
