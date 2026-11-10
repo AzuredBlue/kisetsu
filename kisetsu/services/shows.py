@@ -62,6 +62,8 @@ def all_paused(ctx: Context) -> bool:
 def ensure_episodes(ctx: Context, show: Show) -> List[Episode]:
     """The show's episode rows, creating the ones from 1 up to the known season length."""
     rows = list(ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all())
+    if show.total_episodes:
+        rows = _without_surplus(ctx, rows, show.total_episodes)
     by_number = {row.number: row for row in rows}
     target = show.total_episodes or max(show.next_airing_episode or 0, max(by_number, default=0), 1)
     if show.total_episodes:
@@ -73,6 +75,21 @@ def ensure_episodes(ctx: Context, show: Show) -> List[Episode]:
             by_number[number] = row
             rows.append(row)
     return rows
+
+
+def _without_surplus(ctx: Context, rows: List[Episode], total: int) -> List[Episode]:
+    """Drop the rows past a season length AniList has lowered, which would wait for a release that never comes.
+
+    One that ever had a download, or that the user skipped, stays.
+    """
+    surplus = [row for row in rows if row.number > total and row.status in (EpisodeStatus.WANTED, EpisodeStatus.MISSED)]
+    if not surplus:
+        return rows
+    used = set(ctx.session.exec(select(Download.episode_id).where(Download.episode_id.in_([row.id for row in surplus]))).all())
+    gone = [row for row in surplus if row.id not in used]
+    for row in gone:
+        ctx.session.delete(row)
+    return [row for row in rows if row not in gone]
 
 
 def final_episode_accounted(ctx: Context, show: Show) -> bool:

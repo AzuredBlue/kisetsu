@@ -447,3 +447,18 @@ def test_clearing_a_show_leaves_what_is_in_flight_in_qbit(world):
     assert shows.delete_show(world.ctx(), show, reason="cleared") == 0
     world.commit()
     assert dl.info_hash in world.qbit.truth and world.qbit.deleted_with_files == []
+
+
+def test_an_episode_past_a_lowered_episode_count_goes_unless_it_holds_a_release(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = apply(world, entry(total_episodes=13)).added[0]
+    row = _new_item(feed, article("[Grp] Sousou no Frieren - 13 (1080p).mkv", START), world.clock())
+    world.session.add(row)
+    world.session.flush()
+    apply(world, entry(total_episodes=12))
+    assert sorted(world.statuses(show)) == list(range(1, 13))
+    apply(world, entry(total_episodes=13))
+    downloads.start_download(world.ctx(), show, feed, world.episode(show, 13), row)
+    world.commit()
+    apply(world, entry(total_episodes=12))
+    assert 13 in world.statuses(show)
