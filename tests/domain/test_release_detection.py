@@ -135,3 +135,20 @@ def test_the_minimum_resolution_decides_which_releases_are_valid():
 def test_a_matcher_follows_its_minimum_resolution():
     assert not matches(["Dungeon Meshi"], "[SubsPlease] Dungeon Meshi - 05 (720p).mkv")
     assert decide(build_matcher(["Dungeon Meshi"], None, min_resolution=720), "[SubsPlease] Dungeon Meshi - 05 (720p).mkv", {})[0]
+
+
+@pytest.mark.parametrize("title, resolution", [
+    ("[Ohys-Raws] Dungeon Meshi - 05 (AT-X 1280x720 x264 AAC).mp4", 720),
+    ("[Grp] Dungeon Meshi - 05 [1920x1080]", 1080),
+    ("[Grp] Dungeon Meshi - 05 [BD 1920x804 x264]", 1080),
+    ("[Grp] Dungeon Meshi - 05 [3840x2160]", 2160),
+    ("[Grp] Dungeon Meshi - 05 [DVD 720x480]", 480),
+])
+def test_a_resolution_written_as_width_by_height_is_read(title, resolution):
+    from kisetsu.domain.parsing import release_resolution
+    assert release_resolution(title) == resolution
+
+
+def test_a_release_below_the_minimum_is_refused_however_it_writes_its_resolution():
+    from kisetsu.domain.parsing import is_valid_release
+    assert not is_valid_release("[Ohys-Raws] Dungeon Meshi - 05 (AT-X 1280x720 x264 AAC).mp4", min_resolution=1080)

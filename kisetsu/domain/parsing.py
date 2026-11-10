@@ -341,12 +341,21 @@ def calculate_match_score(
 _RESOLUTION_REGEX: re.Pattern[str] = re.compile(r"\b(2160|1080|720|576|540|480|360)p\b|\b(4k)\b", re.IGNORECASE)
 
 
+# A frame size, "1280x720". A cropped picture ("1920x804") is as wide as a full one, so the width decides when it says more.
+_FRAME_SIZE_REGEX: re.Pattern[str] = re.compile(r"\b(\d{3,4})x(\d{3,4})\b", re.IGNORECASE)
+_LINES_BY_WIDTH = ((3840, 2160), (1920, 1080), (1280, 720))
+
+
 def release_resolution(raw_title: str) -> Optional[int]:
-    """The lines a release says it has ("720p" is 720, "4K" is 2160), or None when it says nothing."""
+    """The lines a release says it has ("720p" is 720, "4K" is 2160, "1280x720" is 720), or None when it says nothing."""
     match = _RESOLUTION_REGEX.search(raw_title or "")
-    if not match:
+    if match:
+        return int(match.group(1)) if match.group(1) else 2160
+    frame = _FRAME_SIZE_REGEX.search(raw_title or "")
+    if not frame:
         return None
-    return int(match.group(1)) if match.group(1) else 2160
+    width, height = int(frame.group(1)), int(frame.group(2))
+    return max(height, next((lines for wide, lines in _LINES_BY_WIDTH if width >= wide), 0))
 # "Collection" only counts set apart in brackets: titles contain the word ("Kantai Collection").
 BATCH_REGEX: re.Pattern[str] = re.compile(
     r"\b(?:batch|complete\s+series|complete\s+season)\b|[\[(]\s*collection\s*[\])]",
