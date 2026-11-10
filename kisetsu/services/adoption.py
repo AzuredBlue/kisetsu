@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from sqlmodel import select
 
 from kisetsu.db.schema import (
+    ACTIVE_DOWNLOAD_STATES,
     Download,
     DownloadState,
     Episode,
@@ -208,9 +209,7 @@ def _offset(ctx: Context, show: Show, feed: Feed) -> int:
 def _is_gap(ctx: Context, episode: Episode) -> bool:
     """Whether the episode has no tracked torrent: only gaps are filled."""
     active = ctx.session.exec(
-        select(Download.id).where(Download.episode_id == episode.id, Download.state.in_([
-            DownloadState.ADDING, DownloadState.VERIFYING, DownloadState.DOWNLOADING, DownloadState.RETRY_WAIT,
-        ])).limit(1)
+        select(Download.id).where(Download.episode_id == episode.id, Download.state.in_(ACTIVE_DOWNLOAD_STATES)).limit(1)
     ).first()
     if active is not None:
         return False

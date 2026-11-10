@@ -9,6 +9,7 @@ from sqlalchemy import func
 from sqlmodel import select
 
 from kisetsu.db.schema import (
+    ACTIVE_DOWNLOAD_STATES,
     Download,
     DownloadState,
     EndReason,
@@ -47,7 +48,6 @@ FEED_STATE_LABELS = {
     FeedState.PINNED: "Picked by you",
     FeedState.LOCKED: "Locked",
 }
-IN_FLIGHT = (DownloadState.ADDING, DownloadState.VERIFYING, DownloadState.DOWNLOADING, DownloadState.RETRY_WAIT)
 HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED, EventKind.FAILED, EventKind.MISSED)
 # An add that qBittorrent still hasn't shown after this long means qBittorrent is not picking up new torrents.
 STUCK_ADD_AFTER = timedelta(hours=1)
@@ -85,7 +85,7 @@ def _replacing(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
     query = (
         select(Episode.show_id, func.count(Download.id))
         .join(Episode, Episode.id == Download.episode_id)
-        .where(Download.supersedes_id.is_not(None), Download.state.in_(IN_FLIGHT))
+        .where(Download.supersedes_id.is_not(None), Download.state.in_(ACTIVE_DOWNLOAD_STATES))
     )
     if show_id is not None:
         query = query.where(Episode.show_id == show_id)
@@ -273,7 +273,7 @@ def show_view(ctx: Context, show: Show) -> Dict[str, Any]:
         .order_by(Download.created_at, Download.id)
     ).all()
     by_id = {dl.id: dl for dl in rows}
-    active_by_episode = {dl.episode_id: dl for dl in rows if dl.state in IN_FLIGHT}
+    active_by_episode = {dl.episode_id: dl for dl in rows if dl.state in ACTIVE_DOWNLOAD_STATES}
     return {
         **card,
         "episodes": [episode_row(ctx, episode, feed_names, show, memo, (by_id, active_by_episode)) for episode in episodes],
