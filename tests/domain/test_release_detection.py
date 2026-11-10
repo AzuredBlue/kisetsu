@@ -163,3 +163,13 @@ def test_a_repack_marked_after_the_number_keeps_its_episode(title):
     from kisetsu.domain.parsing import parse_release_title
     parsed = parse_release_title(title)
     assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi") and parsed["version"] >= 2
+
+
+@pytest.mark.parametrize("name, group", [
+    ("Frieren.Beyond.Journeys.End.S02E05.1080p.CR.WEB-DL.AAC2.0.H.264-VARYG.mkv", "VARYG"),
+    ("Kaguya-sama.Love.is.War.S03E01.1080p.WEB.H.264-GROUP.mkv", "GROUP"),
+    ("Show.S01E05.1080p.WEB-DL.mkv", None),
+])
+def test_the_scene_group_is_the_last_hyphenated_word_not_a_quality_tag(name, group):
+    from kisetsu.domain.parsing import extract_release_group_tag
+    assert extract_release_group_tag(name) == group

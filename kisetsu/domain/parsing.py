@@ -75,7 +75,7 @@ NON_GROUP_TAGS = {
     "hevc", "x264", "x265", "avc", "h264", "h265", "aac", "flac", "opus",
     "web-dl", "webrip", "hdtv", "dvd", "bd", "bluray", "cr",
     "multisub", "multi-sub", "multi-subs", "multisubs", "eng", "english",
-    "raw", "raws", "sub", "subs", "dub", "dual-audio", "batch",
+    "raw", "raws", "sub", "subs", "dub", "dual-audio", "batch", "dl",
 }
 
 
@@ -87,9 +87,8 @@ def extract_release_group_tag(raw_title: str) -> Optional[str]:
         if cand.lower() not in NON_GROUP_TAGS and not cand.isdigit():
             return cand
 
-    m_scene = re.search(r"-([A-Za-z0-9_]+)(?:\s*\(|\s*\[|\s*\.|\s*$)", raw_title)
-    if m_scene:
-        cand = m_scene.group(1).strip()
+    # A scene group ends the name ("...H.264-VARYG.mkv"); a hyphen earlier belongs to the title or to "WEB-DL".
+    for cand in reversed(re.findall(r"-([A-Za-z0-9_]+)(?:\s*\(|\s*\[|\s*\.|\s*$)", raw_title)):
         if cand.lower() not in NON_GROUP_TAGS and len(cand) >= 2 and not cand.isdigit():
             return cand
 
