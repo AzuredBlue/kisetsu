@@ -184,12 +184,18 @@ def matching_show_ids(
     only: Optional[Iterable[int]] = None,
 ) -> List[int]:
     matched = [(show_id, matcher) for show_id, matcher in matchers if broad_match(matcher, title, parsed_cache)]
+    matched = most_plainly_named(matched, title, parsed_cache)
+    wanted = None if only is None else set(only)
+    return [show_id for show_id, _ in matched if wanted is None or show_id in wanted]
+
+
+def most_plainly_named(matched: List[Tuple[Any, Matcher]], title: str, parsed_cache: Optional[ParsedCache] = None) -> List[Tuple[Any, Matcher]]:
+    """Of several shows one title matched, those it names most plainly: the ones of its season, then the closest names."""
     if len(matched) > 1:
         matched = _of_the_named_season(matched, title)
     if len(matched) > 1:
         matched = _closest_names(matched, title, parsed_cache)
-    wanted = None if only is None else set(only)
-    return [show_id for show_id, _ in matched if wanted is None or show_id in wanted]
+    return matched
 
 
 def _closest_names(matched: List[Tuple[int, Matcher]], title: str, parsed_cache: Optional[ParsedCache]) -> List[Tuple[int, Matcher]]:

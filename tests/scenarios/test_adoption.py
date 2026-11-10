@@ -285,3 +285,14 @@ def test_an_errored_torrent_does_not_rule_its_feed_out_of_the_saved_files_lock(w
     world.session.add(Download(episode_id=ep.id, feed_id=one.id, title="x", state=DownloadState.FAILED, info_hash="ab" * 20))
     world.commit()
     assert adoption.lock_from_saved_files(world.ctx()) == [show]
+
+
+def test_a_torrent_naming_the_second_season_is_not_adopted_by_the_first(world):
+    world.ctx().settings.default_category = "Seasonal"
+    first = world.show(1, "Foo Bar Baz", episodes=3, first_air=START - timedelta(days=400))
+    second = world.show(2, "Foo Bar Baz 2nd Season", episodes=3, first_air=START - timedelta(days=15))
+    world.qbit.seed("[Grp] Foo Bar Baz 2nd Season - 03 (1080p).mkv", save_path="/d/Foo", category="Seasonal")
+    world.qbit.sync()
+    assert adopt(world).imported == 1
+    assert world.episode(first, 3).status == EpisodeStatus.WANTED
+    assert world.episode(second, 3).status == EpisodeStatus.COMPLETED

@@ -154,7 +154,7 @@ def adopt_existing(ctx: Context) -> AdoptResult:
         elif retired_tags & torrent.tags:
             show = None
         else:
-            show = by_id.get(carried.get(torrent.hash)) or next((s for s, m in matchers if matching.decide(m, torrent.name, cache)[0]), None)
+            show = by_id.get(carried.get(torrent.hash)) or _named_show(matchers, torrent.name, cache)
         if show is None:
             continue
         if show.id not in states:
@@ -178,6 +178,12 @@ def adopt_existing(ctx: Context) -> AdoptResult:
     if result.imported:
         ctx.emit("shows", "history")
     return result
+
+
+def _named_show(matchers: List[Tuple[Show, matching.Matcher]], name: str, cache: Dict[str, dict]) -> Optional[Show]:
+    """The show a torrent's name is for. Several seasons of a series can all match it; it belongs to the one it names."""
+    matched = [(show, matcher) for show, matcher in matchers if matching.decide(matcher, name, cache)[0]]
+    return next((show for show, _ in matching.most_plainly_named(matched, name, cache)), None)
 
 
 def _offset(ctx: Context, show: Show, feed: Feed) -> int:
