@@ -1,4 +1,4 @@
-"""The qBittorrent WebUI client: torrents, and the RSS tree Kisetsu mirrors its feeds into."""
+"""The qBittorrent WebUI client: torrents, and reading the feed list of its RSS tree (never written)."""
 
 import logging
 import re
@@ -38,7 +38,7 @@ class QbitAuthError(QbitError):
 
 
 class QbitConflict(QbitError):
-    """qBittorrent answered 409: an RSS feed name or URL is taken, or the path is missing."""
+    """qBittorrent answered 409: what the request names is taken or missing."""
 
 
 class QbitDuplicate(QbitError):

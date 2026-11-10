@@ -38,7 +38,7 @@ MAX_FEED_REFRESH_MINUTES = 240
 # How long after an air time the scheduler keeps polling at the fast hunting interval.
 HUNTING_RECENT_DAYS = 14
 DEFAULT_EARLY_AIR_TOLERANCE_HOURS = 6
-# How often the direct engine refreshes the feeds of the shows it is hunting.
+# How often the feeds of the shows being hunted are read.
 DEFAULT_HUNT_INTERVAL_MINUTES = 5
 MIN_HUNT_INTERVAL_MINUTES = 2
 MAX_HUNT_INTERVAL_MINUTES = 60

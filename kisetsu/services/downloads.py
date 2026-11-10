@@ -63,7 +63,7 @@ PRESENT_STATES = (DownloadState.VERIFYING, DownloadState.DOWNLOADING)
 STALLED_AFTER = timedelta(hours=6)
 # States in which a torrent is not expected to move: stopped by the user, waiting in qBittorrent's queue, or being checked.
 _IDLE_PREFIXES = ("paused", "stopped", "queued", "checking", "moving")
-# The reason a removed torrent is requeued with; seeing it on an earlier row of the same version is how a second removal is told.
+# The reason shown for a removed torrent that is requeued. A second removal is told by ``EndReason.REMOVED``, never by this text.
 REMOVED_REASON = "Torrent is no longer present in qBittorrent; queued for a safe retry."
 
 

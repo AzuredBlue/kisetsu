@@ -145,8 +145,8 @@ def build_regex_pattern(
     matched_title: Optional[str] = None,
 ) -> str:
     """
-    Build a case-insensitive qBittorrent RSS rule pattern.
-    If matched_title is known, use it as the rule; otherwise build an alternation from aliases.
+    Build the case-insensitive pattern that finds a show's releases among feed titles.
+    If matched_title is known, the pattern is that name; otherwise it is an alternation of the aliases.
     """
     if matched_title and matched_title.strip():
         # The release group has already shown its naming, so the learned rule is

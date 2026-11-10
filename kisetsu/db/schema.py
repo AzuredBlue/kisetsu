@@ -178,7 +178,7 @@ class Feed(Base, table=True):
     name: str = Field(index=True)
     url: str = Field(unique=True, index=True)
     priority: int = Field(default=1, index=True)  # Lower number = higher priority (1 is top)
-    # The item path in qBittorrent's RSS tree this feed is mirrored to.
+    # The item path in qBittorrent's RSS tree this feed was copied from (``feeds.import_from_qbit``); None when added here.
     qbit_path: Optional[str] = Field(default=None, nullable=True)
     last_fetch_at: Optional[datetime] = _timestamp(default=None, nullable=True)
     last_ok_at: Optional[datetime] = _timestamp(default=None, nullable=True)
