@@ -251,3 +251,13 @@ def test_a_number_after_season_part_or_volume_is_not_an_episode():
     assert parse_release_title("[Grp] Show Part 2 05 (1080p)")["episode"] == 5
     assert parse_release_title("[Grp] Show Season 2 E05 (1080p)")["episode"] == 5
     assert parse_release_title("[Grp] Show 05 (1080p)")["episode"] == 5
+
+
+def test_a_version_after_a_season_and_episode_tag_does_not_hide_the_season():
+    from kisetsu.domain.parsing import release_season, season_conflict
+
+    assert release_season("[Judas] Show - S02E05v2 [1080p]") == 2
+    assert release_season("Show.S02E05v2.1080p.WEB-DL.AAC2.0.H.264-GRP.mkv") == 2
+    assert season_conflict("[Judas] Show - S01E05v2 [1080p]", ["Show 2nd Season"])
+    # What follows the tag is not the series name, so a "Part" there is no arc marker.
+    assert release_arc_qualifier("[Judas] Show - S02E05v2 - Part 2 of the Plan [1080p]") is None

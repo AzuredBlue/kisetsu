@@ -590,3 +590,16 @@ def test_a_feed_with_a_release_mapped_by_its_date_is_resolved_again_to_learn_fro
     world.clock.advance(hours=2)
     assert run(world).started == 1
     assert calls == [False, True] and world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+def test_a_v2_written_after_a_season_and_episode_tag_replaces_v1_on_a_locked_feed(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="Sousou no Frieren 2nd Season")
+    post(world, top, "[Judas] Sousou no Frieren - S02E03 [1080p][HEVC].mkv")
+    assert run(world).started == 1 and show.feed_state == FeedState.LOCKED
+    world.qbit.finish(next(iter(world.qbit.truth)))
+    downloads.settle(world.ctx())
+    world.commit()
+    post(world, top, "[Judas] Sousou no Frieren - S02E03v2 [1080p][HEVC].mkv")
+    assert run(world).started == 1
+    assert [(n, v) for n, v, _ in downloaded(world, show)] == [(3, 1), (3, 2)]

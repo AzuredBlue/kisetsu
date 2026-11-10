@@ -515,7 +515,7 @@ def extract_arc_qualifiers(text: str) -> Optional[str]:
     return None
 
 
-_EPISODE_TOKEN = re.compile(r"\bS\d{1,2}\s*[-_.]?\s*E\d{1,4}\b|\s-\s*\d{1,4}(?:v\d+)?(?=[\s\[(.]|$)", re.IGNORECASE)
+_EPISODE_TOKEN = re.compile(r"\bS\d{1,2}\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b|\s-\s*\d{1,4}(?:v\d+)?(?=[\s\[(.]|$)", re.IGNORECASE)
 
 
 def release_arc_qualifier(raw_title: str) -> Optional[str]:
@@ -534,7 +534,7 @@ _SEASON_NAME_PATTERNS = (
     re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)\s+season\b", re.IGNORECASE),
     re.compile(r"\bS(\d{1,2})\b", re.IGNORECASE),
 )
-_SEASON_TAG = re.compile(r"\bS(\d{1,2})\s*[-_.]?\s*E\d{1,4}\b", re.IGNORECASE)
+_SEASON_TAG = re.compile(r"\bS(\d{1,2})\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b", re.IGNORECASE)
 _TRAILING_ROMAN = re.compile(r"\s(ii|iii|iv|v|vi)\s*$", re.IGNORECASE)
 
 
