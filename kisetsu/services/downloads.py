@@ -58,6 +58,8 @@ FAST_WINDOW = timedelta(minutes=5)
 ABSENT_PASSES = 2
 # Several missing torrents with nothing listed means qBittorrent is still loading.
 LOADING_GUESS = 3
+# With fewer, an empty list may still be qBittorrent loading: nothing is forgotten until it has stayed empty this long.
+EMPTY_LIST_GRACE = timedelta(minutes=5)
 
 PRESENT_STATES = (DownloadState.VERIFYING, DownloadState.DOWNLOADING)
 
@@ -682,7 +684,13 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
         )
     ).all()
     missing = [d for d in tracked if d.info_hash and d.info_hash not in ctx.qbit.torrents]
-    loading = len(missing) >= LOADING_GUESS and listed == 0
+    if listed:
+        ctx.caches.empty_since = None
+    elif ctx.caches.empty_since is None:
+        ctx.caches.empty_since = ctx.now
+    loading = listed == 0 and bool(missing) and (
+        len(missing) >= LOADING_GUESS or ctx.now - ctx.caches.empty_since < EMPTY_LIST_GRACE
+    )
     judged: Dict[str, bool] = {}
     # The shows whose page shows something new: a release that moved on, or one that stalled or got going again.
     touched: Set[int] = set()

@@ -164,6 +164,7 @@ def test_a_batch_download_is_never_swapped(world):
 
 def test_a_torrent_removed_twice_fails_instead_of_coming_back_again(world):
     feed, show, dl = begin(world, A)
+    world.qbit.seed("Something else the user downloads", save_path="/elsewhere")
     world.qbit.remove(dl.info_hash)
     settle(world)
     settle(world)

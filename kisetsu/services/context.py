@@ -24,6 +24,8 @@ class Caches:
     # Settle passes in which a tracked torrent was missing from qBittorrent, and the list size then.
     absent: Dict[str, int] = field(default_factory=dict)
     listed: Optional[int] = None
+    # Since when qBittorrent has listed no torrent at all (None while it lists any).
+    empty_since: Optional[datetime] = None
     # Shows whose grabs wait for their saved files to be matched to a feed, and since when.
     held: Dict[int, datetime] = field(default_factory=dict)
     # Torrents already reported as refused for adoption, so one that stays refused is mentioned once.

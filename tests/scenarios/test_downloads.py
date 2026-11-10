@@ -752,3 +752,31 @@ def test_a_replacement_qbit_cannot_delete_is_not_given_up_until_it_can(world):
     world.qbit.delete = real_delete
     settle(world, minutes=6)
     assert v2.state == DownloadState.CANCELED and row2.info_hash not in world.qbit.truth
+
+
+def test_a_lone_torrent_is_not_forgotten_while_qbit_has_only_just_started_listing_nothing(world):
+    feed, show, ep = setup(world)
+    dl, row = grab(world, show, feed, ep)
+    world.qbit.finish(row.torrent_url)
+    settle(world)
+    kept = world.qbit.truth.copy()
+    world.qbit.truth.clear()
+    for _ in range(3):
+        settle(world)
+    assert dl.info_hash == row.info_hash
+    world.qbit.truth.update(kept)
+    settle(world, minutes=10)
+    settle(world)
+    assert dl.info_hash == row.info_hash and dl.state == DownloadState.DONE
+
+
+def test_a_lone_torrent_the_user_removed_is_forgotten_once_the_empty_list_has_lasted(world):
+    feed, show, ep = setup(world)
+    dl, row = grab(world, show, feed, ep)
+    world.qbit.finish(row.torrent_url)
+    settle(world)
+    world.qbit.truth.clear()
+    settle(world)
+    settle(world, minutes=6)
+    settle(world)
+    assert dl.info_hash is None and dl.state == DownloadState.DONE
