@@ -50,6 +50,8 @@ ADDING_STUCK = timedelta(minutes=15)
 AMBIGUOUS_RETRY = timedelta(minutes=15)
 ADD_RETRY = timedelta(minutes=1)
 ERROR_RETRY = timedelta(minutes=15)
+# A torrent qBittorrent could not delete is tried again after this long.
+DELETE_RETRY = timedelta(minutes=5)
 # A download that was only just added or is being verified is watched closely for this long.
 FAST_WINDOW = timedelta(minutes=5)
 # A torrent missing from qBittorrent is forgotten after this many consecutive passes with a list of the same size.
@@ -823,8 +825,12 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
     if not torrent.finished and ctx.now - dl.created_at > REPLACEMENT_GIVE_UP:
         try:
             _delete(ctx, dl.info_hash, keep_files_of=old.info_hash if old else None)
-        except QbitError:
-            pass
+        except QbitError as e:
+            # Given up now, the torrent would stay in qBittorrent with nothing following it.
+            dl.last_error = str(e)
+            dl.next_retry_at = ctx.now + DELETE_RETRY
+            ctx.session.add(dl)
+            return
         hours = int(REPLACEMENT_GIVE_UP.total_seconds() // 3600)
         _give_up(
             ctx, dl, episode, None, EndReason.REPLACEMENT_GAVE_UP,
@@ -850,7 +856,7 @@ def _advance_replacement(ctx: Context, dl: Download, episode: Episode, torrent: 
             _delete(ctx, old.info_hash, keep_files_of=dl.info_hash)
     except QbitError as e:
         dl.last_error = str(e)
-        dl.next_retry_at = ctx.now + timedelta(minutes=5)
+        dl.next_retry_at = ctx.now + DELETE_RETRY
         ctx.session.add(dl)
         return
     if old is not None:

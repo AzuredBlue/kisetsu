@@ -733,3 +733,22 @@ def test_a_retry_cut_off_during_the_add_is_tried_again(world):
     world.session.expire_all()
     assert dl.state in (DownloadState.DOWNLOADING, DownloadState.DONE), (dl.state, dl.next_retry_at)
 
+
+
+def test_a_replacement_qbit_cannot_delete_is_not_given_up_until_it_can(world):
+    feed, show, ep = setup(world)
+    v1, row1 = grab(world, show, feed, ep)
+    world.qbit.finish(row1.torrent_url)
+    settle(world)
+    v2, row2 = grab(world, show, feed, world.episode(show, 1), V2)
+    real_delete = world.qbit.delete
+
+    def refuse(hashes, *, delete_files):
+        raise QbitError("busy")
+
+    world.qbit.delete = refuse
+    settle(world, minutes=49 * 60)
+    assert v2.state in downloads.ACTIVE_DOWNLOAD_STATES and row2.info_hash in world.qbit.truth
+    world.qbit.delete = real_delete
+    settle(world, minutes=6)
+    assert v2.state == DownloadState.CANCELED and row2.info_hash not in world.qbit.truth
