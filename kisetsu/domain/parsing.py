@@ -447,11 +447,12 @@ def _spelled_like_a_name(title: str, aliases: List[str]) -> bool:
     return False
 
 
-def names_something_else(raw_title: str, aliases: List[str]) -> bool:
+def names_something_else(raw_title: str, aliases: List[str], parsed_cache: Optional[Dict[str, Dict[str, Any]]] = None) -> bool:
     """Whether a release of the show's name is really another thing: a movie or special, a " - subtitle" the show's titles
     lack, or another show that only shares a word and a season with it ("Grand Blue S2" and "Blue Box Season 2") or
     whose name holds the show's ("Monster Musume no Oishasan" and "Monster")."""
-    title = (parse_release_title(raw_title).get("title") or "").strip(" -")
+    parsed = parsed_cache.get(raw_title) if parsed_cache is not None else None
+    title = ((parsed or parse_release_title(raw_title)).get("title") or "").strip(" -")
     known = " ".join(aliases).lower()
     if any(word.group().lower() not in known for word in _OTHER_FORMAT.finditer(title)):
         return True
