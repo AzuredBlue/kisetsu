@@ -699,6 +699,10 @@ def settle(ctx: Context, *, observe_only: bool = False) -> Settled:
     # The shows whose page shows something new: a release that moved on, or one that stalled or got going again.
     touched: Set[int] = set()
     for dl in tracked:
+        if dl.state == DownloadState.DONE and dl.info_hash in ctx.qbit.torrents:
+            # Finished and still in qBittorrent, as most of what is tracked is: nothing to follow or to load for it.
+            ctx.caches.absent.pop(dl.info_hash, None)
+            continue
         episode = ctx.session.get(Episode, dl.episode_id)
         if episode is None:
             continue

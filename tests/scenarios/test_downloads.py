@@ -780,3 +780,27 @@ def test_a_lone_torrent_the_user_removed_is_forgotten_once_the_empty_list_has_la
     settle(world, minutes=6)
     settle(world)
     assert dl.info_hash is None and dl.state == DownloadState.DONE
+
+
+def test_finished_downloads_still_in_qbittorrent_cost_a_settle_pass_no_query_each(world):
+    from sqlalchemy import event
+
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = world.show(episodes=12, first_air=START - timedelta(days=90))
+    for number in range(1, 13):
+        dl, _ = grab(world, show, feed, world.episode(show, number), f"[Grp] Frieren - {number:02d} (1080p).mkv")
+        world.qbit.finish(dl.info_hash)
+    assert settle(world).changed
+    assert set(world.statuses(show).values()) == {EpisodeStatus.COMPLETED}
+    statements = []
+    event.listen(world.engine, "before_cursor_execute", lambda *args: statements.append(args[2]))
+    result = settle(world)
+    assert not result.changed and not result.busy and not result.active
+    assert len(statements) < 6
+    # One removed in qBittorrent is still noticed and forgotten.
+    gone = world.session.exec(select(Download).where(Download.title == "[Grp] Frieren - 03 (1080p).mkv")).one()
+    world.qbit.remove(gone.info_hash)
+    settle(world)
+    settle(world)
+    world.session.refresh(gone)
+    assert gone.info_hash is None and gone.state == DownloadState.DONE
