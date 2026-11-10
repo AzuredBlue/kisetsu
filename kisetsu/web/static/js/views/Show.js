@@ -226,6 +226,7 @@ export function Show({ route }) {
             <div>
               <label for="show-aliases" class="field-label">Custom aliases</label>
               <input type="text" id="show-aliases" class="field mono" placeholder="Comma separated" ...${form.bind('aliases')} />
+              <p class="field-hint">Use the release's full name; a shorter alias can make Kisetsu turn it down as another show.</p>
             </div>
             <div class="matched-as">
               <span class="field-label">Matched as</span>
