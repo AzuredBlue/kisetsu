@@ -34,7 +34,7 @@ window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()
   if (themeMode() === 'system') applyTheme();
 });
 
-let accent = { color: DEFAULT_ACCENT, tint: 'subtle' };
+let accent = { color: DEFAULT_ACCENT, tint: 'off' };
 export function currentAccent() { return accent; }
 
 export function applyUserAccent(color, tint, { persist = true } = {}) {

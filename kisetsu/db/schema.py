@@ -158,7 +158,7 @@ class Settings(Base, table=True):
     early_air_tolerance_hours: int = Field(default=DEFAULT_EARLY_AIR_TOLERANCE_HOURS)
     title_language: str = Field(default="english")
     accent_color: str = Field(default="#2dd4bf")
-    accent_tint: str = Field(default="subtle")
+    accent_tint: str = Field(default="off")
     desktop_notifications: bool = Field(default=False)
 
 
