@@ -124,10 +124,10 @@ def extract_release_version(raw_title: str) -> int:
 
 _COUNTS_SOMETHING_ELSE = re.compile(r"\b(?:season|part|cour|vol(?:ume)?)\.?$", re.IGNORECASE)
 # A standalone episode number. A "." after it is a file extension, never a fraction ("12.5" is a recap, not episode 12).
-# "more" is set when an episode title (" - The Hero's Party") or a language tag ("VOSTFR") follows the number.
+# "more" is set when an episode title (" - The Hero's Party", " - 2 Heroes") or a language tag ("VOSTFR") follows the number.
 _EPISODE_NUMBER = re.compile(
     r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL|REPACK\d*|PROPER\d*))?"
-    r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+[^\d\s]|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
+    r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+(?:[^\d\s]|\d+\s+[^\W\d_])|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
     re.IGNORECASE,
 )
 

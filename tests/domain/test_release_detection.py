@@ -173,3 +173,11 @@ def test_a_repack_marked_after_the_number_keeps_its_episode(title):
 def test_the_scene_group_is_the_last_hyphenated_word_not_a_quality_tag(name, group):
     from kisetsu.domain.parsing import extract_release_group_tag
     assert extract_release_group_tag(name) == group
+
+
+def test_an_episode_title_that_starts_with_a_number_does_not_hide_the_episode():
+    from kisetsu.domain.parsing import parse_release_title
+    parsed = parse_release_title("[Grp] Dungeon Meshi - 05 - 2 Heroes [1080p]")
+    assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi")
+    parsed = parse_release_title("[Grp] Dungeon Meshi - 2 - 05 [1080p]")
+    assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi - 2")
