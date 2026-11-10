@@ -176,6 +176,19 @@ def test_air_times_are_written_onto_the_episodes_and_the_show_is_marked_synced(w
     assert show.schedule_synced_at == START
 
 
+def test_a_missed_episode_dated_into_the_future_is_wanted_again(world):
+    show = world.show(total_episodes=3, anilist_id=5, episodes=3, first_air=START - timedelta(days=16))
+    for number in (2, 3):
+        episode = world.episode(show, number)
+        episode.status = EpisodeStatus.MISSED
+        world.session.add(episode)
+        world.commit()
+    # AniList had episode 3 a week early; episode 2 did air and stays missed.
+    shows.apply_schedules(world.ctx(), [show], {5: [{"episode": 2, "airing_at": START - timedelta(days=9)}, {"episode": 3, "airing_at": START + timedelta(days=5)}]})
+    world.commit()
+    assert world.statuses(show) == {1: EpisodeStatus.WANTED, 2: EpisodeStatus.MISSED, 3: EpisodeStatus.WANTED}
+
+
 def test_shows_are_due_for_a_schedule_after_six_hours_oldest_first(world):
     old = world.show(1, "A", schedule_synced_at=START - timedelta(hours=7))
     older = world.show(2, "B", schedule_synced_at=START - timedelta(days=2))

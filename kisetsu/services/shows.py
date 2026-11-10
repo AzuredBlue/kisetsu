@@ -352,6 +352,9 @@ def apply_schedules(ctx: Context, due: Iterable[Show], schedules: Dict[int, Any]
                 continue
             episode.air_at = air_at
             episode.schedule_state = ScheduleState.AIRED if air_at <= ctx.now else ScheduleState.SCHEDULED
+            if air_at > ctx.now and episode.status == EpisodeStatus.MISSED:
+                # It was given up on by an air time AniList has since moved: it has not aired, so nothing was missed.
+                episode.status = EpisodeStatus.WANTED
             ctx.session.add(episode)
         show.schedule_synced_at = ctx.now
         ctx.session.add(show)
