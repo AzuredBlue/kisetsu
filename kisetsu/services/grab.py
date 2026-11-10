@@ -194,9 +194,13 @@ def resolve(
         if not matched:
             turn_down(item, why_not_matched(ctx, matcher, item.title))
             continue
-        # A movie, special or side story under the show's name ("… - Coleus no Yume - 01") is not one of its episodes.
+        # A movie, special or side story under the show's name ("… - Coleus no Yume - 01") is not one of its episodes,
+        # nor is a release of another show whose name holds this one's.
         if names_something_else(item.title, names):
-            turn_down(item, "A movie, special or side story, not one of the episodes.")
+            turn_down(item, (
+                "A movie, special, side story or another show whose name holds this one's, not one of the episodes. "
+                "If it is this show, add its full name as a custom alias."
+            ))
             continue
         raw = parsed.get("episode")
         if raw is None and state.target_count == 1:

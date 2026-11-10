@@ -311,3 +311,18 @@ def test_a_torrent_no_show_names_is_not_tried_again_until_the_shows_names_change
     world.commit()
     assert adopt(world).imported == 1
     assert world.episode(show, 3).status == EpisodeStatus.COMPLETED
+
+
+def test_a_torrent_of_a_show_whose_name_holds_the_followed_shows_name_is_not_adopted(world):
+    feed = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="Monster")
+    # One the feed carries (so its hash is a stored item matched to the show), and one known only by its name.
+    carried = article("[SubsPlease] My Little Monster - 03 (1080p) [AAAA1111].mkv", world.clock())
+    ingest.ingest(world.ctx(), feed, [carried])
+    world.commit()
+    world.clock.advance(hours=1)
+    world.qbit.seed(carried.title, save_path="/d/x", category="Seasonal", url=carried.torrent_url)
+    world.qbit.seed("[SubsPlease] Monster Musume no Oishasan - 02 (1080p) [BBBB2222].mkv", save_path="/d/y", category="Seasonal")
+    world.qbit.sync()
+    assert adopt(world).imported == 0
+    assert set(world.statuses(show).values()) == {EpisodeStatus.WANTED} and show.feed_state == FeedState.NONE

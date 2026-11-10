@@ -22,7 +22,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.domain import matcher as matching
-from kisetsu.domain.parsing import parse_release_title, release_key
+from kisetsu.domain.parsing import names_something_else, parse_release_title, release_key
 from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK, air_horizon, latest_aired
 from kisetsu.services import events, feeds, library, tags
 from kisetsu.services.context import Context
@@ -167,6 +167,9 @@ def adopt_existing(ctx: Context) -> AdoptResult:
                 if show is None:
                     unnamed.add((torrent.hash, torrent.name))
         if show is None:
+            continue
+        # A series tag is proof. Without one the name decides, and it may name a movie or another show that holds this one's name.
+        if tagged is None and names_something_else(torrent.name, [*show.effective_aliases, *([show.learned_name] if show.learned_name else [])]):
             continue
         if show.id not in states:
             episodes = list(ctx.session.exec(select(Episode).where(Episode.show_id == show.id)).all())

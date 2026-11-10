@@ -429,15 +429,47 @@ def is_single_file(raw_title: str) -> bool:
     return bool(_SINGLE_FILE.search(raw_title.strip()))
 
 
+# Words a release adds to a show's name without naming anything by them.
+_NAME_FILLERS = {"episode", "ep", "tv", "anime", "uncut", "dub", "dubbed"}
+
+
+def _name_words(normalized: str) -> set:
+    return {word for word in meaningful_words(normalized) if not word.isdigit()} - _NAME_FILLERS
+
+
+def _spelled_like_a_name(title: str, aliases: List[str]) -> bool:
+    """Whether the name is one of the show's with its words spaced or ordered another way ("Daiseijo" for "Dai Seijo")."""
+    name = normalize_title(title)
+    for alias in aliases:
+        known = normalize_alias(alias)
+        if max(fuzz.token_sort_ratio(name, known), fuzz.ratio(name.replace(" ", ""), known.replace(" ", ""))) >= _SAME_NAME_SCORE:
+            return True
+    return False
+
+
+def _extends_a_name(title: str, aliases: List[str]) -> bool:
+    """Whether the name holds one of the show's names whole and goes on with words none of its names has:
+    another show ("Monster Musume no Oishasan" and "My Little Monster" for "Monster"). Words that only differ in how
+    one of the names is spelled do not count."""
+    named = _name_words(normalize_title(title))
+    known = [_name_words(normalize_alias(alias)) for alias in aliases]
+    if not named.difference(*known) or _spelled_like_a_name(title, aliases):
+        return False
+    return any(words and words <= named for words in known)
+
+
 def names_something_else(raw_title: str, aliases: List[str]) -> bool:
     """Whether a release of the show's name is really another thing: a movie or special, a " - subtitle" the show's titles
-    lack, or another show that only shares a word and a season with it ("Grand Blue S2" and "Blue Box Season 2")."""
+    lack, or another show that only shares a word and a season with it ("Grand Blue S2" and "Blue Box Season 2") or
+    whose name holds the show's ("Monster Musume no Oishasan" and "Monster")."""
     title = (parse_release_title(raw_title).get("title") or "").strip(" -")
     known = " ".join(aliases).lower()
     if any(word.group().lower() not in known for word in _OTHER_FORMAT.finditer(title)):
         return True
     core = normalize_title(_SEASON_WORDS.sub(" ", title))
     if not any(fuzz.token_set_ratio(core, normalize_alias(_SEASON_WORDS.sub(" ", alias))) >= FUZZY_MATCH_THRESHOLD for alias in aliases):
+        return True
+    if _extends_a_name(title, aliases):
         return True
     if " - " not in title:
         return False

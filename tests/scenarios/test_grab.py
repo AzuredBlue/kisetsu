@@ -611,3 +611,15 @@ def test_a_numbered_release_of_a_series_is_not_a_followed_film_of_its_name(world
     post(world, top, "[SubsPlease] Chainsaw Man - 12 (1080p) [AAAA1111].mkv")
     assert run(world).started == 0
     assert world.episode(film, 1).status != EpisodeStatus.DOWNLOADING and film.feed_state != FeedState.LOCKED
+
+
+def test_a_show_whose_name_holds_the_followed_shows_name_is_not_grabbed_for_it(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="Monster")
+    post(world, top, "[SubsPlease] My Little Monster - 03 (1080p) [AAAA1111].mkv")
+    post(world, top, "[SubsPlease] Monster Musume no Oishasan - 03 (1080p) [BBBB2222].mkv")
+    assert run(world).started == 0
+    assert (show.feed_state, show.learned_name) == (FeedState.NONE, None)
+    post(world, top, "[SubsPlease] Monster - 03 (1080p) [CCCC3333].mkv")
+    assert run(world).started == 1
+    assert (show.feed_state, show.learned_name) == (FeedState.LOCKED, "Monster")

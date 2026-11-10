@@ -261,3 +261,25 @@ def test_a_version_after_a_season_and_episode_tag_does_not_hide_the_season():
     assert season_conflict("[Judas] Show - S01E05v2 [1080p]", ["Show 2nd Season"])
     # What follows the tag is not the series name, so a "Part" there is no arc marker.
     assert release_arc_qualifier("[Judas] Show - S02E05v2 - Part 2 of the Plan [1080p]") is None
+
+
+def test_a_release_whose_name_goes_on_past_the_shows_names_another_show():
+    from kisetsu.domain.parsing import names_something_else
+
+    assert names_something_else("[SubsPlease] Monster Musume no Oishasan - 03 (1080p)", ["Monster"])
+    assert names_something_else("[SubsPlease] My Little Monster - 03 (1080p)", ["Monster"])
+    assert names_something_else("[Grp] Trigun Stargaze - 03 (1080p)", ["Trigun", "TRIGUN"])
+    assert not names_something_else("[SubsPlease] Monster - 03 (1080p)", ["Monster"])
+    assert not names_something_else("[Grp] Monster S2 - 03 (1080p)", ["Monster"])
+    assert not names_something_else("[Grp] Monster (2004) - 03 (1080p)", ["Monster"])
+    assert not names_something_else("[Grp] Monster Episode 03 (1080p)", ["Monster"])
+    # A shorter form of a name, and a name written with another of the show's names beside it, are still the show.
+    assert not names_something_else("[SubsPlease] Boku no Hero Academia - 160 (1080p)", ["Boku no Hero Academia: FINAL SEASON"])
+    frieren = ["Sousou no Frieren", "Frieren: Beyond Journey's End"]
+    assert not names_something_else("[Grp] Sousou no Frieren / Frieren Beyond Journey's End - 05 (1080p)", frieren)
+    # A name spelled another way holds none of the show's names whole, so it is left to the fuzzy match.
+    assert not names_something_else("[Grp] Kimi wo Aishita Hitori no Boku e - 01 (1080p)", ["Kimi o Aishita Hitori no Boku e"])
+    # Nor is a name another show's because a short synonym sits inside it while its words are spaced differently.
+    spaced = ["Tensei shita Dai Seijo wa, Seijo de Aru Koto wo Hita Kakusu", "A Tale of the Secret Saint", "Daiseijo"]
+    assert not names_something_else("[Erai-raws] Tensei shita Daiseijo wa, Seijo de Aru Koto wo Hitakakusu - 01 [1080p]", spaced)
+    assert names_something_else("[Grp] Daiseijo Monogatari - 01 [1080p]", spaced)
