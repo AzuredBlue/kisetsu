@@ -35,6 +35,9 @@ DELAY_AGREEMENT = timedelta(hours=1)
 DELAY_EARLIEST = timedelta(hours=-12)
 DELAY_LATEST = timedelta(hours=24)
 
+# A feed that knows no date writes the epoch; nothing this old or older says when a release was published.
+UNDATED_UNTIL_YEAR = 2000
+
 # Statuses of an episode that already has, or is getting, a release.
 RELEASE_HOLDING = (EpisodeStatus.COMPLETED, EpisodeStatus.DOWNLOADING)
 
@@ -69,6 +72,11 @@ class ShowFacts:
     @property
     def has_download(self) -> bool:
         return any(episode.status in RELEASE_HOLDING for episode in self.episodes)
+
+
+def is_dated(published_at: Optional[datetime]) -> bool:
+    """Whether a release carries a real publish date."""
+    return published_at is not None and published_at.year > UNDATED_UNTIL_YEAR
 
 
 def air_horizon(show: ShowFacts, now: datetime, tolerance_hours: int) -> datetime:
@@ -277,7 +285,7 @@ def date_mapped_episode(
     for feeds that post before AniList's time) and aired within AIR_DATE_TOLERANCE. The
     one that aired closest before the release wins.
     """
-    if published_at.year <= 2000:
+    if not is_dated(published_at):
         return None
     early = timedelta(hours=max(0, tolerance_hours))
     candidates = [
@@ -304,7 +312,7 @@ def published_before_air(
     ``reference`` is the episode's air time, or the show's first one when the episode
     has none. Undated releases and shows with nothing scheduled cannot be judged.
     """
-    if reference is None or published_at is None or published_at.year <= 2000:
+    if reference is None or not is_dated(published_at):
         return False
     slack = max(PUBLISHED_BEFORE_AIR_SLACK, timedelta(hours=max(0, tolerance_hours)))
     return published_at < reference - slack
@@ -317,7 +325,7 @@ def plausible_for_show(published_at: Optional[datetime], first_air: Optional[dat
     carry a season or episode number that fits. Undated releases are dropped, since a search
     cannot vouch for them. Without a premiere time only the future check applies.
     """
-    if published_at is None or published_at.year <= 2000:
+    if not is_dated(published_at):
         return False
     if published_at > now + FUTURE_SLACK:
         return False

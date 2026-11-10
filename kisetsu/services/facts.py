@@ -5,7 +5,7 @@ from typing import Dict, Iterable, List, Optional, Tuple
 from sqlmodel import select
 
 from kisetsu.db.schema import Download, Episode, EpisodeStatus, FeedItem, FeedState, Show
-from kisetsu.domain.schedule import EpisodeFacts, ShowFacts, release_delay
+from kisetsu.domain.schedule import EpisodeFacts, ShowFacts, is_dated, release_delay
 from kisetsu.services.context import Context
 
 
@@ -65,7 +65,7 @@ def release_delays(ctx: Context, show_ids: Optional[Iterable[int]] = None) -> Di
     # One release per episode: a retried add is the same release again.
     samples: Dict[int, Dict[int, Tuple[datetime, datetime]]] = defaultdict(dict)
     for show_id, episode_id, air_at, published_at in ctx.session.exec(query).all():
-        if published_at.year <= 2000:
+        if not is_dated(published_at):
             continue
         known = samples[show_id].get(episode_id)
         if known is None or published_at < known[1]:

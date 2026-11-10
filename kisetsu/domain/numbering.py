@@ -7,7 +7,7 @@ The mapping is a per-show, per-feed offset: ``local = raw - offset``.
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, NamedTuple, Optional, Sequence, Tuple
 
-from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK, date_mapped_episode
+from kisetsu.domain.schedule import PUBLISHED_BEFORE_AIR_SLACK, date_mapped_episode, is_dated
 
 # A season that ended this long ago cannot take a new item as its latest episode.
 SEASON_ENDED_AFTER = timedelta(days=14)
@@ -48,7 +48,7 @@ def map_episode(
         return Mapped(local)
 
     published = published_at or _UNDATED
-    dated = published.year > 2000
+    dated = is_dated(published_at)
 
     if 1 <= raw <= target_count and latest_aired is not None and raw <= latest_aired + 1:
         # A number that fits the aired part of the season is taken as it is unless the

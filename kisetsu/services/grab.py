@@ -30,6 +30,7 @@ from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
     air_horizon,
     date_mapped_episode,
+    is_dated,
     latest_aired,
     missed_numbers,
     premiere_out_of_reach,
@@ -42,8 +43,6 @@ from kisetsu.services.feeds import Carrier
 from kisetsu.services.ingest import followed_shows
 
 logger = logging.getLogger("kisetsu.services.grab")
-
-EPOCH_YEAR = 2000
 
 
 @dataclass
@@ -149,10 +148,6 @@ def _items(ctx: Context, show: Show, feed: Feed) -> List[FeedItem]:
             .order_by(FeedItem.published_at.desc(), FeedItem.id.desc())
         ).all()
     )
-
-
-def _undated(item: FeedItem) -> bool:
-    return item.published_at is None or item.published_at.year <= EPOCH_YEAR
 
 
 def resolve(
@@ -482,7 +477,7 @@ def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolve
             and r.version >= best.get(r.number, r.version)
         ]
         if carried:
-            dates = [r.item.published_at for r in carried if not _undated(r.item)]
+            dates = [r.item.published_at for r in carried if is_dated(r.item.published_at)]
             carriers.append(Carrier(feed, min(dates) if dates else None))
     if not carriers:
         # An assigned feed is still read: it may teach its numbering even when nothing there is wanted.
@@ -508,7 +503,7 @@ def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dic
     air_at = episode.air_at
     # An episode with no air time is taken like any other (the whole season is eligible); map_episode already
     # refuses numbers past the newest aired one.
-    if not upgrade and air_at is not None and _undated(item) and ctx.now - air_at > timedelta(days=HUNTING_RECENT_DAYS):
+    if not upgrade and air_at is not None and not is_dated(item.published_at) and ctx.now - air_at > timedelta(days=HUNTING_RECENT_DAYS):
         return False
     if episode.retry_after is not None and episode.retry_after > ctx.now:
         return False
