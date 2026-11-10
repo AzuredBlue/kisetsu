@@ -144,6 +144,12 @@ def parse_release_title(raw_title: str) -> Dict[str, Any]:
             "version": 1,
         }
 
+    if episode_pair(raw_title) is not None:
+        # Read as its first episode; the caller asks ``episode_pair`` for the second.
+        parsed = parse_release_title(_first_of_pair(raw_title))
+        parsed["raw_title"] = raw_title
+        return parsed
+
     version = extract_release_version(raw_title)
     release_group = extract_release_group_tag(raw_title)
     cleaned = raw_title.strip()
@@ -362,8 +368,8 @@ BATCH_REGEX: re.Pattern[str] = re.compile(
 )
 
 
-# An episode range: "S01E01-E12", "(01-12)", "[01 ~ 24]", "01~12", or a bare "E1-E12", "01-12" or "- 1-12" set apart
-# by spaces. A bare "1-2" is left out: it is part of a title as often as not ("Ranma 1-2 2024 S03E03").
+# An episode range: "S01E01-E12", "(01-12)", "[01 ~ 24]", "01~12", a bare "E1-E12", "01-12" or "- 1-12" set apart
+# by spaces, or "- 12 + 13". A bare "1-2" is left out: it is part of a title as often as not ("Ranma 1-2 2024 S03E03").
 _RANGE_REGEXES = (
     re.compile(r"\bS\d{1,2}E(\d{1,4})\s*-\s*E?(\d{1,4})\b", re.IGNORECASE),
     re.compile(r"[\[(]\s*(?:EP?\s*)?(\d{1,4})\s*[-~]\s*(?:EP?\s*)?(\d{1,4})\s*[\])]", re.IGNORECASE),
@@ -371,7 +377,9 @@ _RANGE_REGEXES = (
     re.compile(r"(?:^|\s)EP?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)", re.IGNORECASE),
     re.compile(r"(?:^|\s)(\d{2,4})-(\d{2,4})(?=$|\s)"),
     re.compile(r"\s-\s+(\d{1,4})-(\d{1,4})(?=$|\s)"),
+    re.compile(r"\s-\s+(\d{1,4})\s*[+&]\s*(\d{1,4})(?=$|[\s\[(])"),
 )
+_BRACKETED_RANGE = _RANGE_REGEXES[1]
 _BATCH_WORDS = re.compile(r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?)\b\s*[\])]?|[\[(]\s*collection\s*[\])]", re.IGNORECASE)
 # A file's name, or the CRC of one: what a single file is posted under, and a batch is not.
 _SINGLE_FILE = re.compile(r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$|[\[(](?=\d*[A-Fa-f])[0-9A-Fa-f]{8}[\])]", re.IGNORECASE)
@@ -380,14 +388,40 @@ _SEASON_WORDS = re.compile(r"\bS\d{1,2}\b|\bseason\s*\d+\b|\b\d+(?:st|nd|rd|th)\
 _SAME_NAME_SCORE = 85
 
 
-def batch_range(raw_title: str) -> Optional[Tuple[int, int]]:
-    """The first and last episode a batch title names, or None when it names no range. "(2019-2021)" dates a release."""
+def _range_match(raw_title: str) -> Optional[re.Match]:
     for regex in _RANGE_REGEXES:
         for found in regex.finditer(raw_title):
             first, last = int(found.group(1)), int(found.group(2))
             if 0 < first < last and not (first >= 1900 and last <= 2100):
-                return first, last
+                return found
     return None
+
+
+def batch_range(raw_title: str) -> Optional[Tuple[int, int]]:
+    """The first and last episode a title names as a range, or None when it names none. "(2019-2021)" dates a release."""
+    found = _range_match(raw_title)
+    return (int(found.group(1)), int(found.group(2))) if found else None
+
+
+def episode_pair(raw_title: str) -> Optional[Tuple[int, int]]:
+    """The two episodes of a double release ("- 01-02", "- 12 + 13"): one torrent of two episodes in a row.
+
+    None for anything else. A longer range, or one called a batch, is a batch.
+    """
+    if BATCH_REGEX.search(raw_title):
+        return None
+    span = batch_range(raw_title)
+    return span if span is not None and span[1] == span[0] + 1 else None
+
+
+def _first_of_pair(raw_title: str) -> str:
+    """A double release's title with its range cut down to the first episode, so it reads like a single one's."""
+    found = _range_match(raw_title)
+    if found is None:
+        return raw_title
+    if found.re is _BRACKETED_RANGE:
+        return f"{raw_title[:found.start()]} - {found.group(1)} {raw_title[found.end():]}"
+    return raw_title[:found.end(1)] + raw_title[found.end(2):]
 
 
 def is_single_file(raw_title: str) -> bool:
@@ -424,8 +458,11 @@ def season_conflict(raw_title: str, aliases: List[str]) -> bool:
 
 
 def is_batch(raw_title: str) -> bool:
-    """Whether a release holds several episodes in one torrent."""
-    return bool(BATCH_REGEX.search(raw_title)) or batch_range(raw_title) is not None
+    """Whether a release holds a run of episodes in one torrent. A double episode (``episode_pair``) is not one."""
+    if BATCH_REGEX.search(raw_title):
+        return True
+    span = batch_range(raw_title)
+    return span is not None and span[1] != span[0] + 1
 
 
 def strip_batch(raw_title: str) -> str:

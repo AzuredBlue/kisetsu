@@ -426,3 +426,24 @@ async def test_a_confirm_after_the_search_was_forgotten_adds_nothing_and_asks_to
     body = await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": feed, "item_keys": keys})
     assert body.status_code == 400 and "Search again" in body.json()["detail"]
     assert web.query(lambda s: s.exec(select(Show)).all()) == []
+
+
+async def test_a_double_episode_is_offered_for_both_episodes_and_added_once(web, tmp_path):
+    _user(web, tmp_path)
+    _finished(web, episodes=3)
+    web.feeds.searchable[NYAA] = [
+        article("[Grp] Sousou no Frieren - 01-02 (1080p).mkv", START - timedelta(days=393)),
+        article("[Grp] Sousou no Frieren - 03 (1080p).mkv", START - timedelta(days=379)),
+    ]
+    web.feed("Nyaa", NYAA, 1)
+    await web.anilist.fetch_user_list("user")
+    found = (await web.client.post("/api/add/search", json={"anilist_id": 7})).json()
+    group = found["feeds"][0]
+    assert [e["number"] for e in group["episodes"]] == [1, 2, 3] and group["batches"] == []
+    keys = [e["item_key"] for e in group["episodes"]]
+    assert keys[0] == keys[1]
+    result = (await web.client.post("/api/add/confirm", json={"anilist_id": 7, "feed_id": group["feed_id"], "item_keys": keys})).json()
+    assert result["started"] == 3 and result["errors"] == []
+    assert len(web.qbit.calls_named("add_torrent")) == 2
+    rows = web.query(lambda s: [(d.source_episode, d.batch) for d in s.exec(select(Download).order_by(Download.id)).all()])
+    assert rows == [(1, True), (2, True), (3, False)]

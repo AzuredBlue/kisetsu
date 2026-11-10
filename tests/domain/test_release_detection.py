@@ -181,3 +181,29 @@ def test_an_episode_title_that_starts_with_a_number_does_not_hide_the_episode():
     assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi")
     parsed = parse_release_title("[Grp] Dungeon Meshi - 2 - 05 [1080p]")
     assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi - 2")
+
+
+@pytest.mark.parametrize("title, pair, season", [
+    ("[SubsPlease] Dungeon Meshi - 01-02 (1080p) [ABCDEF12].mkv", (1, 2), None),
+    ("[Grp] Dungeon Meshi - 12 + 13 [1080p]", (12, 13), None),
+    ("[Grp] Dungeon Meshi - 12 & 13 [1080p]", (12, 13), None),
+    ("[Erai-raws] Dungeon Meshi - 01 ~ 02 [1080p][Multiple Subtitle]", (1, 2), None),
+    ("[Grp] Dungeon Meshi (01-02) [1080p]", (1, 2), None),
+    ("Dungeon Meshi S01E01-E02 1080p WEB H.264-GRP", (1, 2), 1),
+])
+def test_a_double_episode_is_two_episodes_of_one_release_not_a_batch(title, pair, season):
+    from kisetsu.domain.parsing import episode_pair, is_batch, is_valid_release
+    assert episode_pair(title) == pair and not is_batch(title) and is_valid_release(title, 1080)
+    parsed = parse_release_title(title)
+    assert (parsed["episode"], parsed["title"], parsed["season"], parsed["raw_title"]) == (pair[0], "Dungeon Meshi", season, title)
+
+
+@pytest.mark.parametrize("title", [
+    "[Grp] Dungeon Meshi - 01-12 (1080p)",
+    "[Grp] Dungeon Meshi - 01-03 (1080p)",
+    "[Grp] Dungeon Meshi - 01-02 (1080p) [Batch]",
+    "[Grp] Dungeon Meshi - 01 + 03 (1080p)",
+])
+def test_a_longer_range_or_one_called_a_batch_stays_a_batch(title):
+    from kisetsu.domain.parsing import episode_pair, is_batch
+    assert episode_pair(title) is None and is_batch(title)

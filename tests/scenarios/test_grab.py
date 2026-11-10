@@ -513,3 +513,57 @@ def test_the_preferred_quality_is_taken_when_the_feed_has_it_else_the_closest_ab
     [dl] = world.session.exec(select(Download)).all()
     assert dl.title == f"[Grp] Sousou no Frieren - 03{f' ({taken})' if taken else ''}.mkv"
     assert world.episode(show, 3).status == EpisodeStatus.DOWNLOADING
+
+
+DOUBLE = "[Grp] Sousou no Frieren - 01-02 (1080p).mkv"
+
+
+def premiere(world, second_after=timedelta(0)):
+    """A show whose first two episodes aired an hour ago, or the second ``second_after`` later."""
+    return world.show(episodes=3, first_air=START - timedelta(hours=1), every=second_after or timedelta(seconds=1))
+
+
+def test_a_double_episode_supplies_both_episodes_with_one_torrent(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = premiere(world)
+    world.episode(show, 3).air_at = START + timedelta(days=7)
+    world.commit()
+    post(world, top, DOUBLE)
+    assert run(world).started == 2
+    assert len(world.qbit.calls_named("add_torrent")) == 1
+    rows = world.session.exec(select(Download).order_by(Download.id)).all()
+    assert [(d.source_episode, d.batch) for d in rows] == [(1, True), (2, True)] and rows[0].info_hash == rows[1].info_hash
+    assert world.statuses(show) == {1: EpisodeStatus.DOWNLOADING, 2: EpisodeStatus.DOWNLOADING, 3: EpisodeStatus.WANTED}
+    world.qbit.finish(rows[0].info_hash)
+    downloads.settle(world.ctx())
+    world.commit()
+    assert [world.statuses(show)[n] for n in (1, 2)] == [EpisodeStatus.COMPLETED] * 2
+    assert (show.feed_state, show.learned_name) == (FeedState.LOCKED, None)
+
+
+def test_a_double_episode_is_not_grabbed_twice_nor_replaced_by_a_single_v2(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    premiere(world)
+    post(world, top, DOUBLE)
+    run(world)
+    post(world, top, "[Grp] Sousou no Frieren - 02v2 (1080p).mkv")
+    assert run(world).started == 0 and len(world.qbit.calls_named("add_torrent")) == 1
+
+
+def test_a_double_episode_does_not_supply_an_episode_that_has_not_aired(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = premiere(world, second_after=timedelta(days=7))
+    post(world, top, DOUBLE)
+    assert run(world).started == 1
+    assert world.statuses(show)[1] == EpisodeStatus.DOWNLOADING and world.statuses(show)[2] == EpisodeStatus.WANTED
+
+
+def test_a_double_episode_fills_only_the_episode_still_wanted(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = premiere(world)
+    post(world, top, "[Grp] Sousou no Frieren - 01 (1080p).mkv")
+    run(world)
+    post(world, top, DOUBLE)
+    assert run(world).started == 1
+    assert sorted((n, v) for n, v, _ in downloaded(world, show)) == [(1, 1), (2, 1)]
+    assert len(world.qbit.calls_named("add_torrent")) == 2

@@ -26,7 +26,7 @@ from kisetsu.db.schema import (
     FeedItem,
     Show,
 )
-from kisetsu.domain.parsing import is_batch, same_release
+from kisetsu.domain.parsing import episode_pair, is_batch, same_release
 from kisetsu.domain.patterns import resolve_save_path, sanitize_folder_name
 from kisetsu.services import events, feeds, tags
 from kisetsu.services.context import Context
@@ -168,8 +168,8 @@ def _by_name(ctx: Context, title: str) -> Optional[Torrent]:
 
 
 def is_batch_download(dl: Download) -> bool:
-    """Whether the download is a batch: flagged when added, or named like one."""
-    return dl.batch or is_batch(dl.title)
+    """Whether the download's torrent holds other episodes too: flagged when added, or named like a batch or a double episode."""
+    return dl.batch or is_batch(dl.title) or episode_pair(dl.title) is not None
 
 
 def start_download(
@@ -181,8 +181,11 @@ def start_download(
     *,
     switch_source: bool = False,
     batch: bool = False,
+    source_episode: Optional[int] = None,
 ) -> Optional[Download]:
     """Add the torrent of a feed item for an episode.
+
+    ``source_episode`` is the feed's number of this episode when the item holds more than the one it is numbered by.
 
     An episode that already has a release gets a replacement: the new torrent is added
     paused and the old release stays until it has finished. Returns None when there is
@@ -215,11 +218,11 @@ def start_download(
         parsed_title=item.parsed_title,
         release_group=item.release_group,
         version=item.version,
-        source_episode=item.episode_raw,
+        source_episode=source_episode if source_episode is not None else item.episode_raw,
         torrent_url=item.torrent_url,
         info_hash=item.info_hash,
         tag=_tag(),
-        batch=batch,
+        batch=batch or episode_pair(item.title) is not None,
         state=DownloadState.ADDING,
         supersedes_id=supersedes.id if supersedes else None,
         attempts=0,
@@ -241,8 +244,10 @@ def start_download(
     return dl
 
 
-def follow_download(ctx: Context, show: Show, feed: Feed, episode: Episode, item: FeedItem, info_hash: str) -> Download:
-    """Track another episode of a torrent already added (a batch) on its hash, without adding it again."""
+def follow_download(
+    ctx: Context, show: Show, feed: Feed, episode: Episode, item: FeedItem, info_hash: str, *, source_episode: Optional[int] = None,
+) -> Download:
+    """Track another episode of a torrent already added (a batch, a double episode) on its hash, without adding it again."""
     dl = Download(
         episode_id=episode.id,
         feed_id=feed.id,
@@ -251,7 +256,7 @@ def follow_download(ctx: Context, show: Show, feed: Feed, episode: Episode, item
         parsed_title=item.parsed_title,
         release_group=item.release_group,
         version=item.version,
-        source_episode=item.episode_raw,
+        source_episode=source_episode if source_episode is not None else item.episode_raw,
         torrent_url=item.torrent_url,
         info_hash=info_hash,
         batch=True,

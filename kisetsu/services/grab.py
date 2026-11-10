@@ -25,7 +25,7 @@ from kisetsu.db.schema import (
 )
 from kisetsu.domain import matcher as matching
 from kisetsu.domain.numbering import LedgerRow, inferred_offset, map_episode, rebase_plan
-from kisetsu.domain.parsing import is_batch, names_something_else, release_resolution, resolution_rank, season_conflict, strip_batch
+from kisetsu.domain.parsing import episode_pair, is_batch, names_something_else, release_resolution, resolution_rank, season_conflict, strip_batch
 from kisetsu.domain.schedule import (
     RELEASE_HOLDING,
     air_horizon,
@@ -63,6 +63,8 @@ class Resolved:
     number: int
     episode: Episode
     version: int
+    # The item's torrent holds another episode too (a double episode), so it is added once and never replaced on its own.
+    shared: bool = False
 
 
 @dataclass
@@ -225,9 +227,21 @@ def resolve(
             turn_down(item, "Published before this episode aired, so it is an earlier season's release.")
             continue
         version = int(parsed.get("version") or 1)
-        resolved.append(Resolved(item, int(raw), number, episode, version))
-        if version not in state.failed.get(episode.id, set()):
-            best[number] = max(best.get(number, 0), version)
+        pair = episode_pair(item.title)
+        second = state.by_number.get(number + 1) if pair is not None and pair[0] == int(raw) else None
+        if second is not None and (
+            (state.newest_aired is not None and second.number > state.newest_aired)
+            or published_before_air(item.published_at, second.air_at or state.first_air, ctx.tolerance_hours)
+        ):
+            # The second half has not aired by AniList's times: only the first is taken from it.
+            second = None
+        entries = [Resolved(item, int(raw), number, episode, version, shared=pair is not None)]
+        if second is not None:
+            entries.append(Resolved(item, int(raw) + 1, second.number, second, version, shared=True))
+        for entry in entries:
+            resolved.append(entry)
+            if version not in state.failed.get(entry.episode.id, set()):
+                best[entry.number] = max(best.get(entry.number, 0), version)
     return resolved, best
 
 
@@ -430,8 +444,10 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
         resolved_by_feed[chosen.id] = (resolved, best)
         # Of an episode's releases the preferred quality goes first, then the closest above it; the first taken wins.
         preferred = ctx.settings.min_resolution
+        # The torrents this pass added that hold a second episode, by item: that episode follows the same torrent.
+        added: Dict[int, str] = {}
         for entry in sorted(resolved, key=lambda r: resolution_rank(r.item.title, preferred)):
-            if _take(ctx, state, chosen, entry, best):
+            if _take(ctx, state, chosen, entry, best, added):
                 grabbed_from = chosen.id
                 result.started += 1
     if any(f.last_ok_at is not None and f.failing_since is None for f in candidates):
@@ -460,7 +476,7 @@ def _choose_feed(ctx: Context, state: ShowState, candidates: List[Feed], resolve
     return feeds.assign(ctx, show, carriers)
 
 
-def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dict[int, int]) -> bool:
+def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dict[int, int], added: Dict[int, str]) -> bool:
     episode, version, item = entry.episode, entry.version, entry.item
     # The user chose to go without this one: only taking that back, or grabbing it by hand, gets it.
     if episode.status == EpisodeStatus.SKIPPED:
@@ -489,7 +505,12 @@ def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dic
     if downloads.active_download(ctx, episode) is not None:
         return False
     record_evidence(ctx, state, feed, entry.raw, entry.number)
-    dl = downloads.start_download(ctx, state.show, feed, episode, item)
+    if item.id in added:
+        dl = downloads.follow_download(ctx, state.show, feed, episode, item, added[item.id], source_episode=entry.raw)
+    else:
+        dl = downloads.start_download(ctx, state.show, feed, episode, item, source_episode=entry.raw)
+        if dl is not None and entry.shared and dl.info_hash:
+            added[item.id] = dl.info_hash
     if dl is None:
         return False
     state.current[episode.id] = dl if episode.current_download_id == dl.id else state.current.get(episode.id)

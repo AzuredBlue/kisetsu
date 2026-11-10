@@ -430,18 +430,21 @@ def confirm(
     ctx.checkpoint()
     # Torrents already in qBittorrent are taken over rather than added twice.
     adoption.adopt_existing(ctx)
-    added: Dict[int, str] = {}
+    # By item, the torrent added for it and the first episode it went to.
+    added: Dict[int, Tuple[str, int]] = {}
     for number, (episode, item) in sorted(picked.items()):
         ctx.session.refresh(episode)
         if episode.status not in (EpisodeStatus.WANTED, EpisodeStatus.MISSED):
             continue
         if item.id in added:
-            # The rest of a batch already in qBittorrent follow that torrent; adding it again would fetch it again.
-            dl = downloads.follow_download(ctx, show, feed, episode, item, added[item.id])
+            # The rest of a batch or double episode already in qBittorrent follow that torrent; adding it again would fetch it again.
+            info_hash, first = added[item.id]
+            source = item.episode_raw + number - first if item.episode_raw is not None else None
+            dl = downloads.follow_download(ctx, show, feed, episode, item, info_hash, source_episode=source)
         else:
             dl = downloads.start_download(ctx, show, feed, episode, item, batch=item.id in batch_ids)
-            if dl is not None and item.id in batch_ids and (dl.info_hash or item.info_hash):
-                added[item.id] = dl.info_hash or item.info_hash
+            if dl is not None and downloads.is_batch_download(dl) and (dl.info_hash or item.info_hash):
+                added[item.id] = (dl.info_hash or item.info_hash, number)
         if dl is None:
             result["errors"].append(f"Ep {number}: {episode.last_error or 'could not start the download'}")
         else:
