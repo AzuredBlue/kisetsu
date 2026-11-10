@@ -447,17 +447,6 @@ def _spelled_like_a_name(title: str, aliases: List[str]) -> bool:
     return False
 
 
-def _extends_a_name(title: str, aliases: List[str]) -> bool:
-    """Whether the name holds one of the show's names whole and goes on with words none of its names has:
-    another show ("Monster Musume no Oishasan" and "My Little Monster" for "Monster"). Words that only differ in how
-    one of the names is spelled do not count."""
-    named = _name_words(normalize_title(title))
-    known = [_name_words(normalize_alias(alias)) for alias in aliases]
-    if not named.difference(*known) or _spelled_like_a_name(title, aliases):
-        return False
-    return any(words and words <= named for words in known)
-
-
 def names_something_else(raw_title: str, aliases: List[str]) -> bool:
     """Whether a release of the show's name is really another thing: a movie or special, a " - subtitle" the show's titles
     lack, or another show that only shares a word and a season with it ("Grand Blue S2" and "Blue Box Season 2") or
@@ -469,9 +458,14 @@ def names_something_else(raw_title: str, aliases: List[str]) -> bool:
     core = normalize_title(_SEASON_WORDS.sub(" ", title))
     if not any(fuzz.token_set_ratio(core, normalize_alias(_SEASON_WORDS.sub(" ", alias))) >= FUZZY_MATCH_THRESHOLD for alias in aliases):
         return True
-    if _extends_a_name(title, aliases):
+    named = _name_words(normalize_title(title))
+    known = [_name_words(normalize_alias(alias)) for alias in aliases]
+    # One of the show's names whole, going on with words none of its names has, is another show's name, unless the
+    # words only differ in how one of the names is spelled.
+    if named.difference(*known) and any(words and words <= named for words in known) and not _spelled_like_a_name(title, aliases):
         return True
-    if " - " not in title:
+    # A subtitle that is part of one of the show's names ("Bleach - Sennen Kessen-hen" of "... - Soukoku-tan") is its own.
+    if " - " not in title or any(named <= words for words in known):
         return False
     norm = normalize_title(title)
     return not any(fuzz.token_sort_ratio(norm, normalize_alias(alias)) >= _SAME_NAME_SCORE for alias in aliases)

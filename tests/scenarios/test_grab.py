@@ -623,3 +623,10 @@ def test_a_show_whose_name_holds_the_followed_shows_name_is_not_grabbed_for_it(w
     post(world, top, "[SubsPlease] Monster - 03 (1080p) [CCCC3333].mkv")
     assert run(world).started == 1
     assert (show.feed_state, show.learned_name) == (FeedState.LOCKED, "Monster")
+
+
+def test_a_release_named_by_a_shorter_form_with_a_subtitle_is_grabbed(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    show = airing(world, title="BLEACH: Thousand-Year Blood War - The Conflict", aliases=["BLEACH: Sennen Kessen-hen - Soukoku-tan"])
+    post(world, top, "[SubsPlease] Bleach - Sennen Kessen-hen - 03 (1080p) [AAAA1111].mkv")
+    assert run(world).started == 1 and world.episode(show, 3).status == EpisodeStatus.DOWNLOADING

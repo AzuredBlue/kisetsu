@@ -283,3 +283,12 @@ def test_a_release_whose_name_goes_on_past_the_shows_names_another_show():
     spaced = ["Tensei shita Dai Seijo wa, Seijo de Aru Koto wo Hita Kakusu", "A Tale of the Secret Saint", "Daiseijo"]
     assert not names_something_else("[Erai-raws] Tensei shita Daiseijo wa, Seijo de Aru Koto wo Hitakakusu - 01 [1080p]", spaced)
     assert names_something_else("[Grp] Daiseijo Monogatari - 01 [1080p]", spaced)
+
+
+def test_a_subtitle_that_is_part_of_one_of_the_shows_names_is_still_the_show():
+    from kisetsu.domain.parsing import names_something_else
+
+    cour = ["BLEACH: Sennen Kessen-hen - Soukoku-tan", "BLEACH: Thousand-Year Blood War - The Conflict"]
+    assert not names_something_else("[SubsPlease] Bleach - Sennen Kessen-hen - 03 (1080p)", cour)
+    assert names_something_else("[SubsPlease] Bleach - Sennen Kessen-hen - 03 (1080p)", ["Bleach"])
+    assert names_something_else("[SubsPlease] Tensei Shitara Slime Datta Ken - Coleus no Yume - 01 (1080p)", ["Tensei Shitara Slime Datta Ken 3rd Season"])
