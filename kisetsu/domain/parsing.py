@@ -127,7 +127,7 @@ _COUNTS_SOMETHING_ELSE = re.compile(r"\b(?:season|part|cour|vol(?:ume)?)\.?$", r
 # A standalone episode number. A "." after it is a file extension, never a fraction ("12.5" is a recap, not episode 12).
 # "more" is set when an episode title (" - The Hero's Party") or a language tag ("VOSTFR") follows the number.
 _EPISODE_NUMBER = re.compile(
-    r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL))?"
+    r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL|REPACK\d*|PROPER\d*))?"
     r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+[^\d\s]|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
     re.IGNORECASE,
 )

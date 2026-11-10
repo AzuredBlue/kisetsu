@@ -152,3 +152,14 @@ def test_a_resolution_written_as_width_by_height_is_read(title, resolution):
 def test_a_release_below_the_minimum_is_refused_however_it_writes_its_resolution():
     from kisetsu.domain.parsing import is_valid_release
     assert not is_valid_release("[Ohys-Raws] Dungeon Meshi - 05 (AT-X 1280x720 x264 AAC).mp4", min_resolution=1080)
+
+
+@pytest.mark.parametrize("title", [
+    "[Grp] Dungeon Meshi - 05 REPACK [1080p]",
+    "[Grp] Dungeon Meshi - 05 PROPER (1080p)",
+    "[Grp] Dungeon Meshi - 05 REPACK2 [1080p]",
+])
+def test_a_repack_marked_after_the_number_keeps_its_episode(title):
+    from kisetsu.domain.parsing import parse_release_title
+    parsed = parse_release_title(title)
+    assert (parsed["episode"], parsed["title"]) == (5, "Dungeon Meshi") and parsed["version"] >= 2
