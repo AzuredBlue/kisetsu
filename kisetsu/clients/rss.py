@@ -113,6 +113,9 @@ def parse_feed(body: bytes, wall_zone: Optional[tzinfo] = None) -> List[FeedArti
         root = ET.fromstring(body)
     except ET.ParseError as e:
         raise FeedFetchError(f"The feed is not valid XML ({e})") from e
+    if _local(root.tag).lower() != "rss":
+        # An error page or another format would read as a feed with no items, and the feed as healthy.
+        raise FeedFetchError(f"The address answers with <{_local(root.tag)}>, which is not an RSS feed")
     articles: List[FeedArticle] = []
     for item in root.iter("item"):
         fields: Dict[str, str] = {}
