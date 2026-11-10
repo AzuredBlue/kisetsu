@@ -58,6 +58,12 @@ Fetcher = Callable[[str], Awaitable[List[rss.FeedArticle]]]
 _KEEP: Any = object()
 
 
+def _matcher_of(ctx, show_id: int):
+    """The show's matcher for a search, or None when the show was deleted while the search waited its turn."""
+    show = ctx.session.get(Show, show_id)
+    return None if show is None else backfill.matcher_for(show, ctx.settings.min_resolution)
+
+
 class Jobs:
     def __init__(
         self,
@@ -519,7 +525,9 @@ class Jobs:
                     return 0
                 # The backfill job and Search older never search one show twice at once.
                 async with self._search_locks.setdefault(item.show_id, asyncio.Lock()):
-                    matcher = await self.engine.run(lambda ctx, i=item.show_id: backfill.matcher_for(ctx.session.get(Show, i), ctx.settings.min_resolution))
+                    matcher = await self.engine.run(_matcher_of, item.show_id)
+                    if matcher is None:
+                        return 0
                     found = await backfill.search(
                         self.http, item, matcher, self.engine.clock(), searcher=self.searcher, stop_when_found=not exhaustive,
                         grouping=self.grouping,

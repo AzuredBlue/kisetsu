@@ -660,3 +660,14 @@ def test_shows_owed_a_full_schedule_when_anilist_defers_it_are_fetched_on_the_ne
     assert len(calls) == 2
     undated = env.query(lambda s: [e.number for e in s.exec(select(Episode).where(Episode.number <= 3, Episode.air_at.is_(None))).all()])
     assert undated == []
+
+
+def test_a_show_deleted_before_its_search_ran_is_skipped(env):
+    from kisetsu.services import backfill
+
+    gone = backfill.Due(999, "Gone", ["Gone"], [], [1], 0)
+
+    async def go():
+        return await env.jobs._search([gone])
+
+    assert run(env, go) == 0
