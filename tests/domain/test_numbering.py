@@ -78,6 +78,14 @@ def test_a_season_that_ended_long_ago_is_not_pinned_to_by_a_new_item():
     assert mapped(99, target_count=4, latest_aired=4, air_times=air, published_at=NOW).local is None
 
 
+def test_a_number_past_a_one_episode_show_is_not_its_only_episode():
+    assert mapped(12, target_count=1, latest_aired=1).local is None
+    assert mapped(12, target_count=1, latest_aired=1, newest_raw=12, air_times={1: NOW - timedelta(days=5)}, published_at=NOW).local is None
+    # Posted right after it aired, it is still taken by its date (an OVA numbered on from its series).
+    assert mapped(13, target_count=1, latest_aired=1, air_times={1: NOW - timedelta(hours=2)}, published_at=NOW) == (1, True)
+    assert mapped(1, target_count=1, latest_aired=1).local == 1
+
+
 def test_an_ambiguous_number_maps_to_nothing():
     assert mapped(20, target_count=13, latest_aired=None).local is None
 

@@ -66,7 +66,8 @@ def map_episode(
     if by_date is not None:
         return Mapped(by_date, True)
 
-    if latest_aired is not None and raw > target_count and 1 <= latest_aired <= target_count:
+    # A show of one episode (a film) has no numbering to count on from: "12" under its name is a series' episode.
+    if target_count > 1 and latest_aired is not None and raw > target_count and 1 <= latest_aired <= target_count:
         # "The newest release is the latest aired episode" only holds while the show is
         # current; for a season that ended long ago it would pin any new item to its end.
         latest_air_at = air_times.get(latest_aired)

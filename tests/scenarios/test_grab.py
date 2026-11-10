@@ -603,3 +603,11 @@ def test_a_v2_written_after_a_season_and_episode_tag_replaces_v1_on_a_locked_fee
     post(world, top, "[Judas] Sousou no Frieren - S02E03v2 [1080p][HEVC].mkv")
     assert run(world).started == 1
     assert [(n, v) for n, v, _ in downloaded(world, show)] == [(3, 1), (3, 2)]
+
+
+def test_a_numbered_release_of_a_series_is_not_a_followed_film_of_its_name(world):
+    top = world.feed("Top", "https://top/rss", 1)
+    film = world.show(title="Chainsaw Man: Reze-hen", episodes=1, total_episodes=1, anilist_status="FINISHED")
+    post(world, top, "[SubsPlease] Chainsaw Man - 12 (1080p) [AAAA1111].mkv")
+    assert run(world).started == 0
+    assert world.episode(film, 1).status != EpisodeStatus.DOWNLOADING and film.feed_state != FeedState.LOCKED
