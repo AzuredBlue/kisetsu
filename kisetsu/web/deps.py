@@ -20,10 +20,16 @@ class NotFound(LookupError):
 
 
 def probe_qbit(host: str, username: str, password: str) -> Dict[str, str]:
-    """Log in once with these credentials and report qBittorrent's versions."""
+    """Log in once with these credentials and report qBittorrent's versions and its default save folder."""
     client = Qbit(host, username, password)
     try:
-        return client.versions()
+        result = client.versions()
+        # The folder only fills in a suggestion, so a connection that answers is not failed over it.
+        try:
+            result["default_save_path"] = client.default_save_path()
+        except QbitError:
+            pass
+        return result
     finally:
         client.close()
 

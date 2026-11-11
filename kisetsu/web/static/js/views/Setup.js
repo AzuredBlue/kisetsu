@@ -25,6 +25,7 @@ export function Setup({ sandbox }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tested, setTested] = useState({ state: '', text: '' });
+  const [suggested, setSuggested] = useState(false);
   const data = settings.data;
   const initial = useMemo(() => (data ? {
     qbit_host: data.qbit_host, qbit_username: data.qbit_username, qbit_password: '', base_dir: data.base_dir,
@@ -45,6 +46,13 @@ export function Setup({ sandbox }) {
     try {
       const r = await apiFetch('/api/settings/test-qbit', { method: 'POST', json: connection(), quiet: true });
       setTested({ state: 'ok', text: `Connected (qBit ${r.app_version})` });
+      // The first answer fills Save to with a folder inside qBittorrent's own, unless one is typed already.
+      if (!suggested && r.default_save_path && !form.value('base_dir').trim()) {
+        const root = r.default_save_path.replace(/[\\/]+$/, '');
+        const sep = root.includes('\\') && !root.includes('/') ? '\\' : '/';
+        form.set('base_dir', `${root}${sep}Anime${sep}{name}`);
+      }
+      setSuggested(true);
     } catch (err) { setTested({ state: 'bad', text: err.message }); }
   };
   const next = async () => {
