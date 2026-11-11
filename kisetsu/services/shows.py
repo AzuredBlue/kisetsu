@@ -27,7 +27,7 @@ from kisetsu.db.schema import (
     Show,
 )
 from kisetsu.domain.patterns import resolve_save_path
-from kisetsu.services import downloads, feeds, ingest, legacy, library, tags
+from kisetsu.services import downloads, feeds, ingest, legacy, library, tags, watched
 from kisetsu.services.context import Context, get_state, set_state
 
 logger = logging.getLogger("kisetsu.services.shows")
@@ -144,6 +144,8 @@ def _update_existing(ctx: Context, show: Show, data: Dict[str, Any], logs: List[
     updated |= _set_if(show, "total_episodes", data.get("total_episodes"))
     updated |= _set_if(show, "anilist_status", data.get("status") or None)
     updated |= _set_if(show, "list_status", data.get("list_status") or None)
+    if data.get("progress") is not None:
+        updated |= watched.note_progress(ctx, show, data["progress"])
 
     incoming = {a.strip() for a in data.get("aliases", []) if a and a.strip()}
     if not incoming.issubset(set(show.aliases)):
@@ -195,6 +197,8 @@ def show_from_entry(data: Dict[str, Any], paused_all: bool = False) -> Show:
         list_status=data.get("list_status") or None,
         paused=paused_all,
         paused_by=PausedBy.ALL if paused_all else None,
+        watched=data.get("progress"),
+        watched_applied=data.get("progress"),
     )
     show.aliases = list(data.get("aliases", []))
     return show

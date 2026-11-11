@@ -46,6 +46,7 @@ query ($userName: String) {
     lists {
       entries {
         status
+        progress
         media {
           id
           title {
@@ -97,7 +98,7 @@ QUERY_KINDS = {
 }
 
 
-def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, Any]:
+def _list_entry(list_status: Optional[str], media: Dict[str, Any], progress: Optional[int] = None) -> Dict[str, Any]:
     """One list entry in the shape the rest of Kisetsu reads: titles, aliases and broadcast state."""
     media_id = media["id"]
     titles = media.get("title") or {}
@@ -122,6 +123,8 @@ def _list_entry(list_status: Optional[str], media: Dict[str, Any]) -> Dict[str, 
         "aliases": list(aliases),
         # The user's own list status (CURRENT/PLANNING/COMPLETED/...), distinct from the broadcast "status".
         "list_status": list_status or "",
+        # How many episodes the user has watched; None when AniList did not say (a list saved before it was read).
+        "progress": progress if isinstance(progress, int) else None,
         "status": media.get("status") or "UNKNOWN",
         "total_episodes": media.get("episodes"),
         "next_airing_episode": next_airing.get("episode") if next_airing else None,
@@ -475,7 +478,7 @@ class AniListClient:
             for entry in l.get("entries", []):
                 media = entry.get("media")
                 if media and media["id"] not in entries:
-                    entries[media["id"]] = _list_entry(entry.get("status"), media)
+                    entries[media["id"]] = _list_entry(entry.get("status"), media, entry.get("progress"))
         self.user_list = list(entries.values())
         self.user_list_at = self.last_sync_at
         self.user_list_of = username.strip()

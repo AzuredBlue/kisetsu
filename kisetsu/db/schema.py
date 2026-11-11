@@ -110,6 +110,8 @@ class EndReason(str, Enum):
     ADD_GAVE_UP = "add_gave_up"
     REPLACEMENT_GAVE_UP = "replacement_gave_up"
     REMOVED = "removed"
+    # The user watched the episode on AniList, so its torrent is deleted with its files (``services.watched``).
+    WATCHED = "watched"
 
 
 class OffsetSource(str, Enum):
@@ -127,6 +129,7 @@ class EventKind(str, Enum):
     ADOPTED = "adopted"
     FEED = "feed"
     INFO = "info"
+    DELETED = "deleted"
 
 
 # Downloads that still occupy a torrent slot or are waiting to be retried.
@@ -160,6 +163,8 @@ class Settings(Base, table=True):
     accent_color: str = Field(default="#2dd4bf")
     accent_tint: str = Field(default="off")
     desktop_notifications: bool = Field(default=False)
+    # Episodes the user's AniList progress has passed are not downloaded, and are deleted once watched (``services.watched``).
+    delete_watched: bool = Field(default=False)
 
 
 class AppState(Base, table=True):
@@ -269,6 +274,9 @@ class Show(Base, table=True):
     paused_by: Optional[PausedBy] = Field(default=None, nullable=True)
     completed: bool = Field(default=False, index=True)
     last_backfill_at: Optional[datetime] = _timestamp(default=None, nullable=True)
+    # The user's AniList progress (None until a sync reports it), and up to which episode ``services.watched`` has acted on it.
+    watched: Optional[int] = Field(default=None, nullable=True)
+    watched_applied: Optional[int] = Field(default=None, nullable=True)
 
     @property
     def aliases(self) -> List[str]:

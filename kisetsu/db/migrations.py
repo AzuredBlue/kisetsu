@@ -116,6 +116,17 @@ def _v10(engine: Engine) -> None:
                 )
 
 
+def _v11(engine: Engine) -> None:
+    # Deleting watched episodes: the setting, and each show's AniList progress and how far it was acted on.
+    with engine.begin() as conn:
+        if "delete_watched" not in {c["name"] for c in inspect(engine).get_columns("settings")}:
+            conn.exec_driver_sql("ALTER TABLE settings ADD COLUMN delete_watched BOOLEAN NOT NULL DEFAULT 0")
+        columns = {c["name"] for c in inspect(engine).get_columns("shows")}
+        for name in ("watched", "watched_applied"):
+            if name not in columns:
+                conn.exec_driver_sql(f"ALTER TABLE shows ADD COLUMN {name} INTEGER")
+
+
 # Each step upgrades the schema from the version before it. Steps after the
 # first are written as plain SQL against the previous layout.
 MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
@@ -129,6 +140,7 @@ MIGRATIONS: List[Tuple[int, Callable[[Engine], None]]] = [
     (8, _v8),
     (9, _v9),
     (10, _v10),
+    (11, _v11),
 ]
 LATEST_VERSION = MIGRATIONS[-1][0]
 
