@@ -5,7 +5,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from sqlalchemy import func
+from sqlalchemy import and_, case, func
 from sqlmodel import select
 
 from kisetsu.db.schema import (
@@ -25,7 +25,7 @@ from kisetsu.db.schema import (
     Show,
 )
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
-from kisetsu.domain.schedule import is_unreleased
+from kisetsu.domain.schedule import is_unreleased, past_hunting_window
 from kisetsu.domain.status import ShowStatus, show_status
 from kisetsu.services import downloads, grab, manual, shows as shows_service
 from kisetsu.services.context import Context, get_state
@@ -111,6 +111,34 @@ def _watched_skipped(ctx: Context, show_id: Optional[int] = None) -> Dict[int, i
     if show_id is not None:
         query = query.where(Episode.show_id == show_id)
     return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
+
+
+def _caught_up(ctx: Context, show_id: Optional[int] = None) -> Dict[int, datetime]:
+    """The shows whose every aired episode was skipped because the user watched it, with the newest one's air time.
+
+    Nothing is looked for in such a show until its next episode airs. The episodes are those ``_watched_skipped`` counts.
+    """
+    if not ctx.settings.delete_watched:
+        return {}
+    seen = case((and_(Episode.status == EpisodeStatus.SKIPPED, Episode.number <= Show.watched), 1), else_=0)
+    query = (
+        select(Episode.show_id, func.count(Episode.id), func.sum(seen), func.max(Episode.air_at))
+        .join(Show, Show.id == Episode.show_id)
+        .where(Show.watched.is_not(None), Episode.air_at.is_not(None), Episode.air_at <= ctx.now)
+    )
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    rows = ctx.session.exec(query.group_by(Episode.show_id)).all()
+    return {sid: newest for sid, aired, skipped, newest in rows if aired and skipped == aired}
+
+
+def _status(ctx: Context, show: Show, facts, caught_up: Dict[int, datetime]) -> ShowStatus:
+    """How the show is presented. One that has nothing to look for until its next episode airs, and that a feed carries,
+    is not searching for a release even before a grab has proven its feed."""
+    status = show_status(facts, ctx.now)
+    if status == ShowStatus.TESTING and show.id in caught_up and ctx.caches.carried.get(show.id):
+        return ShowStatus.WORKING
+    return status
 
 
 def _aired(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
@@ -229,9 +257,10 @@ def shows_view(ctx: Context) -> List[Dict[str, Any]]:
     airings = _airings(ctx)
     delays = release_delays(ctx)
     seen = _watched_skipped(ctx)
+    caught_up = _caught_up(ctx)
     return [
         show_card(
-            ctx, show, show_status(facts[show.id], ctx.now), counts.get(show.id, {}), feeds.get(show.feed_id),
+            ctx, show, _status(ctx, show, facts[show.id], caught_up), counts.get(show.id, {}), feeds.get(show.feed_id),
             replacing=replacing.get(show.id, 0), aired=aired.get(show.id, 0), last_done=last.get(show.id),
             released=not is_unreleased(facts[show.id], ctx.now), airings=airings.get(show.id), release_delay=delays.get(show.id),
             watched_skipped=seen.get(show.id, 0),
@@ -318,7 +347,7 @@ def card_for(ctx: Context, show: Show) -> Dict[str, Any]:
     facts = facts_for(ctx, [show])[show.id]
     counts = _episode_counts_for(ctx, show.id)
     return show_card(
-        ctx, show, show_status(facts, ctx.now), counts, feed,
+        ctx, show, _status(ctx, show, facts, _caught_up(ctx, show.id)), counts, feed,
         replacing=_replacing(ctx, show.id).get(show.id, 0), aired=_aired(ctx, show.id).get(show.id, 0), last_done=_last_done(ctx, show.id).get(show.id),
         released=not is_unreleased(facts, ctx.now), airings=_airings(ctx, show.id).get(show.id),
         release_delay=release_delays(ctx, [show.id]).get(show.id), watched_skipped=_watched_skipped(ctx, show.id).get(show.id, 0),
@@ -462,7 +491,7 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
     ]
 
 
-ATTENTION_ORDER = {"stalled": 0, "failed": 1, "retrying": 2, "missed": 3}
+ATTENTION_ORDER = {"stalled": 0, "failed": 1, "retrying": 2, "missed": 3, "unfound": 4}
 # The attention rows the user closed, as a JSON list of keys. Only the list hides them: the episode itself is left as it is.
 ATTENTION_DISMISSED_KEY = "attention_dismissed"
 
@@ -478,8 +507,9 @@ def dismissed_attention(ctx: Context) -> Set[str]:
 def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[str, Any]]:
     """Episodes across every show that need the user's eye, each with the one action that helps, if any.
 
-    Stalled and failed downloads first, then those waiting to be tried again, then episodes no feed carries any more.
-    Paused and completed shows are left out, and so are rows the user closed. A closed row is keyed by its episode, its
+    Stalled and failed downloads first, then those waiting to be tried again, then episodes no feed carries any more, then
+    shows the user watched every aired episode of that no feed carries. Paused and completed shows are left out, and so
+    are rows the user closed. A closed row is keyed by its episode, its
     kind and its current download, so the same episode coming back for another reason is shown again. A show's missed
     episodes share one row, which holds the key of each.
     """
@@ -546,9 +576,50 @@ def attention_view(ctx: Context, include_dismissed: bool = False) -> List[Dict[s
         if kind == "missed":
             missed_rows[show.id] = row
         out.append(row)
+    out.extend(_unfound(ctx, shows, rows, dismissed))
     for row in out:
         row["episodes"].sort()
     out.sort(key=lambda row: (ATTENTION_ORDER[row["kind"]], row["show"].casefold(), -row["episodes"][-1]))
+    return out
+
+
+def _unfound(ctx: Context, shows: Dict[int, Show], rows: List[Episode], dismissed: Set[str]) -> List[Dict[str, Any]]:
+    """Shows whose every aired episode the user watched, so none was missed, that the last grab pass found in no feed.
+
+    Like a missed episode, the newest is given a day to show up in a feed first, and the feeds must be reading.
+    """
+    caught_up = {sid: newest for sid, newest in _caught_up(ctx).items() if sid in shows}
+    flagged = [
+        sid for sid, newest in caught_up.items()
+        if ctx.caches.carried.get(sid) is False and past_hunting_window(newest, ctx.now)
+    ]
+    if not flagged or not any(f.last_ok_at is not None and f.failing_since is None for f in ctx.session.exec(select(Feed)).all()):
+        return []
+    aired: Dict[int, List[Episode]] = defaultdict(list)
+    for episode in rows:
+        if episode.show_id in flagged and episode.air_at is not None and episode.air_at <= ctx.now:
+            aired[episode.show_id].append(episode)
+    out = []
+    for sid in flagged:
+        episodes = sorted(aired[sid], key=lambda e: e.number)
+        if not episodes:
+            continue
+        key = f"{episodes[-1].id}:unfound:0"
+        if key in dismissed:
+            continue
+        show = shows[sid]
+        out.append({
+            "show_id": sid,
+            "show": show.title(ctx.settings.title_language),
+            "cover": show.cover_image,
+            "episode_id": episodes[-1].id,
+            "episodes": [e.number for e in episodes],
+            "kind": "unfound",
+            "keys": [key],
+            "reason": "No feed carries this show, so its next episode won't be found either. Check its names or pick its feed on the show page.",
+            "retry_after": None,
+            "action": None,
+        })
     return out
 
 
@@ -591,8 +662,9 @@ def counts_view(ctx: Context) -> Dict[str, Any]:
     shows = ctx.session.exec(select(Show)).all()
     facts = facts_for(ctx, shows)
     by_status: Dict[str, int] = defaultdict(int)
+    caught_up = _caught_up(ctx)
     for show in shows:
-        by_status[show_status(facts[show.id], ctx.now).value] += 1
+        by_status[_status(ctx, show, facts[show.id], caught_up).value] += 1
     episodes = dict(ctx.session.exec(select(Episode.status, func.count(Episode.id)).group_by(Episode.status)).all())
     return {
         "shows": len(shows),

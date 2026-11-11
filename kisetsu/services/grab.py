@@ -54,6 +54,8 @@ class GrabResult:
     errors: List[str] = field(default_factory=list)
     # Shows whose pass broke on something else ("Name: error"); the others were still grabbed for.
     failed: List[str] = field(default_factory=list)
+    # By show looked at: whether a feed it may read carries any release of it.
+    carried: Dict[int, bool] = field(default_factory=dict)
 
 
 @dataclass
@@ -440,6 +442,11 @@ def grab_pass(ctx: Context, only: Optional[Set[int]] = None, held: Optional[Set[
                 ctx.session.rollback()
                 logger.warning(f"Grabbing for '{name}' failed: {e}", exc_info=True)
                 result.failed.append(f"{name}: {e}")
+    carried = {**ctx.caches.carried, **result.carried}
+    if carried != ctx.caches.carried:
+        # Whether a feed carries a show tells a show the user watched to the end apart from one no feed has.
+        ctx.caches.carried = carried
+        ctx.emit("shows")
     if result.started or result.missed:
         ctx.emit("episodes", "history")
     return result
@@ -456,6 +463,7 @@ def _grab_show(ctx: Context, show: Show, facts, all_feeds: List[Feed], result: G
     # and only when it has something to learn from.
     dated: Dict[int, List[FeedItem]] = {f.id: [] for f in candidates}
     resolved_by_feed = {f.id: resolve(ctx, state, f, learn=False, dated=dated[f.id]) for f in candidates}
+    result.carried[show.id] = any(resolved for resolved, _ in resolved_by_feed.values())
     chosen = _choose_feed(ctx, state, candidates, resolved_by_feed)
     grabbed_from: Optional[int] = None
     if chosen is not None:

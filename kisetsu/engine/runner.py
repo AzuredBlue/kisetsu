@@ -186,7 +186,10 @@ class Engine:
         with Session(self.db, expire_on_commit=False) as session:
             try:
                 # Parsed titles never change, so a read shares the engine's cache instead of parsing every item again.
-                ctx = make_context(session, _NoQbit(), self.clock(), Caches(stalled=self.caches.stalled, parsed=self.caches.parsed))
+                ctx = make_context(
+                    session, _NoQbit(), self.clock(),
+                    Caches(stalled=self.caches.stalled, parsed=self.caches.parsed, carried=self.caches.carried),
+                )
                 return fn(ctx, *args, **kwargs)
             finally:
                 session.rollback()

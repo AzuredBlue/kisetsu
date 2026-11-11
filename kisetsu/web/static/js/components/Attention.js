@@ -49,8 +49,8 @@ export function Checklist() {
   </section>`;
 }
 
-const KIND_LABELS = { stalled: 'Stalled', failed: 'Failed', retrying: 'Retrying', missed: 'Missed' };
-const KIND_TONES = { stalled: 'warn', failed: 'bad', retrying: 'warn', missed: 'warn' };
+const KIND_LABELS = { stalled: 'Stalled', failed: 'Failed', retrying: 'Retrying', missed: 'Missed', unfound: 'No feed' };
+const KIND_TONES = { stalled: 'warn', failed: 'bad', retrying: 'warn', missed: 'warn', unfound: 'warn' };
 
 function Action({ row, pending, run }) {
   const action = row.action;
@@ -68,7 +68,8 @@ function Action({ row, pending, run }) {
   </button>`;
 }
 
-// Failed, stalled, retrying and missed episodes of every show, each with the one action that helps.
+// Failed, stalled, retrying and missed episodes of every show, each with the one action that helps, and the shows the user
+// watched every aired episode of that no feed carries.
 export function NeedsAttention() {
   const { data } = useResource(attentionData);
   const [pending, setPending] = useState(null);

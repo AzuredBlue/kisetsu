@@ -49,6 +49,9 @@ class Caches:
     # Downloads whose torrent has not moved for a long time, found by the last settle pass. A read cannot ask qBittorrent,
     # so it is given this set; a pass replaces it whole and nothing edits it in place.
     stalled: Set[int] = field(default_factory=set)
+    # By show: whether the last grab pass found a release of it in a feed it may read, wanted or not. Reads are given this
+    # map too; a pass replaces it whole and nothing edits it in place.
+    carried: Dict[int, bool] = field(default_factory=dict)
 
     def clear(self) -> None:
         self.__init__()
