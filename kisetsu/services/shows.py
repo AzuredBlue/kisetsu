@@ -16,6 +16,7 @@ from kisetsu.db.schema import (
     DismissedShow,
     Download,
     DownloadState,
+    EndReason,
     Episode,
     EpisodeOffset,
     EpisodeStatus,
@@ -292,9 +293,14 @@ def delete_show(
 
 
 def want_episode(ctx: Context, show: Show, episode: Episode) -> str:
-    """Take back the user's choice to skip an episode, so it is grabbed like any other."""
-    if episode.status != EpisodeStatus.SKIPPED:
+    """Take back the user's choice to skip an episode, or get one deleted after it was watched again, so it is grabbed like any other."""
+    cur = downloads.current(ctx, episode)
+    deleted = episode.status == EpisodeStatus.COMPLETED and cur is not None and cur.end_reason == EndReason.WATCHED and not cur.info_hash
+    if episode.status != EpisodeStatus.SKIPPED and not deleted:
         raise ValueError(f"Episode {episode.number} is not skipped.")
+    if deleted:
+        # The deleted release stays in the history; the episode no longer has it.
+        episode.current_download_id = None
     episode.status = EpisodeStatus.WANTED
     ctx.session.add(episode)
     if show.completed:

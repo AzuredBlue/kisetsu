@@ -175,6 +175,8 @@ def show_card(
             "failing": feed.failing_since is not None,
         },
         "progress": {"done": done, "aired": max(aired, done), "total": show.total_episodes},
+        # The AniList progress, while watched episodes are deleted; the episodes up to it are not downloaded.
+        "watched": show.watched if ctx.settings.delete_watched else None,
         "counts": {
             "completed": done,
             "downloading": counts.get(EpisodeStatus.DOWNLOADING, 0),
@@ -256,6 +258,8 @@ def episode_row(
             "tracked": release.info_hash is not None,
             "state": release.state.value,
             "completed_at": iso(release.completed_at),
+            # Watched on AniList: "pending" while its torrent waits to be deleted, "deleted" once it is.
+            "watched": None if release.end_reason != EndReason.WATCHED else "pending" if release.info_hash else "deleted",
         },
         "replacing": None if active is None or active.supersedes_id is None else {"title": active.title, "version": active.version, "state": active.state.value},
     }

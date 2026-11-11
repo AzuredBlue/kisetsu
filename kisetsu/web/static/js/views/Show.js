@@ -203,7 +203,7 @@ export function Show({ route }) {
         </div>
         <div class="card list-card">
           ${listTab === 'episodes'
-            ? html`<${EpisodeList} episodes=${data.episodes} groups=${matchData} paused=${data.paused} delay=${data.release_delay_minutes} now=${new Date(now)} actions=${actions} onSearch=${searchOlder} searching=${searching} />`
+            ? html`<${EpisodeList} episodes=${data.episodes} groups=${matchData} paused=${data.paused} delay=${data.release_delay_minutes} watched=${data.watched} now=${new Date(now)} actions=${actions} onSearch=${searchOlder} searching=${searching} />`
             : !matchData && matches.error ? html`<${LoadError} what="the releases" error=${matches.error} reload=${matches.reload} />`
             : html`<${ReleaseList} groups=${matchData} loading=${!matchData} actions=${actions} onUseFeed=${(feedId) => save({ feed_id: feedId })} />`}
         </div>
