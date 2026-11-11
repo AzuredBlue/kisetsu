@@ -107,12 +107,17 @@ export function ProgressBar({ show }) {
   const pct = known ? Math.round(progressFraction(show.progress) * 100) : 0;
   const hues = show.accent_hues;
   const color = hues && hues.length >= 4 ? paletteFromHues(hues, resolved).ac : null;
-  return html`<div class="bar" title=${`${done}/${total || '?'} downloaded`} style=${color ? `--bar:${color}` : undefined}><div class=${dimmed(show) ? 'dim' : ''} style=${`width:${pct}%`}></div></div>`;
+  return html`<div class="bar" title=${doneText(show)} style=${color ? `--bar:${color}` : undefined}><div class=${dimmed(show) ? 'dim' : ''} style=${`width:${pct}%`}></div></div>`;
 }
 
 export function countText(show) {
   const { done, total } = show.progress;
   return `${done}/${total || '?'}`;
+}
+
+// "3/12 downloaded"; while watched episodes are deleted, the ones the user watched count as well.
+export function doneText(show) {
+  return `${countText(show)} ${show.watched ? 'downloaded or watched' : 'downloaded'}`;
 }
 
 // Only what needs the user's eye, in plain words.
@@ -244,7 +249,7 @@ export function ShowRow({ show, now }) {
     </div>
     <div class="sr-air"><span class="ep">${air.ep}</span>${' '}<span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span>${air.expected ? html`${' '}<span class="muted" title=${air.title}>${air.expected}</span>` : null}</div>
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
-    <div class="sr-progress" title=${`${countText(show)} downloaded`}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
+    <div class="sr-progress" title=${doneText(show)}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
     <${RowActions} show=${show} />
   </div>`;

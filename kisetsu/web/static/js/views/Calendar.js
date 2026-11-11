@@ -85,7 +85,8 @@ export function buildWeek(shows, today, offset = 0) {
   return { days, range };
 }
 
-// Where an aired episode stands, in the words the show cards use. One on disk is settled: it dims and gets a check.
+// Where an aired episode stands, in the words the show cards use. One on disk, or watched while watched episodes are
+// deleted, is settled: it dims and gets a check.
 // One still being looked for stays bright, since it is the one worth a look.
 // With a learned release time, one still on its way is plain "Aired" until it is "Late".
 function outcome({ show, passed, done, status, release }) {

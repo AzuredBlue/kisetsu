@@ -99,6 +99,20 @@ def _last_done(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
     return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
 
 
+def _watched_skipped(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
+    """Each show's episodes skipped because the user watched them; while watched episodes are deleted they count as done."""
+    if not ctx.settings.delete_watched:
+        return {}
+    query = (
+        select(Episode.show_id, func.count(Episode.id))
+        .join(Show, Show.id == Episode.show_id)
+        .where(Episode.status == EpisodeStatus.SKIPPED, Show.watched.is_not(None), Episode.number <= Show.watched)
+    )
+    if show_id is not None:
+        query = query.where(Episode.show_id == show_id)
+    return dict(ctx.session.exec(query.group_by(Episode.show_id)).all())
+
+
 def _aired(ctx: Context, show_id: Optional[int] = None) -> Dict[int, int]:
     query = select(Episode.show_id, func.count(Episode.id)).where(Episode.air_at <= ctx.now)
     if show_id is not None:
@@ -112,14 +126,19 @@ AIRINGS_KEEP = timedelta(days=365)
 
 def _airings(ctx: Context, show_id: Optional[int] = None) -> Dict[int, List[Dict[str, Any]]]:
     """Each show's known episode air times of the last year, for the calendar: breaks between episodes are real gaps, not every week."""
-    query = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status).where(
+    query = select(Episode.show_id, Episode.number, Episode.air_at, Episode.status, Show.watched).join(Show, Show.id == Episode.show_id).where(
         Episode.air_at.is_not(None), Episode.air_at >= ctx.now - AIRINGS_KEEP,
     )
     if show_id is not None:
         query = query.where(Episode.show_id == show_id)
     airings: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-    for sid, number, air_at, status in ctx.session.exec(query.order_by(Episode.number)).all():
-        airings[sid].append({"episode": number, "at": iso(air_at), "status": status.value, "done": status == EpisodeStatus.COMPLETED})
+    counting = ctx.settings.delete_watched
+    for sid, number, air_at, status, seen in ctx.session.exec(query.order_by(Episode.number)).all():
+        # An episode skipped because the user watched it is done too, while watched episodes are deleted.
+        done = status == EpisodeStatus.COMPLETED or (
+            counting and status == EpisodeStatus.SKIPPED and seen is not None and number <= seen
+        )
+        airings[sid].append({"episode": number, "at": iso(air_at), "status": status.value, "done": done})
     return airings
 
 
@@ -143,10 +162,13 @@ def show_card(
     released: bool = True,
     airings: Optional[List[Dict[str, Any]]] = None,
     release_delay: Optional[timedelta] = None,
+    watched_skipped: int = 0,
 ) -> Dict[str, Any]:
     language = ctx.settings.title_language
     title = show.title(language)
-    done = counts.get(EpisodeStatus.COMPLETED, 0)
+    completed = counts.get(EpisodeStatus.COMPLETED, 0)
+    # The episodes skipped because the user watched them are done as well.
+    done = completed + watched_skipped
     return {
         "id": show.id,
         "anilist_id": show.anilist_id,
@@ -178,7 +200,7 @@ def show_card(
         # The AniList progress, while watched episodes are deleted; the episodes up to it are not downloaded.
         "watched": show.watched if ctx.settings.delete_watched else None,
         "counts": {
-            "completed": done,
+            "completed": completed,
             "downloading": counts.get(EpisodeStatus.DOWNLOADING, 0),
             "wanted": counts.get(EpisodeStatus.WANTED, 0),
             "missed": counts.get(EpisodeStatus.MISSED, 0),
@@ -206,11 +228,13 @@ def shows_view(ctx: Context) -> List[Dict[str, Any]]:
     counts, replacing, aired, last = _episode_counts(ctx), _replacing(ctx), _aired(ctx), _last_done(ctx)
     airings = _airings(ctx)
     delays = release_delays(ctx)
+    seen = _watched_skipped(ctx)
     return [
         show_card(
             ctx, show, show_status(facts[show.id], ctx.now), counts.get(show.id, {}), feeds.get(show.feed_id),
             replacing=replacing.get(show.id, 0), aired=aired.get(show.id, 0), last_done=last.get(show.id),
             released=not is_unreleased(facts[show.id], ctx.now), airings=airings.get(show.id), release_delay=delays.get(show.id),
+            watched_skipped=seen.get(show.id, 0),
         )
         for show in shows
     ]
@@ -297,7 +321,7 @@ def card_for(ctx: Context, show: Show) -> Dict[str, Any]:
         ctx, show, show_status(facts, ctx.now), counts, feed,
         replacing=_replacing(ctx, show.id).get(show.id, 0), aired=_aired(ctx, show.id).get(show.id, 0), last_done=_last_done(ctx, show.id).get(show.id),
         released=not is_unreleased(facts, ctx.now), airings=_airings(ctx, show.id).get(show.id),
-        release_delay=release_delays(ctx, [show.id]).get(show.id),
+        release_delay=release_delays(ctx, [show.id]).get(show.id), watched_skipped=_watched_skipped(ctx, show.id).get(show.id, 0),
     )
 
 

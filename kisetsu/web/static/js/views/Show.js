@@ -11,7 +11,7 @@ import { SaveBar, Seg } from '../components/Controls.js';
 import { useDraft } from '../components/useDraft.js';
 import { toast } from '../components/Toast.js';
 import { EpisodeList, ReleaseList, useRowAction } from '../components/Episodes.js';
-import { airSummary, deleteShow, dimmed, Poster, ProgressBar, StatusTag, togglePause, whenClass } from '../components/ShowSummary.js';
+import { airSummary, deleteShow, dimmed, doneText, Poster, ProgressBar, StatusTag, togglePause, whenClass } from '../components/ShowSummary.js';
 
 // The values the side form starts from.
 function initialForm(page) {
@@ -58,7 +58,7 @@ function Header({ page, now }) {
       ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span></span>` : null}
       <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} (${page.feed.state_label.toLowerCase()})` : 'Auto-discover'}</span></span>
     </div>
-    ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${done}/${total || '?'} downloaded</span></div>` : null}
+    ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${doneText(page)}</span></div>` : null}
   </div>`;
 }
 
