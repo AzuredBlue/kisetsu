@@ -231,7 +231,7 @@ export function Show({ route }) {
             <div class="matched-as">
               <span class="field-label">Matched as</span>
               ${data.learned_name
-                ? html`<span class="mono truncate" title=${data.learned_name}>${data.learned_name}</span>`
+                ? html`<span class="mono">${data.learned_name}</span>`
                 : html`<span class="field-hint">Name and aliases, until a release appears.</span>`}
             </div>` : html`
             <div>
