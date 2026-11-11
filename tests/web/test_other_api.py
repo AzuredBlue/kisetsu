@@ -4,8 +4,9 @@ from starlette.requests import Request
 
 from kisetsu.clients.anilist import AniListError
 from kisetsu.clients.qbittorrent import QbitUnavailable, RssStoreFeed
-from kisetsu.db.schema import AppState, Feed, FeedState, Settings, Show
+from kisetsu.db.schema import AppState, DismissedShow, Feed, FeedState, Settings, Show
 from kisetsu.web.api import status as status_api
+from tests.fakes import anilist_show
 
 
 def request_for(app):
@@ -135,6 +136,18 @@ async def test_finishing_setup_reports_an_unreachable_anilist(fresh):
     response = await fresh.client.post("/api/setup/complete", json={"anilist_username": "user"})
     assert response.status_code == 502 and "down" in response.json()["detail"]
     assert (await fresh.client.get("/api/setup/status")).json()["setup_completed"] is False
+
+
+async def test_checking_the_anilist_user_counts_the_shows_a_sync_would_add(fresh):
+    fresh.anilist.shows = [anilist_show(1, "A"), anilist_show(2, "B"), anilist_show(3, "C")]
+    fresh.query(lambda s: (s.add(DismissedShow(anilist_id=3)), s.commit()))
+    found = await fresh.client.post("/api/setup/check-anilist", json={"anilist_username": "user"})
+    assert found.status_code == 200 and found.json() == {"shows": 2}
+    gone = await fresh.client.post("/api/setup/check-anilist", json={"anilist_username": "nobody"})
+    assert gone.status_code == 400 and "not found" in gone.json()["detail"]
+    fresh.anilist.error = AniListError("down")
+    down = await fresh.client.post("/api/setup/check-anilist", json={"anilist_username": "user"})
+    assert down.status_code == 502 and "down" in down.json()["detail"]
 
 
 async def test_finishing_setup_starts_the_engine_and_closes_the_wizard(fresh):

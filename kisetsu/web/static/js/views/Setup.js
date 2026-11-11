@@ -26,6 +26,7 @@ export function Setup({ sandbox }) {
   const [error, setError] = useState('');
   const [tested, setTested] = useState({ state: '', text: '' });
   const [suggested, setSuggested] = useState(false);
+  const [checked, setChecked] = useState({ state: '', text: '' });
   const data = settings.data;
   const initial = useMemo(() => (data ? {
     qbit_host: data.qbit_host, qbit_username: data.qbit_username, qbit_password: '', base_dir: data.base_dir,
@@ -55,6 +56,13 @@ export function Setup({ sandbox }) {
       setSuggested(true);
     } catch (err) { setTested({ state: 'bad', text: err.message }); }
   };
+  const checkAnilist = async () => {
+    setChecked({ state: 'wait', text: 'Checking…' });
+    try {
+      const { shows } = await apiFetch('/api/setup/check-anilist', { method: 'POST', json: { anilist_username: form.value('anilist_username') }, quiet: true });
+      setChecked({ state: 'ok', text: shows ? `Found ${shows} show${shows === 1 ? '' : 's'} airing this season or next.` : 'Found no shows airing this season or next. You can add them later.' });
+    } catch (err) { setChecked({ state: 'bad', text: err.message }); }
+  };
   const next = async () => {
     if (name === 'feeds' && feeds.data && !feeds.data.length) {
       const ok = await confirmDialog({
@@ -79,7 +87,7 @@ export function Setup({ sandbox }) {
     } catch (err) { setError(err instanceof ApiError || err instanceof Error ? err.message : String(err)); }
     setBusy(false);
   };
-  const blocked = (name === 'qbit' && tested.state !== 'ok') || (name === 'anilist' && !form.value('anilist_username').trim());
+  const blocked = (name === 'qbit' && tested.state !== 'ok') || (name === 'anilist' && checked.state !== 'ok');
   const accent = currentAccent();
   const applyAppearance = async (patch, undo) => {
     try { await save(patch); settings.reload(); } catch (err) { if (undo) undo(); }
@@ -126,7 +134,10 @@ export function Setup({ sandbox }) {
       ${name === 'anilist' ? html`
         <h2>AniList</h2>
         <p class="page-sub">Your username. Kisetsu follows what airs this season or next on your Watching and Planning lists; anything else can be added later from Shows, Add show.</p>
-        <input class="field" placeholder="AniList username" aria-label="AniList username" autofocus ...${form.bind('anilist_username')} onKeyDown=${(e) => { if (e.key === 'Enter' && !blocked && !busy) next(); }} />` : null}
+        <div class="stack">
+          <input class="field" placeholder="AniList username" aria-label="AniList username" autofocus ...${form.bind('anilist_username')} onInput=${(e) => { form.set('anilist_username', e.target.value); setChecked({ state: '', text: '' }); }} onKeyDown=${(e) => { if (e.key !== 'Enter' || busy || checked.state === 'wait' || !form.value('anilist_username').trim()) return; if (checked.state === 'ok') next(); else checkAnilist(); }} />
+          <div class="row"><button type="button" class="btn sm" onClick=${checkAnilist} disabled=${!form.value('anilist_username').trim() || checked.state === 'wait'}>Check</button><span class=${`test-${checked.state}`} role="status">${checked.text}</span></div>
+        </div>` : null}
       ${error ? html`<p class="setup-error" role="alert">${error}</p>` : null}
       <div class="setup-foot">
         <div class="setup-dots" aria-label=${`Step ${step + 1} of ${STEPS.length}`}>${STEPS.map((s, i) => html`<span key=${s} class=${i === step ? 'on' : ''}></span>`)}</div>

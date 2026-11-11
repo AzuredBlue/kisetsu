@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
+from sqlmodel import select
 
 from kisetsu.clients.anilist import AniListError
+from kisetsu.db.schema import DismissedShow
+from kisetsu.engine.jobs import LIST_REUSE_SECONDS
 from kisetsu.services.context import SETUP_KEY, set_state, setup_completed
 from kisetsu.web import settings as settings_model
 from kisetsu.web.deps import read, runtime, write
@@ -57,6 +60,28 @@ async def save(body: SettingsPatch, request: Request):
     except _AlreadyDone:
         return _conflict()
     return {"status": "success"}
+
+
+def _dismissed(ctx):
+    return {row.anilist_id for row in ctx.session.exec(select(DismissedShow)).all()}
+
+
+@router.post("/check-anilist")
+async def check_anilist(body: Finish, request: Request):
+    """Whether the user exists, and how many shows the first sync would add."""
+    rt = runtime(request)
+    name = body.anilist_username.strip()
+    if not name:
+        raise SettingsError("Enter your AniList username.")
+    try:
+        if not await rt.anilist.user_exists(name):
+            raise SettingsError(f"AniList user '{name}' was not found.")
+        # user_exists has just read the list, so this takes it instead of asking AniList again.
+        seasonal = await rt.anilist.fetch_user_seasonal_anime(name, reuse_within=LIST_REUSE_SECONDS)
+    except AniListError as e:
+        return _gateway(f"Couldn't reach AniList: {e}")
+    dismissed = await read(request, _dismissed)
+    return {"shows": sum(1 for entry in seasonal if entry["anilist_id"] not in dismissed)}
 
 
 @router.post("/complete")
