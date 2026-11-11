@@ -66,6 +66,7 @@ function PickEntry({ onPick }) {
 function Notes({ result }) {
   const notes = [];
   if (result.folder && result.preselect) notes.push(['info', `Found ${result.folder.files} file(s) in ${result.folder.path}. The feed they came from is selected; the show will use that folder, and what is already there is checked rather than downloaded again.`]);
+  if (result.watched) notes.push(['info', `You watched up to episode ${result.watched} on AniList, so those episodes were not searched for or ticked.`]);
   if (result.note) notes.push(['warn', result.note]);
   if (result.unsearchable && result.unsearchable.length) notes.push(['info', `Only the RSS of ${result.unsearchable.join(', ')} was read: ${result.unsearchable.length === 1 ? 'its site' : 'their sites'} cannot be searched.`]);
   if (result.stopped) notes.push(['warn', `The search stopped early: ${result.stopped}`]);
@@ -82,9 +83,12 @@ function coverage(group, picked) {
 }
 
 // Picking a feed takes all it offers: its batches (the largest first, then those that add episodes), and singles for the rest.
-// A batch that names its episodes is trusted over one that only says "Batch".
-function pickAll(group) {
-  const batches = group.batches || [];
+// A batch that names its episodes is trusted over one that only says "Batch". Episodes up to `watched` are left out: a batch
+// is taken only for unwatched episodes no single offers.
+function pickAll(group, watched = 0) {
+  const fresh = (n) => n > watched;
+  const singles = new Set(group.episodes.filter(e => fresh(e.number)).map(e => e.number));
+  const batches = (group.batches || []).filter(b => b.numbers.some(n => fresh(n) && (!watched || !singles.has(n))));
   const ranged = batches.filter(b => b.ranged);
   const taken = new Set();
   const ids = new Set();
@@ -93,7 +97,7 @@ function pickAll(group) {
     ids.add(b.item_key);
     b.numbers.forEach(n => taken.add(n));
   });
-  group.episodes.filter(e => !taken.has(e.number)).forEach(e => ids.add(e.item_key));
+  group.episodes.filter(e => fresh(e.number) && !taken.has(e.number)).forEach(e => ids.add(e.item_key));
   return ids;
 }
 
@@ -129,7 +133,7 @@ function ReleaseRow({ release, label, checked, onToggle, children }) {
 }
 
 // The singles a ticked batch covers would only repeat it, so they stay out until the batch is unticked.
-function Releases({ group, picked, onToggle }) {
+function Releases({ group, picked, watched, onToggle }) {
   const { inBatch } = coverage(group, picked);
   const singles = group.episodes.filter(ep => !inBatch.has(ep.number));
   const hidden = group.episodes.length - singles.length;
@@ -140,7 +144,7 @@ function Releases({ group, picked, onToggle }) {
     <//>`)}
     ${hidden ? html`<li class="add-hidden">Untick the ${ticked === 1 ? 'batch' : 'batches'} to pick from ${plural(hidden, 'single episode')}.</li>` : null}
     ${singles.map(ep => html`<${ReleaseRow} key=${`e:${ep.item_key}`} release=${ep} label=${`Ep ${ep.number}${version(ep.version)}`} checked=${picked.has(ep.item_key)} onToggle=${() => onToggle(ep)}>
-      ${ep.on_disk ? html`<span class="state ok">on disk</span>` : null}
+      ${ep.on_disk ? html`<span class="state ok">on disk</span>` : watched && ep.number <= watched ? html`<span class="state">watched</span>` : null}
     <//>`)}
   </ul>`;
 }
@@ -151,7 +155,7 @@ function PickReleases({ entry, onBack }) {
   const [feedId, setFeedId] = useState(null);
   const [picked, setPicked] = useState(new Set());
   const [adding, setAdding] = useState(false);
-  const choose = (group) => { setFeedId(group.feed_id); setPicked(pickAll(group)); };
+  const choose = (group, watched) => { setFeedId(group.feed_id); setPicked(pickAll(group, watched || 0)); };
   useEffect(() => {
     let live = true;
     apiFetch('/api/add/search', { method: 'POST', json: { anilist_id: entry.anilist_id }, quiet: true })
@@ -161,7 +165,7 @@ function PickReleases({ entry, onBack }) {
         if (body.nothing_offered) { setFeedId(0); setPicked(new Set()); return; }
         // A lone feed is no choice to make.
         const pre = body.feeds.length === 1 ? body.feeds[0] : body.preselect && body.feeds.find(g => g.feed_id === body.preselect);
-        if (pre) choose(pre);
+        if (pre) choose(pre, body.watched);
       })
       .catch(err => { if (live) setError(err.message); });
     return () => { live = false; };
@@ -223,7 +227,7 @@ function PickReleases({ entry, onBack }) {
         <section class="add-section">
           <div class="add-section-head"><h3 class="section-title">Feed</h3><span class="muted">New episodes will only come from this feed.</span></div>
           <div class="card feeds-card"><ul class="feed-list">
-            ${result.feeds.map(g => html`<${FeedOption} key=${g.feed_id} group=${g} active=${g.feed_id === feedId} picked=${picked} onFeed=${choose} />`)}
+            ${result.feeds.map(g => html`<${FeedOption} key=${g.feed_id} group=${g} active=${g.feed_id === feedId} picked=${picked} onFeed=${(chosen) => choose(chosen, result.watched)} />`)}
           </ul></div>
         </section>
         <section class="add-section">
@@ -235,7 +239,7 @@ function PickReleases({ entry, onBack }) {
             </span>` : null}
           </div>
           <div class="card add-card">
-            ${group ? html`<${Releases} key=${group.feed_id} group=${group} picked=${picked} onToggle=${toggle} />` : null}
+            ${group ? html`<${Releases} key=${group.feed_id} group=${group} picked=${picked} watched=${result.watched} onToggle=${toggle} />` : null}
             <div class="add-foot">
               <span class="add-summary truncate">${summary}${group ? html`<span class="add-summary-feed"> from ${group.feed_name}</span>` : null}</span>
               <button type="button" class="btn primary" disabled=${!group || adding} onClick=${add}>${adding ? html`<${Spinner} small />` : html`<${Icon} name="plus" small />`}<span>Add show</span></button>

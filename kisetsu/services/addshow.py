@@ -22,7 +22,7 @@ from kisetsu.domain.parsing import (
     batch_range, is_batch, is_single_file, names_something_else, parse_release_title, release_season, resolution_rank, strip_batch,
 )
 from kisetsu.domain.patterns import sanitize_folder_name
-from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows
+from kisetsu.services import adoption, downloads, feeds, ingest, library, manual, shows, watched
 from kisetsu.services.context import Context
 from kisetsu.services.feeds import Evidence
 
@@ -47,6 +47,8 @@ class Plan:
     feeds: List[Feed]
     unsearchable: List[str] = field(default_factory=list)
     min_resolution: int = DEFAULT_MIN_RESOLUTION
+    # The episodes up to this one were watched and are not searched for (0: none).
+    watched: int = 0
 
 
 def list_view(ctx: Context, entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -91,6 +93,7 @@ def search_plan(ctx: Context, entry: Dict[str, Any]) -> Plan:
         feeds=[f for f in all_feeds if sites.site_of(f.url)],
         unsearchable=[f.name for f in all_feeds if not sites.site_of(f.url)],
         min_resolution=ctx.settings.min_resolution,
+        watched=(entry.get("progress") or 0) if ctx.settings.delete_watched else 0,
     )
 
 
@@ -348,6 +351,8 @@ def preview(
         "folder": None if folder is None else {"path": folder["path"], "files": len(folder["files"])},
         "preselect": on_disk_feed.id if on_disk_feed is not None and any(g["feed_id"] == on_disk_feed.id for g in groups) else None,
         "note": note,
+        # The episodes up to this one were watched, so they are not picked unless the user ticks them.
+        "watched": show.watched if ctx.settings.delete_watched and show.watched else None,
     }
 
 
@@ -409,7 +414,9 @@ def confirm(
     by_number = {e.number: e for e in episodes}
     for batch in batches:
         if item_key(batch.item) in chosen:
-            for number in batch.numbers:
+            # A batch is followed for the episodes not yet watched; the watched ones' files go with it once those are watched too.
+            unwatched = [n for n in batch.numbers if not watched.is_watched(ctx, show, n)]
+            for number in unwatched or batch.numbers:
                 if number in by_number:
                     picked.setdefault(number, (by_number[number], batch.item))
     for number, release in releases.items():
@@ -419,6 +426,10 @@ def confirm(
     for episode in episodes:
         if episode.number in offered and episode.number not in picked:
             episode.status = EpisodeStatus.SKIPPED
+            ctx.session.add(episode)
+        elif episode.number in picked and episode.status == EpisodeStatus.SKIPPED:
+            # Watched, but the user ticked it.
+            episode.status = EpisodeStatus.WANTED
             ctx.session.add(episode)
     ctx.session.flush()
     name = show.title(ctx.settings.title_language)

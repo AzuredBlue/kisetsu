@@ -589,10 +589,13 @@ class Jobs:
         plan = await self.engine.run(addshow.search_plan, entry)
         stopped = None
         articles: Dict[int, Any] = {}
-        if plan.terms and plan.feeds:
+        total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
+        aired = (entry.get("next_airing_episode") or 1) - 1 if entry.get("next_airing_episode") else total
+        # Episodes the user watched are not looked for; with every aired one watched there is nothing to search.
+        wanted = list(range(plan.watched + 1, total + 1)) if not plan.watched or plan.watched < aired else []
+        if plan.terms and plan.feeds and wanted:
             await self._load_grouping()
-            total = entry.get("total_episodes") or max(1, (entry.get("next_airing_episode") or 2) - 1)
-            due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, list(range(1, total + 1)), 0)
+            due = backfill.Due(0, entry.get("display_name") or "", plan.terms, plan.feeds, wanted, 0)
             found = await backfill.search(
                 self.http, due, addshow.matcher_for(entry, plan.min_resolution), self.engine.clock(), searcher=self.searcher,
                 grouping=self.grouping,
