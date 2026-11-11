@@ -86,7 +86,6 @@ function Sidebar({ route, open, onClose, info, at }) {
   const badge = (id) => {
     if (!info) return null;
     if (id === 'shows') return info.shows;
-    if (id === 'feeds') return null;
     return null;
   };
   const light = resolvedTheme() === 'light';
