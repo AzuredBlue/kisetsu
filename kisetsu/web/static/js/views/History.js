@@ -15,7 +15,7 @@ import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
 
 // A finished download is the normal case, so its word stays quiet and only its icon carries the colour.
-const KINDS = { grabbed: ['Queued', null], done: ['Downloaded', 'check'], replaced: ['Replaced', 'swap'], failed: ['Failed', null], missed: ['Missed', null] };
+const KINDS = { grabbed: ['Queued', null], done: ['Downloaded', 'check'], replaced: ['Replaced', 'swap'], failed: ['Failed', null], missed: ['Missed', null], deleted: ['Deleted', 'trash'] };
 // A failure or a miss is told by its reason, not by a release name (a missed episode has none).
 const PROBLEMS = ['failed', 'missed'];
 

@@ -48,7 +48,7 @@ FEED_STATE_LABELS = {
     FeedState.PINNED: "Picked by you",
     FeedState.LOCKED: "Locked",
 }
-HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED, EventKind.FAILED, EventKind.MISSED)
+HISTORY_KINDS = (EventKind.GRABBED, EventKind.DONE, EventKind.REPLACED, EventKind.FAILED, EventKind.MISSED, EventKind.DELETED)
 # An add that qBittorrent still hasn't shown after this long means qBittorrent is not picking up new torrents.
 STUCK_ADD_AFTER = timedelta(hours=1)
 ITEM_DOWNLOAD_LABELS = {
@@ -408,7 +408,8 @@ def history_view(ctx: Context, limit: int) -> List[Dict[str, Any]]:
     seen = set()
     events = []
     for e in rows:
-        key = (e.show_id, e.episode, e.title)
+        # A deletion is its own entry: the download it ends stays listed on its day.
+        key = (e.show_id, e.episode, e.title, e.kind == EventKind.DELETED)
         if e.id not in superseded and key not in seen:
             seen.add(key)
             events.append(e)
