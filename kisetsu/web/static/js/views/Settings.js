@@ -6,7 +6,8 @@ import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } fro
 import { exportBackup, restoreBackup } from '../components/Backup.js';
 import { Seg, SaveBar, SetRow, Swatches } from '../components/Controls.js';
 import { LoadError } from '../components/LoadError.js';
-import { confirmDialog } from '../components/Modal.js';
+import { confirmDialog, showModal } from '../components/Modal.js';
+import { episodeLabel, fileSize, plural } from '../format.js';
 import { toast } from '../components/Toast.js';
 import { useDraft } from '../components/useDraft.js';
 
@@ -18,6 +19,25 @@ function initialForm(s) {
     default_seed_ratio: s.default_seed_ratio, anilist_username: s.anilist_username, anilist_sync_minutes: s.anilist_sync_minutes,
     feed_refresh_minutes: s.feed_refresh_minutes, hunt_interval_minutes: s.hunt_interval_minutes, early_air_tolerance_hours: s.early_air_tolerance_hours,
   };
+}
+
+// Before deleting watched episodes is turned on: what it does, and which of the episodes already watched it would delete now.
+// Resolves to 'now' (delete those too), 'later' (keep them) or a false value (cancel).
+function deleteWatchedDialog(preview) {
+  const some = preview.episodes > 0;
+  const size = (bytes) => (bytes ? `, ${fileSize(bytes)}` : '');
+  return showModal((close) => html`
+    <h2>Delete watched episodes?</h2>
+    <div class="body">
+      <p>Episodes your AniList progress has passed are no longer downloaded. When your progress passes a downloaded episode, its torrent is deleted from qBittorrent with its files once it stops seeding, or a week after it finished. A batch waits until every episode in it is watched.</p>
+      ${some ? html`<p>You already watched ${plural(preview.episodes, 'downloaded episode')}${size(preview.size)}. Delete them too, or keep them?</p>
+        <ul class="torrent-list">${preview.shows.map(s => html`<li key=${s.name}><span class="truncate">${s.name}</span><span class="push muted tabular">Ep ${episodeLabel(s.numbers)}${size(s.size)}</span></li>`)}</ul>` : null}
+    </div>
+    <div class="actions">
+      <button class="btn" onClick=${() => close(false)}>Cancel</button>
+      ${some ? html`<button class="btn" onClick=${() => close('later')}>Keep them</button>` : null}
+      <button class=${`btn ${some ? 'danger' : 'primary'}`} onClick=${() => close(some ? 'now' : 'later')}>${some ? 'Delete them too' : 'Turn on'}</button>
+    </div>`, { wide: some });
 }
 
 // A setting that applies the moment it is clicked; the previous value comes back if the server refuses it.
@@ -67,6 +87,15 @@ export function Settings() {
 
   const setNotifications = async (on) => { await applyNow({ desktop_notifications: on }); reload(); };
   const setMinResolution = async (value) => { if (await applyNow({ min_resolution: value })) reload(); };
+  const setDeleteWatched = async (on) => {
+    if (on === data.delete_watched) return;
+    if (!on) { if (await applyNow({ delete_watched: false })) reload(); return; }
+    let preview;
+    try { preview = await apiFetch('/api/settings/watched-preview'); } catch (err) { return; }
+    const choice = await deleteWatchedDialog(preview);
+    if (!choice) return;
+    if (await applyNow({ delete_watched: true, delete_watched_now: choice === 'now' })) reload();
+  };
   const setLanguage = async (lang) => {
     if (lang === data.title_language) return;
     let moveExisting = false;
@@ -113,6 +142,7 @@ export function Settings() {
             <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" title="A folder as qBittorrent sees it (with Docker, the path inside the container)" ...${bind('base_dir')} /><//>
             <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(none)" ...${bind('default_category')} /><//>
             <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
+            <${SetRow} name="Delete watched" hint="Skip episodes your AniList progress has passed, and delete each download with its files after you watch it."><${Seg} label="Delete watched" value=${data.delete_watched} onChange=${setDeleteWatched} options=${[[true, 'On'], [false, 'Off']]} /><//>
             <${SetRow} name="Preferred quality" hint="Or the next one up when a feed lacks it. Never lower."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
             <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
           </div>

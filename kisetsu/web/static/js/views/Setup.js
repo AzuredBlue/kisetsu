@@ -31,6 +31,7 @@ export function Setup({ sandbox }) {
   const initial = useMemo(() => (data ? {
     qbit_host: data.qbit_host, qbit_username: data.qbit_username, qbit_password: '', base_dir: data.base_dir,
     default_category: data.default_category, default_seed_ratio: data.default_seed_ratio, anilist_username: data.anilist_username,
+    delete_watched: data.delete_watched,
   } : {}), [data]);
   const form = useDraft(initial, 'setup');
   const name = STEPS[step];
@@ -76,7 +77,7 @@ export function Setup({ sandbox }) {
     setError('');
     try {
       if (name === 'qbit') await save(connection());
-      if (name === 'downloads') await save({ base_dir: form.value('base_dir'), default_category: form.value('default_category'), default_seed_ratio: Number(form.value('default_seed_ratio')) });
+      if (name === 'downloads') await save({ base_dir: form.value('base_dir'), default_category: form.value('default_category'), default_seed_ratio: Number(form.value('default_seed_ratio')), delete_watched: form.value('delete_watched') });
       if (name === 'anilist') {
         await apiFetch('/api/setup/complete', { method: 'POST', json: { anilist_username: form.value('anilist_username') }, quiet: true });
         settings.reload();
@@ -121,6 +122,7 @@ export function Setup({ sandbox }) {
           <${SetRow} name="Save to" htmlFor="su-base" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="su-base" class="field mono" placeholder="~/Anime/{name}" ...${form.bind('base_dir')} /><//>
           <${SetRow} name="Category" htmlFor="su-cat" size="mid"><input id="su-cat" class="field" placeholder="(blank)" ...${form.bind('default_category')} /><//>
           <${SetRow} name="Seed ratio" htmlFor="su-ratio" hint="Stop seeding at this ratio." size="num"><input id="su-ratio" type="number" step="0.1" min="0" class="field num" ...${form.bind('default_seed_ratio')} /><//>
+          <${SetRow} name="Delete watched" hint="Skip episodes your AniList progress has passed, and delete each download with its files after you watch it, once it stops seeding."><${Seg} label="Delete watched" value=${form.value('delete_watched')} onChange=${(v) => form.set('delete_watched', v)} options=${[[true, 'On'], [false, 'Off']]} /><//>
         </div>` : null}
       ${name === 'appearance' ? html`
         <h2>Appearance</h2>

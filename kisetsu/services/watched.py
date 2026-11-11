@@ -8,11 +8,11 @@ an episode is acted on once: one the user asks for again after it was watched is
 import logging
 import os
 from datetime import datetime, timedelta
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from sqlmodel import select
 
-from kisetsu.clients.qbittorrent import Torrent
+from kisetsu.clients.qbittorrent import QbitError, Torrent
 from kisetsu.db.schema import (
     ACTIVE_DOWNLOAD_STATES,
     Download,
@@ -238,3 +238,67 @@ def _delete(ctx: Context, hashes: List[str]) -> None:
     for chosen, delete_files in (([h for h in hashes if h not in shared], True), (shared, False)):
         if chosen:
             ctx.qbit.delete(chosen, delete_files=delete_files)
+
+
+def switched(ctx: Context, backlog: bool = False) -> None:
+    """The setting was just turned on or off.
+
+    On, the episodes already watched are not downloaded, and with ``backlog`` their torrents are deleted as well (by
+    ``apply``). Off, nothing is deleted any more, and what was waiting to be is kept.
+    """
+    shows = ctx.session.exec(select(Show).where(Show.watched.is_not(None))).all()
+    for show in shows:
+        if not ctx.settings.delete_watched:
+            show.watched_applied = show.watched
+        elif backlog:
+            show.watched_applied = 0
+        else:
+            skip_watched(ctx, show)
+        ctx.session.add(show)
+    if not ctx.settings.delete_watched:
+        waiting = ctx.session.exec(
+            select(Download).where(Download.end_reason == EndReason.WATCHED, Download.info_hash.is_not(None))
+        ).all()
+        for dl in waiting:
+            dl.end_reason = None
+            ctx.session.add(dl)
+    ctx.emit("shows", "episodes", *(f"show:{show.id}" for show in shows))
+
+
+def backlog(ctx: Context) -> Dict[str, Any]:
+    """What deleting the episodes already watched would delete: by show, the episodes and the size of their torrents.
+
+    A batch counts only when every episode in it was watched. Without qBittorrent the size is unknown (None).
+    """
+    try:
+        ctx.qbit.sync()
+        listed: Optional[Dict[str, Torrent]] = ctx.qbit.torrents
+    except QbitError:
+        listed = None
+    hashes = ctx.session.exec(
+        select(Download.info_hash).join(Episode, Episode.id == Download.episode_id).join(Show, Show.id == Episode.show_id).where(
+            Show.watched.is_not(None), Episode.number <= Show.watched, Download.info_hash.is_not(None), Download.state.not_in(_GONE_STATES),
+        )
+    ).all()
+    found: Dict[int, Dict[str, Any]] = {}
+    for info_hash in sorted(set(hashes)):
+        if listed is not None and info_hash not in listed:
+            continue
+        held = _holders(ctx, info_hash)
+        owners = [ctx.session.get(Show, episode.show_id) for _, episode in held]
+        if not held or any(o is None or o.watched is None or e.number > o.watched for o, (_, e) in zip(owners, held)):
+            continue
+        for index, (show, (_, episode)) in enumerate(zip(owners, held)):
+            row = found.setdefault(show.id, {"name": show.title(ctx.settings.title_language), "episodes": set(), "size": 0})
+            row["episodes"].add(episode.number)
+            if index == 0 and listed is not None:
+                row["size"] += listed[info_hash].size
+    shows = sorted(found.values(), key=lambda row: row["name"].casefold())
+    return {
+        "shows": [
+            {"name": row["name"], "episodes": len(row["episodes"]), "numbers": sorted(row["episodes"]), "size": row["size"] if listed is not None else None}
+            for row in shows
+        ],
+        "episodes": sum(len(row["episodes"]) for row in shows),
+        "size": sum(row["size"] for row in shows) if listed is not None else None,
+    }

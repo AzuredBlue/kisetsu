@@ -8,7 +8,7 @@ from sqlmodel import select
 from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.db.schema import Show
 from kisetsu.domain.patterns import compress_home_path
-from kisetsu.services import shows
+from kisetsu.services import shows, watched
 from kisetsu.web import settings as settings_model
 from kisetsu.web.deps import read, runtime, write
 from kisetsu.web.settings import SettingsError, SettingsPatch
@@ -21,6 +21,7 @@ GRAB_FIELDS = {"early_air_tolerance_hours", "title_language", "base_dir", "defau
 HUNT_FIELDS = {"hunt_interval_minutes", "early_air_tolerance_hours"}
 FEED_FIELDS = {"feed_refresh_minutes"}
 CONNECTION_FIELDS = {"qbit_host", "qbit_username", "qbit_password"}
+WATCHED_FIELDS = {"delete_watched"}
 
 
 class QbitTest(BaseModel):
@@ -90,6 +91,9 @@ async def update_settings(body: SettingsPatch, request: Request):
         rt.jobs.poke("hunt")
     if changed & FEED_FIELDS:
         rt.jobs.poke("refresh_feeds")
+    if changed & WATCHED_FIELDS:
+        # Settle deletes what was already watched, when the user chose that.
+        rt.jobs.poke("settle")
     return {"message": "Settings saved.", "logs": logs}
 
 
@@ -99,6 +103,12 @@ async def title_language_preview(lang: str, request: Request):
     if lang not in settings_model.LANGUAGES:
         raise SettingsError("lang must be english or romaji")
     return await write(request, _language_preview, lang)
+
+
+@router.get("/watched-preview")
+async def watched_preview(request: Request):
+    """What turning on deleting watched episodes would delete right away, if the user chooses to."""
+    return await write(request, watched.backlog)
 
 
 @router.post("/test-qbit")

@@ -10,7 +10,7 @@ from kisetsu.clients.qbittorrent import QbitError
 from kisetsu.config import MAX_FEED_REFRESH_MINUTES, MAX_HUNT_INTERVAL_MINUTES, MIN_FEED_REFRESH_MINUTES, MIN_HUNT_INTERVAL_MINUTES, MIN_RESOLUTIONS
 from kisetsu.db.schema import Settings, Show
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
-from kisetsu.services import library, tags
+from kisetsu.services import library, tags, watched
 from kisetsu.services.context import Context, setup_completed
 
 ACCENT_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -19,7 +19,7 @@ LANGUAGES = ("english", "romaji")
 # The wizard may only set these; the rest of the page opens once setup is finished.
 SETUP_FIELDS = {
     "qbit_host", "qbit_username", "qbit_password", "base_dir", "default_category",
-    "default_seed_ratio", "title_language", "accent_color", "accent_tint", "desktop_notifications",
+    "default_seed_ratio", "title_language", "accent_color", "accent_tint", "desktop_notifications", "delete_watched",
 }
 
 
@@ -45,6 +45,9 @@ class SettingsPatch(BaseModel):
     accent_tint: Optional[str] = None
     desktop_notifications: Optional[bool] = None
     min_resolution: Optional[int] = None
+    delete_watched: Optional[bool] = None
+    # With ``delete_watched`` turned on: also delete the torrents of the episodes already watched.
+    delete_watched_now: Optional[bool] = None
 
     @field_validator("min_resolution")
     @classmethod
@@ -111,6 +114,7 @@ def settings_view(settings: Settings) -> Dict[str, Any]:
         "accent_tint": settings.accent_tint,
         "desktop_notifications": settings.desktop_notifications,
         "min_resolution": settings.min_resolution,
+        "delete_watched": settings.delete_watched,
     }
 
 
@@ -150,6 +154,9 @@ def apply_settings(ctx: Context, patch: SettingsPatch) -> List[str]:
             setattr(s, name, given[name])
     if "anilist_username" in given:
         s.anilist_username = given["anilist_username"].strip()
+    if "delete_watched" in given and given["delete_watched"] != s.delete_watched:
+        s.delete_watched = given["delete_watched"]
+        watched.switched(ctx, backlog=bool(given.get("delete_watched_now")))
     language = given.get("title_language")
     if language and language != s.title_language:
         s.title_language = language

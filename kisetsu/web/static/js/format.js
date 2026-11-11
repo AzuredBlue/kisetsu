@@ -103,6 +103,11 @@ export function plural(n, one, many = `${one}s`) {
   return `${n} ${n === 1 ? one : many}`;
 }
 
+// 1503238553 -> "1.4 GB"
+export function fileSize(bytes) {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(bytes / 1e6))} MB`;
+}
+
 // [10, 9, 8, 3] -> "3, 8–10"
 export function episodeLabel(numbers) {
   const runs = [];
