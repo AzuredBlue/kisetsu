@@ -28,6 +28,8 @@ const NAV = [
 ];
 const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show', logs: 'Logs' };
 const CHECK_JOBS = ['startup', 'refresh_feeds', 'sync_anilist', 'backfill'];
+// The page the Logs button returns to when pressed again on the Logs page.
+let beforeLogs = '#shows';
 
 function Notes({ info }) {
   if (!info) return null;
@@ -112,7 +114,7 @@ function Sidebar({ route, open, onClose, info, at }) {
           <button type="button" class="btn sm icon-only" onClick=${togglePause} title=${paused ? 'Resume all downloads' : 'Pause all downloads'} aria-label=${paused ? 'Resume all downloads' : 'Pause all downloads'}>
             <${Icon} name=${paused ? 'play' : 'pause'} small />
           </button>
-          <button type="button" class="btn sm icon-only" aria-current=${route.name === 'logs' ? 'page' : undefined} onClick=${() => { go('logs'); onClose(); }} title="Logs" aria-label="Logs">
+          <button type="button" class="btn sm icon-only" aria-current=${route.name === 'logs' ? 'page' : undefined} onClick=${() => { if (route.name === 'logs') window.location.hash = beforeLogs; else go('logs'); onClose(); }} title=${route.name === 'logs' ? 'Back from Logs' : 'Logs'} aria-label=${route.name === 'logs' ? 'Back from Logs' : 'Logs'}>
             <${Icon} name="logs" small />
           </button>
         </div>
@@ -122,6 +124,7 @@ function Sidebar({ route, open, onClose, info, at }) {
 
 function Shell() {
   const route = useRoute();
+  if (route.name !== 'logs') beforeLogs = window.location.hash || '#shows';
   const [menu, setMenu] = useState(false);
   const live = useResource(status);
   const online = useResource(settings);
