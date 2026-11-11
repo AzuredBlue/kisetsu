@@ -510,6 +510,7 @@ section + section { margin-top: .5rem; }
 
 /* Adding a show by hand */
 .add-search { position: relative; & > .icon { position: absolute; left: .875rem; top: 50%; transform: translateY(-50%); color: rgb(var(--text-3)); pointer-events: none; } & .field { padding-left: 2.375rem; } }
+.shows-filter { width: 14rem; max-width: 100%; & .field { padding-block: .35rem; font-size: var(--fs-xs); } }
 .add-hint { margin-top: 0; }
 .add-entry, .add-picked { & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: var(--fs-xs); } } & .grow { flex: 1; min-width: 0; } }
 .add-entry { display: flex; align-items: center; gap: .875rem; width: 100%; padding: .625rem 1.25rem; font-size: var(--fs-xs); text-align: left; transition: background-color .15s;
