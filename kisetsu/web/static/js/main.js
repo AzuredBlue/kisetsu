@@ -24,10 +24,9 @@ const NAV = [
   ['calendar', 'Calendar', 'calendar'],
   ['history', 'History', 'history'],
   ['feeds', 'RSS Feeds', 'feeds'],
-  ['logs', 'Logs', 'logs'],
   ['settings', 'Settings', 'settings'],
 ];
-const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show' };
+const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show', logs: 'Logs' };
 const CHECK_JOBS = ['startup', 'refresh_feeds', 'sync_anilist', 'backfill'];
 
 function Notes({ info }) {
@@ -112,6 +111,9 @@ function Sidebar({ route, open, onClose, info, at }) {
           </button>
           <button type="button" class="btn sm icon-only" onClick=${togglePause} title=${paused ? 'Resume all downloads' : 'Pause all downloads'} aria-label=${paused ? 'Resume all downloads' : 'Pause all downloads'}>
             <${Icon} name=${paused ? 'play' : 'pause'} small />
+          </button>
+          <button type="button" class="btn sm icon-only" aria-current=${route.name === 'logs' ? 'page' : undefined} onClick=${() => { go('logs'); onClose(); }} title="Logs" aria-label="Logs">
+            <${Icon} name="logs" small />
           </button>
         </div>
       </div>

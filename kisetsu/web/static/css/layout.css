@@ -8,7 +8,7 @@
   &.open { transform: none; }
   & .brand { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1rem .5rem; font-size: .875rem; font-weight: 600; }
   & nav { flex: 1; display: grid; align-content: start; gap: .125rem; padding: .25rem .5rem; overflow-y: auto; }
-  & .foot { display: grid; gap: .5rem; padding: .75rem; }
+  & .foot { display: grid; gap: .5rem; padding: .75rem; & .btn[aria-current="page"] { background: var(--tonal); color: rgb(var(--text)); & .icon { color: rgb(var(--ac)); } } }
   & .next-check { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; padding: 0 .125rem; font-size: var(--fs-xs); color: rgb(var(--text-3)); & span:last-child { color: rgb(var(--text-2)); font-variant-numeric: tabular-nums; } }
 }
 @media (min-width: 768px) { .sidebar { position: static; transform: none; } .backdrop, .menu-btn { display: none; } }
