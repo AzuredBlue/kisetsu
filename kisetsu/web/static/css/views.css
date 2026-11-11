@@ -303,7 +303,7 @@
   transition: background-color .15s;
   /* A hovered row takes its show's colours (--show-panel, --show-text from the poster), as a show card does. */
   @media (hover: hover) {
-    &:hover { background: rgb(var(--show-panel, var(--line)) / .2); }
+    &:hover { background: rgb(var(--show-panel, var(--line)) / .3); }
     &:hover .history-show { color: rgb(var(--show-text, var(--ac-soft))); }
     & a:hover .poster img { filter: brightness(1.12); }
   }
