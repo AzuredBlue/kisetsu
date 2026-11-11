@@ -12,6 +12,7 @@ from kisetsu.config import HUNTING_RECENT_DAYS
 from kisetsu.db.schema import (
     ACTIVE_DOWNLOAD_STATES,
     Download,
+    EndReason,
     Episode,
     EpisodeOffset,
     EpisodeStatus,
@@ -512,6 +513,9 @@ def _take(ctx: Context, state: ShowState, feed: Feed, entry: Resolved, best: Dic
     cur = state.current.get(episode.id)
     if upgrade and cur is not None and downloads.is_batch_download(cur) and episode.status in RELEASE_HOLDING:
         # An episode that came in a batch keeps it: replacing it would delete the whole batch with its files.
+        return False
+    if cur is not None and cur.end_reason == EndReason.WATCHED:
+        # Watched, and deleted or about to be: a newer version is not wanted either.
         return False
     air_at = episode.air_at
     # An episode with no air time is taken like any other (the whole season is eligible); map_episode already

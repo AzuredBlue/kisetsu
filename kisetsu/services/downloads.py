@@ -801,8 +801,30 @@ def _adds_paused(ctx: Context, dl: Download) -> bool:
     return old is not None and old.info_hash is not None and old.info_hash in ctx.qbit.torrents
 
 
+def end_watched(ctx: Context, dl: Download, episode: Episode) -> None:
+    """The torrent of a watched episode is gone. A finished release stays as what the episode had; an episode left with none is skipped."""
+    dl.info_hash = None
+    dl.end_reason = EndReason.WATCHED
+    dl.next_retry_at = None
+    dl.updated_at = ctx.now
+    if dl.state != DownloadState.DONE:
+        dl.state = DownloadState.CANCELED
+        if episode.current_download_id == dl.id:
+            episode.current_download_id = None
+    ctx.session.add(dl)
+    recompute_episode(ctx, episode)
+    if episode.current_download_id is None and episode.status != EpisodeStatus.SKIPPED:
+        episode.status = EpisodeStatus.SKIPPED
+        ctx.session.add(episode)
+
+
 def _forget(ctx: Context, dl: Download, episode: Episode, show: Optional[Show]) -> None:
     """A tracked torrent was removed in qBittorrent."""
+    if dl.end_reason == EndReason.WATCHED:
+        # Its episode was watched and the torrent was to be deleted anyway: it is never added again.
+        ctx.caches.absent.pop(dl.info_hash or "", None)
+        end_watched(ctx, dl, episode)
+        return
     if dl.state == DownloadState.DONE:
         dl.info_hash = None
         ctx.session.add(dl)

@@ -146,6 +146,11 @@ class SandboxQbit(Qbit):
     def find_by_tag(self, tag: str) -> Optional[Torrent]:
         return next((t for t in self._merged.values() if tag in t.tags), None)
 
+    def files(self, info_hash: str) -> List[str]:
+        fake = self.state.fakes.get(info_hash)
+        # A pretend torrent is one file named like the release.
+        return [fake.name] if fake is not None else super().files(info_hash)
+
     def tags(self) -> List[str]:
         names = set(super().tags()) - self.state.tags_deleted
         for fake in self.state.fakes.values():

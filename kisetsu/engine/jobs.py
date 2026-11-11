@@ -383,7 +383,8 @@ class Jobs:
         logger.info(f"AniList synced: {len(seasonal)} shows. Next sync in {round(wait / 60)} min.")
         if applied.added_ids and self.ready.is_set():
             await self.on_new_shows(applied.added_ids)
-        for name in ("grab", "hunt", "palette"):
+        # Settle deletes what the new progress says was watched.
+        for name in ("grab", "hunt", "palette", "settle"):
             self.poke(name)
         return wait
 

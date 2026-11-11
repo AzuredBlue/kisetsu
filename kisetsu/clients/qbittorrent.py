@@ -328,6 +328,10 @@ class Qbit:
                 return torrent
         return None
 
+    def files(self, info_hash: str) -> List[str]:
+        """The torrent's files, as paths within its save folder."""
+        return self._call(lambda c: [str(f.name) for f in c.torrents_files(torrent_hash=info_hash)])
+
     def add_torrent(
         self,
         url: str,

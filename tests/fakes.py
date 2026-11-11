@@ -89,6 +89,8 @@ class FakeQbit:
         self.tag_names: set = set()
         self.rss: List[RssStoreFeed] = []
         self._hidden: Dict[str, Torrent] = {}
+        # A torrent's files within its save folder; one named like the torrent unless set here.
+        self.file_names: Dict[str, List[str]] = {}
 
     # -- plumbing -------------------------------------------------------------
 
@@ -128,6 +130,10 @@ class FakeQbit:
 
     def find_by_tag(self, tag: str) -> Optional[Torrent]:
         return next((t for t in self._view.values() if tag in t.tags), None)
+
+    def files(self, info_hash: str) -> List[str]:
+        self._enter("files", info_hash)
+        return list(self.file_names.get(info_hash) or [self.truth[info_hash].name])
 
     def add_torrent(
         self,

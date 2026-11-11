@@ -9,7 +9,7 @@ from sqlalchemy import delete
 from sqlmodel import select
 
 from kisetsu.db.schema import Event, Show
-from kisetsu.services import adoption, downloads, feeds, grab, ingest, library, shows, tags
+from kisetsu.services import adoption, downloads, feeds, grab, ingest, library, shows, tags, watched
 from kisetsu.services.context import Context, get_state, set_state
 
 logger = logging.getLogger("kisetsu.services.cycle")
@@ -131,8 +131,10 @@ def grab_cycle(ctx: Context) -> CycleResult:
 
 
 def settle_cycle(ctx: Context, observe_only: bool = False) -> downloads.Settled:
-    """Follow the downloads; a finished episode may complete its show, so air times are settled afterwards."""
+    """Follow the downloads and delete what the user watched; a finished episode may complete its show, so air times are settled afterwards."""
     result = downloads.settle(ctx, observe_only=observe_only)
+    if not observe_only and watched.apply(ctx):
+        result.changed = True
     if result.changed:
         _say(shows.rollover(ctx))
     return result
