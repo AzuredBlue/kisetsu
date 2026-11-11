@@ -27,7 +27,7 @@ from kisetsu.db.schema import (
 from kisetsu.domain.patterns import compress_home_path, resolve_save_path
 from kisetsu.domain.schedule import is_unreleased
 from kisetsu.domain.status import ShowStatus, show_status
-from kisetsu.services import downloads, manual, shows as shows_service
+from kisetsu.services import downloads, grab, manual, shows as shows_service
 from kisetsu.services.context import Context, get_state
 from kisetsu.services.facts import facts_for, release_delays
 
@@ -277,6 +277,7 @@ def show_view(ctx: Context, show: Show) -> Dict[str, Any]:
     return {
         **card,
         "episodes": [episode_row(ctx, episode, feed_names, show, memo, (by_id, active_by_episode)) for episode in episodes],
+        "matched_season": grab.enforced_season(ctx, show, facts_for(ctx, [show])[show.id]),
         "episode_offsets": [
             {"feed_id": o.feed_id, "feed": feed_names.get(o.feed_id), "offset": o.offset, "source": o.source.value, "evidence": o.evidence_count}
             for o in sorted(offsets, key=lambda o: o.feed_id)

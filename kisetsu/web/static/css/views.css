@@ -192,7 +192,7 @@
 }
 .side-card { display: grid; gap: .75rem; padding: 1rem; }
 /* The name a release was matched by, beside its label, wrapping onto more lines when long; it is selected whole for copying. */
-.matched-as { display: flex; align-items: baseline; gap: .75rem; min-width: 0; & .field-label { flex: none; margin: 0; } & .field-hint { margin: 0; } & .mono { min-width: 0; overflow-wrap: break-word; user-select: all; color: rgb(var(--text-2)); } }
+.matched-as { display: flex; align-items: baseline; gap: .75rem; min-width: 0; & .field-label { flex: none; margin: 0; } & .field-hint { margin: 0; } & .matched-name { min-width: 0; overflow-wrap: break-word; color: rgb(var(--text-2)); } & .mono { user-select: all; } }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
 .show-body .save-bar-slot { grid-column: 1 / -1; }
 

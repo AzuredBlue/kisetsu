@@ -139,6 +139,17 @@ def _matcher_for(ctx: Context, state: ShowState, feed: Feed) -> matching.Matcher
     return matching.narrow_to_feed(base, show.learned_name, held)
 
 
+def enforced_season(ctx: Context, show: Show, facts) -> Optional[int]:
+    """The season a release must name to be grabbed from the show's locked feed, or None when no season is required."""
+    if show.feed_state != FeedState.LOCKED or show.feed_id is None:
+        return None
+    feed = ctx.session.get(Feed, show.feed_id)
+    if feed is None:
+        return None
+    matcher = _matcher_for(ctx, show_state(ctx, show, facts), feed)
+    return matcher.season if matcher.season_known else None
+
+
 def _items(ctx: Context, show: Show, feed: Feed) -> List[FeedItem]:
     return list(
         ctx.session.exec(
