@@ -160,8 +160,8 @@ export function Settings() {
       <div class="card card-divided form-grid">
         <${SetRow} name="AniList sync (min)" htmlFor="set-sync" hint="How often your AniList list is read." size="num"><input id="set-sync" type="number" min="1" max="10080" class="field num" ...${bind('anilist_sync_minutes')} /><//>
         <${SetRow} name="Feed check (min)" htmlFor="set-feeds" hint="How often a show's feed is read while an episode that aired in the last 3 days is still missing. Feeds no show needs are read every 6 hours." size="num"><input id="set-feeds" type="number" min="5" max="240" class="field num" ...${bind('feed_refresh_minutes')} /><//>
-        <${SetRow} name="Hunt (min)" htmlFor="set-hunt" hint="Right after an episode airs, how often its show's feed is read until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
-        <${SetRow} name="Early air (h)" htmlFor="set-early" hint="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time." size="num"><input id="set-early" type="number" min="0" max="168" class="field num" ...${bind('early_air_tolerance_hours')} /><//>
+        <${SetRow} name="Check after airing (min)" htmlFor="set-hunt" hint="Right after an episode airs, how often its show's feed is read until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
+        <${SetRow} name="Look early for new shows (h)" htmlFor="set-early" hint="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time." size="num"><input id="set-early" type="number" min="0" max="168" class="field num" ...${bind('early_air_tolerance_hours')} /><//>
       </div>
     </details>
 
