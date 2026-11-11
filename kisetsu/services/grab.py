@@ -36,7 +36,7 @@ from kisetsu.domain.schedule import (
     premiere_out_of_reach,
     published_before_air,
 )
-from kisetsu.services import downloads, events, feeds, ingest, library
+from kisetsu.services import downloads, events, feeds, ingest, library, watched
 from kisetsu.services.context import Context
 from kisetsu.services.facts import facts_for
 from kisetsu.services.feeds import Carrier
@@ -346,6 +346,8 @@ def _learn_offset(ctx: Context, state: ShowState, feed: Feed, raw: int, local: i
         episode = state.by_number[number]
         downloads.recompute_episode(ctx, episode)
         state.current[episode.id] = downloads.current(ctx, episode)
+    # An episode whose release moved away is wanted again, unless it was watched.
+    watched.skip_watched(ctx, state.show, episodes=[state.by_number[n] for n in touched])
     events.record(
         ctx,
         EventKind.INFO,

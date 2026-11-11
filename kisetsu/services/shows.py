@@ -71,6 +71,8 @@ def ensure_episodes(ctx: Context, show: Show) -> List[Episode]:
     for number in range(1, target + 1):
         if number not in by_number:
             row = Episode(show_id=show.id, number=number)
+            if watched.is_watched(ctx, show, number):
+                row.status = EpisodeStatus.SKIPPED
             ctx.session.add(row)
             by_number[number] = row
             rows.append(row)
@@ -96,7 +98,7 @@ def final_episode_accounted(ctx: Context, show: Show) -> bool:
     """Whether every episode of a finished season is accounted for.
 
     Every episode up to the season length must be completed, skipped by the user or missed
-    (no longer retrievable), and at least one completed. A finale that was only just given up on keeps
+    (no longer retrievable), and at least one completed, unless the user watched them all. A finale that was only just given up on keeps
     the season open for as long as the grabber keeps looking for it.
     """
     if not show.total_episodes or show.total_episodes <= 0 or show.id is None:
@@ -123,7 +125,9 @@ def final_episode_accounted(ctx: Context, show: Show) -> bool:
         )
         return not recent_finale
 
-    return all(accounted(e) for e in episodes) and any(e.status == EpisodeStatus.COMPLETED for e in episodes)
+    # A season the user watched to the end needs nothing downloaded, even when every episode was skipped as watched.
+    obtained = any(e.status == EpisodeStatus.COMPLETED for e in episodes) or watched.is_watched(ctx, show, show.total_episodes)
+    return all(accounted(e) for e in episodes) and obtained
 
 
 def _set_if(show: Show, attr: str, value: Any) -> bool:
