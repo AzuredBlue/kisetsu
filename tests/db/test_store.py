@@ -348,6 +348,32 @@ def test_a_version_9_database_reads_the_subsplease_rss_dates_as_pacific_time():
     assert [i.guid for i in after] == ["winter"]
 
 
+def test_a_step_that_stops_partway_leaves_nothing_behind_and_runs_again_from_the_start(engine, monkeypatch):
+    from kisetsu.db import migrations
+
+    stop = [True]
+
+    def step(conn):
+        conn.exec_driver_sql("ALTER TABLE settings ADD COLUMN extra INTEGER NOT NULL DEFAULT 0")
+        conn.exec_driver_sql("UPDATE settings SET extra = extra + 1")
+        if stop[0]:
+            raise RuntimeError("stopped")
+
+    latest = migrations.LATEST_VERSION
+    monkeypatch.setattr(migrations, "MIGRATIONS", migrations.MIGRATIONS + [(latest + 1, step)])
+    monkeypatch.setattr(migrations, "LATEST_VERSION", latest + 1)
+    with pytest.raises(RuntimeError):
+        migrate(engine)
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == latest
+        assert "extra" not in [row[1] for row in conn.exec_driver_sql("PRAGMA table_info(settings)").all()]
+    stop[0] = False
+    migrate(engine)
+    with engine.connect() as conn:
+        assert conn.exec_driver_sql("PRAGMA user_version").scalar() == latest + 1
+        assert conn.exec_driver_sql("SELECT extra FROM settings").scalar() == 1
+
+
 def test_a_migration_keeps_its_own_backups_and_only_the_newest_earlier_ones(tmp_path, monkeypatch):
     from kisetsu.db import migrations
 
