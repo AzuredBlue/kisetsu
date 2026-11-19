@@ -293,7 +293,9 @@ class Jobs:
             self.poke("grab")
         if outcome.gaps:
             self.backfill_all = True
-            self.poke("backfill", 5.0)
+            # Until startup is done, its own search takes this request; a job run beside it would search the same shows again.
+            if self.ready.is_set():
+                self.poke("backfill", 5.0)
         if outcome.reconsider:
             # A feed their searches left out has just shown it carries them: what it holds may be what they miss.
             self.request_backfill(sorted(outcome.reconsider))

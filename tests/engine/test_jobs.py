@@ -239,6 +239,7 @@ def test_a_read_that_misses_what_was_stored_asks_for_a_search(env):
     async def go():
         await env.engine.run(lambda ctx: ctx.qbit.sync(full=True))
         await env.jobs.sync_anilist()
+        env.jobs.ready.set()
         await env.jobs.refresh_feeds()
         env.feeds.items[TOP] = [env.feeds.post(TOP, title(9), START), env.feeds.post(TOP, title(10), START)]
         env.clock.advance(minutes=15)
