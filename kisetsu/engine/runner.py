@@ -20,6 +20,8 @@ SUBSCRIBER_BACKLOG = 64
 # Changes published this close together reach the UI as one message, so a burst (a colour stored for every
 # show, say) makes it refetch once instead of once per change.
 BATCH_SECONDS = 0.25
+# Threads for ``Engine.read``, kept apart from the default executor so slow blocking calls there never hold up a page.
+READ_THREADS = 2
 
 
 class ChangeBus:
@@ -164,6 +166,7 @@ class Engine:
         self._qbit: Optional[Any] = None
         self._qbit_key: Optional[Tuple] = None
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kisetsu-engine")
+        self._readers = ThreadPoolExecutor(max_workers=READ_THREADS, thread_name_prefix="kisetsu-read")
 
     async def start(self) -> None:
         self.bus.bind(asyncio.get_running_loop())
@@ -175,7 +178,7 @@ class Engine:
     async def read(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Run a read-only ``fn(ctx, ...)`` beside the engine thread; nothing it does is saved and qBittorrent is out of reach."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, partial(self._read, fn, *args, **kwargs))
+        return await loop.run_in_executor(self._readers, partial(self._read, fn, *args, **kwargs))
 
     async def dry_run(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         """Like ``read``, on the engine thread: ``fn`` may write, since everything is rolled back, without racing the engine for the database."""
@@ -229,3 +232,4 @@ class Engine:
 
         await asyncio.get_running_loop().run_in_executor(self._executor, shut)
         self._executor.shutdown(wait=True)
+        self._readers.shutdown(wait=False)
