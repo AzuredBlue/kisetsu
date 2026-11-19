@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "qbittorrent-api>=2024.0.0",
+    "requests>=2.31.0",
     "sqlmodel>=0.0.16",
     "sqlalchemy>=2.0.0",
     "pydantic>=2.0.0",
@@ -17,6 +18,8 @@ dependencies = [
     "guessit>=3.8.0",
     "rapidfuzz>=3.9.0",
     "fastapi>=0.110.0",
+    "starlette>=0.36.3",
+    "anyio>=3.4.0",
     "uvicorn>=0.28.0",
     "pillow>=10.0.0",
     "desktop-notifier>=6.0.0",
