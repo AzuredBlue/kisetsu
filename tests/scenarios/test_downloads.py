@@ -96,6 +96,22 @@ def test_a_v2_is_added_paused_rechecked_and_the_v1_stays_until_it_has_finished(w
     assert world.episode(show, 1).current_download_id == v2.id
 
 
+def test_another_release_of_an_errored_episode_replaces_its_torrent(world):
+    feed, show, ep = setup(world)
+    old, row1 = grab(world, show, feed, ep)
+    world.qbit.fail(row1.info_hash)
+    settle(world)
+    assert world.episode(show, 1).status == EpisodeStatus.FAILED
+    new, row2 = grab(world, show, feed, world.episode(show, 1), V1.replace("Grp", "Other"))
+    assert new.supersedes_id == old.id and world.episode(show, 1).status == EpisodeStatus.DOWNLOADING
+    world.qbit.finish(row2.torrent_url)
+    settle(world)
+    world.session.expire_all()
+    assert row1.info_hash not in world.qbit.truth
+    assert (old.state, new.state) == (DownloadState.SUPERSEDED, DownloadState.DONE)
+    assert world.episode(show, 1).status == EpisodeStatus.COMPLETED
+
+
 def test_a_rerelease_under_the_same_path_keeps_the_files(world):
     feed, show, ep = setup(world)
     v1, row1 = grab(world, show, feed, ep)

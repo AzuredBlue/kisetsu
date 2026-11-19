@@ -130,6 +130,8 @@ def recompute_episode(ctx: Context, episode: Episode) -> None:
         episode.status, episode.last_error, episode.retry_after = EpisodeStatus.DOWNLOADING, None, None
     elif cur.state == DownloadState.DONE:
         episode.status, episode.last_error, episode.retry_after = EpisodeStatus.COMPLETED, None, None
+    elif cur.state == DownloadState.FAILED and _replacing(ctx, cur):
+        episode.status, episode.last_error, episode.retry_after = EpisodeStatus.DOWNLOADING, None, None
     elif cur.state == DownloadState.FAILED:
         episode.status, episode.last_error, episode.retry_after = EpisodeStatus.FAILED, cur.last_error, None
     else:
@@ -139,6 +141,13 @@ def recompute_episode(ctx: Context, episode: Episode) -> None:
     ctx.session.add(episode)
     # Only the episode changed: the views of other shows and of the feeds need not refetch.
     ctx.emit("episodes", f"show:{episode.show_id}")
+
+
+def _replacing(ctx: Context, old: Download) -> bool:
+    """Whether a replacement of ``old`` is still under way."""
+    return ctx.session.exec(
+        select(Download.id).where(Download.supersedes_id == old.id, Download.state.in_(ACTIVE_DOWNLOAD_STATES))
+    ).first() is not None
 
 
 def failed_versions(ctx: Context, episode: Episode) -> set:
@@ -210,6 +219,9 @@ def start_download(
             elif old_torrent is None and cur.info_hash is None and cur.title and _by_name(ctx, cur.title) is not None:
                 supersedes, old_present = cur, True
                 cur.info_hash = _by_name(ctx, cur.title).hash
+        elif cur.state == DownloadState.FAILED and old_present:
+            # The errored torrent is still in qBittorrent: it goes the way of any replaced release once this one has finished.
+            supersedes = cur
     dl = Download(
         episode_id=episode.id,
         feed_id=feed.id,
