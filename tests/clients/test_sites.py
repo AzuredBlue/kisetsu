@@ -117,6 +117,7 @@ def test_subsplease_results_use_the_rss_ids_and_the_feeds_resolution():
     assert len(a.info_hash) == 40
     assert a.published_at == datetime(2026, 10, 9, 12, 0, tzinfo=timezone.utc)
     assert sites.parse_subsplease_search([], "1080") == []
+    assert sites.parse_subsplease_search({"error": "Too many requests", "x": {"downloads": ["a", 5]}}, "1080") == []
 
 
 def test_subsplease_search_dates_are_never_in_the_future():

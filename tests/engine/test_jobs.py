@@ -600,6 +600,22 @@ def test_what_the_searches_learned_of_a_site_outlives_a_restart(env):
     assert restarted.grouping.works("nyaa.si") is True and restarted.grouping.complete("nyaa.si", 74)
 
 
+def test_a_search_that_raises_still_lets_startup_finish(env):
+    first = airing(env, 3)
+    nyaa = "https://nyaa.si/?page=rss&q=1080p"
+    env.add_feed("Nyaa", nyaa, 1)
+    env.feeds.post(nyaa, title(3), first + timedelta(days=14))
+    asked = []
+
+    async def broken(client, url, term, now=None):
+        asked.append(term)
+        raise AttributeError("'str' object has no attribute 'get'")
+
+    env.jobs.searcher = broken
+    assert run(env, env.jobs.startup) is None
+    assert asked and "delay:backfill" in env.pokes
+
+
 def test_subsplease_schedule_is_read_once_and_only_with_a_subsplease_feed(env):
     reads = []
 

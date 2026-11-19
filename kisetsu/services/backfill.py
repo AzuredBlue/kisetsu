@@ -306,6 +306,10 @@ async def _search_site(
             else:
                 logger.warning(f"Searching '{feed.name}' for '{term}' failed: {e}")
             return None
+        except Exception as e:
+            # An answer the site should never give must not stop the other searches, nor the job that asked for them.
+            logger.warning(f"Searching '{feed.name}' for '{term}' failed: {e}", exc_info=True)
+            return None
 
     for feed in site_feeds:
         if not across_feeds:
@@ -474,7 +478,7 @@ async def search_shared(
             terms = list(dict.fromkeys(term for item in group for term in item.terms))
             try:
                 articles = await searcher(client, feed.url, sites.any_of(terms), now=now)
-            except FeedFetchError as e:
+            except Exception as e:
                 # Each show's own search follows and reports what is wrong with the site.
                 logger.debug(f"A shared search of '{feed.name}' failed: {e}")
                 return found

@@ -210,21 +210,24 @@ def parse_subsplease_search(payload: Any, resolution: str, now: Optional[datetim
     The guids are the ones the RSS uses (the magnet's hash), so an item found by both is one
     item. The API's ``release_date`` can be an hour off, which
     is harmless for the day-sized checks it feeds, but it must never be in the future, so it
-    is capped at ``now``.
+    is capped at ``now``. Entries and downloads of any other shape are skipped.
     """
     articles: List[FeedArticle] = []
     if not isinstance(payload, dict):
         return articles
     now = now or datetime.now(timezone.utc)
     for entry in payload.values():
-        for download in (entry or {}).get("downloads") or []:
-            if str(download.get("res")) != resolution:
+        if not isinstance(entry, dict) or not isinstance(entry.get("downloads"), list):
+            continue
+        release_date = entry.get("release_date")
+        released = parse_date(release_date) if isinstance(release_date, str) else None
+        for download in entry["downloads"]:
+            if not isinstance(download, dict) or str(download.get("res")) != resolution:
                 continue
-            magnet = download.get("magnet") or ""
-            btih, name = magnet_parts(magnet)
+            magnet = download.get("magnet")
+            btih, name = magnet_parts(magnet) if isinstance(magnet, str) else (None, None)
             if not btih or not name:
                 continue
-            released = parse_date((entry or {}).get("release_date"))
             articles.append(FeedArticle(
                 guid=btih,
                 title=name,
