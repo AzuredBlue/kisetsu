@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 from sqlmodel import select
 
-from kisetsu.clients.qbittorrent import QbitError, QbitRejected, QbitUnavailable
+from kisetsu.clients.qbittorrent import QbitConflict, QbitError, QbitRejected, QbitUnavailable
 from kisetsu.db.schema import Download, DownloadState, EndReason, EpisodeStatus, Event, EventKind, FeedState
 from kisetsu.services import downloads
 from kisetsu.services.ingest import _new_item
@@ -203,6 +203,19 @@ def test_an_unavailable_qbit_creates_no_download(world):
         downloads.start_download(world.ctx(), show, feed, ep, row)
     world.session.rollback()
     assert world.session.exec(select(Download)).all() == []
+
+
+def test_a_category_qbit_refuses_counts_as_a_failed_add_and_gives_up(world):
+    feed, show, ep = setup(world, category="Anime/")
+
+    def refuse(category):
+        raise QbitConflict("Category name is invalid")
+
+    world.qbit.ensure_category = refuse
+    dl, row = grab(world, show, feed, ep)
+    for _ in range(downloads.MAX_ATTEMPTS):
+        settle(world, minutes=16)
+    assert dl.state == DownloadState.CANCELED and dl.end_reason == EndReason.ADD_GAVE_UP
 
 
 def test_a_grab_that_keeps_failing_gives_up_for_hours_then_fails_for_good(world):

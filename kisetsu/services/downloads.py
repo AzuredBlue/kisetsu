@@ -303,8 +303,13 @@ def _attempt_add(ctx: Context, show: Show, episode: Episode, dl: Download, *, pa
     try:
         if category:
             ctx.qbit.ensure_category(category)
-    except QbitError as e:
+    except QbitUnavailable as e:
         _retry(ctx, dl, episode, f"Could not create the qBittorrent category: {e}", ADD_RETRY)
+        return
+    except QbitError as e:
+        # qBittorrent answered and refused the category, so this counts as a failed add.
+        dl.attempts += 1
+        _retry(ctx, dl, episode, f"Could not create the qBittorrent category: {e}", AMBIGUOUS_RETRY)
         return
     dl.attempts += 1
     # ADDING before the add is committed: if the app stops during it, settle tries again once it looks stuck.
