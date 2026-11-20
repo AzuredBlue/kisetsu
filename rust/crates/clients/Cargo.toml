@@ -7,3 +7,10 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+jiff.workspace = true
+serde.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
