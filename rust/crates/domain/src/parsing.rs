@@ -1,0 +1,1031 @@
+//! Release titles: what a title says about itself (name, episode, season, group, version,
+//! resolution, episode range), and how closely its name matches a show's.
+
+use std::collections::HashSet;
+use std::fmt;
+use std::sync::LazyLock;
+
+use crate::fuzz;
+use crate::patterns::build_regex_pattern;
+use crate::pyre::{Flags, Match, Regex};
+use crate::pystr;
+
+/// The fuzzy score from which a release's name is taken for a show's.
+pub const FUZZY_MATCH_THRESHOLD: f64 = 85.0;
+/// The lowest resolution a release may name to be downloaded, unless the user picks another.
+pub const DEFAULT_MIN_RESOLUTION: i64 = 1080;
+
+const STOPWORDS: &[&str] = &[
+    "the", "a", "an", "no", "wa", "ga", "to", "de", "ni", "la", "le", "el",
+];
+/// Words that only say which season or part a title is; two titles sharing nothing else are not
+/// one show.
+const SEASON_WORDS: &[&str] = &["season", "part", "cour", "final", "stage"];
+const ROMAN_NUMERALS: &[(&str, &str)] = &[
+    ("x", "10"),
+    ("ix", "9"),
+    ("viii", "8"),
+    ("vii", "7"),
+    ("vi", "6"),
+    ("v", "5"),
+    ("iv", "4"),
+    ("iii", "3"),
+    ("ii", "2"),
+];
+const NON_GROUP_TAGS: &[&str] = &[
+    "1080p",
+    "720p",
+    "480p",
+    "540p",
+    "576p",
+    "2160p",
+    "4k",
+    "hevc",
+    "x264",
+    "x265",
+    "avc",
+    "h264",
+    "h265",
+    "aac",
+    "flac",
+    "opus",
+    "web-dl",
+    "webrip",
+    "hdtv",
+    "dvd",
+    "bd",
+    "bluray",
+    "cr",
+    "multisub",
+    "multi-sub",
+    "multi-subs",
+    "multisubs",
+    "eng",
+    "english",
+    "raw",
+    "raws",
+    "sub",
+    "subs",
+    "dub",
+    "dual-audio",
+    "batch",
+    "dl",
+];
+/// Widths of a frame and the lines a full frame that wide has.
+const LINES_BY_WIDTH: &[(i64, i64)] = &[(3840, 2160), (1920, 1080), (1280, 720)];
+/// Which of `RANGE_REGEXES` finds a range in brackets.
+const BRACKETED_RANGE: usize = 1;
+const SAME_NAME_SCORE: f64 = 85.0;
+/// Words a release adds to a show's name without naming anything by them.
+const NAME_FILLERS: &[&str] = &["episode", "ep", "tv", "anime", "uncut", "dub", "dubbed"];
+const ROMAN_SEASONS: &[(&str, i64)] = &[("ii", 2), ("iii", 3), ("iv", 4), ("v", 5), ("vi", 6)];
+
+/// Patterns written in the code, each compiled on first use.
+macro_rules! regexes {
+    ($($(#[$doc:meta])* $name:ident = $pattern:expr, $flags:ident;)*) => {
+        $(
+            $(#[$doc])*
+            static $name: LazyLock<Regex> =
+                LazyLock::new(|| Regex::from_literal($pattern, Flags::$flags));
+        )*
+    };
+}
+
+regexes! {
+    VERSION_REGEX = r"(E\d+|\b\d+)v\d+", IGNORECASE;
+    ROMAN_NUMERAL = r"\b(x|ix|viii|vii|vi|v|iv|iii|ii)\b", NONE;
+    BRACKETED = r"\[.*?\]|\(.*?\)", NONE;
+    ORDINAL_SEASON = r"\b(\d+)(?:st|nd|rd|th)\s+season\b", NONE;
+    SHORT_SEASON = r"\bs(\d+)\b", NONE;
+    PUNCTUATION = r#"[:\-_/\\.|+~'\"`]"#, NONE;
+    /// "SPY×FAMILY" is "Spy x Family".
+    TIMES = r"[×✕]", NONE;
+    /// Marks like the "△" of "Yuru Camp△" are not part of any word.
+    NOT_WORD = r"[^\w\s]", NONE;
+    SPACES = r"\s+", NONE;
+    GROUP_AT_START = r"^\[(.*?)\]", NONE;
+    /// A scene group ends the name ("...H.264-VARYG.mkv"); a hyphen earlier belongs to the title
+    /// or to "WEB-DL".
+    SCENE_GROUP = r"-([A-Za-z0-9_]+)(?:\s*\(|\s*\[|\s*\.|\s*$)", NONE;
+    BRACKET_CONTENT = r"\[(.*?)\]", NONE;
+    VERSION_TAG = r"(?:E\d+|\b\d+)v(\d+)\b|[\[(]v(\d+)[\])]|\b(?:v|ver\.?|version)\s*(\d+)\b", IGNORECASE;
+    REPACK_OR_PROPER = r"\bREPACK\d*\b|\bPROPER\d*\b", IGNORECASE;
+    REPACK_NUMBER = r"\bREPACK(\d+)\b", IGNORECASE;
+    COUNTS_SOMETHING_ELSE = r"\b(?:season|part|cour|vol(?:ume)?)\.?$", IGNORECASE;
+    /// A standalone episode number. A "." after it is a file extension, never a fraction ("12.5"
+    /// is a recap, not episode 12). "more" is set when an episode title (" - The Hero's Party",
+    /// " - 2 Heroes") or a language tag ("VOSTFR") follows the number.
+    EPISODE_NUMBER = concat!(
+        r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL|REPACK\d*|PROPER\d*))?",
+        r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+(?:[^\d\s]|\d+\s+[^\W\d_])|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
+    ), IGNORECASE;
+    VIDEO_EXTENSION = r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$", IGNORECASE;
+    AUDIO_CHANNELS = r"\b(?:DDP?|EAC-?3|AC3|AAC|FLAC|OPUS|DTS(?:-HD)?|TrueHD|PCM|DD\+?|Dolby|Atmos)?\s*(?:[1-7]\.[0-2]|2\.0|5\.1|7\.1)\b", IGNORECASE;
+    FRAME_RATE = r"\b\d+(?:\.\d+)?\s*fps\b", IGNORECASE;
+    BIT_DEPTH = r"\b\d{1,2}\s*-?\s*bits?\b", IGNORECASE;
+    QUALITY_TAGS = r"\b(?:2160p|1080p|1080i|720p|576p|540p|480p|4k|8k|UHD|FHD|HD|WEB-?DL|WEBRip|BDRip|BluRay|BD|HDTV|DVD(?:Rip)?|REMUX|Dual-Audio|Multi-Audio|Multi-Subs?|MultiSub|Uncensored|Batch|Complete)\b", IGNORECASE;
+    DUAL_NUMBERING = r"-\s*(\d{1,4})\s*\(\s*S(\d{1,2})E(\d{1,4})\s*\)", IGNORECASE;
+    SEASON_EPISODE = r"\bS(\d{1,2})\s*[-_.]?\s*E(\d{1,4})\b", IGNORECASE;
+    SEASON_DASH_EPISODE = r"\b(?:S|Season\s*)(\d{1,2})\s*-\s*(\d{1,4})\b", IGNORECASE;
+    SEASON_ONLY = r"\b(?:S|Season\s*)(\d{1,2})\b", IGNORECASE;
+    YEAR = r"\b(?:19|20)\d{2}\b", NONE;
+    TRAILING_TAG = concat!(
+        r"\b(?:2160p|1080p|1080i|720p|576p|540p|480p|4k|8k|UHD|FHD|HD|WEB-?DL|WEBRip|BDRip|BluRay|BD|HDTV|DVD(?:Rip)?|REMUX|AVC|HEVC|x264|x265|H\.?264|H\.?265|AV1|VP9|AAC|FLAC|OPUS|DDP?|EAC3|AC3|TrueHD|PCM|Dual-Audio|Multi-Audio|Multi-Subs?|MultiSub|DUAL|NF|CR|AMZN|HIDIVE|BILI|REPACK\d?|PROPER|Uncensored|Batch|Complete)\b",
+        r"[\s\-_|/:\(\[\{.]*$",
+    ), IGNORECASE;
+    TRAILING_SEPARATORS = r"[\s\-_|/:\(\[\{.]+$", NONE;
+    LEADING_SEPARATORS = r"^[\s\-_|/:\)\]\}\.]+", NONE;
+    RESOLUTION = r"\b(2160|1080|720|576|540|480|360)p\b|\b(4k)\b", IGNORECASE;
+    /// A frame size, "1280x720". A cropped picture ("1920x804") is as wide as a full one, so the
+    /// width decides when it says more.
+    FRAME_SIZE = r"\b(\d{3,4})x(\d{3,4})\b", IGNORECASE;
+    /// "Collection" only counts set apart in brackets: titles contain the word ("Kantai
+    /// Collection").
+    BATCH_REGEX = r"\b(?:batch|complete\s+series|complete\s+season)\b|[\[(]\s*collection\s*[\])]", IGNORECASE;
+    BATCH_WORDS = r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?)\b\s*[\])]?|[\[(]\s*collection\s*[\])]", IGNORECASE;
+    /// A file's name, or the CRC of one: what a single file is posted under, and a batch is not.
+    SINGLE_FILE = r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$|[\[(](?=\d*[A-Fa-f])[0-9A-Fa-f]{8}[\])]", IGNORECASE;
+    OTHER_FORMAT = r"\b(?:movie|film|gekijouban|ova|oav|oads?|ona|specials?|recaps?)\b", IGNORECASE;
+    SEASON_MARKERS = r"\bS\d{1,2}\b|\bseason\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b", IGNORECASE;
+    STAGE = r"(\d+)\s*(?:st|nd|rd|th)?\s*(?:-\s*\d+\s*(?:st|nd|rd|th)?\s*)?stage", NONE;
+    DIGITS = r"\d+", NONE;
+    PART = r"part\s*(\d+)", NONE;
+    SEASON_NUMBER = r"season\s*(\d+)", NONE;
+    EPISODE_TOKEN = r"\bS\d{1,2}\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b|\s-\s*\d{1,4}(?:v\d+)?(?=[\s\[(.]|$)", IGNORECASE;
+    SEASON_TAG = r"\bS(\d{1,2})\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b", IGNORECASE;
+    TRAILING_ROMAN = r"\s(ii|iii|iv|v|vi)\s*$", IGNORECASE;
+    LEADING_GROUP = r"^\s*\[[^\]]*\]\s*", NONE;
+    TRAILING_NAME_SEPARATORS = r"[\s\-_|/:]+$", NONE;
+    KEY_EXTENSION = r"\.(mkv|mp4|avi)$", IGNORECASE;
+    NOT_ALPHANUMERIC = r"[^0-9a-z]+", NONE;
+}
+
+/// An episode range: "S01E01-E12", "(01-12)", "[01 ~ 24]", "01~12", a bare "E1-E12", "01-12" or
+/// "- 1-12" set apart by spaces, or "- 12 + 13". A bare "1-2" is left out: it is part of a title as
+/// often as not ("Ranma 1-2 2024 S03E03").
+static RANGE_REGEXES: LazyLock<[Regex; 7]> = LazyLock::new(|| {
+    [
+        (
+            r"\bS\d{1,2}E(\d{1,4})\s*-\s*E?(\d{1,4})\b",
+            Flags::IGNORECASE,
+        ),
+        (
+            r"[\[(]\s*(?:EP?\s*)?(\d{1,4})\s*[-~]\s*(?:EP?\s*)?(\d{1,4})\s*[\])]",
+            Flags::IGNORECASE,
+        ),
+        (r"\b(\d{1,4})\s*~\s*(\d{1,4})\b", Flags::NONE),
+        (
+            r"(?:^|\s)EP?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)",
+            Flags::IGNORECASE,
+        ),
+        (r"(?:^|\s)(\d{2,4})-(\d{2,4})(?=$|\s)", Flags::NONE),
+        (r"\s-\s+(\d{1,4})-(\d{1,4})(?=$|\s)", Flags::NONE),
+        (
+            r"\s-\s+(\d{1,4})\s*[+&]\s*(\d{1,4})(?=$|[\s\[(])",
+            Flags::NONE,
+        ),
+    ]
+    .map(|(pattern, flags)| Regex::from_literal(pattern, flags))
+});
+
+static SEASON_NAME_PATTERNS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
+    [
+        r"\bseason\s*(\d{1,2})\b",
+        r"\b(\d{1,2})(?:st|nd|rd|th)\s+season\b",
+        r"\bS(\d{1,2})\b",
+    ]
+    .map(|pattern| Regex::from_literal(pattern, Flags::IGNORECASE))
+});
+
+/// A season numeral that matched case-insensitively but lowercases to none of the known ones
+/// ("İi" lowercases to "i̇i"): the lookup fails as Python's `KeyError` does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownNumeral(pub String);
+
+impl fmt::Display for UnknownNumeral {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "unknown season numeral {:?}", self.0)
+    }
+}
+
+impl std::error::Error for UnknownNumeral {}
+
+/// What a release title says about itself.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ParsedRelease {
+    pub raw_title: String,
+    pub title: String,
+    pub episode: Option<i64>,
+    pub season: Option<i64>,
+    pub release_group: Option<String>,
+    pub version: i64,
+}
+
+/// What `match_release_to_show` takes besides the title and the aliases.
+#[derive(Clone, Copy, Debug)]
+pub struct MatchOptions<'a> {
+    pub threshold: f64,
+    /// The show's pattern; None builds it from the aliases.
+    pub test_pattern: Option<&'a str>,
+    /// `prepare_aliases` of the aliases; None prepares them.
+    pub prepared_aliases: Option<&'a [(String, String)]>,
+    /// For callers that only interpret an already-downloaded release. Callers that choose which
+    /// torrents to download leave it false, so a release of another cour of the same arc is never
+    /// claimed.
+    pub ignore_arc_marker: bool,
+    pub allow_fuzzy: bool,
+    pub min_resolution: i64,
+}
+
+impl Default for MatchOptions<'_> {
+    fn default() -> Self {
+        Self {
+            threshold: FUZZY_MATCH_THRESHOLD,
+            test_pattern: None,
+            prepared_aliases: None,
+            ignore_arc_marker: false,
+            allow_fuzzy: true,
+            min_resolution: DEFAULT_MIN_RESOLUTION,
+        }
+    }
+}
+
+/// Each non-empty alias with its `normalize_alias` form, leaving out those that normalize to
+/// nothing.
+pub fn prepare_aliases(aliases: &[impl AsRef<str>]) -> Vec<(String, String)> {
+    aliases
+        .iter()
+        .map(AsRef::as_ref)
+        .filter(|alias| !alias.is_empty())
+        .filter_map(|alias| {
+            let normalized = normalize_alias(alias);
+            (!normalized.is_empty()).then(|| (alias.to_owned(), normalized))
+        })
+        .collect()
+}
+
+/// `normalize_title` for a show's own name: square brackets there are part of it ("[Oshi no
+/// Ko]"), not a tag.
+pub fn normalize_alias(alias: &str) -> String {
+    normalize_title(&alias.replace(['[', ']'], " "))
+}
+
+/// The words of a normalized title that name the show: no stopwords, season words or the
+/// season's number.
+pub fn meaningful_words(normalized: &str) -> HashSet<&str> {
+    let mut words = HashSet::new();
+    let mut previous = "";
+    for word in pystr::split(normalized) {
+        if !STOPWORDS.contains(&word)
+            && !SEASON_WORDS.contains(&word)
+            && !(pystr::isdigit(word) && SEASON_WORDS.contains(&previous))
+        {
+            words.insert(word);
+        }
+        previous = word;
+    }
+    words
+}
+
+/// A title in the form names are compared in: lowercase, without bracketed tags, roman numerals
+/// and ordinal seasons as numbers ("2nd Season" and "S2" as "season 2"), and only words.
+pub fn normalize_title(title: &str) -> String {
+    if title.is_empty() {
+        return String::new();
+    }
+    let text = pystr::lower(title);
+    let text = BRACKETED.sub(" ", &text, 0);
+    let text = ROMAN_NUMERAL.sub_with(
+        |found| {
+            let numeral = found.group(1).unwrap_or_default();
+            ROMAN_NUMERALS
+                .iter()
+                .find(|(roman, _)| *roman == numeral)
+                .map_or(numeral, |&(_, number)| number)
+                .to_owned()
+        },
+        &text,
+        0,
+    );
+    let text = ORDINAL_SEASON.sub(r"season \1", &text, 0);
+    let text = SHORT_SEASON.sub(r"season \1", &text, 0);
+    let text = PUNCTUATION.sub(" ", &text, 0);
+    let text = TIMES.sub(" x ", &text, 0);
+    let text = NOT_WORD.sub(" ", &text, 0);
+    pystr::strip(&SPACES.sub(" ", &text, 0)).to_owned()
+}
+
+fn is_non_group_tag(text: &str) -> bool {
+    NON_GROUP_TAGS.contains(&pystr::lower(text).as_str())
+}
+
+/// A CRC in brackets: 8 or 4 hex digits.
+fn is_checksum(text: &str) -> bool {
+    matches!(text.len(), 4 | 8) && text.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The release group, whether at the start ("[SubsPlease]"), at the end ("[Varyg]") or a scene
+/// suffix ("-VARYG"). An empty bracket at the start gives an empty group.
+pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
+    if let Some(found) = GROUP_AT_START.r#match(pystr::strip(raw_title)) {
+        let candidate = pystr::strip(found.group(1).unwrap_or_default());
+        if !is_non_group_tag(candidate) && !pystr::isdigit(candidate) {
+            return Some(candidate.to_owned());
+        }
+    }
+
+    let scene: Vec<&str> = SCENE_GROUP
+        .finditer(raw_title)
+        .filter_map(|found| found.group(1))
+        .collect();
+    if let Some(candidate) = scene.into_iter().rev().find(|candidate| {
+        !is_non_group_tag(candidate) && candidate.chars().count() >= 2 && !pystr::isdigit(candidate)
+    }) {
+        return Some(candidate.to_owned());
+    }
+
+    let brackets: Vec<&str> = BRACKET_CONTENT
+        .finditer(raw_title)
+        .filter_map(|found| found.group(1))
+        .collect();
+    brackets
+        .into_iter()
+        .rev()
+        .map(pystr::strip)
+        .find(|value| !is_checksum(value) && !is_non_group_tag(value) && !pystr::isdigit(value))
+        .map(str::to_owned)
+}
+
+/// The release's version: "v2", "[v3]", "ver. 2", or a REPACK or PROPER (2, or one more than the
+/// REPACK's number); 1 when it names none.
+pub fn extract_release_version(raw_title: &str) -> i64 {
+    if raw_title.is_empty() {
+        return 1;
+    }
+    if let Some(value) = VERSION_TAG
+        .search(raw_title)
+        .and_then(|found| (1..=3).find_map(|index| found.group(index)))
+    {
+        return pystr::int(value);
+    }
+    if REPACK_OR_PROPER.is_match(raw_title) {
+        return REPACK_NUMBER
+            .search(raw_title)
+            .and_then(|found| found.group(1))
+            .map_or(2, |number| pystr::int(number).saturating_add(1));
+    }
+    1
+}
+
+/// Parses a release title or file name into its name, episode, season, group and version.
+///
+/// A double release ("- 01-02") reads as its first episode; `episode_pair` gives the second.
+pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
+    if raw_title.is_empty() {
+        return ParsedRelease {
+            raw_title: String::new(),
+            title: String::new(),
+            episode: None,
+            season: None,
+            release_group: None,
+            version: 1,
+        };
+    }
+
+    if episode_pair(raw_title).is_some() {
+        let mut parsed = parse_release_title(&first_of_pair(raw_title));
+        parsed.raw_title = raw_title.to_owned();
+        return parsed;
+    }
+
+    let version = extract_release_version(raw_title);
+    let release_group = extract_release_group_tag(raw_title);
+    let mut cleaned = pystr::strip(raw_title).to_owned();
+    if let Some(group) = release_group.as_deref().filter(|group| !group.is_empty()) {
+        cleaned = remove_group(&cleaned, group);
+    }
+    let cleaned = VERSION_REGEX.sub(r"\1", &cleaned, 0);
+    let cleaned = pystr::strip(&VIDEO_EXTENSION.sub("", &cleaned, 0)).to_owned();
+    let cleaned = AUDIO_CHANNELS.sub(" ", &cleaned, 0);
+    let cleaned = FRAME_RATE.sub(" ", &cleaned, 0);
+    let cleaned = BIT_DEPTH.sub(" ", &cleaned, 0);
+    let cleaned = QUALITY_TAGS.sub(" ", &cleaned, 0);
+
+    let primary_segment = pystr::strip(
+        cleaned
+            .split_once('|')
+            .map_or(&*cleaned, |(first, _)| first),
+    );
+    let (title_candidate, episode, season) = episode_and_season(primary_segment);
+
+    let mut title = BRACKETED.sub("", title_candidate, 0);
+    title = YEAR.sub("", &title, 0);
+    for _ in 0..5 {
+        title = pystr::strip(&TRAILING_TAG.sub("", &title, 0)).to_owned();
+        title = pystr::strip(&TRAILING_SEPARATORS.sub("", &title, 0)).to_owned();
+    }
+    title = pystr::strip(&LEADING_SEPARATORS.sub("", &title, 0)).to_owned();
+    title = pystr::strip(&SPACES.sub(" ", &title, 0)).to_owned();
+
+    if title.is_empty() {
+        return parse_without_name(raw_title, episode, season, release_group, version);
+    }
+    ParsedRelease {
+        raw_title: raw_title.to_owned(),
+        title,
+        episode,
+        season,
+        release_group,
+        version,
+    }
+}
+
+/// The parse of a title in which no name is found: the raw title stands for the name, and an
+/// episode or season of 0 or an empty group counts as none.
+fn parse_without_name(
+    raw_title: &str,
+    episode: Option<i64>,
+    season: Option<i64>,
+    release_group: Option<String>,
+    version: i64,
+) -> ParsedRelease {
+    ParsedRelease {
+        raw_title: raw_title.to_owned(),
+        title: raw_title.to_owned(),
+        episode: episode.filter(|&number| number != 0),
+        season: season.filter(|&number| number != 0),
+        release_group: release_group.filter(|group| !group.is_empty()),
+        version,
+    }
+}
+
+/// The title without the group's tags: "[Group]" at the start or anywhere, and a "-Group" that
+/// ends a word, each with the whitespace after it.
+fn remove_group(title: &str, group: &str) -> String {
+    let bracketed = format!("[{group}]");
+    let title = match title.strip_prefix(&bracketed) {
+        Some(rest) => pystr::lstrip(rest),
+        None => title,
+    };
+    let title = remove_tags(title, &bracketed, false);
+    remove_tags(&title, &format!("-{group}"), true)
+}
+
+/// `text` without each `tag` and the whitespace after it, scanning left to right as `re.sub` does.
+/// With `at_word_end`, only a tag followed by a word boundary (`\b`) is removed.
+fn remove_tags(text: &str, tag: &str, at_word_end: bool) -> String {
+    let ends_in_word = tag.chars().next_back().is_some_and(pystr::is_word);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(tag) {
+        let after = &rest[at + tag.len()..];
+        let word_follows = after.chars().next().is_some_and(pystr::is_word);
+        if at_word_end && ends_in_word == word_follows {
+            // No match here: the search goes on from the next character.
+            let next = at + rest[at..].chars().next().map_or(1, char::len_utf8);
+            out.push_str(&rest[..next]);
+            rest = &rest[next..];
+            continue;
+        }
+        out.push_str(&rest[..at]);
+        rest = pystr::lstrip(after);
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The part of a title before its episode and season numbers, with the episode and season.
+fn episode_and_season(segment: &str) -> (&str, Option<i64>, Option<i64>) {
+    let before = |found: &Match<'_>| pystr::strip(&segment[..found.start()]);
+    let number = |found: &Match<'_>, index| found.group(index).map(pystr::int);
+
+    if let Some(found) = DUAL_NUMBERING.search(segment) {
+        return (before(&found), number(&found, 1), number(&found, 2));
+    }
+    if let Some(found) = SEASON_EPISODE.search(segment) {
+        return (before(&found), number(&found, 2), number(&found, 1));
+    }
+    if let Some(found) = SEASON_DASH_EPISODE.search(segment) {
+        return (before(&found), number(&found, 2), number(&found, 1));
+    }
+    if let Some(found) = EPISODE_NUMBER
+        .finditer(segment)
+        .filter(|found| is_episode_number(segment, found))
+        .last()
+    {
+        return (before(&found), found.name("num").map(pystr::int), None);
+    }
+    let season = SEASON_ONLY
+        .search(segment)
+        .and_then(|found| found.group(1))
+        .map(pystr::int);
+    (segment, None, season)
+}
+
+/// Whether a standalone number in the segment is an episode's: not a year, and not the number of
+/// a season, part or volume.
+fn is_episode_number(segment: &str, found: &Match<'_>) -> bool {
+    let whole = found.as_str();
+    // An episode title or a language tag may follow the number only when " - " sets it apart.
+    if found.name("more").is_some() && !found.name("pre").unwrap_or_default().contains('-') {
+        return false;
+    }
+    let prefixed = whole.trim_matches([' ', '-', '_']).starts_with(['E', '#']);
+    if prefixed {
+        return true;
+    }
+    let number = pystr::int(found.name("num").unwrap_or_default());
+    if (1950..=2050).contains(&number) {
+        return false;
+    }
+    // "Season 2", "Part 6" and "Volume 1" number something bigger than an episode.
+    whole.contains('-') || !COUNTS_SOMETHING_ELSE.is_match(&segment[..found.start()])
+}
+
+/// The best fuzzy score of the title against the aliases, from 0 to 100, with the alias that gave
+/// it.
+///
+/// An alias sharing no word that names the show (only "season 3" or "final season") is skipped.
+pub fn calculate_match_score(
+    parsed_title: &str,
+    aliases: &[impl AsRef<str>],
+    prepared_aliases: Option<&[(String, String)]>,
+) -> (f64, Option<String>) {
+    if parsed_title.is_empty() || aliases.is_empty() {
+        return (0.0, None);
+    }
+    let norm_parsed = normalize_title(parsed_title);
+    let tokens: Vec<&str> = pystr::split(&norm_parsed)
+        .filter(|word| !STOPWORDS.contains(word))
+        .collect();
+    if tokens.is_empty() {
+        return (0.0, None);
+    }
+    let named = meaningful_words(&norm_parsed);
+    // One short word is compared whole, so it cannot match a longer name that contains it.
+    let short = matches!(tokens.as_slice(), [only] if only.chars().count() < 5);
+
+    let prepared_here;
+    let prepared = match prepared_aliases {
+        Some(prepared) => prepared,
+        None => {
+            prepared_here = prepare_aliases(aliases);
+            &prepared_here
+        }
+    };
+
+    let mut best_score = 0.0;
+    let mut best_alias = None;
+    for (alias, norm_alias) in prepared {
+        if norm_parsed == *norm_alias {
+            return (100.0, Some(alias.clone()));
+        }
+        if named.is_disjoint(&meaningful_words(norm_alias)) {
+            continue;
+        }
+        let score = if short {
+            fuzz::token_sort_ratio(&norm_parsed, norm_alias)
+        } else {
+            fuzz::token_set_ratio(&norm_parsed, norm_alias)
+        };
+        if score > best_score {
+            best_score = score;
+            best_alias = Some(alias);
+        }
+    }
+    (best_score, best_alias.cloned())
+}
+
+/// The lines a release says it has ("720p" is 720, "4K" is 2160, "1280x720" is 720), or None when
+/// it says nothing.
+pub fn release_resolution(raw_title: &str) -> Option<i64> {
+    if let Some(found) = RESOLUTION.search(raw_title) {
+        return Some(found.group(1).map_or(2160, pystr::int));
+    }
+    let frame = FRAME_SIZE.search(raw_title)?;
+    let width = pystr::int(frame.group(1)?);
+    let height = pystr::int(frame.group(2)?);
+    let full_frame = LINES_BY_WIDTH
+        .iter()
+        .find(|&&(wide, _)| width >= wide)
+        .map_or(0, |&(_, lines)| lines);
+    Some(height.max(full_frame))
+}
+
+/// The first range among `RANGE_REGEXES`, in their order, with the index of the regex that found
+/// it and its first and last episode. "(2019-2021)" dates a release and is no range.
+fn range_match(raw_title: &str) -> Option<(usize, Match<'_>, (i64, i64))> {
+    RANGE_REGEXES.iter().enumerate().find_map(|(index, regex)| {
+        regex.finditer(raw_title).find_map(|found| {
+            let first = pystr::int(found.group(1)?);
+            let last = pystr::int(found.group(2)?);
+            (0 < first && first < last && !(first >= 1900 && last <= 2100)).then_some((
+                index,
+                found,
+                (first, last),
+            ))
+        })
+    })
+}
+
+/// The first and last episode a title names as a range, or None when it names none.
+pub fn batch_range(raw_title: &str) -> Option<(i64, i64)> {
+    range_match(raw_title).map(|(_, _, span)| span)
+}
+
+/// The two episodes of a double release ("- 01-02", "- 12 + 13"): one torrent of two episodes in
+/// a row. None for anything else; a longer range, or one called a batch, is a batch.
+pub fn episode_pair(raw_title: &str) -> Option<(i64, i64)> {
+    if BATCH_REGEX.is_match(raw_title) {
+        return None;
+    }
+    batch_range(raw_title).filter(|&(first, last)| last == first + 1)
+}
+
+/// A double release's title with its range cut down to the first episode, so it reads like a
+/// single one's.
+fn first_of_pair(raw_title: &str) -> String {
+    let Some((index, found, _)) = range_match(raw_title) else {
+        return raw_title.to_owned();
+    };
+    if index == BRACKETED_RANGE {
+        return format!(
+            "{} - {} {}",
+            &raw_title[..found.start()],
+            found.group(1).unwrap_or_default(),
+            &raw_title[found.end()..]
+        );
+    }
+    match (found.span(1), found.span(2)) {
+        (Some((_, first_end)), Some((_, last_end))) => {
+            format!("{}{}", &raw_title[..first_end], &raw_title[last_end..])
+        }
+        _ => raw_title.to_owned(),
+    }
+}
+
+/// Whether the title is one file's: a special or a movie when it carries no episode number, never
+/// a whole season.
+pub fn is_single_file(raw_title: &str) -> bool {
+    SINGLE_FILE.is_match(pystr::strip(raw_title))
+}
+
+/// The words of a normalized name that tell it apart: no digits and no filler words.
+fn name_words(normalized: &str) -> HashSet<&str> {
+    meaningful_words(normalized)
+        .into_iter()
+        .filter(|word| !pystr::isdigit(word) && !NAME_FILLERS.contains(word))
+        .collect()
+}
+
+/// Whether the name is one of the show's with its words spaced or ordered another way
+/// ("Daiseijo" for "Dai Seijo").
+fn spelled_like_a_name(title: &str, aliases: &[impl AsRef<str>]) -> bool {
+    let name = normalize_title(title);
+    let unspaced = name.replace(' ', "");
+    aliases.iter().any(|alias| {
+        let known = normalize_alias(alias.as_ref());
+        let score = fuzz::token_sort_ratio(&name, &known)
+            .max(fuzz::ratio(&unspaced, &known.replace(' ', "")));
+        score >= SAME_NAME_SCORE
+    })
+}
+
+/// Whether a release of the show's name is really another thing: a movie or special, a
+/// " - subtitle" the show's titles lack, or another show that only shares a word and a season with
+/// it ("Grand Blue S2" and "Blue Box Season 2") or whose name holds the show's ("Monster Musume no
+/// Oishasan" and "Monster").
+pub fn names_something_else(raw_title: &str, aliases: &[impl AsRef<str>]) -> bool {
+    let parsed = parse_release_title(raw_title);
+    let title = parsed.title.trim_matches([' ', '-']);
+    let all_names = pystr::lower(
+        &aliases
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<_>>()
+            .join(" "),
+    );
+    if OTHER_FORMAT
+        .finditer(title)
+        .any(|word| !all_names.contains(&pystr::lower(word.as_str())))
+    {
+        return true;
+    }
+
+    let core = normalize_title(&SEASON_MARKERS.sub(" ", title, 0));
+    if !aliases.iter().any(|alias| {
+        let alias_core = normalize_alias(&SEASON_MARKERS.sub(" ", alias.as_ref(), 0));
+        fuzz::token_set_ratio(&core, &alias_core) >= FUZZY_MATCH_THRESHOLD
+    }) {
+        return true;
+    }
+
+    let normalized = normalize_title(title);
+    let named = name_words(&normalized);
+    let known_names: Vec<String> = aliases
+        .iter()
+        .map(|alias| normalize_alias(alias.as_ref()))
+        .collect();
+    let known: Vec<HashSet<&str>> = known_names.iter().map(|name| name_words(name)).collect();
+    // One of the show's names whole, going on with words none of its names has, is another show's
+    // name, unless the words only differ in how one of the names is spelled.
+    let has_other_words = named
+        .iter()
+        .any(|word| known.iter().all(|words| !words.contains(word)));
+    if has_other_words
+        && known
+            .iter()
+            .any(|words| !words.is_empty() && words.is_subset(&named))
+        && !spelled_like_a_name(title, aliases)
+    {
+        return true;
+    }
+    // A subtitle that is part of one of the show's names ("Bleach - Sennen Kessen-hen" of "... -
+    // Soukoku-tan") is its own.
+    if !title.contains(" - ") || known.iter().any(|words| named.is_subset(words)) {
+        return false;
+    }
+    !known_names
+        .iter()
+        .any(|name| fuzz::token_sort_ratio(&normalized, name) >= SAME_NAME_SCORE)
+}
+
+/// Whether a release names a season none of the show's names does ("Kingdom 5th Season" for
+/// "Kingdom 6th Season"). A show whose names give no season, or a release that names none, never
+/// conflicts.
+pub fn season_conflict(
+    raw_title: &str,
+    aliases: &[impl AsRef<str>],
+) -> Result<bool, UnknownNumeral> {
+    let Some(named) = release_season(raw_title)? else {
+        return Ok(false);
+    };
+    let mut seasons = HashSet::new();
+    for alias in aliases {
+        if let Some(season) = release_season(alias.as_ref())? {
+            seasons.insert(season);
+        }
+    }
+    Ok(!seasons.is_empty() && !seasons.contains(&named))
+}
+
+/// Whether a release holds a run of episodes in one torrent. A double episode (`episode_pair`) is
+/// not one.
+pub fn is_batch(raw_title: &str) -> bool {
+    BATCH_REGEX.is_match(raw_title)
+        || batch_range(raw_title).is_some_and(|(first, last)| last != first + 1)
+}
+
+/// The title without its batch markers and episode range, so it can be matched to a show like a
+/// single release.
+pub fn strip_batch(raw_title: &str) -> String {
+    let mut text = BATCH_WORDS.sub(" ", raw_title, 0);
+    for regex in RANGE_REGEXES.iter() {
+        text = regex.sub(" ", &text, 0);
+    }
+    pystr::split(&text).collect::<Vec<_>>().join(" ")
+}
+
+/// How well a release fits the preferred quality, lower is better: the preferred resolution
+/// itself, then the closest one above it, then a release that names none. One below the
+/// preference (which is never taken) ranks last of all.
+pub fn resolution_rank(raw_title: &str, preferred: i64) -> i64 {
+    match release_resolution(raw_title) {
+        None => 10_000,
+        Some(resolution) if resolution >= preferred => resolution.saturating_sub(preferred),
+        Some(_) => 100_000,
+    }
+}
+
+/// Whether a release may be taken: no batch, and no resolution below the minimum. A release that
+/// names none is kept.
+pub fn is_valid_release(raw_title: &str, min_resolution: i64) -> bool {
+    !is_batch(raw_title)
+        && release_resolution(raw_title).is_none_or(|resolution| resolution >= min_resolution)
+}
+
+/// The arc, cour or part marker of a text as a token that keeps split seasons apart ("stage1",
+/// "stage2-3", "part7", "season4"), or None when it carries none.
+pub fn extract_arc_qualifiers(text: &str) -> Option<String> {
+    if text.is_empty() {
+        return None;
+    }
+    let lowered = pystr::lower(text);
+    if let Some(stage) = STAGE.search(&lowered) {
+        let numbers: Vec<&str> = DIGITS
+            .finditer(stage.as_str())
+            .map(|found| found.as_str())
+            .collect();
+        return Some(format!("stage{}", numbers.join("-")));
+    }
+    if let Some(part) = PART.search(&lowered) {
+        return Some(format!("part{}", part.group(1).unwrap_or_default()));
+    }
+    SEASON_NUMBER
+        .search(&lowered)
+        .map(|season| format!("season{}", season.group(1).unwrap_or_default()))
+}
+
+/// The title before its episode number ("S01E05" or " - 05"), or the whole title.
+fn before_episode(raw_title: &str) -> &str {
+    EPISODE_TOKEN
+        .search(raw_title)
+        .map_or(raw_title, |token| &raw_title[..token.start()])
+}
+
+/// The arc marker in a release's series name, ignoring what follows the episode number: episode
+/// names, quality tags and alternate titles can mention a "Part 5" or "Part 1080p" that is not
+/// the show's arc.
+pub fn release_arc_qualifier(raw_title: &str) -> Option<String> {
+    extract_arc_qualifiers(before_episode(raw_title))
+}
+
+/// The series name of a release: no leading group tag, nothing from the episode number on.
+fn series_name_part(raw_title: &str) -> String {
+    LEADING_GROUP.sub("", before_episode(raw_title), 0)
+}
+
+fn name_season(name: &str) -> Result<Option<i64>, UnknownNumeral> {
+    for pattern in SEASON_NAME_PATTERNS.iter() {
+        if let Some(found) = pattern.search(name) {
+            return Ok(found.group(1).map(pystr::int));
+        }
+    }
+    let Some(roman) = TRAILING_ROMAN.search(name) else {
+        return Ok(None);
+    };
+    let numeral = pystr::lower(roman.group(1).unwrap_or_default());
+    ROMAN_SEASONS
+        .iter()
+        .find(|(roman, _)| *roman == numeral)
+        .map(|&(_, season)| Some(season))
+        .ok_or(UnknownNumeral(numeral))
+}
+
+/// The season a release names for itself, or None when it names none: from the series name in
+/// front of the episode number ("Link Click S3", "Foo 2nd Season", "Mob Psycho 100 III"), then
+/// from an "S03E05" tag.
+pub fn release_season(raw_title: &str) -> Result<Option<i64>, UnknownNumeral> {
+    if let Some(season) = name_season(&series_name_part(raw_title))? {
+        return Ok(Some(season));
+    }
+    Ok(SEASON_TAG
+        .search(raw_title)
+        .and_then(|tag| tag.group(1))
+        .map(pystr::int))
+}
+
+/// The arc marker a show's aliases insist on, if any. Only cour or stage and part markers count:
+/// release groups often leave out a plain "Season N", but a bare title is ambiguous between the
+/// arcs of a cour split.
+pub fn alias_arc_requirement(aliases: &[impl AsRef<str>]) -> Option<String> {
+    aliases
+        .iter()
+        .filter_map(|alias| extract_arc_qualifiers(alias.as_ref()))
+        .find(|qualifier| qualifier.starts_with("stage") || qualifier.starts_with("part"))
+}
+
+fn arc_is_compatible(requirement: &str, qualifier: Option<&str>) -> bool {
+    let Some(qualifier) = qualifier else {
+        return false;
+    };
+    if requirement == qualifier {
+        return true;
+    }
+    // "stage2-3" accepts a title that names either half of that cour pair.
+    match (
+        requirement.strip_prefix("stage"),
+        qualifier.strip_prefix("stage"),
+    ) {
+        (Some(required), Some(named)) => {
+            let required: HashSet<&str> = required.split('-').collect();
+            named.split('-').any(|stage| required.contains(stage))
+        }
+        _ => false,
+    }
+}
+
+/// Makes the parsed title carry the season marker the release writes in its name ("Ao Ashi S2").
+fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) -> Result<(), UnknownNumeral> {
+    let name = series_name_part(raw_title);
+    if name_season(&name)?.is_none() || name_season(&parsed.title)?.is_some() {
+        return Ok(());
+    }
+    let name = pystr::strip(&TRAILING_NAME_SEPARATORS.sub("", &name, 0)).to_owned();
+    if !name.is_empty() {
+        parsed.title = name;
+    }
+    Ok(())
+}
+
+/// Whether a feed item or torrent is a release of the show, with its score and parse.
+///
+/// Batches and releases below the minimum resolution never match, nor, unless
+/// `ignore_arc_marker`, a release without the arc marker the show's aliases insist on. Then the
+/// show's pattern decides (a pattern that does not compile matches nothing), and failing that the
+/// fuzzy score of the parsed name against `threshold`, when `allow_fuzzy`.
+pub fn match_release_to_show(
+    raw_title: &str,
+    aliases: &[impl AsRef<str>],
+    options: &MatchOptions<'_>,
+) -> Result<(bool, f64, ParsedRelease), UnknownNumeral> {
+    let mut parsed = parse_release_title(raw_title);
+    if !is_valid_release(raw_title, options.min_resolution) {
+        return Ok((false, 0.0, parsed));
+    }
+
+    let requirement = (!options.ignore_arc_marker)
+        .then(|| alias_arc_requirement(aliases))
+        .flatten();
+    if requirement.is_some_and(|requirement| {
+        !arc_is_compatible(&requirement, release_arc_qualifier(raw_title).as_deref())
+    }) {
+        return Ok((false, 0.0, parsed));
+    }
+
+    let built;
+    let pattern = match options.test_pattern {
+        Some(pattern) => pattern,
+        None => {
+            built = build_regex_pattern(aliases, None);
+            &built
+        }
+    };
+    let regex = Regex::new(pattern, Flags::IGNORECASE).ok();
+    if let Some(found) = regex.as_ref().and_then(|regex| regex.search(raw_title)) {
+        let token = pystr::strip(found.as_str());
+        if !token.is_empty() {
+            parsed.title = token.to_owned();
+        }
+        keep_season_in_title(raw_title, &mut parsed)?;
+        return Ok((true, 100.0, parsed));
+    }
+
+    if !options.allow_fuzzy {
+        return Ok((false, 0.0, parsed));
+    }
+    let (score, _) = calculate_match_score(&parsed.title, aliases, options.prepared_aliases);
+    let is_match = score >= options.threshold;
+    if is_match {
+        keep_season_in_title(raw_title, &mut parsed)?;
+    }
+    Ok((is_match, score, parsed))
+}
+
+/// A release name reduced to its words, so naming styles compare equal: a feed title ("Blue Box
+/// S02E01 … H.264-VARYG (Ao no Hako …)") and the torrent's file name
+/// ("Blue.Box.S02E01.….H.264-VARYG.mkv") name one release.
+pub fn release_key(name: &str) -> String {
+    let key = KEY_EXTENSION.sub("", pystr::strip(name), 0);
+    pystr::strip(&NOT_ALPHANUMERIC.sub(" ", &pystr::lower(&key), 0)).to_owned()
+}
+
+/// Whether two names are one release: equal words, or one extends the other by whole words.
+pub fn same_release(first: &str, second: &str) -> bool {
+    let (a, b) = (release_key(first), release_key(second));
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let extends = |longer: &str, shorter: &str| {
+        longer
+            .strip_prefix(shorter)
+            .is_some_and(|rest| rest.starts_with(' '))
+    };
+    a == b || extends(&a, &b) || extends(&b, &a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_scene_group_ending_in_a_symbol_is_removed_only_before_a_word() {
+        assert_eq!(
+            parse_release_title("Show -Foo!bar - 02 [Foo!]").title,
+            "Show bar"
+        );
+        assert_eq!(
+            parse_release_title("Show -Foo! bar - 02 [Foo!]").title,
+            "Show -Foo! bar"
+        );
+    }
+
+    #[test]
+    fn an_unknown_season_numeral_fails_the_match() {
+        let matched = match_release_to_show("Show İi - 01", &["Show"], &MatchOptions::default());
+        assert_eq!(matched, Err(UnknownNumeral("i\u{307}i".to_owned())));
+    }
+
+    #[test]
+    fn numbers_beyond_i64_saturate() {
+        assert_eq!(
+            extract_release_version("Show - 01v99999999999999999999"),
+            i64::MAX
+        );
+        assert_eq!(
+            extract_release_version("Show REPACK99999999999999999999 - 01"),
+            i64::MAX
+        );
+        assert_eq!(resolution_rank("Show 1080p", i64::MIN), i64::MAX);
+    }
+}

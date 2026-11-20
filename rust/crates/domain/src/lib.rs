@@ -4,6 +4,7 @@
 
 pub mod enums;
 pub mod fuzz;
+pub mod parsing;
 pub mod patterns;
 pub mod pyre;
 mod pystr;
