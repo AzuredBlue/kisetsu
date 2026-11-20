@@ -70,6 +70,16 @@ impl Regex {
         })
     }
 
+    /// A pattern written in the code, which is valid: Python compiles the same text when its
+    /// module loads, and the tests run every one.
+    #[expect(
+        clippy::expect_used,
+        reason = "a pattern written in the code is valid, as Python's import of the same text shows"
+    )]
+    pub(crate) fn from_literal(pattern: &'static str, flags: Flags) -> Self {
+        Self::new(pattern, flags).expect("a pattern written in the code compiles")
+    }
+
     /// Whether the pattern matches anywhere in the text: `re.search(...)` is not None.
     pub fn is_match(&self, text: &str) -> bool {
         match self.starts {
