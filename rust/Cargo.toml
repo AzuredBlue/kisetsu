@@ -10,4 +10,6 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+fancy-regex = { version = "0.20.2", default-features = false, features = ["std", "perf"] }
 jiff = "1.0.1"
+regex-syntax = { version = "0.8.12", default-features = false, features = ["std"] }
