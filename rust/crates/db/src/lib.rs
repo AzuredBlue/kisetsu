@@ -8,6 +8,7 @@ mod error;
 pub mod migrations;
 pub mod schema;
 pub mod storage;
+pub mod store;
 
 pub use error::{Error, Result, UnknownName};
 pub use rusqlite;
