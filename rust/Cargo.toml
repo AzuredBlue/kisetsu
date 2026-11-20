@@ -8,3 +8,6 @@ edition = "2024"
 rust-version = "1.85"
 license = "MIT"
 publish = false
+
+[workspace.dependencies]
+jiff = "1.0.1"
