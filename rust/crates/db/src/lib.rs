@@ -3,7 +3,9 @@
 
 #![forbid(unsafe_code)]
 
+mod ddl;
 mod error;
+pub mod migrations;
 pub mod schema;
 pub mod storage;
 
