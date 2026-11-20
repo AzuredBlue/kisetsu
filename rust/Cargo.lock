@@ -108,6 +108,7 @@ dependencies = [
  "fancy-regex",
  "jiff",
  "regex-syntax",
+ "sha1_smol",
 ]
 
 [[package]]
@@ -203,6 +204,12 @@ dependencies = [
  "quote",
  "syn",
 ]
+
+[[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "syn"

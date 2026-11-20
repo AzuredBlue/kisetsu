@@ -4,6 +4,7 @@
 
 pub mod enums;
 pub mod fuzz;
+pub mod matcher;
 pub mod numbering;
 pub mod parsing;
 pub mod patterns;
