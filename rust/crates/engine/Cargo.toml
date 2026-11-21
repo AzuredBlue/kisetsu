@@ -7,3 +7,12 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+kisetsu-db = { path = "../db" }
+kisetsu-services = { path = "../services" }
+thiserror.workspace = true
+tracing.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"

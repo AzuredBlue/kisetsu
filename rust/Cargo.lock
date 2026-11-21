@@ -401,6 +401,12 @@ dependencies = [
 [[package]]
 name = "kisetsu-engine"
 version = "0.1.0"
+dependencies = [
+ "kisetsu-db",
+ "kisetsu-services",
+ "thiserror",
+ "tracing",
+]
 
 [[package]]
 name = "kisetsu-services"
