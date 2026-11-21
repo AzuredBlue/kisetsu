@@ -1,11 +1,13 @@
 //! Kisetsu: reads the user's AniList watching list and makes qBittorrent download each new episode.
 
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod app;
 mod cli;
 mod config;
+mod console;
 mod tray;
 
 use std::process::ExitCode;
@@ -18,6 +20,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 fn main() -> ExitCode {
+    console::attach_to_parent();
     let logs = Arc::new(LogRing::new());
     tracing_subscriber::registry()
         .with(
