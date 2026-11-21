@@ -73,6 +73,10 @@ pub trait Clock: Send + Sync {
     /// Seconds on a monotonic clock.
     fn now(&self) -> f64;
     fn sleep(&self, seconds: f64);
+    /// The current instant on the wall clock.
+    fn wall(&self) -> Timestamp {
+        Timestamp::now()
+    }
 }
 
 /// The real clock.

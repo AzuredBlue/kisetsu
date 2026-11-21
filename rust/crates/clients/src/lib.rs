@@ -6,6 +6,7 @@
 mod net;
 mod url;
 
+pub mod anilist;
 pub mod fetch;
 pub mod qbittorrent;
 pub mod rss;
