@@ -38,7 +38,7 @@ const FORMAT: i64 = 1;
 const DB_FILE: &str = "kisetsu.db";
 const MANIFEST_FILE: &str = "manifest.json";
 /// Far past any real database; stops a damaged or hostile file from filling the disk.
-const MAX_BACKUP_BYTES: u64 = 1024 * 1024 * 1024;
+pub const MAX_BACKUP_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const THEMES: [&str; 3] = ["system", "light", "dark"];
 

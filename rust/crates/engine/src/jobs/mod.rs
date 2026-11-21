@@ -47,7 +47,7 @@ const HOUSEKEEPING_FIRST: Duration = Duration::from_secs(3600);
 const HUNT_IDLE_MAX: Duration = Duration::from_secs(3600);
 /// The list the setup check fetched is taken by the sync that follows within this time, instead of
 /// asking again.
-const LIST_REUSE_SECONDS: f64 = 120.0;
+pub const LIST_REUSE_SECONDS: f64 = 120.0;
 /// A burst of pokes (a search finishing every second or so) runs the job at most once in this
 /// time; a lone poke runs it at once.
 const BURST_GAP: Duration = Duration::from_secs(1);

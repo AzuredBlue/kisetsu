@@ -34,7 +34,7 @@ use crate::{adoption, ingest, shows, watched};
 
 /// The list statuses offered for adding: what the user watches, paused or dropped. Completed ones
 /// are left out.
-const LIST_STATUSES: [&str; 4] = ["CURRENT", "REPEATING", "PAUSED", "DROPPED"];
+pub const LIST_STATUSES: [&str; 4] = ["CURRENT", "REPEATING", "PAUSED", "DROPPED"];
 /// Releases older than the season start by more than this are not the show's: a season's first
 /// episodes can air in the weeks before AniList's nominal start (a FALL show in late September).
 const SEASON_SLACK: SignedDuration = SignedDuration::from_hours(30 * 24);

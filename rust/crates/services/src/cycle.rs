@@ -15,7 +15,7 @@ use crate::downloads::{self, Settled};
 use crate::error::Result;
 use crate::{adoption, feeds, grab, ingest, library, shows, tags, watched};
 
-const LAST_SYNC_KEY: &str = "last_anilist_sync_at";
+pub const LAST_SYNC_KEY: &str = "last_anilist_sync_at";
 /// Version of the colour extraction; a stored result from another version is recomputed.
 const ACCENT_VERSION: u32 = 4;
 const EVENTS_KEEP: SignedDuration = SignedDuration::from_hours(90 * 24);
