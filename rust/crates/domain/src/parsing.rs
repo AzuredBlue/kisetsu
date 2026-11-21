@@ -688,12 +688,10 @@ fn name_words(normalized: &str) -> HashSet<&str> {
 
 /// Whether the name is one of the show's with its words spaced or ordered another way
 /// ("Daiseijo" for "Dai Seijo").
-fn spelled_like_a_name(title: &str, aliases: &[impl AsRef<str>]) -> bool {
-    let name = normalize_title(title);
+fn spelled_like_a_name(name: &str, known_names: &[String]) -> bool {
     let unspaced = name.replace(' ', "");
-    aliases.iter().any(|alias| {
-        let known = normalize_alias(alias.as_ref());
-        let score = fuzz::token_sort_ratio(&name, &known)
+    known_names.iter().any(|known| {
+        let score = fuzz::token_sort_ratio(name, known)
             .max(fuzz::ratio(&unspaced, &known.replace(' ', "")));
         score >= SAME_NAME_SCORE
     })
@@ -703,8 +701,7 @@ fn spelled_like_a_name(title: &str, aliases: &[impl AsRef<str>]) -> bool {
 /// " - subtitle" the show's titles lack, or another show that only shares a word and a season with
 /// it ("Grand Blue S2" and "Blue Box Season 2") or whose name holds the show's ("Monster Musume no
 /// Oishasan" and "Monster").
-pub fn names_something_else(raw_title: &str, aliases: &[impl AsRef<str>]) -> bool {
-    let parsed = parse_release_title(raw_title);
+pub fn names_something_else(parsed: &ParsedRelease, aliases: &[impl AsRef<str>]) -> bool {
     let title = parsed.title.trim_matches([' ', '-']);
     let all_names = aliases
         .iter()
@@ -743,7 +740,7 @@ pub fn names_something_else(raw_title: &str, aliases: &[impl AsRef<str>]) -> boo
         && known
             .iter()
             .any(|words| !words.is_empty() && words.is_subset(&named))
-        && !spelled_like_a_name(title, aliases)
+        && !spelled_like_a_name(&normalized, &known_names)
     {
         return true;
     }
