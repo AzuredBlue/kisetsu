@@ -1,6 +1,7 @@
 //! The engine's jobs. Network work happens on the thread of the job; every database or
 //! qBittorrent step goes through [`Engine::call`].
 
+mod addshow;
 mod anilist;
 mod backfill;
 mod downloads;
@@ -67,6 +68,9 @@ const GAP_BACKFILL_DELAY: Duration = Duration::from_secs(5);
 /// The shortest wait the hunt takes between looks.
 const HUNT_FLOOR: Duration = Duration::from_secs(5);
 
+/// How long the running jobs get to end when they are held.
+const STOP_GRACE: Duration = Duration::from_secs(30);
+
 /// What is wrong with qBittorrent, AniList or the grab, for the UI's status.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Health {
@@ -112,6 +116,8 @@ pub struct Jobs {
     /// How many results the feeds' pages held, waiting for the next search to take them in, so
     /// that reading a feed never waits for a search.
     page_sizes: Mutex<Vec<(String, u64)>>,
+    /// What the searches for shows being added found, by AniList id and when.
+    found: Mutex<HashMap<i64, (std::time::Instant, addshow::Found)>>,
     /// A direct call (startup, a new show, Search older) and the same job must never run at once.
     feeds_lock: Mutex<()>,
     anilist_lock: Mutex<()>,
@@ -171,6 +177,7 @@ impl Jobs {
             }),
             grouping: Mutex::new(Grouping::new(Box::new(wall_seconds))),
             page_sizes: Mutex::new(Vec::new()),
+            found: Mutex::new(HashMap::new()),
             feeds_lock: Mutex::new(()),
             anilist_lock: Mutex::new(()),
             search_locks: Mutex::new(HashMap::new()),
@@ -219,6 +226,39 @@ impl Jobs {
             Some(HOUSEKEEPING_INTERVAL),
             Some(HOUSEKEEPING_FIRST),
         );
+    }
+
+    /// Holds every job while `work` replaces the database, since a job keeps ids between its
+    /// steps, then starts them over as after a restart.
+    pub fn while_stopped<R>(self: &Arc<Self>, work: impl FnOnce() -> R) -> R {
+        let was_running = self.scheduler.is_started();
+        let busy = self.scheduler.stop(STOP_GRACE);
+        if !busy.is_empty() {
+            warn!(
+                "Jobs still running while the database is replaced: {}",
+                busy.join(", ")
+            );
+        }
+        let result = work();
+        self.ready.store(false, Ordering::Release);
+        self.synced.store(false, Ordering::Release);
+        {
+            let mut state = locked(&self.state);
+            state.backoff = Backoff::default();
+            state.backfill_requests.clear();
+            state.backfill_all = false;
+            state.refresh_all = false;
+            state.hunt_read_at = None;
+            state.offline_started = false;
+            state.health = Health::default();
+        }
+        if was_running {
+            self.scheduler.clear();
+            self.register();
+            self.scheduler.start();
+        }
+        self.publish_status();
+        result
     }
 
     /// Runs the job soon.
@@ -340,6 +380,8 @@ impl Jobs {
         self.engine.read(|ctx| setup_completed(ctx.conn))
     }
 }
+
+pub use addshow::NewShowSearch;
 
 #[cfg(test)]
 mod tests;

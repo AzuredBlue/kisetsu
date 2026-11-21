@@ -815,3 +815,46 @@ fn a_cover_that_could_not_be_read_is_tried_again_next_time() {
     env.jobs.palette().unwrap();
     assert_eq!(env.remote.hue_calls.lock().unwrap().len(), 2);
 }
+
+#[test]
+fn a_search_for_a_new_show_is_kept_until_the_show_is_added() {
+    let env = Env::new();
+    env.add_feed("Nyaa", NYAA);
+    let entry = ListEntry {
+        total_episodes: Some(12),
+        ..anilist_show(7, "Sousou no Frieren")
+    };
+    env.feeds().searchable.insert(
+        NYAA.to_owned(),
+        vec![article(&title(1), Some(START), None, None, None)],
+    );
+
+    let searched = env.jobs.search_new_show(&entry).unwrap();
+
+    assert_eq!(searched.preview.anilist_id, 7);
+    assert!(
+        env.jobs
+            .found_for(7)
+            .iter()
+            .any(|(_, found)| !found.is_empty())
+    );
+    assert!(env.jobs.found_for(8).is_empty());
+    env.jobs.forget_found(7);
+    assert!(env.jobs.found_for(7).is_empty());
+}
+
+#[test]
+fn holding_the_jobs_starts_them_over_as_after_a_restart() {
+    let env = Env::new();
+    env.jobs.ready.store(true, Ordering::Release);
+    locked(&env.jobs.state).health.grab = Some("boom".to_owned());
+    env.scheduler.start();
+
+    let during = env.jobs.while_stopped(|| env.scheduler.is_started());
+
+    assert!(!during);
+    assert!(env.scheduler.is_started());
+    assert!(!env.jobs.is_ready());
+    assert_eq!(env.jobs.health(), Health::default());
+    env.scheduler.stop(Duration::from_secs(1));
+}

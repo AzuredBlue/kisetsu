@@ -250,7 +250,7 @@ impl Jobs {
         Ok(())
     }
 
-    fn keep_grouping(&self) -> Result<()> {
+    pub(super) fn keep_grouping(&self) -> Result<()> {
         let kept = self.with_grouping(|grouping| grouping.dump());
         if locked(&self.state).grouping_kept.as_deref() == Some(kept.as_str()) {
             return Ok(());
