@@ -5,8 +5,11 @@ use std::sync::Arc;
 use std::sync::mpsc;
 use std::time::Duration;
 
+use kisetsu_clients::notify::Notifier;
+use kisetsu_clients::palette::WebImages;
 use kisetsu_clients::qbittorrent::QbitClient;
 use kisetsu_clients::sandbox::{DOWNLOAD_SECONDS, SandboxQbit, SandboxState};
+use kisetsu_clients::toast;
 use kisetsu_db::rusqlite::params;
 use kisetsu_db::store;
 use kisetsu_engine::instance::{InstanceLock, LockError, lock_path};
@@ -14,6 +17,7 @@ use kisetsu_engine::jobs::Jobs;
 use kisetsu_engine::remote::{Remote, WebRemote};
 use kisetsu_engine::runner::{Engine, Parts, QbitFactory};
 use kisetsu_engine::scheduler::Scheduler;
+use kisetsu_services::context::Notify;
 use kisetsu_web::{App, Assets, Guard, LogRing, Runtime, ServeError, Server};
 use tracing::{info, warn};
 
@@ -84,6 +88,28 @@ fn qbit_factory(sandbox: bool, database: &Path) -> QbitFactory {
     })
 }
 
+/// Announces finished downloads on the desktop, from a background thread.
+struct DesktopNotices(Arc<Notifier>);
+
+impl Notify for DesktopNotices {
+    fn notify(&self, title: &str, body: &str, cover_url: Option<&str>) {
+        self.0.notify(title, body, cover_url);
+    }
+}
+
+/// The desktop notifier, keeping covers in the config folder (else beside the database).
+fn desktop_notices(database: &Path) -> Arc<dyn Notify + Send + Sync> {
+    let folder = store::config_dir()
+        .or_else(|| database.parent().map(Path::to_path_buf))
+        .unwrap_or_default();
+    let notifier = Notifier::new(
+        Arc::new(WebImages::default()),
+        folder.join("covers"),
+        toast::system_backend(),
+    );
+    Arc::new(DesktopNotices(Arc::new(notifier)))
+}
+
 /// Runs Kisetsu until Ctrl+C (or the platform's stop signal).
 pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     // A sandbox started with the flag has a database of its own, thrown away when it ends.
@@ -111,10 +137,9 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     info!("Database: {}", database.display());
     let mut list_cache = database.clone().into_os_string();
     list_cache.push(".userlist.json");
-    let engine = Arc::new(Engine::start(
-        &database,
-        Parts::new(qbit_factory(sandbox, &database)),
-    )?);
+    let mut parts = Parts::new(qbit_factory(sandbox, &database));
+    parts.notifier = Some(desktop_notices(&database));
+    let engine = Arc::new(Engine::start(&database, parts)?);
     let scheduler = Scheduler::default();
     let remote: Arc<dyn Remote> = Arc::new(WebRemote::new(PathBuf::from(list_cache)));
     let jobs = Arc::new(Jobs::new(
