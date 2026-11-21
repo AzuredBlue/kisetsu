@@ -390,7 +390,15 @@ version = "0.1.0"
 name = "kisetsu-services"
 version = "0.1.0"
 dependencies = [
+ "jiff",
+ "kisetsu-clients",
+ "kisetsu-db",
+ "kisetsu-domain",
+ "serde_json",
+ "sha1_smol",
  "tempfile",
+ "thiserror",
+ "tracing",
 ]
 
 [[package]]

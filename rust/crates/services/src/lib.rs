@@ -1,3 +1,13 @@
-//! Logic that works with the outside world on behalf of the domain.
+//! The app's logic on top of the database and the clients. A service takes a [`context::Context`]
+//! and does its work synchronously; it never commits.
 
+#![forbid(unsafe_code)]
+#![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+pub mod context;
+pub mod error;
+pub mod events;
+pub mod facts;
 pub mod paths;
+
+pub use error::{Error, Result};

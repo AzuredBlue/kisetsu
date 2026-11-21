@@ -6,7 +6,25 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# In-memory stand-ins for qBittorrent, AniList and the feeds, for tests of code built on the services.
+fakes = ["dep:sha1_smol"]
+
 [dependencies]
+kisetsu-clients = { path = "../clients" }
+kisetsu-db = { path = "../db" }
+kisetsu-domain = { path = "../domain" }
+jiff.workspace = true
+serde_json.workspace = true
+sha1_smol = { workspace = true, optional = true }
+thiserror.workspace = true
+tracing.workspace = true
 
 [dev-dependencies]
+sha1_smol.workspace = true
 tempfile.workspace = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
