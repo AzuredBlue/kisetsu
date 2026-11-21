@@ -22,6 +22,9 @@ pub enum Error {
     /// An explicit action on a release that was not carried out, with the reason to show.
     #[error(transparent)]
     Refused(#[from] crate::manual::Refusal),
+    /// A change to a show that was not made.
+    #[error(transparent)]
+    ShowRefused(#[from] crate::shows::Refusal),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

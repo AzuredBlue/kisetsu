@@ -21,6 +21,7 @@ pub mod legacy;
 pub mod library;
 pub mod manual;
 pub mod paths;
+pub mod shows;
 pub mod tags;
 pub mod watched;
 
