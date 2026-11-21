@@ -8,6 +8,8 @@ pub mod context;
 pub mod error;
 pub mod events;
 pub mod facts;
+pub mod library;
 pub mod paths;
+pub mod tags;
 
 pub use error::{Error, Result};
