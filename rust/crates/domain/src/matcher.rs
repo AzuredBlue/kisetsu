@@ -12,9 +12,8 @@ use std::fmt::Write as _;
 use sha1_smol::Sha1;
 
 use crate::parsing::{
-    MatchOptions, ParsedRelease, alias_arc_requirement, match_release_to_show, meaningful_words,
-    normalize_title, parse_release_title, prepare_aliases, release_arc_qualifier, release_season,
-    season_conflict,
+    MatchOptions, ParsedRelease, alias_arc_requirement, match_parsed, meaningful_words,
+    normalize_title, prepare_aliases, release_arc_qualifier, release_season, season_conflict,
 };
 use crate::patterns::show_match_patterns;
 use crate::rx::{Case, Regex};
@@ -39,18 +38,22 @@ impl Pattern {
         &self.text
     }
 
+    fn regex(&self) -> Option<&Regex> {
+        self.regex.as_ref()
+    }
+
     fn is_match(&self, title: &str) -> bool {
-        self.regex
-            .as_ref()
-            .is_some_and(|regex| regex.is_match(title))
+        self.regex().is_some_and(|regex| regex.is_match(title))
     }
 }
 
+/// How to tell a show's releases from other titles. It owns its compiled patterns, so it is
+/// built once for a show and used for every title.
 #[derive(Debug)]
 pub struct Matcher {
     pub aliases: Vec<String>,
     pub prepared: Vec<(String, String)>,
-    pub pattern: String,
+    pub pattern: Pattern,
     pub learned_pattern: Option<Pattern>,
     /// On a locked feed: only the learned name matches, and the season must agree.
     pub strict: bool,
@@ -69,7 +72,7 @@ pub fn build_matcher(
     Matcher {
         aliases: aliases.to_vec(),
         prepared: prepare_aliases(aliases),
-        pattern,
+        pattern: Pattern::new(pattern),
         learned_pattern: learned_pattern.map(Pattern::new),
         strict: false,
         season_known: false,
@@ -116,7 +119,8 @@ pub fn narrow_to_feed(
 
 /// Whether the release names a season the show's names don't. The feed's own naming (the
 /// learned name) is trusted.
-fn other_season(matcher: &Matcher, title: &str) -> bool {
+fn other_season(matcher: &Matcher, release: &ParsedRelease) -> bool {
+    let title = &release.raw_title;
     if matcher
         .learned_pattern
         .as_ref()
@@ -128,22 +132,26 @@ fn other_season(matcher: &Matcher, title: &str) -> bool {
 }
 
 /// Whether the title could be one of the show's releases; the arc marker is not enforced.
-pub fn broad_match(matcher: &Matcher, title: &str) -> bool {
-    if other_season(matcher, title) {
+pub fn broad_match(matcher: &Matcher, release: &ParsedRelease) -> bool {
+    if other_season(matcher, release) {
         return false;
     }
     let options = MatchOptions {
-        test_pattern: Some(&matcher.pattern),
         prepared_aliases: Some(&matcher.prepared),
         ignore_arc_marker: true,
         min_resolution: matcher.min_resolution,
         ..MatchOptions::default()
     };
-    match_release_to_show(title, &matcher.aliases, &options).0
+    match_parsed(release, &matcher.aliases, matcher.pattern.regex(), &options).0
 }
 
 /// Whether the title is one of the show's releases, with its parse.
-pub fn decide(matcher: &Matcher, title: &str, unmarked_ok: bool) -> (bool, ParsedRelease) {
+pub fn decide(
+    matcher: &Matcher,
+    release: &ParsedRelease,
+    unmarked_ok: bool,
+) -> (bool, ParsedRelease) {
+    let title = &release.raw_title;
     // A title in the learned name that carries no arc marker shows that the group does not
     // label this show's cour, so there is nothing to compare with the aliases' marker. A
     // title with a marker of its own is still checked.
@@ -153,23 +161,23 @@ pub fn decide(matcher: &Matcher, title: &str, unmarked_ok: bool) -> (bool, Parse
             .learned_pattern
             .as_ref()
             .is_some_and(|learned| learned.is_match(title));
+    let pattern = if matcher.strict {
+        matcher.learned_pattern.as_ref().and_then(Pattern::regex)
+    } else {
+        matcher.pattern.regex()
+    };
     let options = MatchOptions {
-        test_pattern: if matcher.strict {
-            matcher.learned_pattern.as_ref().map(Pattern::as_str)
-        } else {
-            Some(&matcher.pattern)
-        },
         prepared_aliases: Some(&matcher.prepared),
         ignore_arc_marker: learned_without_marker || (unmarked_ok && unmarked),
         allow_fuzzy: !matcher.strict,
         min_resolution: matcher.min_resolution,
         ..MatchOptions::default()
     };
-    let (matched, _, parsed) = match_release_to_show(title, &matcher.aliases, &options);
+    let (matched, _, parsed) = match_parsed(release, &matcher.aliases, pattern, &options);
     if matched && matcher.season_known && release_season(title) != matcher.season {
         return (false, parsed);
     }
-    if matched && !matcher.strict && other_season(matcher, title) {
+    if matched && !matcher.strict && other_season(matcher, release) {
         return (false, parsed);
     }
     (matched, parsed)
@@ -185,37 +193,36 @@ pub fn decide(matcher: &Matcher, title: &str, unmarked_ok: bool) -> (bool, Parse
 /// falls outside the schedule stays refused.
 pub fn decide_dated(
     matcher: &Matcher,
-    title: &str,
+    release: &ParsedRelease,
     mut on_schedule: impl FnMut(i64) -> bool,
 ) -> (bool, ParsedRelease) {
-    let (matched, parsed) = decide(matcher, title, false);
+    let (matched, parsed) = decide(matcher, release, false);
     if matched {
         return (matched, parsed);
     }
     let on_its_schedule = parsed.episode.filter(|&raw| raw > 0).is_some_and(|raw| {
         alias_arc_requirement(&matcher.aliases).is_some()
-            && release_arc_qualifier(title).is_none()
+            && release_arc_qualifier(&release.raw_title).is_none()
             && on_schedule(raw)
     });
     if on_its_schedule {
-        decide(matcher, title, true)
+        decide(matcher, release, true)
     } else {
         (matched, parsed)
     }
 }
 
 /// The highest episode number among the show's matching releases in a feed.
-pub fn newest_raw_episode(
+pub fn newest_raw_episode<'a>(
     matcher: &Matcher,
-    titles: impl IntoIterator<Item = impl AsRef<str>>,
+    releases: impl IntoIterator<Item = &'a ParsedRelease>,
 ) -> Option<i64> {
     let mut newest = None;
-    for title in titles {
-        let title = title.as_ref();
-        if title.is_empty() {
+    for release in releases {
+        if release.raw_title.is_empty() {
             continue;
         }
-        let (matched, parsed) = decide(matcher, title, false);
+        let (matched, parsed) = decide(matcher, release, false);
         if let Some(raw) = parsed.episode.filter(|&raw| matched && raw > 0) {
             newest = newest.max(Some(raw));
         }
@@ -280,16 +287,15 @@ fn push_json_string(json: &mut String, text: &str) {
 /// The ids of the shows a title belongs to, in the order of `matchers`; with `only`, just those.
 pub fn matching_show_ids(
     matchers: &[(i64, Matcher)],
-    title: &str,
+    release: &ParsedRelease,
     only: Option<&[i64]>,
 ) -> Vec<i64> {
-    let mut matched = Vec::new();
-    for (show_id, matcher) in matchers {
-        if broad_match(matcher, title) {
-            matched.push((*show_id, matcher));
-        }
-    }
-    most_plainly_named(matched, title)
+    let matched = matchers
+        .iter()
+        .filter(|(_, matcher)| broad_match(matcher, release))
+        .map(|(show_id, matcher)| (*show_id, matcher))
+        .collect();
+    most_plainly_named(matched, release)
         .into_iter()
         .map(|(show_id, _)| show_id)
         .filter(|show_id| only.is_none_or(|only| only.contains(show_id)))
@@ -300,15 +306,15 @@ pub fn matching_show_ids(
 /// then the closest names.
 pub fn most_plainly_named<'a>(
     matched: Vec<(i64, &'a Matcher)>,
-    title: &str,
+    release: &ParsedRelease,
 ) -> Vec<(i64, &'a Matcher)> {
     let matched = if matched.len() > 1 {
-        of_the_named_season(matched, title)
+        of_the_named_season(matched, release)
     } else {
         matched
     };
     if matched.len() > 1 {
-        closest_names(matched, title)
+        closest_names(matched, release)
     } else {
         matched
     }
@@ -319,9 +325,11 @@ pub fn most_plainly_named<'a>(
 /// "Boku no Hero Academia - 160" fits "Boku no Hero Academia: FINAL SEASON" (only season words
 /// added) better than "Vigilante: Boku no Hero Academia Illegals", which names a different
 /// show. Equally close shows all stay.
-fn closest_names<'a>(matched: Vec<(i64, &'a Matcher)>, title: &str) -> Vec<(i64, &'a Matcher)> {
-    let name = parse_release_title(title).title;
-    let normalized = normalize_title(&name);
+fn closest_names<'a>(
+    matched: Vec<(i64, &'a Matcher)>,
+    release: &ParsedRelease,
+) -> Vec<(i64, &'a Matcher)> {
+    let normalized = normalize_title(&release.title);
     let words: HashSet<&str> = normalized.split_whitespace().collect();
     if words.is_empty() {
         return matched;
@@ -357,9 +365,9 @@ fn closest_names<'a>(matched: Vec<(i64, &'a Matcher)>, title: &str) -> Vec<(i64,
 /// show's aliases often omit it), and nothing is dropped.
 fn of_the_named_season<'a>(
     matched: Vec<(i64, &'a Matcher)>,
-    title: &str,
+    release: &ParsedRelease,
 ) -> Vec<(i64, &'a Matcher)> {
-    let Some(season) = release_season(title) else {
+    let Some(season) = release_season(&release.raw_title) else {
         return matched;
     };
     let naming: Vec<_> = matched

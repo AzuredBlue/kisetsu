@@ -216,12 +216,10 @@ pub struct ParsedRelease {
     pub version: i64,
 }
 
-/// What `match_release_to_show` takes besides the title and the aliases.
+/// What `match_release_to_show` and `match_parsed` take besides the title and the aliases.
 #[derive(Clone, Copy, Debug)]
 pub struct MatchOptions<'a> {
     pub threshold: f64,
-    /// The show's pattern; None builds it from the aliases.
-    pub test_pattern: Option<&'a str>,
     /// `prepare_aliases` of the aliases; None prepares them.
     pub prepared_aliases: Option<&'a [(String, String)]>,
     /// For callers that only interpret an already-downloaded release. Callers that choose which
@@ -236,7 +234,6 @@ impl Default for MatchOptions<'_> {
     fn default() -> Self {
         Self {
             threshold: FUZZY_MATCH_THRESHOLD,
-            test_pattern: None,
             prepared_aliases: None,
             ignore_arc_marker: false,
             allow_fuzzy: true,
@@ -900,18 +897,45 @@ fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) {
     }
 }
 
+/// `match_parsed` for a title not parsed yet, with the show's pattern as text (None builds it from
+/// the aliases; text that does not compile matches nothing).
+pub fn match_release_to_show(
+    raw_title: &str,
+    aliases: &[impl AsRef<str>],
+    test_pattern: Option<&str>,
+    options: &MatchOptions<'_>,
+) -> (bool, f64, ParsedRelease) {
+    let built;
+    let pattern = match test_pattern {
+        Some(pattern) => pattern,
+        None => {
+            built = build_regex_pattern(aliases, None);
+            &built
+        }
+    };
+    let regex = Regex::new(pattern, Case::Insensitive).ok();
+    match_parsed(
+        &parse_release_title(raw_title),
+        aliases,
+        regex.as_ref(),
+        options,
+    )
+}
+
 /// Whether a feed item or torrent is a release of the show, with its score and parse.
 ///
 /// Batches and releases below the minimum resolution never match, nor, unless
 /// `ignore_arc_marker`, a release without the arc marker the show's aliases insist on. Then the
-/// show's pattern decides (a pattern that does not compile matches nothing), and failing that the
-/// fuzzy score of the parsed name against `threshold`, when `allow_fuzzy`.
-pub fn match_release_to_show(
-    raw_title: &str,
+/// show's pattern decides (None matches nothing), and failing that the fuzzy score of the parsed
+/// name against `threshold`, when `allow_fuzzy`.
+pub fn match_parsed(
+    release: &ParsedRelease,
     aliases: &[impl AsRef<str>],
+    pattern: Option<&Regex>,
     options: &MatchOptions<'_>,
 ) -> (bool, f64, ParsedRelease) {
-    let mut parsed = parse_release_title(raw_title);
+    let raw_title = release.raw_title.as_str();
+    let mut parsed = release.clone();
     if !is_valid_release(raw_title, options.min_resolution) {
         return (false, 0.0, parsed);
     }
@@ -925,16 +949,7 @@ pub fn match_release_to_show(
         return (false, 0.0, parsed);
     }
 
-    let built;
-    let pattern = match options.test_pattern {
-        Some(pattern) => pattern,
-        None => {
-            built = build_regex_pattern(aliases, None);
-            &built
-        }
-    };
-    let regex = Regex::new(pattern, Case::Insensitive).ok();
-    if let Some(found) = regex.as_ref().and_then(|regex| regex.find(raw_title)) {
+    if let Some(found) = pattern.and_then(|regex| regex.find(raw_title)) {
         let token = pystr::strip(found.as_str());
         if !token.is_empty() {
             parsed.title = token.to_owned();
