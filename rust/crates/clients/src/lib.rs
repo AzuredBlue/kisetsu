@@ -7,6 +7,7 @@ mod net;
 mod url;
 
 pub mod fetch;
+pub mod qbittorrent;
 pub mod rss;
 
 pub mod traffic;
