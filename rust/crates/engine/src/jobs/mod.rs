@@ -101,6 +101,19 @@ struct State {
     grouping_kept: Option<String>,
 }
 
+/// What the jobs remember, for a test to set.
+#[cfg(feature = "testing")]
+#[derive(Debug, Clone, Default)]
+pub struct Memory {
+    pub health: Health,
+    pub backfill_requests: BTreeSet<i64>,
+    pub backfill_all: bool,
+    pub refresh_all: bool,
+    pub hunt_read_at: Option<Timestamp>,
+    pub ready: bool,
+    pub synced: bool,
+}
+
 pub struct Jobs {
     engine: Arc<Engine>,
     scheduler: Scheduler,
@@ -288,6 +301,21 @@ impl Jobs {
             at
         };
         self.scheduler.poke(name, at.saturating_sub(now));
+    }
+
+    /// Replaces what the jobs remember.
+    #[cfg(feature = "testing")]
+    pub fn remember(&self, memory: Memory) {
+        {
+            let mut state = locked(&self.state);
+            state.health = memory.health;
+            state.backfill_requests = memory.backfill_requests;
+            state.backfill_all = memory.backfill_all;
+            state.refresh_all = memory.refresh_all;
+            state.hunt_read_at = memory.hunt_read_at;
+        }
+        self.ready.store(memory.ready, Ordering::Release);
+        self.synced.store(memory.synced, Ordering::Release);
     }
 
     // -- what the UI shows --

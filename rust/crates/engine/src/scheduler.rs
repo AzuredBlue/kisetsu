@@ -255,6 +255,16 @@ impl Scheduler {
         self.inner.changed.notify_all();
     }
 
+    /// Sets when the job runs next and why its last run failed, as if it had run.
+    #[cfg(feature = "testing")]
+    pub fn seed(&self, name: &str, due: Option<Duration>, last_error: Option<String>) {
+        let mut state = locked(&self.inner.state);
+        if let Some(job) = state.find(name) {
+            job.due = due;
+            job.last_error = last_error;
+        }
+    }
+
     pub fn status(&self, name: &str) -> Option<JobStatus> {
         let state = locked(&self.inner.state);
         state

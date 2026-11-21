@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Lets a test put the jobs and the scheduler in a known state.
+testing = []
+
 [dependencies]
 kisetsu-clients = { path = "../clients" }
 kisetsu-db = { path = "../db" }
