@@ -162,7 +162,8 @@ fn lacking(ctx: &Context<'_>, show: &Show, show_feeds: &[Feed]) -> Result<HashSe
     Ok(lacking)
 }
 
-fn subsplease_feeds(ctx: &Context<'_>) -> Result<Vec<i64>> {
+/// The ids of the feeds that are on SubsPlease.
+pub fn subsplease_feeds(ctx: &Context<'_>) -> Result<Vec<i64>> {
     Ok(Feed::select(ctx.conn, "ORDER BY id", [])?
         .into_iter()
         .filter(|feed| sites::site_of(&feed.url) == Some(Site::SubsPlease))
