@@ -16,18 +16,18 @@ const ROMAN_TO_INT: [(&str, i64); 6] = [
     ("V", 5),
     ("VI", 6),
 ];
-pub const MIN_PATTERN_CHARS: usize = 6;
+const MIN_PATTERN_CHARS: usize = 6;
 /// Release groups join the words of a title with spaces, dots, underscores or hyphens (a feed title
 /// and the torrent's file name often differ), so matching ignores which.
-pub const NAME_SEPARATORS: &str = r"[\s._\-:–—/]+";
+const NAME_SEPARATORS: &str = r"[\s._\-:–—/]+";
 
 /// A character `NAME_SEPARATORS` matches.
 fn is_name_separator(c: char) -> bool {
     c.is_whitespace() || "._-:–—/".contains(c)
 }
-pub const WORD_START: &str = r"(?<![A-Za-z0-9])";
+const WORD_START: &str = r"(?<![A-Za-z0-9])";
 /// An alias this short (an acronym like "SBR") is only trusted as a whole word.
-pub const SHORT_ALIAS_CHARS: usize = 4;
+const SHORT_ALIAS_CHARS: usize = 4;
 
 static SEASON_MARK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::literal(
@@ -142,9 +142,6 @@ fn short_end_guard(alias: &str) -> &'static str {
 
 /// Escapes true regex metacharacters while keeping spaces and hyphens clean and human-readable.
 pub fn sanitize_regex_token(title: &str) -> String {
-    if title.is_empty() {
-        return String::new();
-    }
     let protected = title
         .replace("(0?)", "\0ZERO_OPT_P\0")
         .replace("0?", "\0ZERO_OPT\0");
@@ -162,9 +159,6 @@ pub fn sanitize_regex_token(title: &str) -> String {
 /// name, which keeps the pattern valid for every later episode of the same show.
 pub fn build_release_name_pattern(release_name: &str) -> String {
     let stripped = release_name.trim();
-    if stripped.is_empty() {
-        return String::new();
-    }
     sanitize_regex_token(stripped) + name_end_guard(stripped)
 }
 
@@ -230,12 +224,7 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
         // The release group has already shown its naming, so the learned rule is exactly that
         // name. Season hedges ("S2", "Season 2", "II") belong on the armed path below, where the
         // naming is still unknown.
-        let pattern = build_release_name_pattern(matched_title);
-        return if pattern.is_empty() {
-            ".*".to_owned()
-        } else {
-            pattern
-        };
+        return build_release_name_pattern(matched_title);
     }
 
     let valid: Vec<&str> = aliases
@@ -295,9 +284,6 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
 /// - Collapses multiple hyphens and whitespace
 /// - Strips leading/trailing dots and spaces
 pub fn sanitize_folder_name(name: &str) -> String {
-    if name.is_empty() {
-        return "Anime".to_owned();
-    }
     let s = SLASH_IN_NAME.replace_all(name, "$1-$2");
     let s = SLASH.replace_all(&s, " - ");
     let s = COLON.replace_all(&s, " - ");
@@ -311,10 +297,7 @@ pub fn sanitize_folder_name(name: &str) -> String {
 }
 
 /// A path inside the home directory `home` with that prefix written as '~', for display.
-pub fn compress_home_path(path: Option<&str>, home: &str) -> String {
-    let Some(path) = path.filter(|path| !path.is_empty()) else {
-        return String::new();
-    };
+pub fn compress_home_path(path: &str, home: &str) -> String {
     let stripped = path.trim();
     if stripped == home {
         return "~".to_owned();
@@ -380,7 +363,7 @@ fn is_absolute(raw: &str) -> bool {
     raw.starts_with(['/', '~']) || (raw.chars().count() > 2 && raw.chars().nth(1) == Some(':'))
 }
 
-/// `os.path.join(base, name)` for a name without separators or a drive.
+/// `name` under `base`, for a name without separators or a drive.
 fn join(base: &str, name: &str) -> String {
     let bare_drive = cfg!(windows) && base.len() == 2 && base.ends_with(':');
     if base.ends_with(is_separator) || bare_drive {
@@ -390,7 +373,7 @@ fn join(base: &str, name: &str) -> String {
     }
 }
 
-/// `os.path.expanduser`: a leading '~' alone or before a separator is the home directory. A
+/// A leading '~' alone or before a separator is the home directory. A
 /// '~user' form is left as it is.
 fn expand_user(path: &str, home: &str) -> String {
     match path.strip_prefix('~') {
@@ -399,10 +382,10 @@ fn expand_user(path: &str, home: &str) -> String {
     }
 }
 
-/// `str(Path(os.path.expanduser(path)).resolve())`.
+/// The absolute, resolved form of a path with a leading '~' expanded.
 ///
 /// The path is made absolute against the working directory and `.` and `..` are resolved by its
-/// text. Then, like Python, the longest leading part that exists is replaced by its real path
+/// text. Then the longest leading part that exists is replaced by its real path
 /// (links followed, the case on disk), and the parts that don't exist are kept as written.
 fn resolve(path: &str, home: &str) -> String {
     let expanded = PathBuf::from(expand_user(path, home));

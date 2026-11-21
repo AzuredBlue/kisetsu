@@ -1,11 +1,12 @@
-//! Fuzzy title scores, equal to rapidfuzz's `fuzz.ratio`, `fuzz.token_sort_ratio` and
-//! `fuzz.token_set_ratio` called without a processor or a score cutoff.
+//! Fuzzy title scores from 0 to 100: the Indel similarity of two strings (`ratio`), and the same
+//! after sorting each string's words (`token_sort_ratio`) or comparing the shared and the
+//! remaining words (`token_set_ratio`).
 //!
-//! Lengths and edits count code points. Tokens are the words of `str.split()`.
+//! Lengths and edits count code points. Words are separated by whitespace.
 
 use std::collections::BTreeSet;
 
-/// `fuzz.ratio`: the normalized Indel similarity of the two strings, from 0 to 100.
+/// The normalized Indel similarity of the two strings, from 0 to 100.
 pub fn ratio(s1: &str, s2: &str) -> f64 {
     let first: Vec<char> = s1.chars().collect();
     let second: Vec<char> = s2.chars().collect();
@@ -16,12 +17,12 @@ pub fn ratio(s1: &str, s2: &str) -> f64 {
     (1.0 - indel_distance(&first, &second) as f64 / total as f64) * 100.0
 }
 
-/// `fuzz.token_sort_ratio`: `ratio` of the strings with their words sorted.
+/// `ratio` of the strings with their words sorted.
 pub fn token_sort_ratio(s1: &str, s2: &str) -> f64 {
     ratio(&sorted_words(s1), &sorted_words(s2))
 }
 
-/// `fuzz.token_set_ratio`: the best `ratio` among the shared words alone and the shared words
+/// The best `ratio` among the shared words alone and the shared words
 /// followed by each string's other words. 0 when either string has no words.
 pub fn token_set_ratio(s1: &str, s2: &str) -> f64 {
     let words_a: BTreeSet<&str> = s1.split_whitespace().collect();
@@ -56,7 +57,7 @@ pub fn token_set_ratio(s1: &str, s2: &str) -> f64 {
     result.max(shared_a_ratio).max(shared_b_ratio)
 }
 
-/// A distance as a score from 0 to 100, written as rapidfuzz computes it for token scores.
+/// A distance as a score from 0 to 100, written the way token scores are computed.
 fn norm_distance(distance: usize, total: usize) -> f64 {
     if total == 0 {
         return 100.0;

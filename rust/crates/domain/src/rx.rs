@@ -207,8 +207,9 @@ mod tests {
     }
 
     #[test]
-    fn case_insensitive_matching_uses_unicode_case_folding() {
-        let caseless = Regex::new("straße", Case::Insensitive).unwrap();
-        assert!(caseless.is_match("STRASSE") || caseless.is_match("STRAßE"));
+    fn case_insensitive_matching_folds_non_ascii_letters() {
+        let caseless = Regex::new("é", Case::Insensitive).unwrap();
+        assert!(caseless.is_match("É"));
+        assert!(!regex("é").is_match("É"));
     }
 }

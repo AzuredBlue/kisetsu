@@ -316,9 +316,6 @@ pub fn meaningful_words(normalized: &str) -> HashSet<&str> {
 /// A title in the form names are compared in: lowercase, without bracketed tags, roman numerals
 /// and ordinal seasons as numbers ("2nd Season" and "S2" as "season 2"), and only words.
 pub fn normalize_title(title: &str) -> String {
-    if title.is_empty() {
-        return String::new();
-    }
     let text = title.to_lowercase();
     let text = BRACKETED.replace_all(&text, " ");
     let text = ROMAN_NUMERAL.replace_all_with(&text, |found| {
@@ -347,11 +344,11 @@ fn is_checksum(text: &str) -> bool {
 }
 
 /// The release group, whether at the start ("[SubsPlease]"), at the end ("[Varyg]") or a scene
-/// suffix ("-VARYG"). An empty bracket at the start gives an empty group.
+/// suffix ("-VARYG").
 pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
     if let Some(found) = GROUP_AT_START.find(raw_title.trim()) {
         let candidate = found.group(1).unwrap_or_default().trim();
-        if !is_non_group_tag(candidate) && !is_number(candidate) {
+        if !candidate.is_empty() && !is_non_group_tag(candidate) && !is_number(candidate) {
             return Some(candidate.to_owned());
         }
     }
@@ -374,16 +371,18 @@ pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
         .into_iter()
         .rev()
         .map(str::trim)
-        .find(|value| !is_checksum(value) && !is_non_group_tag(value) && !is_number(value))
+        .find(|value| {
+            !value.is_empty()
+                && !is_checksum(value)
+                && !is_non_group_tag(value)
+                && !is_number(value)
+        })
         .map(str::to_owned)
 }
 
 /// The release's version: "v2", "[v3]", "ver. 2", or a REPACK or PROPER (2, or one more than the
 /// REPACK's number); 1 when it names none.
 pub fn extract_release_version(raw_title: &str) -> i64 {
-    if raw_title.is_empty() {
-        return 1;
-    }
     if let Some(value) = VERSION_TAG
         .find(raw_title)
         .and_then(|found| (1..=3).find_map(|index| found.group(index)))
@@ -403,17 +402,6 @@ pub fn extract_release_version(raw_title: &str) -> i64 {
 ///
 /// A double release ("- 01-02") reads as its first episode; `episode_pair` gives the second.
 pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
-    if raw_title.is_empty() {
-        return ParsedRelease {
-            raw_title: String::new(),
-            title: String::new(),
-            episode: None,
-            season: None,
-            release_group: None,
-            version: 1,
-        };
-    }
-
     if episode_pair(raw_title).is_some() {
         let mut parsed = parse_release_title(&first_of_pair(raw_title));
         parsed.raw_title = raw_title.to_owned();
@@ -423,7 +411,7 @@ pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
     let version = extract_release_version(raw_title);
     let release_group = extract_release_group_tag(raw_title);
     let mut cleaned = raw_title.trim().to_owned();
-    if let Some(group) = release_group.as_deref().filter(|group| !group.is_empty()) {
+    if let Some(group) = &release_group {
         cleaned = remove_group(&cleaned, group);
     }
     let cleaned = VERSION_REGEX.replace_all(&cleaned, "$1");
@@ -452,7 +440,7 @@ pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
     title = SPACES.replace_all(&title, " ").trim().to_owned();
 
     if title.is_empty() {
-        return parse_without_name(raw_title, episode, season, release_group, version);
+        title = raw_title.to_owned();
     }
     ParsedRelease {
         raw_title: raw_title.to_owned(),
@@ -460,25 +448,6 @@ pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
         episode,
         season,
         release_group,
-        version,
-    }
-}
-
-/// The parse of a title in which no name is found: the raw title stands for the name, and an
-/// episode or season of 0 or an empty group counts as none.
-fn parse_without_name(
-    raw_title: &str,
-    episode: Option<i64>,
-    season: Option<i64>,
-    release_group: Option<String>,
-    version: i64,
-) -> ParsedRelease {
-    ParsedRelease {
-        raw_title: raw_title.to_owned(),
-        title: raw_title.to_owned(),
-        episode: episode.filter(|&number| number != 0),
-        season: season.filter(|&number| number != 0),
-        release_group: release_group.filter(|group| !group.is_empty()),
         version,
     }
 }
@@ -495,7 +464,7 @@ fn remove_group(title: &str, group: &str) -> String {
     remove_tags(&title, &format!("-{group}"), true)
 }
 
-/// `text` without each `tag` and the whitespace after it, scanning left to right as `re.sub` does.
+/// `text` without each `tag` and the whitespace after it, scanning left to right.
 /// With `at_word_end`, only a tag followed by a word boundary (`\b`) is removed.
 fn remove_tags(text: &str, tag: &str, at_word_end: bool) -> String {
     let ends_in_word = tag.chars().next_back().is_some_and(is_word);

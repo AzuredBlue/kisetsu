@@ -78,11 +78,6 @@ impl ShowFacts {
     fn anilist_status_is(&self, status: &str) -> bool {
         self.anilist_status.as_deref() == Some(status)
     }
-
-    /// AniList's next episode number, where 0 counts as none.
-    fn next_airing_number(&self) -> Option<i64> {
-        self.next_airing_episode.filter(|&number| number != 0)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -146,11 +141,11 @@ pub fn latest_aired(show: &ShowFacts, horizon: Timestamp) -> Option<i64> {
     if known.is_some() {
         return known;
     }
-    if let (Some(next), Some(next_at)) = (show.next_airing_number(), show.next_airing_at) {
+    if let (Some(next), Some(next_at)) = (show.next_airing_episode, show.next_airing_at) {
         return if next_at <= horizon {
             Some(next)
         } else {
-            Some(next.saturating_sub(1).max(0)).filter(|&number| number != 0)
+            next.checked_sub(1).filter(|&number| number > 0)
         };
     }
     let no_air_times = show.episodes.iter().all(|episode| episode.air_at.is_none());
@@ -169,7 +164,7 @@ fn air_time_of(show: &ShowFacts, number: i64) -> Option<Timestamp> {
     if stored.is_some() {
         return stored;
     }
-    let (next_at, next) = show.next_airing_at.zip(show.next_airing_number())?;
+    let (next_at, next) = show.next_airing_at.zip(show.next_airing_episode)?;
     if number == next {
         Some(next_at)
     } else if number.checked_add(1) == Some(next) {
