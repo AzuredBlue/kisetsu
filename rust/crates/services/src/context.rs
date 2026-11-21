@@ -239,6 +239,14 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    /// Undoes what was done since the last checkpoint, for a job that goes on after an error.
+    pub fn rollback_to_checkpoint(&self) -> Result<()> {
+        if !self.conn.is_autocommit() {
+            self.conn.execute_batch("ROLLBACK; BEGIN IMMEDIATE")?;
+        }
+        Ok(())
+    }
+
     /// A tag for a torrent about to be added, which is not known by its hash yet.
     pub fn next_download_tag(&mut self) -> Result<String> {
         match self.download_tags.as_deref_mut() {

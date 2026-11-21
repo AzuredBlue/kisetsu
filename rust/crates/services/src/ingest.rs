@@ -50,7 +50,7 @@ pub fn followed_shows(ctx: &Context<'_>) -> Result<Vec<Show>> {
 
 /// Each followed show's matcher, and the signature of what it was built from, rebuilt when a
 /// show or what it is matched by changed.
-fn matchers(ctx: &mut Context<'_>) -> Result<Arc<MatcherSet>> {
+pub(crate) fn matchers(ctx: &mut Context<'_>) -> Result<Arc<MatcherSet>> {
     let shows = followed_shows(ctx)?;
     let minimum = ctx.settings.min_resolution;
     let extra = format!("min_resolution={minimum}");

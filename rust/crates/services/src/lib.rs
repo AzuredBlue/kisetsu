@@ -5,6 +5,7 @@
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 pub mod adoption;
+pub mod backfill;
 pub mod context;
 pub mod downloads;
 pub mod error;
@@ -14,6 +15,7 @@ pub mod facts;
 pub mod fakes;
 pub mod feeds;
 pub mod feedsync;
+pub mod grab;
 pub mod ingest;
 pub mod library;
 pub mod paths;
