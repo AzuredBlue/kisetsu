@@ -236,6 +236,22 @@ impl Remote for FakeRemote {
         locked(&self.anilist).fetch_user_seasonal_anime(username, monitored, reuse_within)
     }
 
+    fn user_exists(&self, username: &str) -> Result<bool, AniListError> {
+        locked(&self.anilist).user_exists(username)
+    }
+
+    fn user_list(&self) -> Vec<ListEntry> {
+        locked(&self.anilist).user_list()
+    }
+
+    fn user_list_at(&self) -> Option<Timestamp> {
+        locked(&self.anilist).user_list_at()
+    }
+
+    fn anilist_blocked_until(&self) -> Option<f64> {
+        None
+    }
+
     fn upcoming_schedules(
         &self,
         media_ids: &[i64],

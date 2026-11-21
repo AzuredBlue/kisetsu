@@ -40,6 +40,19 @@ pub trait Remote: Send + Sync {
         reuse_within: Option<f64>,
     ) -> Result<Vec<ListEntry>, AniListError>;
 
+    /// Whether AniList knows the user. The list it read is kept for [`Self::user_list`], and for a
+    /// sync that follows soon.
+    fn user_exists(&self, username: &str) -> Result<bool, AniListError>;
+
+    /// The user's list as last read.
+    fn user_list(&self) -> Vec<ListEntry>;
+
+    /// When [`Self::user_list`] was read.
+    fn user_list_at(&self) -> Option<Timestamp>;
+
+    /// The epoch second until which AniList is not asked, when it asked for a pause.
+    fn anilist_blocked_until(&self) -> Option<f64>;
+
     /// The air times of the shows from `since` on.
     fn upcoming_schedules(
         &self,
@@ -100,6 +113,22 @@ impl Remote for WebRemote {
     ) -> Result<Vec<ListEntry>, AniListError> {
         self.anilist
             .fetch_user_seasonal_anime(username, monitored, reuse_within)
+    }
+
+    fn user_exists(&self, username: &str) -> Result<bool, AniListError> {
+        self.anilist.user_exists(username)
+    }
+
+    fn user_list(&self) -> Vec<ListEntry> {
+        self.anilist.user_list()
+    }
+
+    fn user_list_at(&self) -> Option<Timestamp> {
+        self.anilist.user_list_at()
+    }
+
+    fn anilist_blocked_until(&self) -> Option<f64> {
+        self.anilist.rate_limit_status().blocked_until
     }
 
     fn upcoming_schedules(
