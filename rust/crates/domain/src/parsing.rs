@@ -1,6 +1,7 @@
 //! Release titles: what a title says about itself (name, episode, season, group, version,
 //! resolution, episode range), and how closely its name matches a show's.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -901,29 +902,28 @@ fn arc_is_compatible(requirement: &str, qualifier: Option<&str>) -> bool {
     }
 }
 
-/// Makes the parsed title carry the season marker the release writes in its name ("Ao Ashi S2").
-fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) {
-    let name = series_name_part(raw_title);
-    if name_season(&name).is_none() || name_season(&parsed.title).is_some() {
-        return;
+/// The name with the season marker the release writes in its title ("Ao Ashi S2"), when `name`
+/// lacks it.
+fn season_kept_in_name(raw_title: &str, name: &str) -> Option<String> {
+    let written = series_name_part(raw_title);
+    if name_season(&written).is_none() || name_season(name).is_some() {
+        return None;
     }
-    let name = TRAILING_NAME_SEPARATORS
-        .replace_all(&name, "")
+    let written = TRAILING_NAME_SEPARATORS
+        .replace_all(&written, "")
         .trim()
         .to_owned();
-    if !name.is_empty() {
-        parsed.title = name;
-    }
+    (!written.is_empty()).then_some(written)
 }
 
 /// `match_parsed` for a title not parsed yet, with the show's pattern as text (None builds it from
-/// the aliases; text that does not compile matches nothing).
+/// the aliases; text that does not compile matches nothing). The last item is the matched name.
 pub fn match_release_to_show(
     raw_title: &str,
     aliases: &[impl AsRef<str>],
     test_pattern: Option<&str>,
     options: &MatchOptions<'_>,
-) -> (bool, f64, ParsedRelease) {
+) -> (bool, f64, String) {
     let built;
     let pattern = match test_pattern {
         Some(pattern) => pattern,
@@ -933,30 +933,29 @@ pub fn match_release_to_show(
         }
     };
     let regex = Regex::new(pattern, Case::Insensitive).ok();
-    match_parsed(
-        &parse_release_title(raw_title),
-        aliases,
-        regex.as_ref(),
-        options,
-    )
+    let release = parse_release_title(raw_title);
+    let (matched, score, name) = match_parsed(&release, aliases, regex.as_ref(), options);
+    (matched, score, name.into_owned())
 }
 
-/// Whether a feed item or torrent is a release of the show, with its score and parse.
+/// Whether a feed item or torrent is a release of the show, with its score and the matched name:
+/// the part of the title the show's pattern found, else the parsed name, with the season marker
+/// the title writes in it.
 ///
 /// Batches and releases below the minimum resolution never match, nor, unless
 /// `ignore_arc_marker`, a release without the arc marker the show's aliases insist on. Then the
 /// show's pattern decides (None matches nothing), and failing that the fuzzy score of the parsed
 /// name against `threshold`, when `allow_fuzzy`.
-pub fn match_parsed(
-    release: &ParsedRelease,
+pub fn match_parsed<'a>(
+    release: &'a ParsedRelease,
     aliases: &[impl AsRef<str>],
     pattern: Option<&Regex>,
     options: &MatchOptions<'_>,
-) -> (bool, f64, ParsedRelease) {
+) -> (bool, f64, Cow<'a, str>) {
     let raw_title = release.raw_title.as_str();
-    let mut parsed = release.clone();
+    let unchanged = || Cow::Borrowed(release.title.as_str());
     if !is_valid_release(raw_title, options.min_resolution) {
-        return (false, 0.0, parsed);
+        return (false, 0.0, unchanged());
     }
 
     let requirement = (!options.ignore_arc_marker)
@@ -965,27 +964,31 @@ pub fn match_parsed(
     if requirement.is_some_and(|requirement| {
         !arc_is_compatible(&requirement, release_arc_qualifier(raw_title).as_deref())
     }) {
-        return (false, 0.0, parsed);
+        return (false, 0.0, unchanged());
     }
 
     if let Some(found) = pattern.and_then(|regex| regex.find(raw_title)) {
         let token = found.as_str().trim();
-        if !token.is_empty() {
-            parsed.title = token.to_owned();
-        }
-        keep_season_in_title(raw_title, &mut parsed);
-        return (true, 100.0, parsed);
+        let name = if token.is_empty() {
+            release.title.as_str()
+        } else {
+            token
+        };
+        let name = season_kept_in_name(raw_title, name).map_or(Cow::Borrowed(name), Cow::Owned);
+        return (true, 100.0, name);
     }
 
     if !options.allow_fuzzy {
-        return (false, 0.0, parsed);
+        return (false, 0.0, unchanged());
     }
-    let (score, _) = calculate_match_score(&parsed.title, aliases, options.prepared_aliases);
+    let (score, _) = calculate_match_score(&release.title, aliases, options.prepared_aliases);
     let is_match = score >= options.threshold;
-    if is_match {
-        keep_season_in_title(raw_title, &mut parsed);
-    }
-    (is_match, score, parsed)
+    let name = if is_match {
+        season_kept_in_name(raw_title, &release.title).map_or_else(unchanged, Cow::Owned)
+    } else {
+        unchanged()
+    };
+    (is_match, score, name)
 }
 
 /// A release name reduced to its words, so naming styles compare equal: a feed title ("Blue Box

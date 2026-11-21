@@ -6,6 +6,7 @@
 //! marker the show's aliases insist on, and on a feed the show is locked to it narrows to the
 //! name and season that feed has been delivering.
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
@@ -145,12 +146,12 @@ pub fn broad_match(matcher: &Matcher, release: &ParsedRelease) -> bool {
     match_parsed(release, &matcher.aliases, matcher.pattern.regex(), &options).0
 }
 
-/// Whether the title is one of the show's releases, with its parse.
-pub fn decide(
+/// Whether the title is one of the show's releases, with the name it matched (see `match_parsed`).
+pub fn decide<'a>(
     matcher: &Matcher,
-    release: &ParsedRelease,
+    release: &'a ParsedRelease,
     unmarked_ok: bool,
-) -> (bool, ParsedRelease) {
+) -> (bool, Cow<'a, str>) {
     let title = &release.raw_title;
     // A title in the learned name that carries no arc marker shows that the group does not
     // label this show's cour, so there is nothing to compare with the aliases' marker. A
@@ -173,14 +174,14 @@ pub fn decide(
         min_resolution: matcher.min_resolution,
         ..MatchOptions::default()
     };
-    let (matched, _, parsed) = match_parsed(release, &matcher.aliases, pattern, &options);
+    let (matched, _, name) = match_parsed(release, &matcher.aliases, pattern, &options);
     if matched && matcher.season_known && release_season(title) != matcher.season {
-        return (false, parsed);
+        return (false, name);
     }
     if matched && !matcher.strict && other_season(matcher, release) {
-        return (false, parsed);
+        return (false, name);
     }
-    (matched, parsed)
+    (matched, name)
 }
 
 /// `decide` for a release whose publish date is known.
@@ -191,16 +192,16 @@ pub fn decide(
 /// cannot tell us but the date can; `on_schedule(raw_episode)` says so, and the release is
 /// then accepted without the marker. A release that names a different arc, has no date or
 /// falls outside the schedule stays refused.
-pub fn decide_dated(
+pub fn decide_dated<'a>(
     matcher: &Matcher,
-    release: &ParsedRelease,
+    release: &'a ParsedRelease,
     mut on_schedule: impl FnMut(i64) -> bool,
-) -> (bool, ParsedRelease) {
-    let (matched, parsed) = decide(matcher, release, false);
+) -> (bool, Cow<'a, str>) {
+    let (matched, name) = decide(matcher, release, false);
     if matched {
-        return (matched, parsed);
+        return (matched, name);
     }
-    let on_its_schedule = parsed.episode.filter(|&raw| raw > 0).is_some_and(|raw| {
+    let on_its_schedule = release.episode.filter(|&raw| raw > 0).is_some_and(|raw| {
         alias_arc_requirement(&matcher.aliases).is_some()
             && release_arc_qualifier(&release.raw_title).is_none()
             && on_schedule(raw)
@@ -208,7 +209,7 @@ pub fn decide_dated(
     if on_its_schedule {
         decide(matcher, release, true)
     } else {
-        (matched, parsed)
+        (matched, name)
     }
 }
 
@@ -222,8 +223,8 @@ pub fn newest_raw_episode<'a>(
         if release.raw_title.is_empty() {
             continue;
         }
-        let (matched, parsed) = decide(matcher, release, false);
-        if let Some(raw) = parsed.episode.filter(|&raw| matched && raw > 0) {
+        let (matched, _) = decide(matcher, release, false);
+        if let Some(raw) = release.episode.filter(|&raw| matched && raw > 0) {
             newest = newest.max(Some(raw));
         }
     }
