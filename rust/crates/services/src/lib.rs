@@ -10,6 +10,7 @@ pub mod error;
 pub mod events;
 pub mod facts;
 pub mod feeds;
+pub mod ingest;
 pub mod library;
 pub mod paths;
 pub mod tags;
