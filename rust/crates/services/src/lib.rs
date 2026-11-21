@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod addshow;
 pub mod adoption;
 pub mod backfill;
 pub mod backup;
