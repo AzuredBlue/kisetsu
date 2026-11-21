@@ -9,7 +9,6 @@ publish.workspace = true
 [dependencies]
 fancy-regex.workspace = true
 jiff.workspace = true
-regex-syntax.workspace = true
 sha1_smol.workspace = true
 
 [lints.clippy]

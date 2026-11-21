@@ -17,7 +17,7 @@ use crate::parsing::{
     release_season, season_conflict,
 };
 use crate::patterns::show_match_patterns;
-use crate::pyre::{Flags, Regex};
+use crate::rx::{Case, Regex};
 
 /// A name pattern kept with the text it was compiled from.
 ///
@@ -31,7 +31,7 @@ pub struct Pattern {
 impl Pattern {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
-        let regex = Regex::new(&text, Flags::IGNORECASE).ok();
+        let regex = Regex::new(&text, Case::Insensitive).ok();
         Self { text, regex }
     }
 

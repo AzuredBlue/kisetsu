@@ -5,8 +5,8 @@ use std::fs;
 use std::path::{Component, Path, PathBuf, is_separator};
 use std::sync::LazyLock;
 
-use crate::pyre::{Flags, Regex};
 use crate::pystr;
+use crate::rx::{Case, Regex};
 
 const ROMAN_TO_INT: [(&str, &str); 6] = [
     ("I", "1"),
@@ -20,31 +20,34 @@ pub const MIN_PATTERN_CHARS: usize = 6;
 /// Release groups join the words of a title with spaces, dots, underscores or hyphens (a feed title
 /// and the torrent's file name often differ), so matching ignores which.
 pub const NAME_SEPARATORS: &str = r"[\s._\-:–—/]+";
+
+/// A character `NAME_SEPARATORS` matches.
+fn is_name_separator(c: char) -> bool {
+    c.is_whitespace() || "._-:–—/".contains(c)
+}
 pub const WORD_START: &str = r"(?<![A-Za-z0-9])";
 /// An alias this short (an acronym like "SBR") is only trusted as a whole word.
 pub const SHORT_ALIAS_CHARS: usize = 4;
 
-static NAME_SPLIT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(NAME_SEPARATORS, Flags::NONE));
 static SEASON_MARK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::from_literal(
+    Regex::literal(
         r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
-        Flags::IGNORECASE,
+        Case::Insensitive,
     )
 });
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::from_literal(r"\s+", Flags::NONE));
+static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"\s+", Case::Sensitive));
 static DANGLING_SEPARATORS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", Flags::NONE));
+    LazyLock::new(|| Regex::literal(r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", Case::Sensitive));
 static METACHARACTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(r"([\\^$.|?*+()\[\]{}])", Flags::NONE));
+    LazyLock::new(|| Regex::literal(r"([\\^$.|?*+()\[\]{}])", Case::Sensitive));
 static SLASH_IN_NAME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(r"(\w+)[/](\w+)", Flags::NONE));
-static SLASH: LazyLock<Regex> = LazyLock::new(|| Regex::from_literal(r"[/\\|]", Flags::NONE));
-static COLON: LazyLock<Regex> = LazyLock::new(|| Regex::from_literal(r":\s*", Flags::NONE));
+    LazyLock::new(|| Regex::literal(r"(\w+)[/](\w+)", Case::Sensitive));
+static SLASH: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"[/\\|]", Case::Sensitive));
+static COLON: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r":\s*", Case::Sensitive));
 static FORBIDDEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(r#"[<>:"/\\|?*\x00-\x1f]"#, Flags::NONE));
+    LazyLock::new(|| Regex::literal(r#"[<>:"/\\|?*\x00-\x1f]"#, Case::Sensitive));
 static DOUBLE_DASH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::from_literal(r"\s*-\s*-\s*", Flags::NONE));
+    LazyLock::new(|| Regex::literal(r"\s*-\s*-\s*", Case::Sensitive));
 
 /// The season number a roman numeral stands for.
 fn roman_to_int(numeral: &str) -> Option<&'static str> {
@@ -65,7 +68,7 @@ fn int_to_roman(number: &str) -> Option<&'static str> {
 /// Season 3").
 pub fn generate_season_variants(alias: &str) -> Vec<String> {
     let mut variants = vec![alias.to_owned()];
-    let Some(mark) = SEASON_MARK.search(alias) else {
+    let Some(mark) = SEASON_MARK.find(alias) else {
         return variants;
     };
     // Whichever alternative matched is the only group that captured anything.
@@ -90,9 +93,9 @@ pub fn generate_season_variants(alias: &str) -> Vec<String> {
     // Cut the season off the whole alias. Separators inside a title ("Re:Zero", "Kaguya-sama",
     // "Fate/stay night") are part of the name, so the base is never truncated at one; only
     // dangling ones left by the removal are trimmed.
-    let base = SEASON_MARK.sub("", alias, 0);
-    let base = SPACES.sub(" ", &base, 0);
-    let base = DANGLING_SEPARATORS.sub("", pystr::strip(&base), 0);
+    let base = SEASON_MARK.replace_all(alias, "");
+    let base = SPACES.replace_all(&base, " ");
+    let base = DANGLING_SEPARATORS.replace_all(pystr::strip(&base), "");
     let base = pystr::strip(&base);
 
     if base.chars().count() >= 3 {
@@ -149,10 +152,10 @@ pub fn sanitize_regex_token(title: &str) -> String {
         .replace("(0?)", "\0ZERO_OPT_P\0")
         .replace("0?", "\0ZERO_OPT\0");
     let escaped = METACHARACTER
-        .sub(r"\\\1", pystr::strip(&protected), 0)
+        .replace_all(pystr::strip(&protected), r"\$1")
         .replace("\0ZERO_OPT_P\0", "(0?)")
         .replace("\0ZERO_OPT\0", "0?");
-    SPACES.sub(" ", &escaped, 0)
+    SPACES.replace_all(&escaped, " ").into_owned()
 }
 
 /// A regex from a release name observed on a feed.
@@ -174,9 +177,8 @@ pub fn build_release_name_pattern(release_name: &str) -> String {
 /// missing separator ("BlueBox") does not.
 pub fn build_tolerant_name_pattern(name: &str) -> String {
     let stripped = pystr::strip(name);
-    let tokens: Vec<&str> = NAME_SPLIT
-        .split(stripped)
-        .into_iter()
+    let tokens: Vec<&str> = stripped
+        .split(is_name_separator)
         .filter(|token| !token.is_empty())
         .collect();
     match tokens.as_slice() {
@@ -259,7 +261,8 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
         expanded.extend(generate_season_variants(alias));
         // "[Oshi no Ko] 3rd Season" is written "Oshi no Ko S3" by release groups: the brackets are
         // part of the name only.
-        let unbracketed = SPACES.sub(" ", &alias.replace(['[', ']'], " "), 0);
+        let spaced = alias.replace(['[', ']'], " ");
+        let unbracketed = SPACES.replace_all(&spaced, " ");
         let unbracketed = pystr::strip(&unbracketed);
         if unbracketed != alias && unbracketed.chars().count() >= MIN_PATTERN_CHARS {
             expanded.extend(generate_season_variants(unbracketed));
@@ -298,12 +301,12 @@ pub fn sanitize_folder_name(name: &str) -> String {
     if name.is_empty() {
         return "Anime".to_owned();
     }
-    let s = SLASH_IN_NAME.sub(r"\1-\2", name, 0);
-    let s = SLASH.sub(" - ", &s, 0);
-    let s = COLON.sub(" - ", &s, 0);
-    let s = FORBIDDEN.sub("", &s, 0);
-    let s = DOUBLE_DASH.sub(" - ", &s, 0);
-    let s = SPACES.sub(" ", &s, 0);
+    let s = SLASH_IN_NAME.replace_all(name, "$1-$2");
+    let s = SLASH.replace_all(&s, " - ");
+    let s = COLON.replace_all(&s, " - ");
+    let s = FORBIDDEN.replace_all(&s, "");
+    let s = DOUBLE_DASH.replace_all(&s, " - ");
+    let s = SPACES.replace_all(&s, " ");
     match s.trim_matches([' ', '.']) {
         "" => "Anime".to_owned(),
         s => s.to_owned(),
@@ -455,5 +458,26 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
         PathBuf::from(local)
     } else {
         path
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_regex_written_in_the_code_compiles() {
+        let all = [
+            &SEASON_MARK,
+            &SPACES,
+            &DANGLING_SEPARATORS,
+            &METACHARACTER,
+            &SLASH_IN_NAME,
+            &SLASH,
+            &COLON,
+            &FORBIDDEN,
+            &DOUBLE_DASH,
+        ];
+        assert!(all.iter().all(|regex| regex.compiled()));
     }
 }
