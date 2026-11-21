@@ -19,6 +19,9 @@ pub enum Error {
     FeedLocked { title: String },
     #[error("'{name}' already uses that URL")]
     FeedUrlTaken { name: String },
+    /// An explicit action on a release that was not carried out, with the reason to show.
+    #[error(transparent)]
+    Refused(#[from] crate::manual::Refusal),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

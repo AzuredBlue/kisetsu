@@ -18,6 +18,7 @@ pub mod feedsync;
 pub mod grab;
 pub mod ingest;
 pub mod library;
+pub mod manual;
 pub mod paths;
 pub mod tags;
 pub mod watched;
