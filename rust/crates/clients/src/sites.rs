@@ -256,6 +256,11 @@ pub fn site_of(feed_url: &str) -> Option<Site> {
     }
 }
 
+/// The host a feed address points to, or the whole address when it names none.
+pub fn host_of(feed_url: &str) -> String {
+    url::host_or_url(feed_url)
+}
+
 /// The feed's own URL with `term` added to its search, keeping user, category and filter.
 pub fn nyaa_search_url(feed_url: &str, term: &str) -> String {
     let parts = url::split(feed_url);
