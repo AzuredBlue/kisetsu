@@ -563,6 +563,7 @@ dependencies = [
  "kisetsu-clients",
  "kisetsu-db",
  "kisetsu-engine",
+ "kisetsu-web",
  "tempfile",
  "thiserror",
  "tracing",

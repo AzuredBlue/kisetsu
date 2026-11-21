@@ -11,22 +11,15 @@ use kisetsu_db::rusqlite::params;
 use kisetsu_db::store;
 use kisetsu_engine::instance::{InstanceLock, LockError, lock_path};
 use kisetsu_engine::jobs::Jobs;
-use kisetsu_engine::remote::WebRemote;
+use kisetsu_engine::remote::{Remote, WebRemote};
 use kisetsu_engine::runner::{Engine, Parts, QbitFactory};
 use kisetsu_engine::scheduler::Scheduler;
+use kisetsu_web::{App, Assets, Guard, LogRing, Runtime, ServeError, Server};
 use tracing::{info, warn};
 
 use crate::cli::Args;
 use crate::config;
 
-/// Jobs whose runs the UI shows.
-const VISIBLE_JOBS: [&str; 5] = [
-    "startup",
-    "refresh_feeds",
-    "hunt",
-    "sync_anilist",
-    "backfill",
-];
 /// How long the jobs get to finish what they are doing once the app is told to stop.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
 
@@ -40,6 +33,12 @@ pub enum Error {
     Sandbox(#[from] std::io::Error),
     #[error("There is no home folder to keep the database in; set KISETSU_DB_PATH.")]
     NoDatabasePath,
+    #[error(
+        "The UI's files were not found; set KISETSU_STATIC_DIR to the folder that holds index.html."
+    )]
+    NoStaticFiles,
+    #[error(transparent)]
+    Serve(#[from] ServeError),
     #[error("Cannot listen for the stop signal: {0}")]
     Signal(#[from] ctrlc::Error),
 }
@@ -86,7 +85,7 @@ fn qbit_factory(sandbox: bool, database: &Path) -> QbitFactory {
 }
 
 /// Runs Kisetsu until Ctrl+C (or the platform's stop signal).
-pub fn run(args: &Args) -> Result<(), Error> {
+pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     // A sandbox started with the flag has a database of its own, thrown away when it ends.
     let sandbox_dir = if args.sandbox {
         Some(
@@ -102,6 +101,7 @@ pub fn run(args: &Args) -> Result<(), Error> {
         Some(dir) => dir.path().join("kisetsu.db"),
         None => config::database_path().ok_or(Error::NoDatabasePath)?,
     };
+    let static_dir = config::static_dir().ok_or(Error::NoStaticFiles)?;
     let (stop, stopped) = mpsc::channel();
     ctrlc::set_handler(move || {
         let _ = stop.send(());
@@ -116,25 +116,36 @@ pub fn run(args: &Args) -> Result<(), Error> {
         Parts::new(qbit_factory(sandbox, &database)),
     )?);
     let scheduler = Scheduler::default();
-    let remote = Arc::new(WebRemote::new(PathBuf::from(list_cache)));
-    let jobs = Jobs::new(Arc::clone(&engine), scheduler.clone(), remote);
+    let remote: Arc<dyn Remote> = Arc::new(WebRemote::new(PathBuf::from(list_cache)));
+    let jobs = Arc::new(Jobs::new(
+        Arc::clone(&engine),
+        scheduler.clone(),
+        Arc::clone(&remote),
+    ));
     let bus = engine.bus().clone();
-    scheduler.on_change(move |name, _| {
-        if VISIBLE_JOBS.contains(&name) {
-            bus.publish(["status"]);
-        }
-    });
     jobs.register();
     scheduler.start();
-    warn!(
-        "The web server is not part of this build yet: running the jobs only, nothing listens on {}:{}.",
-        args.host, args.port
+
+    let runtime = Runtime::new(
+        Arc::clone(&engine),
+        scheduler.clone(),
+        Arc::clone(&jobs),
+        remote,
+        logs,
+        sandbox,
     );
+    let guard = Guard::new(Guard::machine_name(), &config::allowed_hosts(), sandbox);
+    let app = Arc::new(App::new(runtime, guard, Assets::new(static_dir)));
+    let mut server = Server::start(Arc::clone(&app), &args.host, args.port)?;
+    info!("Listening on http://{}:{}", args.host, args.port);
 
     // The signal handler only sends; the stop itself happens here.
     let _ = stopped.recv();
     info!("Shutting down.");
     engine.stop();
+    bus.shutdown();
+    server.stop();
+    app.wait_for_background();
     let running = scheduler.stop(SHUTDOWN_GRACE);
     if !running.is_empty() {
         warn!("Jobs still running at shutdown: {}", running.join(", "));
