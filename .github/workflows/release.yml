@@ -1,0 +1,97 @@
+name: Release
+
+# Runs only when a version tag is pushed.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the target
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup target add "${{ matrix.target }}"
+
+      - name: Build
+        shell: bash
+        working-directory: rust
+        run: cargo build --release --locked --package kisetsu --target "${{ matrix.target }}"
+
+      - name: Package for Windows
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $name = "kisetsu-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          Compress-Archive -Path "rust/target/${{ matrix.target }}/release/kisetsu.exe" -DestinationPath "$name.zip"
+
+      - name: Package for Linux
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          name="kisetsu-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          tar -C "rust/target/${{ matrix.target }}/release" -czf "$name.tar.gz" kisetsu
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: kisetsu-*.${{ matrix.archive }}
+          if-no-files-found: error
+
+  release:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: sha256sum kisetsu-* > SHA256SUMS
+
+      - name: Sign SHA256SUMS
+        working-directory: dist
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+        run: |
+          test -n "$MINISIGN_SECRET_KEY" || { echo "The MINISIGN_SECRET_KEY secret is not set." >&2; exit 1; }
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends minisign
+          key="$RUNNER_TEMP/minisign.key"
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
+          minisign -S -s "$key" -m SHA256SUMS -x SHA256SUMS.minisig
+          rm -f "$key"
+
+      - name: Create the release
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes kisetsu-* SHA256SUMS SHA256SUMS.minisig
