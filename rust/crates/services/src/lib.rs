@@ -18,5 +18,6 @@ pub mod ingest;
 pub mod library;
 pub mod paths;
 pub mod tags;
+pub mod watched;
 
 pub use error::{Error, Result};

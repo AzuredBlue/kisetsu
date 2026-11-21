@@ -60,6 +60,33 @@ fn real_path(path: &Path) -> PathBuf {
     }
 }
 
+/// A path made absolute and plain by its text alone, so two spellings of one folder compare
+/// equal: `.` and `..` are resolved, and where the file system ignores case so is the case.
+pub fn normalized(path: &str) -> String {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| PathBuf::from(path));
+    let mut plain = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                plain.pop();
+            }
+            other => plain.push(other),
+        }
+    }
+    let text = plain.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        text.to_lowercase()
+    } else {
+        text
+    }
+}
+
+/// Whether `child` is `parent` or somewhere under it, however either is spelled.
+pub fn within(child: &str, parent: &str) -> bool {
+    Path::new(&normalized(child)).starts_with(normalized(parent))
+}
+
 /// A Windows real path without the `\\?\` prefix the system adds (`\\?\UNC\` becomes `\\`).
 fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
@@ -99,6 +126,23 @@ mod tests {
         assert_eq!(plain, PathBuf::from("/shows"));
     }
 
+    #[test]
+    fn a_folder_is_within_itself_and_the_folders_above_it_however_it_is_spelled() {
+        let base = std::env::temp_dir();
+        let parent = base.join("Shows").to_string_lossy().into_owned();
+        let child = base
+            .join("Shows")
+            .join("x")
+            .join("..")
+            .join("Bleach")
+            .join("01.mkv");
+        let child = child.to_string_lossy().into_owned();
+        assert!(within(&child, &parent));
+        assert!(within(&parent, &parent));
+        assert!(!within(&parent, &child));
+        let sibling = base.join("Shows 2").to_string_lossy().into_owned();
+        assert!(!within(&sibling, &parent));
+    }
     #[test]
     fn a_leading_tilde_is_the_home_directory() {
         let dir = tempfile::tempdir().unwrap();
