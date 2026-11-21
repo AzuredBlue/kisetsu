@@ -213,6 +213,24 @@ fn a_read_sees_committed_rows_saves_nothing_and_cannot_reach_qbit() {
 }
 
 #[test]
+fn a_dry_run_runs_on_the_engine_thread_and_saves_nothing() {
+    let Fixture { engine, .. } = fixture();
+    let on_engine_thread = engine
+        .dry_run(|ctx| {
+            feeds::add_feed(ctx, "A", "https://a/rss", None)?;
+            assert_eq!(feed_names(ctx)?, ["A"]);
+            Ok(thread::current().name().map(str::to_owned))
+        })
+        .unwrap();
+    assert_eq!(on_engine_thread.as_deref(), Some("kisetsu-engine"));
+    assert!(matches!(
+        engine.dry_run(|ctx| ctx.qbit().map(|_| ())),
+        Err(Error::Service(ServiceError::NoQbit))
+    ));
+    assert!(engine.call(feed_names).unwrap().is_empty());
+}
+
+#[test]
 fn a_read_is_given_what_the_last_pass_learned_of_stalled_and_carried() {
     let Fixture { engine, .. } = fixture();
     engine

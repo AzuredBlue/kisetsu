@@ -177,6 +177,31 @@ impl Worker {
         result
     }
 
+    /// Runs `work` on a view of the database that is never saved, and without qBittorrent.
+    fn dry_run<R>(
+        &mut self,
+        work: impl FnOnce(&mut Context<'_>) -> kisetsu_services::Result<R>,
+    ) -> Result<R> {
+        let now = self.clock.now();
+        let shared = locked(&self.read_caches).clone();
+        let mut caches = Caches {
+            stalled: shared.stalled,
+            carried: shared.carried,
+            ..Caches::default()
+        };
+        let conn = &mut self.conn;
+        let outcome = panic::catch_unwind(AssertUnwindSafe(|| {
+            store::read_scope(conn, |tx| {
+                let mut ctx = Context::new(tx, now, &mut caches)?;
+                work(&mut ctx)
+            })
+        }));
+        match outcome {
+            Ok(result) => result.map_err(Error::Service),
+            Err(panic) => Err(Error::Panicked(panic_message(&*panic))),
+        }
+    }
+
     /// Leaves what a read may use where it can find it.
     fn share_caches(&self) {
         let mut shared = locked(&self.read_caches);
@@ -321,6 +346,24 @@ impl Engine {
         let (reply, answer) = mpsc::channel();
         let message = Message::Work(Box::new(move |worker| {
             let _ = reply.send(worker.run(&caller, work));
+        }));
+        self.sender.send(message).map_err(|_| Error::Stopped)?;
+        answer.recv().map_err(|_| Error::Stopped)?
+    }
+
+    /// Runs `work` on the engine thread like [`Self::call`], but on a view of the database that is
+    /// never saved and without qBittorrent: `work` may write while it computes (a preview, a copy
+    /// of the database) without racing the engine for the database.
+    pub fn dry_run<R: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Context<'_>) -> kisetsu_services::Result<R> + Send + 'static,
+    ) -> Result<R> {
+        if self.is_stopped() {
+            return Err(Error::Stopped);
+        }
+        let (reply, answer) = mpsc::channel();
+        let message = Message::Work(Box::new(move |worker| {
+            let _ = reply.send(worker.dry_run(work));
         }));
         self.sender.send(message).map_err(|_| Error::Stopped)?;
         answer.recv().map_err(|_| Error::Stopped)?
