@@ -273,6 +273,9 @@ version = "0.1.0"
 [[package]]
 name = "kisetsu-services"
 version = "0.1.0"
+dependencies = [
+ "tempfile",
+]
 
 [[package]]
 name = "kisetsu-web"

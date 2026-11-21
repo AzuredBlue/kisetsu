@@ -1,8 +1,6 @@
 //! The regexes that find a show's releases among feed titles, and the folder a show saves into.
 
-use std::env;
-use std::fs;
-use std::path::{Component, Path, PathBuf, is_separator};
+use std::path::is_separator;
 use std::sync::LazyLock;
 
 use crate::parsing::{is_digit, is_number, number};
@@ -308,7 +306,8 @@ pub fn compress_home_path(path: &str, home: &str) -> String {
     }
 }
 
-/// The absolute folder a show saves into, with '~' meaning the home directory `home`.
+/// The absolute folder a show saves into; `resolve` turns an absolute-looking folder (one that may
+/// start with '~') into its resolved form.
 ///
 /// A custom folder is used when set: `{name}` in it becomes the show's folder name, and a relative
 /// one goes under `base_dir`. Otherwise the show's folder name fills `base_dir`'s `{name}`, or is
@@ -317,7 +316,7 @@ pub fn resolve_save_path(
     base_dir: &str,
     display_name: &str,
     custom_save_folder: Option<&str>,
-    home: &str,
+    resolve: impl Fn(&str) -> String,
 ) -> String {
     let clean_name = sanitize_folder_name(display_name);
     let base_template = base_dir.trim();
@@ -341,7 +340,7 @@ pub fn resolve_save_path(
             format!("{prefix}/{custom}")
         };
         return if is_absolute(&raw) {
-            resolve(&raw, home)
+            resolve(&raw)
         } else {
             raw
         };
@@ -355,7 +354,7 @@ pub fn resolve_save_path(
     } else {
         join(base_template, &clean_name)
     };
-    resolve(&expanded, home)
+    resolve(&expanded)
 }
 
 /// Whether a saved folder is taken as absolute: rooted, under '~', or after a drive letter.
@@ -370,74 +369,6 @@ fn join(base: &str, name: &str) -> String {
         format!("{base}{name}")
     } else {
         format!("{base}{}{name}", std::path::MAIN_SEPARATOR)
-    }
-}
-
-/// A leading '~' alone or before a separator is the home directory. A
-/// '~user' form is left as it is.
-fn expand_user(path: &str, home: &str) -> String {
-    match path.strip_prefix('~') {
-        Some(rest) if rest.is_empty() || rest.starts_with(is_separator) => format!("{home}{rest}"),
-        _ => path.to_owned(),
-    }
-}
-
-/// The absolute, resolved form of a path with a leading '~' expanded.
-///
-/// The path is made absolute against the working directory and `.` and `..` are resolved by its
-/// text. Then the longest leading part that exists is replaced by its real path
-/// (links followed, the case on disk), and the parts that don't exist are kept as written.
-fn resolve(path: &str, home: &str) -> String {
-    let expanded = PathBuf::from(expand_user(path, home));
-    let absolute = if expanded.is_absolute() {
-        expanded
-    } else {
-        std::path::absolute(&expanded)
-            .or_else(|_| env::current_dir().map(|cwd| cwd.join(&expanded)))
-            .unwrap_or(expanded)
-    };
-    let mut normal = PathBuf::new();
-    for component in absolute.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                normal.pop();
-            }
-            other => normal.push(other),
-        }
-    }
-    real_path(&normal).to_string_lossy().into_owned()
-}
-
-/// The path with its longest existing leading part replaced by that part's real path.
-fn real_path(path: &Path) -> PathBuf {
-    let mut missing = Vec::new();
-    let mut existing = path;
-    loop {
-        if let Ok(real) = fs::canonicalize(existing) {
-            let mut real = without_verbatim_prefix(real);
-            real.extend(missing.iter().rev());
-            return real;
-        }
-        match (existing.parent(), existing.file_name()) {
-            (Some(parent), Some(name)) => {
-                missing.push(name);
-                existing = parent;
-            }
-            _ => return path.to_path_buf(),
-        }
-    }
-}
-
-/// A Windows real path without the `\\?\` prefix the system adds (`\\?\UNC\` becomes `\\`).
-fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let text = path.to_string_lossy();
-    if let Some(unc) = text.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{unc}"))
-    } else if let Some(local) = text.strip_prefix(r"\\?\") {
-        PathBuf::from(local)
-    } else {
-        path
     }
 }
 
