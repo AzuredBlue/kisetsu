@@ -268,6 +268,13 @@ impl ChangeBus {
         self.arm(state);
     }
 
+    /// Sends what is held back at once, whatever time it is due.
+    #[cfg(feature = "testing")]
+    pub fn flush(&self) {
+        let mut state = locked(&self.inner.state);
+        state.flush_due(Instant::now() + Duration::from_secs(365 * 24 * 3600));
+    }
+
     /// Ends every subscription, so open event streams do not hold the server up.
     pub fn shutdown(&self) {
         let mut state = locked(&self.inner.state);
