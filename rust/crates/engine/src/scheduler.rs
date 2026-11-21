@@ -72,6 +72,17 @@ struct Job {
     runs: u64,
 }
 
+impl Job {
+    fn status(&self) -> JobStatus {
+        JobStatus {
+            due: self.due,
+            running: self.running,
+            runs: self.runs,
+            last_error: self.last_error.clone(),
+        }
+    }
+}
+
 /// The jobs and when each is due.
 #[derive(Default)]
 struct State {
@@ -246,13 +257,25 @@ impl Scheduler {
 
     pub fn status(&self, name: &str) -> Option<JobStatus> {
         let state = locked(&self.inner.state);
-        let job = state.jobs.iter().find(|job| job.name == name)?;
-        Some(JobStatus {
-            due: job.due,
-            running: job.running,
-            runs: job.runs,
-            last_error: job.last_error.clone(),
-        })
+        state
+            .jobs
+            .iter()
+            .find(|job| job.name == name)
+            .map(Job::status)
+    }
+
+    /// How every registered job stands, in the order they were registered.
+    pub fn statuses(&self) -> Vec<(String, JobStatus)> {
+        locked(&self.inner.state)
+            .jobs
+            .iter()
+            .map(|job| (job.name.clone(), job.status()))
+            .collect()
+    }
+
+    /// Whether the jobs are being run as they fall due.
+    pub fn is_started(&self) -> bool {
+        locked(&self.driver).is_some()
     }
 
     /// Starts running the jobs as they fall due. Does nothing when already started.
