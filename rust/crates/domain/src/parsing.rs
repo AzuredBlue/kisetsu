@@ -2,7 +2,6 @@
 //! resolution, episode range), and how closely its name matches a show's.
 
 use std::collections::HashSet;
-use std::fmt;
 use std::sync::LazyLock;
 
 use crate::fuzz;
@@ -205,19 +204,6 @@ static SEASON_NAME_PATTERNS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
     ]
     .map(|pattern| Regex::literal(pattern, Case::Insensitive))
 });
-
-/// A season numeral that matched case-insensitively but lowercases to none of the known ones
-/// ("İi" lowercases to "i̇i"): the lookup fails as Python's `KeyError` does.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct UnknownNumeral(pub String);
-
-impl fmt::Display for UnknownNumeral {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "unknown season numeral {:?}", self.0)
-    }
-}
-
-impl std::error::Error for UnknownNumeral {}
 
 /// What a release title says about itself.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -758,20 +744,15 @@ pub fn names_something_else(raw_title: &str, aliases: &[impl AsRef<str>]) -> boo
 /// Whether a release names a season none of the show's names does ("Kingdom 5th Season" for
 /// "Kingdom 6th Season"). A show whose names give no season, or a release that names none, never
 /// conflicts.
-pub fn season_conflict(
-    raw_title: &str,
-    aliases: &[impl AsRef<str>],
-) -> Result<bool, UnknownNumeral> {
-    let Some(named) = release_season(raw_title)? else {
-        return Ok(false);
+pub fn season_conflict(raw_title: &str, aliases: &[impl AsRef<str>]) -> bool {
+    let Some(named) = release_season(raw_title) else {
+        return false;
     };
-    let mut seasons = HashSet::new();
-    for alias in aliases {
-        if let Some(season) = release_season(alias.as_ref())? {
-            seasons.insert(season);
-        }
-    }
-    Ok(!seasons.is_empty() && !seasons.contains(&named))
+    let seasons: HashSet<i64> = aliases
+        .iter()
+        .filter_map(|alias| release_season(alias.as_ref()))
+        .collect();
+    !seasons.is_empty() && !seasons.contains(&named)
 }
 
 /// Whether a release holds a run of episodes in one torrent. A double episode (`episode_pair`) is
@@ -852,34 +833,29 @@ fn series_name_part(raw_title: &str) -> String {
         .into_owned()
 }
 
-fn name_season(name: &str) -> Result<Option<i64>, UnknownNumeral> {
+fn name_season(name: &str) -> Option<i64> {
     for pattern in SEASON_NAME_PATTERNS.iter() {
         if let Some(found) = pattern.find(name) {
-            return Ok(found.group(1).map(pystr::int));
+            return found.group(1).map(pystr::int);
         }
     }
-    let Some(roman) = TRAILING_ROMAN.find(name) else {
-        return Ok(None);
-    };
-    let numeral = pystr::lower(roman.group(1).unwrap_or_default());
+    let numeral = pystr::lower(TRAILING_ROMAN.find(name)?.group(1)?);
     ROMAN_SEASONS
         .iter()
         .find(|(roman, _)| *roman == numeral)
-        .map(|&(_, season)| Some(season))
-        .ok_or(UnknownNumeral(numeral))
+        .map(|&(_, season)| season)
 }
 
 /// The season a release names for itself, or None when it names none: from the series name in
 /// front of the episode number ("Link Click S3", "Foo 2nd Season", "Mob Psycho 100 III"), then
 /// from an "S03E05" tag.
-pub fn release_season(raw_title: &str) -> Result<Option<i64>, UnknownNumeral> {
-    if let Some(season) = name_season(&series_name_part(raw_title))? {
-        return Ok(Some(season));
-    }
-    Ok(SEASON_TAG
-        .find(raw_title)
-        .and_then(|tag| tag.group(1))
-        .map(pystr::int))
+pub fn release_season(raw_title: &str) -> Option<i64> {
+    name_season(&series_name_part(raw_title)).or_else(|| {
+        SEASON_TAG
+            .find(raw_title)
+            .and_then(|tag| tag.group(1))
+            .map(pystr::int)
+    })
 }
 
 /// The arc marker a show's aliases insist on, if any. Only cour or stage and part markers count:
@@ -913,16 +889,15 @@ fn arc_is_compatible(requirement: &str, qualifier: Option<&str>) -> bool {
 }
 
 /// Makes the parsed title carry the season marker the release writes in its name ("Ao Ashi S2").
-fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) -> Result<(), UnknownNumeral> {
+fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) {
     let name = series_name_part(raw_title);
-    if name_season(&name)?.is_none() || name_season(&parsed.title)?.is_some() {
-        return Ok(());
+    if name_season(&name).is_none() || name_season(&parsed.title).is_some() {
+        return;
     }
     let name = pystr::strip(&TRAILING_NAME_SEPARATORS.replace_all(&name, "")).to_owned();
     if !name.is_empty() {
         parsed.title = name;
     }
-    Ok(())
 }
 
 /// Whether a feed item or torrent is a release of the show, with its score and parse.
@@ -935,10 +910,10 @@ pub fn match_release_to_show(
     raw_title: &str,
     aliases: &[impl AsRef<str>],
     options: &MatchOptions<'_>,
-) -> Result<(bool, f64, ParsedRelease), UnknownNumeral> {
+) -> (bool, f64, ParsedRelease) {
     let mut parsed = parse_release_title(raw_title);
     if !is_valid_release(raw_title, options.min_resolution) {
-        return Ok((false, 0.0, parsed));
+        return (false, 0.0, parsed);
     }
 
     let requirement = (!options.ignore_arc_marker)
@@ -947,7 +922,7 @@ pub fn match_release_to_show(
     if requirement.is_some_and(|requirement| {
         !arc_is_compatible(&requirement, release_arc_qualifier(raw_title).as_deref())
     }) {
-        return Ok((false, 0.0, parsed));
+        return (false, 0.0, parsed);
     }
 
     let built;
@@ -964,19 +939,19 @@ pub fn match_release_to_show(
         if !token.is_empty() {
             parsed.title = token.to_owned();
         }
-        keep_season_in_title(raw_title, &mut parsed)?;
-        return Ok((true, 100.0, parsed));
+        keep_season_in_title(raw_title, &mut parsed);
+        return (true, 100.0, parsed);
     }
 
     if !options.allow_fuzzy {
-        return Ok((false, 0.0, parsed));
+        return (false, 0.0, parsed);
     }
     let (score, _) = calculate_match_score(&parsed.title, aliases, options.prepared_aliases);
     let is_match = score >= options.threshold;
     if is_match {
-        keep_season_in_title(raw_title, &mut parsed)?;
+        keep_season_in_title(raw_title, &mut parsed);
     }
-    Ok((is_match, score, parsed))
+    (is_match, score, parsed)
 }
 
 /// A release name reduced to its words, so naming styles compare equal: a feed title ("Blue Box
