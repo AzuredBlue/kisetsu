@@ -278,6 +278,16 @@ impl<'a> Context<'a> {
     }
 }
 
+/// A time as the text kept in the database's state and in files: ISO 8601 with a `+00:00` offset,
+/// and microseconds only when there are any.
+pub fn iso_utc(at: Timestamp) -> String {
+    let base = at.strftime("%Y-%m-%dT%H:%M:%S");
+    match at.as_microsecond().rem_euclid(1_000_000) {
+        0 => format!("{base}+00:00"),
+        micros => format!("{base}.{micros:06}+00:00"),
+    }
+}
+
 pub fn get_state(conn: &Connection, key: &str, default: &str) -> Result<String> {
     let value = conn
         .prepare_cached("SELECT value FROM app_state WHERE key = ?")?

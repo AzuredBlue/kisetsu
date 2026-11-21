@@ -7,6 +7,7 @@
 pub mod adoption;
 pub mod backfill;
 pub mod context;
+pub mod cycle;
 pub mod downloads;
 pub mod error;
 pub mod events;
