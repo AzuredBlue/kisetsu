@@ -1,11 +1,12 @@
 //! Kisetsu: reads the user's AniList watching list and makes qBittorrent download each new episode.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
 mod app;
 mod cli;
 mod config;
+mod tray;
 
 use std::process::ExitCode;
 use std::sync::Arc;

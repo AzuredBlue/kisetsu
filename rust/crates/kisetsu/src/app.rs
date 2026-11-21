@@ -23,6 +23,7 @@ use tracing::{info, warn};
 
 use crate::cli::Args;
 use crate::config;
+use crate::tray;
 
 /// How long the jobs get to finish what they are doing once the app is told to stop.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -129,6 +130,7 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     };
     let static_dir = config::static_dir().ok_or(Error::NoStaticFiles)?;
     let (stop, stopped) = mpsc::channel();
+    let tray_stop = stop.clone();
     ctrlc::set_handler(move || {
         let _ = stop.send(());
     })?;
@@ -164,9 +166,18 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     let mut server = Server::start(Arc::clone(&app), &args.host, args.port)?;
     info!("Listening on http://{}:{}", args.host, args.port);
 
-    // The signal handler only sends; the stop itself happens here.
+    let tray = if args.no_tray {
+        None
+    } else {
+        tray::start(&args.host, args.port, sandbox, &engine, &tray_stop)
+    };
+
+    // The signal handler and the tray's Quit only send; the stop itself happens here.
     let _ = stopped.recv();
     info!("Shutting down.");
+    if let Some(tray) = tray {
+        tray.close();
+    }
     engine.stop();
     bus.shutdown();
     server.stop();

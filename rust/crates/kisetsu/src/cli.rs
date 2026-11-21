@@ -13,6 +13,7 @@ pub struct Args {
     pub host: String,
     pub port: u16,
     pub sandbox: bool,
+    pub no_tray: bool,
 }
 
 /// What to do, once the command line is read.
@@ -53,6 +54,12 @@ fn command() -> Command {
                      all work, but downloads are only pretended and logged",
                 ),
         )
+        .arg(
+            Arg::new("no_tray")
+                .long("no-tray")
+                .action(ArgAction::SetTrue)
+                .help("do not show the notification-area icon (Windows)"),
+        )
 }
 
 /// Reads the command line, without the program name.
@@ -84,6 +91,7 @@ where
         host,
         port,
         sandbox,
+        no_tray: matches.get_flag("no_tray"),
     }))
 }
 
@@ -111,6 +119,12 @@ mod tests {
     fn the_host_is_local_unless_asked_otherwise() {
         assert_eq!(run(&[]).host, "127.0.0.1");
         assert_eq!(run(&["--host", "0.0.0.0"]).host, "0.0.0.0");
+    }
+
+    #[test]
+    fn the_tray_is_shown_unless_declined() {
+        assert!(!run(&[]).no_tray);
+        assert!(run(&["--no-tray"]).no_tray);
     }
 
     #[test]
