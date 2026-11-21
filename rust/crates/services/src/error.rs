@@ -30,6 +30,12 @@ pub enum Error {
     /// A show that was not added.
     #[error(transparent)]
     AddShowRefused(#[from] crate::addshow::Refusal),
+    /// What a request names is not there.
+    #[error("{0}")]
+    NotFound(String),
+    /// A request that cannot be done as asked; the text says why.
+    #[error("{0}")]
+    Invalid(String),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
