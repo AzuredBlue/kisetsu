@@ -9,6 +9,8 @@ pub mod context;
 pub mod error;
 pub mod events;
 pub mod facts;
+#[cfg(any(test, feature = "fakes"))]
+pub mod fakes;
 pub mod feeds;
 pub mod feedsync;
 pub mod ingest;
