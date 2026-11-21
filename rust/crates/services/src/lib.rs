@@ -4,10 +4,12 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 
+pub mod adoption;
 pub mod context;
 pub mod error;
 pub mod events;
 pub mod facts;
+pub mod feeds;
 pub mod library;
 pub mod paths;
 pub mod tags;
