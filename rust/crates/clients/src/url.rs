@@ -55,6 +55,51 @@ pub(crate) fn host_or_url(url: &str) -> String {
     hostname(url).unwrap_or_else(|| url.to_owned())
 }
 
+/// The text with its `%XX` escapes decoded; bytes that are not UTF-8 become U+FFFD.
+pub(crate) fn unquote(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        let escaped = (byte == b'%')
+            .then(|| bytes.get(index + 1..index + 3))
+            .flatten()
+            .and_then(|pair| Some(hex_digit(pair[0])? << 4 | hex_digit(pair[1])?));
+        match escaped {
+            Some(value) => {
+                decoded.push(value);
+                index += 3;
+            }
+            None => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    char::from(byte)
+        .to_digit(16)
+        .and_then(|digit| u8::try_from(digit).ok())
+}
+
+/// The `name=value` pairs of a query, decoded, blank values kept.
+pub(crate) fn parse_qsl(query: &str) -> Vec<(String, String)> {
+    query
+        .split('&')
+        .filter(|pair| !pair.is_empty())
+        .map(|pair| {
+            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
+            (
+                unquote(&name.replace('+', " ")),
+                unquote(&value.replace('+', " ")),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

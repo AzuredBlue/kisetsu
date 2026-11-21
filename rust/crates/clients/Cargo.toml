@@ -9,6 +9,9 @@ publish.workspace = true
 [dependencies]
 jiff.workspace = true
 serde.workspace = true
+quick-xml.workspace = true
+thiserror.workspace = true
+ureq.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"
