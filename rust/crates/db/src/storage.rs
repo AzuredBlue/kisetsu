@@ -149,8 +149,8 @@ pub fn decode_list(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()
 }
 
-/// A value that has a column representation.
-pub(crate) trait Column: Sized {
+/// A value that has a column representation: how it is read from a row and bound as a parameter.
+pub trait Column: Sized {
     fn read(row: &Row<'_>, index: usize) -> rusqlite::Result<Self>;
     fn to_value(&self) -> Value;
 }
@@ -312,6 +312,50 @@ macro_rules! table {
                 );
                 conn.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(values))?;
                 Ok(conn.last_insert_rowid())
+            }
+
+            /// Writes every column but the first to the row whose first column equals this
+            /// row's; returns how many rows that was.
+            pub fn update(&self, conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
+                use $crate::storage::Column;
+                let values = [
+                    $(self.$field.to_value(),)*
+                    self.$first.to_value(),
+                ];
+                let assignments = [$(concat!("\"", stringify!($field), "\" = ?")),*].join(", ");
+                let sql = format!(
+                    "UPDATE {} SET {assignments} WHERE \"{}\" = ?",
+                    Self::TABLE,
+                    stringify!($first),
+                );
+                conn.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(values))
+            }
+
+            /// The rows `SELECT <columns> FROM <table> <tail>` finds, `tail` being the
+            /// `WHERE`, `ORDER BY` and `LIMIT` clauses.
+            pub fn select(
+                conn: &rusqlite::Connection,
+                tail: &str,
+                params: impl rusqlite::Params,
+            ) -> rusqlite::Result<Vec<Self>> {
+                let sql = format!("SELECT {} FROM {} {tail}", Self::COLUMNS, Self::TABLE);
+                conn.prepare_cached(&sql)?
+                    .query_map(params, Self::from_row)?
+                    .collect()
+            }
+
+            /// The first row `select` finds.
+            pub fn find(
+                conn: &rusqlite::Connection,
+                tail: &str,
+                params: impl rusqlite::Params,
+            ) -> rusqlite::Result<Option<Self>> {
+                let sql = format!("SELECT {} FROM {} {tail} LIMIT 1", Self::COLUMNS, Self::TABLE);
+                match conn.prepare_cached(&sql)?.query_row(params, Self::from_row) {
+                    Ok(row) => Ok(Some(row)),
+                    Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+                    Err(error) => Err(error),
+                }
             }
         }
     };

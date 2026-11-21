@@ -222,6 +222,29 @@ mod tests {
     }
 
     #[test]
+    fn rows_are_selected_found_and_updated_by_their_first_column() {
+        let conn = open_in_memory().unwrap();
+        let mut feed = Feed {
+            id: None,
+            name: "n".into(),
+            url: "u".into(),
+            priority: 2,
+            qbit_path: None,
+            last_fetch_at: None,
+            last_ok_at: None,
+            failing_since: None,
+            last_error: None,
+        };
+        feed.id = Some(feed.insert(&conn).unwrap());
+        feed.name = "renamed".into();
+        assert_eq!(feed.update(&conn).unwrap(), 1);
+        let found = Feed::find(&conn, "WHERE url = ?", ["u"]).unwrap();
+        assert_eq!(found, Some(feed.clone()));
+        assert_eq!(Feed::select(&conn, "ORDER BY id", []).unwrap(), [feed]);
+        assert_eq!(Feed::find(&conn, "WHERE url = ?", ["x"]).unwrap(), None);
+    }
+
+    #[test]
     fn a_row_holding_an_unknown_enum_name_is_an_error() {
         let conn = open_in_memory().unwrap();
         conn.execute("INSERT INTO shows (anilist_id, aliases_json, custom_aliases_json, feed_state, save_folder, paused, completed) VALUES (1, '[]', '[]', 'locked', '', 0, 0)", [])
