@@ -9,8 +9,12 @@ publish.workspace = true
 [dependencies]
 kisetsu-db = { path = "../db" }
 kisetsu-services = { path = "../services" }
+fs4.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints.clippy]
 unwrap_used = "deny"
