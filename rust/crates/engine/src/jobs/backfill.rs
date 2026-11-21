@@ -1,6 +1,9 @@
 //! Searching the feeds' sites for past releases.
 
 use std::collections::HashMap;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::thread;
 
 use kisetsu_clients::sites::Grouping;
 use kisetsu_db::schema::Show;
@@ -11,6 +14,7 @@ use tracing::{debug, warn};
 
 use super::*;
 use crate::remote::RemoteSearch;
+use crate::scheduler::panic_message;
 
 /// The show's matcher for a search, or `None` when the show was deleted while the search waited
 /// its turn.
@@ -131,16 +135,15 @@ impl Jobs {
     }
 
     /// Runs `with` on what the searches know of the sites, after taking in how many results the
-    /// feeds' pages held. One search at a time holds it.
-    pub(super) fn with_grouping<R>(&self, with: impl FnOnce(&mut Grouping) -> R) -> R {
-        let mut grouping = locked(&self.grouping);
+    /// feeds' pages held. Searches share it; it holds itself only for each short step.
+    pub(super) fn with_grouping<R>(&self, with: impl FnOnce(&Grouping) -> R) -> R {
         for (host, count) in locked(&self.page_sizes).drain(..) {
-            grouping.saw(&host, count);
+            self.grouping.saw(&host, count);
         }
-        with(&mut grouping)
+        with(&self.grouping)
     }
 
-    /// Searches for the shows' past releases, one show at a time; each site's own pacing keeps
+    /// Searches for the shows' past releases, a few shows at a time; each site's own pacing keeps
     /// its requests spaced.
     ///
     /// Unless `exhaustive`, a show's lower feeds are skipped once its missing episodes are found.
@@ -148,7 +151,7 @@ impl Jobs {
     pub(super) fn search(&self, due: Vec<Due>, exhaustive: bool) -> Result<usize> {
         self.load_grouping()?;
         let mut due = due;
-        let mut run = Run::default();
+        let run = Mutex::new(Run::default());
         if !exhaustive && due.len() > 1 {
             // A site not yet checked for taking several names at once is checked by one show's
             // own search.
@@ -156,27 +159,56 @@ impl Jobs {
                 let first = self.with_grouping(|grouping| {
                     backfill::unchecked(&due, grouping).map(|item| item.show_id)
                 });
-                let Some(show_id) = first.filter(|_| run.stopped.is_none()) else {
+                let Some(show_id) = first.filter(|_| locked(&run).stopped.is_none()) else {
                     break;
                 };
                 if let Some(at) = due.iter().position(|item| item.show_id == show_id) {
                     let item = due.remove(at);
-                    self.search_one(&item, exhaustive, &mut run)?;
+                    self.search_one(&item, exhaustive, &run)?;
                 }
             }
-            if run.stopped.is_none() {
-                self.search_shared(&due, &mut run)?;
+            if locked(&run).stopped.is_none() {
+                self.search_shared(&due, &run)?;
             }
         }
-        for item in &due {
-            self.search_one(item, exhaustive, &mut run)?;
-        }
+        self.search_each(&due, exhaustive, &run)?;
         self.keep_grouping()?;
-        Ok(run.added)
+        let added = locked(&run).added;
+        Ok(added)
+    }
+
+    /// Searches for each show on its own, up to [`SEARCH_CONCURRENCY`] shows at a time.
+    fn search_each(&self, due: &[Due], exhaustive: bool, run: &Mutex<Run>) -> Result<()> {
+        let next = AtomicUsize::new(0);
+        let failed = AtomicBool::new(false);
+        let work = || -> Result<()> {
+            while !failed.load(Ordering::Acquire) {
+                let Some(item) = due.get(next.fetch_add(1, Ordering::Relaxed)) else {
+                    break;
+                };
+                self.search_one(item, exhaustive, run).inspect_err(|_| {
+                    failed.store(true, Ordering::Release);
+                })?;
+            }
+            Ok(())
+        };
+        thread::scope(|scope| {
+            let workers: Vec<_> = (0..SEARCH_CONCURRENCY.min(due.len()))
+                .map(|_| scope.spawn(work))
+                .collect();
+            let mut outcome = Ok(());
+            for worker in workers {
+                let result = worker
+                    .join()
+                    .unwrap_or_else(|panic| Err(Error::Panicked(panic_message(&*panic))));
+                outcome = outcome.and(result);
+            }
+            outcome
+        })
     }
 
     /// Searches once for the shows that share a site's page, and keeps what covers each.
-    fn search_shared(&self, due: &[Due], run: &mut Run) -> Result<()> {
+    fn search_shared(&self, due: &[Due], run: &Mutex<Run>) -> Result<()> {
         let ids: Vec<i64> = due.iter().map(|item| item.show_id).collect();
         let matchers = self.engine.call(move |ctx| {
             let mut matchers = HashMap::new();
@@ -193,14 +225,14 @@ impl Jobs {
         let found = self.with_grouping(|grouping| {
             backfill::search_shared(due, &by_show, now, &searcher, grouping)
         });
-        run.shared.extend(found);
+        locked(run).shared.extend(found);
         Ok(())
     }
 
     /// Searches for one show's releases, unless a site stopped the searches, and stores what was
     /// found.
-    fn search_one(&self, item: &Due, exhaustive: bool, run: &mut Run) -> Result<()> {
-        if run.stopped.is_some() {
+    fn search_one(&self, item: &Due, exhaustive: bool, run: &Mutex<Run>) -> Result<()> {
+        if locked(run).stopped.is_some() {
             return Ok(());
         }
         let show_id = item.show_id;
@@ -210,7 +242,8 @@ impl Jobs {
         let Some(matcher) = self.engine.call(move |ctx| matcher_of(ctx, show_id))? else {
             return Ok(());
         };
-        let found = match run.shared.remove(&show_id) {
+        let shared = locked(run).shared.remove(&show_id);
+        let found = match shared {
             Some(found) => found,
             None => {
                 let now = self.engine.now();
@@ -222,14 +255,19 @@ impl Jobs {
         };
         let stopped = found.stopped.clone();
         let (stored, kept) = (item.clone(), found);
-        run.added += self
+        let added = self
             .engine
             .call(move |ctx| backfill::apply(ctx, &stored, &kept))?;
+        let mut state = locked(run);
+        state.added += added;
         if let Some(reason) = stopped {
-            warn!("Past-release search stopped: {reason}");
-            run.stopped = Some(reason);
+            if state.stopped.is_none() {
+                warn!("Past-release search stopped: {reason}");
+                state.stopped = Some(reason);
+            }
             return Ok(());
         }
+        drop(state);
         // Whatever it found, a finished search lets the grab mark what is still not there as
         // missed.
         self.poke_soon("grab", BURST_GAP);

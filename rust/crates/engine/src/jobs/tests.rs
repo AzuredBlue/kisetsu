@@ -711,6 +711,53 @@ fn a_show_deleted_before_its_search_ran_is_skipped() {
     assert!(env.feeds().searched().is_empty());
 }
 
+/// Six shows, each with one name, all missing episodes on one searchable feed; returns what is due.
+fn six_shows_due(env: &Env) -> Vec<backfill::Due> {
+    env.add_feed("Nyaa", NYAA);
+    env.feeds().searchable.insert(NYAA.to_owned(), Vec::new());
+    let first = at(START, DAY * -14);
+    for id in 1..=6 {
+        let name = format!("Show Number {id}");
+        env.anilist().shows.push(ListEntry {
+            total_episodes: Some(12),
+            next_airing_episode: Some(4),
+            next_airing_at: Some(at(START, DAY * 7)),
+            ..anilist_show(id, &name)
+        });
+        env.anilist().set_schedule(id, first, 3, DAY * 7);
+    }
+    full_sync(env);
+    env.jobs.sync_anilist(false).unwrap();
+    let due = env
+        .engine
+        .call(|ctx| backfill::due(ctx, DueOptions::default(), None))
+        .unwrap();
+    assert_eq!(due.len(), 6);
+    assert!(due.iter().all(|item| item.terms.len() == 1));
+    due
+}
+
+#[test]
+fn up_to_four_shows_are_searched_at_the_same_time() {
+    let env = Env::new();
+    let due = six_shows_due(&env);
+    // Each search waits for three others, so they only get on if four really overlap.
+    env.remote.search_meeting.store(4, Ordering::SeqCst);
+    env.jobs.search(due, false).unwrap();
+    assert_eq!(env.remote.searches_begun(), 6);
+    assert_eq!(env.remote.most_searching(), SEARCH_CONCURRENCY);
+}
+
+#[test]
+fn a_site_cutting_a_search_short_stops_the_shows_not_yet_started() {
+    let env = Env::new();
+    let due = six_shows_due(&env);
+    env.remote.search_meeting.store(4, Ordering::SeqCst);
+    env.remote.search_rate_limited.store(true, Ordering::SeqCst);
+    assert_eq!(env.jobs.search(due, false).unwrap(), 0);
+    assert_eq!(env.remote.searches_begun(), SEARCH_CONCURRENCY);
+}
+
 #[test]
 fn the_subsplease_schedule_is_read_once_and_only_with_a_subsplease_feed() {
     let env = Env::new();

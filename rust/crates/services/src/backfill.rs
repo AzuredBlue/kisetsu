@@ -601,7 +601,7 @@ impl SiteSearch<'_> {
         &self,
         site_feeds: &[Feed],
         across_feeds: bool,
-        mut grouping: Option<&mut Grouping>,
+        grouping: Option<&Grouping>,
     ) -> Searched {
         let item = self.item;
         let mut found = Searched::default();
@@ -619,7 +619,6 @@ impl SiteSearch<'_> {
             // Several names in one search is nyaa's form; even there it is used only once checked.
             let groupable = grouping.is_some() && site == Some(Site::Nyaa) && item.terms.len() > 1;
             let works = grouping
-                .as_deref()
                 .filter(|_| groupable)
                 .and_then(|grouping| grouping.works(&host));
             let grouped = sites::any_of(&item.terms);
@@ -643,9 +642,7 @@ impl SiteSearch<'_> {
             // be compared with them.
             let claimed = groupable
                 && works.is_none()
-                && grouping
-                    .as_deref_mut()
-                    .is_some_and(|grouping| grouping.claim(&host));
+                && grouping.is_some_and(|grouping| grouping.claim(&host));
             let mut checking = claimed;
             // Each page found, and whether it held every match (judged before it counts towards
             // the host's page size).
@@ -662,10 +659,8 @@ impl SiteSearch<'_> {
                     continue;
                 };
                 let size = u64::try_from(articles.len()).unwrap_or(u64::MAX);
-                let complete = grouping
-                    .as_deref()
-                    .is_some_and(|grouping| grouping.complete(&host, size));
-                if let Some(grouping) = grouping.as_deref_mut() {
+                let complete = grouping.is_some_and(|grouping| grouping.complete(&host, size));
+                if let Some(grouping) = grouping {
                     grouping.saw(&host, size);
                 }
                 found.add(feed.id.unwrap_or_default(), &articles);
@@ -684,12 +679,12 @@ impl SiteSearch<'_> {
                 }
             }
             if checking && !stopped {
-                if let Some(grouping) = grouping.as_deref_mut() {
+                if let Some(grouping) = grouping {
                     self.check_grouping(grouping, &host, feed, &grouped, &pages, &mut found);
                 }
             }
             if claimed {
-                if let Some(grouping) = grouping.as_deref_mut() {
+                if let Some(grouping) = grouping {
                     grouping.release(&host);
                 }
             }
@@ -708,7 +703,7 @@ impl SiteSearch<'_> {
     /// left matches out.
     fn check_grouping(
         &self,
-        grouping: &mut Grouping,
+        grouping: &Grouping,
         host: &str,
         feed: &Feed,
         grouped: &str,
@@ -757,7 +752,7 @@ pub fn search(
     now: Timestamp,
     searcher: &dyn Searcher,
     stop_when_found: bool,
-    mut grouping: Option<&mut Grouping>,
+    grouping: Option<&Grouping>,
 ) -> Searched {
     let run = SiteSearch {
         item,
@@ -778,7 +773,7 @@ pub fn search(
     }
     let mut merged = Searched::default();
     for (_, group) in &by_site {
-        let result = run.run(group, false, grouping.as_deref_mut());
+        let result = run.run(group, false, grouping);
         for (feed_id, articles) in &result.articles {
             merged.add(*feed_id, articles);
         }
@@ -839,7 +834,7 @@ pub fn search_shared(
     matchers: &HashMap<i64, &Matcher>,
     now: Timestamp,
     searcher: &dyn Searcher,
-    grouping: &mut Grouping,
+    grouping: &Grouping,
 ) -> Vec<(i64, Searched)> {
     let mut found: Vec<(i64, Searched)> = Vec::new();
     let mut by_feed: Vec<(&Feed, String, Vec<&Due>)> = Vec::new();

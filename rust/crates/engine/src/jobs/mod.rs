@@ -41,6 +41,8 @@ const BACKFILL_INTERVAL: Duration = Duration::from_secs(6 * 3600);
 const SITE_CHECK_SEARCHES: usize = 3;
 /// Cover images read at the same time (AniList's image server).
 const PALETTE_CONCURRENCY: usize = 4;
+/// Shows searched for past releases at the same time; each site still gets one request at a time.
+const SEARCH_CONCURRENCY: usize = 4;
 const HOUSEKEEPING_INTERVAL: Duration = Duration::from_secs(24 * 3600);
 /// Well before a whole interval, or a machine restarted every day would never get to it.
 const HOUSEKEEPING_FIRST: Duration = Duration::from_secs(3600);
@@ -125,7 +127,7 @@ pub struct Jobs {
     synced: AtomicBool,
     state: Mutex<State>,
     /// What the searches learned of each site, shared by every search.
-    grouping: Mutex<Grouping>,
+    grouping: Grouping,
     /// How many results the feeds' pages held, waiting for the next search to take them in, so
     /// that reading a feed never waits for a search.
     page_sizes: Mutex<Vec<(String, u64)>>,
@@ -188,7 +190,7 @@ impl Jobs {
                 schedule_at: None,
                 grouping_kept: None,
             }),
-            grouping: Mutex::new(Grouping::new(Box::new(wall_seconds))),
+            grouping: Grouping::new(Box::new(wall_seconds)),
             page_sizes: Mutex::new(Vec::new()),
             found: Mutex::new(HashMap::new()),
             feeds_lock: Mutex::new(()),

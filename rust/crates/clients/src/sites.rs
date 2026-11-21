@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex, MutexGuard};
 
 use jiff::Timestamp;
 use regex::Regex;
@@ -114,38 +114,22 @@ pub fn any_of(terms: &[String]) -> String {
 /// off. Either result is checked again after a while. One search at a time checks a host, as a check
 /// asks for every name and costs more than a plain search. What was learned is kept across restarts
 /// ([`Grouping::dump`], [`Grouping::load`]), so the clock is the wall clock.
+///
+/// Searches running at the same time share one `Grouping`: each method holds it only for its own
+/// short step.
 pub struct Grouping {
+    state: Mutex<GroupingState>,
+}
+
+struct GroupingState {
     clock: Box<dyn Fn() -> f64 + Send>,
     checked: HashMap<String, (f64, bool)>,
     checking: HashSet<String>,
     largest: HashMap<String, u64>,
 }
 
-impl Grouping {
-    pub fn new(clock: Box<dyn Fn() -> f64 + Send>) -> Self {
-        Self {
-            clock,
-            checked: HashMap::new(),
-            checking: HashSet::new(),
-            largest: HashMap::new(),
-        }
-    }
-
-    /// Whether the caller is to check the host now; it then calls [`Grouping::release`] when done.
-    pub fn claim(&mut self, host: &str) -> bool {
-        if self.works(host).is_some() || self.checking.contains(host) {
-            return false;
-        }
-        self.checking.insert(host.to_owned());
-        true
-    }
-
-    pub fn release(&mut self, host: &str) {
-        self.checking.remove(host);
-    }
-
-    /// `Some` once checked, `None` while it is still to be checked.
-    pub fn works(&self, host: &str) -> Option<bool> {
+impl GroupingState {
+    fn works(&self, host: &str) -> Option<bool> {
         let (at, works) = *self.checked.get(host)?;
         self.current(at).then_some(works)
     }
@@ -154,9 +138,53 @@ impl Grouping {
         (0.0..=GROUPING_RECHECK_SECONDS).contains(&((self.clock)() - checked_at))
     }
 
-    pub fn record(&mut self, host: &str, works: bool) {
-        let now = (self.clock)();
-        self.checked.insert(host.to_owned(), (now, works));
+    fn saw(&mut self, host: &str, count: u64) {
+        let largest = self.largest.entry(host.to_owned()).or_insert(0);
+        *largest = (*largest).max(count);
+    }
+}
+
+impl Grouping {
+    pub fn new(clock: Box<dyn Fn() -> f64 + Send>) -> Self {
+        Self {
+            state: Mutex::new(GroupingState {
+                clock,
+                checked: HashMap::new(),
+                checking: HashSet::new(),
+                largest: HashMap::new(),
+            }),
+        }
+    }
+
+    fn state(&self) -> MutexGuard<'_, GroupingState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Whether the caller is to check the host now; it then calls [`Grouping::release`] when done.
+    pub fn claim(&self, host: &str) -> bool {
+        let mut state = self.state();
+        if state.works(host).is_some() || state.checking.contains(host) {
+            return false;
+        }
+        state.checking.insert(host.to_owned());
+        true
+    }
+
+    pub fn release(&self, host: &str) {
+        self.state().checking.remove(host);
+    }
+
+    /// `Some` once checked, `None` while it is still to be checked.
+    pub fn works(&self, host: &str) -> Option<bool> {
+        self.state().works(host)
+    }
+
+    pub fn record(&self, host: &str, works: bool) {
+        let mut state = self.state();
+        let now = (state.clock)();
+        state.checked.insert(host.to_owned(), (now, works));
     }
 
     /// Whether a page of `count` results holds every match.
@@ -164,42 +192,43 @@ impl Grouping {
     /// A site's page size is not assumed. A page with no results was not cut off, and one with
     /// fewer results than the host has returned before had room for more.
     pub fn complete(&self, host: &str, count: u64) -> bool {
-        count == 0 || count < self.largest.get(host).copied().unwrap_or(0)
+        count == 0 || count < self.page_size(host)
     }
 
     /// The most results one of the host's pages was seen to hold (0: none seen yet).
     pub fn page_size(&self, host: &str) -> u64 {
-        self.largest.get(host).copied().unwrap_or(0)
+        self.state().largest.get(host).copied().unwrap_or(0)
     }
 
     /// Notes how many results one of the host's pages held.
-    pub fn saw(&mut self, host: &str, count: u64) {
-        let largest = self.largest.entry(host.to_owned()).or_insert(0);
-        *largest = (*largest).max(count);
+    pub fn saw(&self, host: &str, count: u64) {
+        self.state().saw(host, count);
     }
 
     pub fn dump(&self) -> String {
-        let checked: serde_json::Map<String, Value> = self
+        let state = self.state();
+        let checked: serde_json::Map<String, Value> = state
             .checked
             .iter()
             .map(|(host, (at, works))| (host.clone(), json!([at, works])))
             .collect();
-        json!({"checked": checked, "largest": self.largest}).to_string()
+        json!({"checked": checked, "largest": state.largest}).to_string()
     }
 
     /// Takes back what [`Grouping::dump`] kept. A host whose check is due again starts over, page
     /// size included. Text that is no dump changes nothing.
-    pub fn load(&mut self, text: &str) {
+    pub fn load(&self, text: &str) {
         let Some((checked, largest)) = parse_dump(text) else {
             return;
         };
-        self.checked = checked
+        let mut state = self.state();
+        state.checked = checked
             .into_iter()
-            .filter(|(_, (at, _))| self.current(*at))
+            .filter(|(_, (at, _))| state.current(*at))
             .collect();
         for (host, count) in largest {
-            if self.checked.contains_key(&host) {
-                self.saw(&host, count);
+            if state.checked.contains_key(&host) {
+                state.saw(&host, count);
             }
         }
     }

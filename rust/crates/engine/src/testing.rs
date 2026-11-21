@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
@@ -167,11 +167,56 @@ pub struct FakeRemote {
     pub media_deferrals: Mutex<VecDeque<AniListError>>,
     /// The shows each ask for whole schedules named.
     pub media_calls: Mutex<Vec<Vec<i64>>>,
+    /// Makes each search wait until this many are in flight, or give up after a few seconds.
+    pub search_meeting: AtomicUsize,
+    /// Whether every search answers that the site is rate limiting.
+    pub search_rate_limited: AtomicBool,
+    searches: Mutex<SearchCount>,
+    searches_changed: Condvar,
     reading: AtomicUsize,
     pub most_reading: AtomicUsize,
 }
 
+/// How many searches are in flight, how many were at once at most, and how many began.
+#[derive(Default)]
+struct SearchCount {
+    now: usize,
+    most: usize,
+    begun: usize,
+    /// Set once `search_meeting` searches were in flight together; later searches pass at once.
+    met: bool,
+}
+
 impl FakeRemote {
+    /// The most searches that were in flight at once.
+    pub fn most_searching(&self) -> usize {
+        locked(&self.searches).most
+    }
+
+    /// How many searches began.
+    pub fn searches_begun(&self) -> usize {
+        locked(&self.searches).begun
+    }
+
+    /// Counts a search as in flight; with `search_meeting` set it waits for the others.
+    fn meet_other_searches(&self) {
+        let meeting = self.search_meeting.load(Ordering::SeqCst);
+        let mut count = locked(&self.searches);
+        count.now += 1;
+        count.begun += 1;
+        count.most = count.most.max(count.now);
+        count.met |= meeting > 0 && count.now >= meeting;
+        self.searches_changed.notify_all();
+        if meeting > 0 {
+            count = self
+                .searches_changed
+                .wait_timeout_while(count, Duration::from_secs(5), |count| !count.met)
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .0;
+        }
+        count.now -= 1;
+    }
+
     pub fn new(clock: FakeClock) -> Self {
         Self {
             feeds: Mutex::new(FakeFeeds::default()),
@@ -183,6 +228,10 @@ impl FakeRemote {
             read_time: Mutex::new(Duration::ZERO),
             media_deferrals: Mutex::new(VecDeque::new()),
             media_calls: Mutex::new(Vec::new()),
+            search_meeting: AtomicUsize::new(0),
+            search_rate_limited: AtomicBool::new(false),
+            searches: Mutex::new(SearchCount::default()),
+            searches_changed: Condvar::new(),
             reading: AtomicUsize::new(0),
             most_reading: AtomicUsize::new(0),
         }
@@ -208,6 +257,12 @@ impl Remote for FakeRemote {
         term: &str,
         _now: Timestamp,
     ) -> Result<Option<Vec<FeedArticle>>, FeedFetchError> {
+        self.meet_other_searches();
+        if self.search_rate_limited.load(Ordering::SeqCst) {
+            return Err(FeedFetchError::RateLimited {
+                host: feed_url.to_owned(),
+            });
+        }
         locked(&self.feeds).search(feed_url, term)
     }
 
