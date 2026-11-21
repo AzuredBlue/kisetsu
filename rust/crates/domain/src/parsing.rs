@@ -348,7 +348,11 @@ fn is_checksum(text: &str) -> bool {
 pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
     if let Some(found) = GROUP_AT_START.find(raw_title.trim()) {
         let candidate = found.group(1).unwrap_or_default().trim();
-        if !candidate.is_empty() && !is_non_group_tag(candidate) && !is_number(candidate) {
+        // An empty leading bracket names no group and ends the search.
+        if candidate.is_empty() {
+            return None;
+        }
+        if !is_non_group_tag(candidate) && !is_number(candidate) {
             return Some(candidate.to_owned());
         }
     }
@@ -1031,6 +1035,16 @@ mod tests {
             parse_release_title("Show -Foo! bar - 02 [Foo!]").title,
             "Show -Foo! bar"
         );
+    }
+
+    #[test]
+    fn an_empty_leading_bracket_ends_the_group_search() {
+        for title in ["[] Show - 01", "[ ] Show - 01 [Group]"] {
+            let parsed = parse_release_title(title);
+            assert_eq!(parsed.release_group, None, "{title}");
+            assert_eq!(parsed.title, "Show", "{title}");
+            assert_eq!(parsed.episode, Some(1), "{title}");
+        }
     }
 
     #[test]
