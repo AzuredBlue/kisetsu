@@ -1,10 +1,9 @@
 //! The regexes that find a show's releases among feed titles, and the folder a show saves into.
 
 use std::path::is_separator;
-use std::sync::LazyLock;
 
 use crate::parsing::{is_digit, is_number, number};
-use crate::rx::{Case, Regex};
+use crate::rx::regexes;
 
 const ROMAN_TO_INT: [(&str, i64); 6] = [
     ("I", 1),
@@ -27,25 +26,17 @@ const WORD_START: &str = r"(?<![A-Za-z0-9])";
 /// An alias this short (an acronym like "SBR") is only trusted as a whole word.
 const SHORT_ALIAS_CHARS: usize = 4;
 
-static SEASON_MARK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::literal(
-        r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b",
-        Case::Insensitive,
-    )
-});
-static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"\s+", Case::Sensitive));
-static DANGLING_SEPARATORS: LazyLock<Regex> =
-    LazyLock::new(|| Regex::literal(r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", Case::Sensitive));
-static METACHARACTER: LazyLock<Regex> =
-    LazyLock::new(|| Regex::literal(r"([\\^$.|?*+()\[\]{}])", Case::Sensitive));
-static SLASH_IN_NAME: LazyLock<Regex> =
-    LazyLock::new(|| Regex::literal(r"(\w+)[/](\w+)", Case::Sensitive));
-static SLASH: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r"[/\\|]", Case::Sensitive));
-static COLON: LazyLock<Regex> = LazyLock::new(|| Regex::literal(r":\s*", Case::Sensitive));
-static FORBIDDEN: LazyLock<Regex> =
-    LazyLock::new(|| Regex::literal(r#"[<>:"/\\|?*\x00-\x1f]"#, Case::Sensitive));
-static DOUBLE_DASH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::literal(r"\s*-\s*-\s*", Case::Sensitive));
+regexes! {
+    SEASON_MARK = r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b", Insensitive;
+    SPACES = r"\s+", Sensitive;
+    DANGLING_SEPARATORS = r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", Sensitive;
+    METACHARACTER = r"([\\^$.|?*+()\[\]{}])", Sensitive;
+    SLASH_IN_NAME = r"(\w+)[/](\w+)", Sensitive;
+    SLASH = r"[/\\|]", Sensitive;
+    COLON = r":\s*", Sensitive;
+    FORBIDDEN = r#"[<>:"/\\|?*\x00-\x1f]"#, Sensitive;
+    DOUBLE_DASH = r"\s*-\s*-\s*", Sensitive;
+}
 
 /// The season number a roman numeral stands for.
 fn roman_to_int(numeral: &str) -> Option<i64> {
@@ -378,17 +369,6 @@ mod tests {
 
     #[test]
     fn every_regex_written_in_the_code_compiles() {
-        let all = [
-            &SEASON_MARK,
-            &SPACES,
-            &DANGLING_SEPARATORS,
-            &METACHARACTER,
-            &SLASH_IN_NAME,
-            &SLASH,
-            &COLON,
-            &FORBIDDEN,
-            &DOUBLE_DASH,
-        ];
-        assert!(all.iter().all(|regex| regex.compiled()));
+        assert!(written_regexes().iter().all(|regex| regex.compiled()));
     }
 }

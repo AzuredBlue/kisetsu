@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 
 use crate::fuzz;
 use crate::patterns::build_regex_pattern;
-use crate::rx::{Case, Match, Regex};
+use crate::rx::{Case, Match, Regex, regexes};
 
 /// The value of a decimal digit: ASCII, or full-width as Japanese titles write them ("Season２").
 fn digit_value(c: char) -> Option<u32> {
@@ -113,25 +113,6 @@ const SAME_NAME_SCORE: f64 = 85.0;
 /// Words a release adds to a show's name without naming anything by them.
 const NAME_FILLERS: &[&str] = &["episode", "ep", "tv", "anime", "uncut", "dub", "dubbed"];
 const ROMAN_SEASONS: &[(&str, i64)] = &[("ii", 2), ("iii", 3), ("iv", 4), ("v", 5), ("vi", 6)];
-
-/// Patterns written in the code, each compiled on first use.
-macro_rules! regexes {
-    ($($(#[$doc:meta])* $name:ident = $pattern:expr, $flags:ident;)*) => {
-        $(
-            $(#[$doc])*
-            static $name: LazyLock<Regex> =
-                LazyLock::new(|| Regex::literal($pattern, Case::$flags));
-        )*
-
-        #[cfg(test)]
-        fn written_regexes() -> Vec<&'static Regex> {
-            let mut all = vec![$(&*$name),*];
-            all.extend(RANGE_REGEXES.iter());
-            all.extend(SEASON_NAME_PATTERNS.iter());
-            all
-        }
-    };
-}
 
 regexes! {
     VERSION_REGEX = r"(E\d+|\b\d+)v\d+", Insensitive;
@@ -1022,7 +1003,10 @@ mod tests {
 
     #[test]
     fn every_regex_written_in_the_code_compiles() {
-        assert!(written_regexes().iter().all(|regex| regex.compiled()));
+        let mut all = written_regexes();
+        all.extend(RANGE_REGEXES.iter());
+        all.extend(SEASON_NAME_PATTERNS.iter());
+        assert!(all.iter().all(|regex| regex.compiled()));
     }
 
     #[test]

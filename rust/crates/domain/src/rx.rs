@@ -19,6 +19,26 @@ pub enum Case {
     Insensitive,
 }
 
+/// Patterns written in the code, each compiled on first use. In tests, `written_regexes()` lists
+/// them all, so a new pattern is always checked to compile.
+macro_rules! regexes {
+    ($($(#[$doc:meta])* $name:ident = $pattern:expr, $flags:ident;)*) => {
+        $(
+            $(#[$doc])*
+            static $name: ::std::sync::LazyLock<$crate::rx::Regex> =
+                ::std::sync::LazyLock::new(|| {
+                    $crate::rx::Regex::literal($pattern, $crate::rx::Case::$flags)
+                });
+        )*
+
+        #[cfg(test)]
+        fn written_regexes() -> Vec<&'static $crate::rx::Regex> {
+            vec![$(&*$name),*]
+        }
+    };
+}
+pub(crate) use regexes;
+
 /// The size of the lazily built automaton a search may keep, in bytes.
 const DEFAULT_DFA_CACHE: usize = 2 * 1024 * 1024;
 
