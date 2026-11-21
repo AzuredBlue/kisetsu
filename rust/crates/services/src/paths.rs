@@ -13,6 +13,12 @@ fn expand_user(path: &str, home: &str) -> String {
     }
 }
 
+/// The path with a leading '~' replaced by the user's home directory.
+pub fn expand_home(path: &str) -> String {
+    let home = env::home_dir().unwrap_or_default();
+    expand_user(path, &home.to_string_lossy())
+}
+
 /// The absolute, resolved form of a path with a leading '~' meaning the home directory `home`.
 ///
 /// The path is made absolute against the working directory and `.` and `..` are resolved by its
