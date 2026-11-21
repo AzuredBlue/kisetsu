@@ -19,6 +19,12 @@ thiserror.workspace = true
 tracing.workspace = true
 ureq.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+tauri-winrt-notification.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust.workspace = true
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

@@ -14,5 +14,6 @@ pub mod qbittorrent;
 pub mod rss;
 pub mod sandbox;
 pub mod sites;
+pub mod toast;
 
 pub mod traffic;
