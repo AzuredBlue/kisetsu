@@ -42,6 +42,8 @@ pub struct Parts {
     /// Where finished downloads are announced; `None` announces nothing.
     pub notifier: Option<Arc<dyn Notify + Send + Sync>>,
     pub bus: ChangeBus,
+    /// Names the downloads Kisetsu adds; `None` makes a different name on every call.
+    pub tags: Option<Box<dyn TagSource + Send>>,
 }
 
 impl Parts {
@@ -51,6 +53,7 @@ impl Parts {
             qbit,
             notifier: None,
             bus: ChangeBus::default(),
+            tags: None,
         }
     }
 }
@@ -126,7 +129,7 @@ struct Worker {
     conn: Connection,
     caches: Caches,
     qbit: QbitSlot,
-    tags: OperationTags,
+    tags: Box<dyn TagSource + Send>,
     clock: Arc<dyn Clock + Send + Sync>,
     notifier: Option<Arc<dyn Notify + Send + Sync>>,
     bus: ChangeBus,
@@ -155,7 +158,7 @@ impl Worker {
                 let mut ctx = Context::new(tx, now, caches)?;
                 let connection = qbit.get(&ctx.settings);
                 ctx.qbit = Some(connection);
-                ctx.download_tags = Some(tags);
+                ctx.download_tags = Some(tags.as_mut());
                 ctx.notifier = notifier.as_deref().map(|notifier| notifier as &dyn Notify);
                 let result = work(&mut ctx);
                 topics = std::mem::take(&mut ctx.topics);
@@ -287,6 +290,9 @@ impl Engine {
         let read_caches = Arc::new(Mutex::new(ReadCaches::default()));
         let (sender, messages) = mpsc::channel::<Message>();
         let (factory, clock, notifier) = (parts.qbit, Arc::clone(&parts.clock), parts.notifier);
+        let tags = parts
+            .tags
+            .unwrap_or_else(|| Box::<OperationTags>::default());
         let (bus, shared) = (parts.bus.clone(), Arc::clone(&read_caches));
         // The connection to qBittorrent is made on this thread and never leaves it.
         let thread = thread::Builder::new()
@@ -299,7 +305,7 @@ impl Engine {
                         factory,
                         current: None,
                     },
-                    tags: OperationTags::default(),
+                    tags,
                     clock,
                     notifier,
                     bus,
