@@ -8,6 +8,7 @@ mod url;
 
 pub mod anilist;
 pub mod fetch;
+pub mod notify;
 pub mod palette;
 pub mod qbittorrent;
 pub mod rss;
