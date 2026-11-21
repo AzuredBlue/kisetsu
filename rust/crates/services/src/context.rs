@@ -307,6 +307,13 @@ pub fn set_state(conn: &Connection, key: &str, value: &str) -> Result<()> {
     Ok(())
 }
 
+pub const SETUP_KEY: &str = "setup_completed";
+
+/// Whether the user finished the first-run setup.
+pub fn setup_completed(conn: &Connection) -> Result<bool> {
+    Ok(get_state(conn, SETUP_KEY, "")? == "1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

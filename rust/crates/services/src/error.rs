@@ -25,6 +25,8 @@ pub enum Error {
     /// A change to a show that was not made.
     #[error(transparent)]
     ShowRefused(#[from] crate::shows::Refusal),
+    #[error(transparent)]
+    Backup(#[from] crate::backup::BackupError),
 }
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

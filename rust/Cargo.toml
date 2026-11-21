@@ -24,3 +24,4 @@ quick-xml = "0.42.0"
 ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
 regex = "1.12.2"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
+zip = { version = "7.3.0", default-features = false, features = ["deflate-flate2"] }
