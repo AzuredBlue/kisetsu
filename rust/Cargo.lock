@@ -416,6 +416,7 @@ dependencies = [
  "jiff",
  "kisetsu-clients",
  "kisetsu-db",
+ "kisetsu-domain",
  "kisetsu-services",
  "sha1_smol",
  "tempfile",

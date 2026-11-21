@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 kisetsu-clients = { path = "../clients" }
 kisetsu-db = { path = "../db" }
+kisetsu-domain = { path = "../domain" }
 kisetsu-services = { path = "../services" }
 fs4.workspace = true
 jiff.workspace = true

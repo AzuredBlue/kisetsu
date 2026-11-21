@@ -1,9 +1,10 @@
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::thread::sleep;
 
 use super::*;
 use crate::error::Error;
+use crate::testing::ManualMonotonic;
 
 fn secs(seconds: u64) -> Duration {
     Duration::from_secs(seconds)
@@ -26,23 +27,6 @@ fn state_of(jobs: Vec<Job>) -> State {
     State {
         jobs,
         stopping: false,
-    }
-}
-
-/// A clock the test moves.
-#[derive(Default)]
-struct Manual(AtomicU64);
-
-impl Manual {
-    fn advance(&self, by: Duration) {
-        self.0
-            .fetch_add(u64::try_from(by.as_millis()).unwrap(), Ordering::SeqCst);
-    }
-}
-
-impl Monotonic for Manual {
-    fn now(&self) -> Duration {
-        Duration::from_millis(self.0.load(Ordering::SeqCst))
     }
 }
 
@@ -154,7 +138,7 @@ fn only_a_job_not_running_is_due() {
 
 #[test]
 fn pokes_and_delays_count_from_the_schedulers_clock() {
-    let clock = Arc::new(Manual::default());
+    let clock = Arc::new(ManualMonotonic::default());
     let scheduler = Scheduler::new(clock.clone());
     scheduler.add("a", Arc::new(|| Ok(None)), None, None);
     scheduler.add("b", Arc::new(|| Ok(None)), None, Some(secs(30)));

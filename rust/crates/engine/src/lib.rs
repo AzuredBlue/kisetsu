@@ -7,6 +7,9 @@
 pub mod bus;
 pub mod error;
 pub mod instance;
+pub mod jobs;
+mod parallel;
+pub mod remote;
 pub mod runner;
 pub mod scheduler;
 #[cfg(test)]
