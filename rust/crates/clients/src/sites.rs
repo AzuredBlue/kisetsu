@@ -33,7 +33,7 @@ static MARKERS: LazyLock<Regex> = LazyLock::new(|| {
         r"(?i)\b(?:the\s+)?final\s+season\b|\b(?:season|stage|part|cour|s)\s*\d+\b|\b\d+(?:st|nd|rd|th)(?:\s+(?:season|stage|part|cour))?\b|\b(?:season|stage|part|cour)\b",
     )
 });
-static PUNCTUATION: LazyLock<Regex> = LazyLock::new(|| compiled(r"[^\p{L}\p{N}_\s']"));
+static PUNCTUATION: LazyLock<Regex> = LazyLock::new(|| compiled(r"[^\w\s']"));
 
 /// A pattern written in this file; a typo shows up in every test that searches.
 #[expect(clippy::expect_used, reason = "the patterns are literals of this file")]
