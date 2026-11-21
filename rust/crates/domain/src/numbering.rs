@@ -34,7 +34,7 @@ pub struct Mapped {
 
 impl Mapped {
     /// A mapping the air dates did not decide.
-    pub const fn new(local: Option<i64>) -> Self {
+    const fn new(local: Option<i64>) -> Self {
         Self {
             local,
             by_date: false,
@@ -144,24 +144,6 @@ pub struct LedgerRow {
     pub has_torrent: bool,
 }
 
-impl LedgerRow {
-    /// A row with no torrent.
-    pub const fn new(
-        number: i64,
-        holds_release: bool,
-        source_episode: Option<i64>,
-        from_this_feed: bool,
-    ) -> Self {
-        Self {
-            number,
-            holds_release,
-            source_episode,
-            from_this_feed,
-            has_torrent: false,
-        }
-    }
-}
-
 /// The offset a release teaches when its air date contradicts the ledger.
 ///
 /// The air date says the release is episode `local`, but that row already holds a release the
@@ -187,13 +169,13 @@ pub fn inferred_offset(
 /// Rows written before a feed's numbering was known (adopted torrents) sit under the raw number
 /// the feed used. Once the real offset is known they must move, or the true episode would look
 /// already downloaded. Returns `(from_number, to_number)` pairs, or None when nothing changes or
-/// a move is unsafe: each target must exist, be an episode that has aired, and be free or itself
-/// moving.
+/// a move is unsafe: each target must be an episode of the season (1 to `episode_count`) that has
+/// aired and exists, and be free or itself moving.
 pub fn rebase_plan(
     rows: &[LedgerRow],
     offset: i64,
     latest_aired: Option<i64>,
-    limit: Option<i64>,
+    episode_count: i64,
 ) -> Option<Vec<(i64, i64)>> {
     let by_number: HashMap<i64, &LedgerRow> = rows.iter().map(|row| (row.number, row)).collect();
     let movers: Vec<(&LedgerRow, i64)> = rows
@@ -204,11 +186,12 @@ pub fn rebase_plan(
     if movers.is_empty() {
         return None;
     }
-    let ceiling = limit.unwrap_or_else(|| by_number.keys().copied().max().unwrap_or(0));
     let mut moves = Vec::with_capacity(movers.len());
     for &(row, source) in &movers {
         let target = source.checked_sub(offset)?;
-        if !(1..=ceiling).contains(&target) || latest_aired.is_some_and(|latest| target > latest) {
+        if !(1..=episode_count).contains(&target)
+            || latest_aired.is_some_and(|latest| target > latest)
+        {
             return None;
         }
         moves.push((row.number, target));
