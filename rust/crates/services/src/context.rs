@@ -135,6 +135,20 @@ pub struct Caches {
     pub stalled: HashSet<i64>,
     /// By show: whether the last grab pass found a release of it in a feed it may read.
     pub carried: HashMap<i64, bool>,
+    /// Torrents already reported as refused for adoption, so one that stays refused is mentioned
+    /// once.
+    pub refused: HashSet<String>,
+    /// The torrents in qBittorrent that no followed show's names match: adoption does not try
+    /// them again until a show, an alias or a learned name changes.
+    pub unnamed: Option<Unnamed>,
+}
+
+/// The `(hash, name)` of torrents no show's names match, for the matchers built from `built_from`.
+#[derive(Debug, Default)]
+pub struct Unnamed {
+    /// What each matcher was built from, by show id.
+    pub built_from: BTreeMap<i64, String>,
+    pub torrents: HashSet<(String, String)>,
 }
 
 /// A torrent just added, which the next sync is to show: its download and the episode it is for.
