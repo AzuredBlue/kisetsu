@@ -245,14 +245,29 @@ impl Jobs {
 
     /// Holds every job while `work` replaces the database, since a job keeps ids between its
     /// steps, then starts them over as after a restart.
-    pub fn while_stopped<R>(self: &Arc<Self>, work: impl FnOnce() -> R) -> R {
+    ///
+    /// A job still running after the grace cannot be held: the jobs start again as they were, the
+    /// database is left alone and the error names the jobs.
+    pub fn while_stopped<R>(self: &Arc<Self>, work: impl FnOnce() -> Result<R>) -> Result<R> {
+        self.while_stopped_within(STOP_GRACE, work)
+    }
+
+    fn while_stopped_within<R>(
+        self: &Arc<Self>,
+        grace: Duration,
+        work: impl FnOnce() -> Result<R>,
+    ) -> Result<R> {
         let was_running = self.scheduler.is_started();
-        let busy = self.scheduler.stop(STOP_GRACE);
+        let busy = self.scheduler.stop(grace);
         if !busy.is_empty() {
             warn!(
-                "Jobs still running while the database is replaced: {}",
+                "Jobs still running, so the database is not replaced: {}",
                 busy.join(", ")
             );
+            if was_running {
+                self.scheduler.start();
+            }
+            return Err(Error::JobsRunning(busy));
         }
         let result = work();
         self.ready.store(false, Ordering::Release);

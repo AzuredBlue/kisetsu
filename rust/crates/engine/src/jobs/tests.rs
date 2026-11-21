@@ -897,11 +897,52 @@ fn holding_the_jobs_starts_them_over_as_after_a_restart() {
     locked(&env.jobs.state).health.grab = Some("boom".to_owned());
     env.scheduler.start();
 
-    let during = env.jobs.while_stopped(|| env.scheduler.is_started());
+    let during = env
+        .jobs
+        .while_stopped(|| Ok(env.scheduler.is_started()))
+        .unwrap();
 
     assert!(!during);
     assert!(env.scheduler.is_started());
     assert!(!env.jobs.is_ready());
     assert_eq!(env.jobs.health(), Health::default());
     env.scheduler.stop(Duration::from_secs(1));
+}
+
+#[test]
+fn a_job_still_running_after_the_grace_refuses_the_work_and_the_jobs_go_on() {
+    let env = Env::new();
+    env.jobs.ready.store(true, Ordering::Release);
+    let (began, began_rx) = std::sync::mpsc::channel();
+    let (release, release_rx) = std::sync::mpsc::channel::<()>();
+    let (began, release_rx) = (Mutex::new(began), Mutex::new(release_rx));
+    env.scheduler.add(
+        "slow",
+        Arc::new(move || {
+            let _ = locked(&began).send(());
+            let _ = locked(&release_rx).recv_timeout(Duration::from_secs(10));
+            Ok(None)
+        }),
+        None,
+        Some(Duration::ZERO),
+    );
+    env.scheduler.start();
+    began_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+    let mut worked = false;
+    let refused = env
+        .jobs
+        .while_stopped_within(Duration::from_millis(100), || {
+            worked = true;
+            Ok(())
+        })
+        .unwrap_err();
+
+    assert!(!worked);
+    assert!(matches!(&refused, Error::JobsRunning(jobs) if *jobs == ["slow"]));
+    assert!(refused.to_string().contains("slow"));
+    assert!(env.scheduler.is_started());
+    assert!(env.jobs.is_ready());
+    release.send(()).unwrap();
+    assert!(env.scheduler.stop(Duration::from_secs(5)).is_empty());
 }

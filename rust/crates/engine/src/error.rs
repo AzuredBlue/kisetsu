@@ -17,6 +17,10 @@ pub enum Error {
     /// The engine is shutting down and takes no more work.
     #[error("Kisetsu is shutting down")]
     Stopped,
+    /// Jobs were still running after the grace they were given, so the work that needed them
+    /// stopped was not done.
+    #[error("A job is still running ({}); try again in a moment.", .0.join(", "))]
+    JobsRunning(Vec<String>),
     /// The work stopped on a bug of ours instead of returning.
     #[error("{0}")]
     Panicked(String),

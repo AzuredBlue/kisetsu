@@ -19,6 +19,9 @@ pub enum ApiError {
     /// 409: the show is locked to its feed.
     #[error("{0}")]
     FeedLocked(String),
+    /// 409: the request cannot be done while something else is going on; the text says what.
+    #[error("{0}")]
+    Conflict(String),
     /// 502: qBittorrent did not do it.
     #[error("qBittorrent: {0}")]
     Qbit(String),
@@ -42,6 +45,7 @@ impl ApiError {
             Self::FeedLocked(text) => {
                 Response::json(409, &json!({"detail": text, "code": "feed_locked"}))
             }
+            Self::Conflict(text) => detail(409, &text),
             Self::Qbit(text) => detail(502, &format!("qBittorrent: {text}")),
             Self::Upstream(text) => detail(502, &text),
             Self::Unprocessable(problems) => Response::json(422, &problems.to_json()),
@@ -81,9 +85,34 @@ impl From<EngineError> for ApiError {
     fn from(error: EngineError) -> Self {
         match error {
             EngineError::Service(error) => error.into(),
+            EngineError::JobsRunning(_) => Self::Conflict(error.to_string()),
             other => Self::Internal(other.to_string()),
         }
     }
 }
 
 pub type ApiResult = Result<Response, ApiError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::http::Body;
+
+    #[test]
+    fn jobs_still_running_answer_409_with_the_jobs_named() {
+        let error = ApiError::from(EngineError::JobsRunning(vec![
+            "grab".to_owned(),
+            "backfill".to_owned(),
+        ]));
+        let response = error.into_response();
+        assert_eq!(response.status, 409);
+        let Body::Bytes(bytes) = response.body else {
+            panic!("the answer has a body");
+        };
+        let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            body,
+            json!({"detail": "A job is still running (grab, backfill); try again in a moment."})
+        );
+    }
+}
