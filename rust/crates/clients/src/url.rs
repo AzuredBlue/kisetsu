@@ -100,6 +100,33 @@ pub(crate) fn parse_qsl(query: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Percent-encodes everything but letters, digits, `_.-~` and the characters of `safe`.
+pub(crate) fn quote(text: &str, safe: &str) -> String {
+    let mut quoted = String::with_capacity(text.len());
+    for &byte in text.as_bytes() {
+        let character = char::from(byte);
+        if character.is_ascii_alphanumeric()
+            || "_.-~".contains(character)
+            || safe.contains(character)
+        {
+            quoted.push(character);
+        } else {
+            quoted.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    quoted
+}
+
+/// A query: `name=value` pairs joined by `&`, spaces written as `+`.
+pub(crate) fn urlencode(pairs: &[(String, String)]) -> String {
+    let encode = |text: &str| quote(text, " ").replace(' ', "+");
+    pairs
+        .iter()
+        .map(|(name, value)| format!("{}={}", encode(name), encode(value)))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -21,3 +21,4 @@ tracing = "0.1.44"
 serde = { version = "1.0.228", features = ["derive"] }
 quick-xml = "0.42.0"
 ureq = { version = "3.5.2", default-features = false, features = ["rustls"] }
+regex = "1.12.2"
