@@ -394,6 +394,7 @@ dependencies = [
  "kisetsu-clients",
  "kisetsu-db",
  "kisetsu-domain",
+ "serde",
  "serde_json",
  "sha1_smol",
  "tempfile",
