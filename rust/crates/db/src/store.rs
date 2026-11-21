@@ -105,6 +105,19 @@ pub fn session_scope<T, E: From<rusqlite::Error>>(
     Ok(value)
 }
 
+/// Runs `work` on a consistent view of the database that is never saved: the transaction is rolled
+/// back whatever `work` returns. No lock is taken up front, so a reader never queues behind a
+/// writer; a write `work` makes is undone, though it still needs the write lock while it runs.
+pub fn read_scope<T, E: From<rusqlite::Error>>(
+    conn: &mut Connection,
+    work: impl FnOnce(&Transaction<'_>) -> Result<T, E>,
+) -> Result<T, E> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let outcome = work(&tx);
+    tx.rollback()?;
+    outcome
+}
+
 fn create_private_dir(folder: &Path) -> std::io::Result<()> {
     if folder.exists() {
         return Ok(());
@@ -219,6 +232,39 @@ mod tests {
             .query_row("SELECT count(*) FROM feeds", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn a_read_scope_sees_committed_rows_and_keeps_nothing_it_wrote() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("k.db");
+        let mut writer = open(&path).unwrap();
+        let mut reader = connect(&path).unwrap();
+        let feed = Feed {
+            id: None,
+            name: "n".into(),
+            url: "u".into(),
+            priority: 1,
+            qbit_path: None,
+            last_fetch_at: None,
+            last_ok_at: None,
+            failing_since: None,
+            last_error: None,
+        };
+        session_scope(&mut writer, |tx| Ok::<_, Error>(feed.insert(tx)?)).unwrap();
+        let count = |conn: &Connection| -> i64 {
+            conn.query_row("SELECT count(*) FROM feeds", [], |row| row.get(0))
+                .unwrap()
+        };
+        let seen = read_scope(&mut reader, |tx| {
+            let mut second = feed.clone();
+            second.url = "v".into();
+            second.insert(tx)?;
+            Ok::<_, Error>(count(tx))
+        });
+        assert_eq!(seen.unwrap(), 2);
+        assert_eq!(count(&reader), 1);
+        assert_eq!(count(&writer), 1);
     }
 
     #[test]
