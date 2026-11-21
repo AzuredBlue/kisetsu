@@ -7,13 +7,17 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+kisetsu-clients = { path = "../clients" }
 kisetsu-db = { path = "../db" }
 kisetsu-services = { path = "../services" }
 fs4.workspace = true
+jiff.workspace = true
+sha1_smol.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+kisetsu-services = { path = "../services", features = ["fakes"] }
 tempfile.workspace = true
 
 [lints.clippy]

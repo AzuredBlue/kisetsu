@@ -413,8 +413,11 @@ name = "kisetsu-engine"
 version = "0.1.0"
 dependencies = [
  "fs4",
+ "jiff",
+ "kisetsu-clients",
  "kisetsu-db",
  "kisetsu-services",
+ "sha1_smol",
  "tempfile",
  "thiserror",
  "tracing",
