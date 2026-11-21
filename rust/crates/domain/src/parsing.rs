@@ -401,6 +401,7 @@ pub fn extract_release_version(raw_title: &str) -> i64 {
 /// Parses a release title or file name into its name, episode, season, group and version.
 ///
 /// A double release ("- 01-02") reads as its first episode; `episode_pair` gives the second.
+/// The name is empty when nothing before the episode names the show, as in "[Group] [Show] - 01".
 pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
     if episode_pair(raw_title).is_some() {
         let mut parsed = parse_release_title(&first_of_pair(raw_title));
@@ -439,9 +440,6 @@ pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
     title = LEADING_SEPARATORS.replace_all(&title, "").trim().to_owned();
     title = SPACES.replace_all(&title, " ").trim().to_owned();
 
-    if title.is_empty() {
-        title = raw_title.to_owned();
-    }
     ParsedRelease {
         raw_title: raw_title.to_owned(),
         title,
