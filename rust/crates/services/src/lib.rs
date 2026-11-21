@@ -6,6 +6,7 @@
 
 pub mod adoption;
 pub mod context;
+pub mod downloads;
 pub mod error;
 pub mod events;
 pub mod facts;
