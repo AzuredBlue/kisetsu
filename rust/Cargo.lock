@@ -237,7 +237,9 @@ dependencies = [
  "quick-xml",
  "serde",
  "serde_json",
+ "sha1_smol",
  "thiserror",
+ "tracing",
  "ureq",
 ]
 
