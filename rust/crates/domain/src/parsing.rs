@@ -6,8 +6,42 @@ use std::sync::LazyLock;
 
 use crate::fuzz;
 use crate::patterns::build_regex_pattern;
-use crate::pystr;
 use crate::rx::{Case, Match, Regex};
+
+/// The value of a decimal digit: ASCII, or full-width as Japanese titles write them ("Season２").
+fn digit_value(c: char) -> Option<u32> {
+    c.to_digit(10).or_else(|| {
+        ('０'..='９')
+            .contains(&c)
+            .then(|| u32::from(c) - u32::from('０'))
+    })
+}
+
+pub(crate) fn is_digit(c: char) -> bool {
+    digit_value(c).is_some()
+}
+
+/// Whether the text is made of digits only.
+pub(crate) fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.chars().all(is_digit)
+}
+
+/// The value of a run of digits; a number too large for an `i64`, or written with any other
+/// digits, is `i64::MAX`.
+pub(crate) fn number(digits: &str) -> i64 {
+    digits
+        .chars()
+        .try_fold(0_i64, |value, c| {
+            let digit = i64::from(digit_value(c)?);
+            Some(value.saturating_mul(10).saturating_add(digit))
+        })
+        .unwrap_or(i64::MAX)
+}
+
+/// Whether the character is part of a word.
+fn is_word(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
 
 /// The fuzzy score from which a release's name is taken for a show's.
 pub const FUZZY_MATCH_THRESHOLD: f64 = 85.0;
@@ -267,10 +301,10 @@ pub fn normalize_alias(alias: &str) -> String {
 pub fn meaningful_words(normalized: &str) -> HashSet<&str> {
     let mut words = HashSet::new();
     let mut previous = "";
-    for word in pystr::split(normalized) {
+    for word in normalized.split_whitespace() {
         if !STOPWORDS.contains(&word)
             && !SEASON_WORDS.contains(&word)
-            && !(pystr::isdigit(word) && SEASON_WORDS.contains(&previous))
+            && !(is_number(word) && SEASON_WORDS.contains(&previous))
         {
             words.insert(word);
         }
@@ -285,7 +319,7 @@ pub fn normalize_title(title: &str) -> String {
     if title.is_empty() {
         return String::new();
     }
-    let text = pystr::lower(title);
+    let text = title.to_lowercase();
     let text = BRACKETED.replace_all(&text, " ");
     let text = ROMAN_NUMERAL.replace_all_with(&text, |found| {
         let numeral = found.group(1).unwrap_or_default();
@@ -300,11 +334,11 @@ pub fn normalize_title(title: &str) -> String {
     let text = PUNCTUATION.replace_all(&text, " ");
     let text = TIMES.replace_all(&text, " x ");
     let text = NOT_WORD.replace_all(&text, " ");
-    pystr::strip(&SPACES.replace_all(&text, " ")).to_owned()
+    SPACES.replace_all(&text, " ").trim().to_owned()
 }
 
 fn is_non_group_tag(text: &str) -> bool {
-    NON_GROUP_TAGS.contains(&pystr::lower(text).as_str())
+    NON_GROUP_TAGS.contains(&text.to_lowercase().as_str())
 }
 
 /// A CRC in brackets: 8 or 4 hex digits.
@@ -315,9 +349,9 @@ fn is_checksum(text: &str) -> bool {
 /// The release group, whether at the start ("[SubsPlease]"), at the end ("[Varyg]") or a scene
 /// suffix ("-VARYG"). An empty bracket at the start gives an empty group.
 pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
-    if let Some(found) = GROUP_AT_START.find(pystr::strip(raw_title)) {
-        let candidate = pystr::strip(found.group(1).unwrap_or_default());
-        if !is_non_group_tag(candidate) && !pystr::isdigit(candidate) {
+    if let Some(found) = GROUP_AT_START.find(raw_title.trim()) {
+        let candidate = found.group(1).unwrap_or_default().trim();
+        if !is_non_group_tag(candidate) && !is_number(candidate) {
             return Some(candidate.to_owned());
         }
     }
@@ -327,7 +361,7 @@ pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
         .filter_map(|found| found.group(1))
         .collect();
     if let Some(candidate) = scene.into_iter().rev().find(|candidate| {
-        !is_non_group_tag(candidate) && candidate.chars().count() >= 2 && !pystr::isdigit(candidate)
+        !is_non_group_tag(candidate) && candidate.chars().count() >= 2 && !is_number(candidate)
     }) {
         return Some(candidate.to_owned());
     }
@@ -339,8 +373,8 @@ pub fn extract_release_group_tag(raw_title: &str) -> Option<String> {
     brackets
         .into_iter()
         .rev()
-        .map(pystr::strip)
-        .find(|value| !is_checksum(value) && !is_non_group_tag(value) && !pystr::isdigit(value))
+        .map(str::trim)
+        .find(|value| !is_checksum(value) && !is_non_group_tag(value) && !is_number(value))
         .map(str::to_owned)
 }
 
@@ -354,13 +388,13 @@ pub fn extract_release_version(raw_title: &str) -> i64 {
         .find(raw_title)
         .and_then(|found| (1..=3).find_map(|index| found.group(index)))
     {
-        return pystr::int(value);
+        return number(value);
     }
     if REPACK_OR_PROPER.is_match(raw_title) {
         return REPACK_NUMBER
             .find(raw_title)
             .and_then(|found| found.group(1))
-            .map_or(2, |number| pystr::int(number).saturating_add(1));
+            .map_or(2, |digits| number(digits).saturating_add(1));
     }
     1
 }
@@ -388,32 +422,34 @@ pub fn parse_release_title(raw_title: &str) -> ParsedRelease {
 
     let version = extract_release_version(raw_title);
     let release_group = extract_release_group_tag(raw_title);
-    let mut cleaned = pystr::strip(raw_title).to_owned();
+    let mut cleaned = raw_title.trim().to_owned();
     if let Some(group) = release_group.as_deref().filter(|group| !group.is_empty()) {
         cleaned = remove_group(&cleaned, group);
     }
     let cleaned = VERSION_REGEX.replace_all(&cleaned, "$1");
-    let cleaned = pystr::strip(&VIDEO_EXTENSION.replace_all(&cleaned, "")).to_owned();
+    let cleaned = VIDEO_EXTENSION.replace_all(&cleaned, "").trim().to_owned();
     let cleaned = AUDIO_CHANNELS.replace_all(&cleaned, " ");
     let cleaned = FRAME_RATE.replace_all(&cleaned, " ");
     let cleaned = BIT_DEPTH.replace_all(&cleaned, " ");
     let cleaned = QUALITY_TAGS.replace_all(&cleaned, " ");
 
-    let primary_segment = pystr::strip(
-        cleaned
-            .split_once('|')
-            .map_or(&*cleaned, |(first, _)| first),
-    );
+    let primary_segment = cleaned
+        .split_once('|')
+        .map_or(&*cleaned, |(first, _)| first)
+        .trim();
     let (title_candidate, episode, season) = episode_and_season(primary_segment);
 
     let mut title = BRACKETED.replace_all(title_candidate, "").into_owned();
     title = YEAR.replace_all(&title, "").into_owned();
     for _ in 0..5 {
-        title = pystr::strip(&TRAILING_TAG.replace_all(&title, "")).to_owned();
-        title = pystr::strip(&TRAILING_SEPARATORS.replace_all(&title, "")).to_owned();
+        title = TRAILING_TAG.replace_all(&title, "").trim().to_owned();
+        title = TRAILING_SEPARATORS
+            .replace_all(&title, "")
+            .trim()
+            .to_owned();
     }
-    title = pystr::strip(&LEADING_SEPARATORS.replace_all(&title, "")).to_owned();
-    title = pystr::strip(&SPACES.replace_all(&title, " ")).to_owned();
+    title = LEADING_SEPARATORS.replace_all(&title, "").trim().to_owned();
+    title = SPACES.replace_all(&title, " ").trim().to_owned();
 
     if title.is_empty() {
         return parse_without_name(raw_title, episode, season, release_group, version);
@@ -452,7 +488,7 @@ fn parse_without_name(
 fn remove_group(title: &str, group: &str) -> String {
     let bracketed = format!("[{group}]");
     let title = match title.strip_prefix(&bracketed) {
-        Some(rest) => pystr::lstrip(rest),
+        Some(rest) => rest.trim_start(),
         None => title,
     };
     let title = remove_tags(title, &bracketed, false);
@@ -462,12 +498,12 @@ fn remove_group(title: &str, group: &str) -> String {
 /// `text` without each `tag` and the whitespace after it, scanning left to right as `re.sub` does.
 /// With `at_word_end`, only a tag followed by a word boundary (`\b`) is removed.
 fn remove_tags(text: &str, tag: &str, at_word_end: bool) -> String {
-    let ends_in_word = tag.chars().next_back().is_some_and(pystr::is_word);
+    let ends_in_word = tag.chars().next_back().is_some_and(is_word);
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(at) = rest.find(tag) {
         let after = &rest[at + tag.len()..];
-        let word_follows = after.chars().next().is_some_and(pystr::is_word);
+        let word_follows = after.chars().next().is_some_and(is_word);
         if at_word_end && ends_in_word == word_follows {
             // No match here: the search goes on from the next character.
             let next = at + rest[at..].chars().next().map_or(1, char::len_utf8);
@@ -476,7 +512,7 @@ fn remove_tags(text: &str, tag: &str, at_word_end: bool) -> String {
             continue;
         }
         out.push_str(&rest[..at]);
-        rest = pystr::lstrip(after);
+        rest = after.trim_start();
     }
     out.push_str(rest);
     out
@@ -484,29 +520,41 @@ fn remove_tags(text: &str, tag: &str, at_word_end: bool) -> String {
 
 /// The part of a title before its episode and season numbers, with the episode and season.
 fn episode_and_season(segment: &str) -> (&str, Option<i64>, Option<i64>) {
-    let before = |found: &Match<'_>| pystr::strip(&segment[..found.start()]);
-    let number = |found: &Match<'_>, index| found.group(index).map(pystr::int);
+    let before = |found: &Match<'_>| (segment[..found.start()]).trim();
+    let group_number = |found: &Match<'_>, index| found.group(index).map(number);
 
     if let Some(found) = DUAL_NUMBERING.find(segment) {
-        return (before(&found), number(&found, 1), number(&found, 2));
+        return (
+            before(&found),
+            group_number(&found, 1),
+            group_number(&found, 2),
+        );
     }
     if let Some(found) = SEASON_EPISODE.find(segment) {
-        return (before(&found), number(&found, 2), number(&found, 1));
+        return (
+            before(&found),
+            group_number(&found, 2),
+            group_number(&found, 1),
+        );
     }
     if let Some(found) = SEASON_DASH_EPISODE.find(segment) {
-        return (before(&found), number(&found, 2), number(&found, 1));
+        return (
+            before(&found),
+            group_number(&found, 2),
+            group_number(&found, 1),
+        );
     }
     if let Some(found) = EPISODE_NUMBER
         .find_iter(segment)
         .filter(|found| is_episode_number(segment, found))
         .last()
     {
-        return (before(&found), found.name("num").map(pystr::int), None);
+        return (before(&found), found.name("num").map(number), None);
     }
     let season = SEASON_ONLY
         .find(segment)
         .and_then(|found| found.group(1))
-        .map(pystr::int);
+        .map(number);
     (segment, None, season)
 }
 
@@ -522,7 +570,7 @@ fn is_episode_number(segment: &str, found: &Match<'_>) -> bool {
     if prefixed {
         return true;
     }
-    let number = pystr::int(found.name("num").unwrap_or_default());
+    let number = number(found.name("num").unwrap_or_default());
     if (1950..=2050).contains(&number) {
         return false;
     }
@@ -543,7 +591,8 @@ pub fn calculate_match_score(
         return (0.0, None);
     }
     let norm_parsed = normalize_title(parsed_title);
-    let tokens: Vec<&str> = pystr::split(&norm_parsed)
+    let tokens: Vec<&str> = norm_parsed
+        .split_whitespace()
         .filter(|word| !STOPWORDS.contains(word))
         .collect();
     if tokens.is_empty() {
@@ -588,11 +637,11 @@ pub fn calculate_match_score(
 /// it says nothing.
 pub fn release_resolution(raw_title: &str) -> Option<i64> {
     if let Some(found) = RESOLUTION.find(raw_title) {
-        return Some(found.group(1).map_or(2160, pystr::int));
+        return Some(found.group(1).map_or(2160, number));
     }
     let frame = FRAME_SIZE.find(raw_title)?;
-    let width = pystr::int(frame.group(1)?);
-    let height = pystr::int(frame.group(2)?);
+    let width = number(frame.group(1)?);
+    let height = number(frame.group(2)?);
     let full_frame = LINES_BY_WIDTH
         .iter()
         .find(|&&(wide, _)| width >= wide)
@@ -605,8 +654,8 @@ pub fn release_resolution(raw_title: &str) -> Option<i64> {
 fn range_match(raw_title: &str) -> Option<(usize, Match<'_>, (i64, i64))> {
     RANGE_REGEXES.iter().enumerate().find_map(|(index, regex)| {
         regex.find_iter(raw_title).find_map(|found| {
-            let first = pystr::int(found.group(1)?);
-            let last = pystr::int(found.group(2)?);
+            let first = number(found.group(1)?);
+            let last = number(found.group(2)?);
             (0 < first && first < last && !(first >= 1900 && last <= 2100)).then_some((
                 index,
                 found,
@@ -655,14 +704,14 @@ fn first_of_pair(raw_title: &str) -> String {
 /// Whether the title is one file's: a special or a movie when it carries no episode number, never
 /// a whole season.
 pub fn is_single_file(raw_title: &str) -> bool {
-    SINGLE_FILE.is_match(pystr::strip(raw_title))
+    SINGLE_FILE.is_match(raw_title.trim())
 }
 
 /// The words of a normalized name that tell it apart: no digits and no filler words.
 fn name_words(normalized: &str) -> HashSet<&str> {
     meaningful_words(normalized)
         .into_iter()
-        .filter(|word| !pystr::isdigit(word) && !NAME_FILLERS.contains(word))
+        .filter(|word| !is_number(word) && !NAME_FILLERS.contains(word))
         .collect()
 }
 
@@ -686,16 +735,15 @@ fn spelled_like_a_name(title: &str, aliases: &[impl AsRef<str>]) -> bool {
 pub fn names_something_else(raw_title: &str, aliases: &[impl AsRef<str>]) -> bool {
     let parsed = parse_release_title(raw_title);
     let title = parsed.title.trim_matches([' ', '-']);
-    let all_names = pystr::lower(
-        &aliases
-            .iter()
-            .map(AsRef::as_ref)
-            .collect::<Vec<_>>()
-            .join(" "),
-    );
+    let all_names = aliases
+        .iter()
+        .map(AsRef::as_ref)
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase();
     if OTHER_FORMAT
         .find_iter(title)
-        .any(|word| !all_names.contains(&pystr::lower(word.as_str())))
+        .any(|word| !all_names.contains(&word.as_str().to_lowercase()))
     {
         return true;
     }
@@ -766,7 +814,7 @@ pub fn strip_batch(raw_title: &str) -> String {
     for regex in RANGE_REGEXES.iter() {
         text = regex.replace_all(&text, " ").into_owned();
     }
-    pystr::split(&text).collect::<Vec<_>>().join(" ")
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// How well a release fits the preferred quality, lower is better: the preferred resolution
@@ -793,7 +841,7 @@ pub fn extract_arc_qualifiers(text: &str) -> Option<String> {
     if text.is_empty() {
         return None;
     }
-    let lowered = pystr::lower(text);
+    let lowered = text.to_lowercase();
     if let Some(stage) = STAGE.find(&lowered) {
         let numbers: Vec<&str> = DIGITS
             .find_iter(stage.as_str())
@@ -833,10 +881,10 @@ fn series_name_part(raw_title: &str) -> String {
 fn name_season(name: &str) -> Option<i64> {
     for pattern in SEASON_NAME_PATTERNS.iter() {
         if let Some(found) = pattern.find(name) {
-            return found.group(1).map(pystr::int);
+            return found.group(1).map(number);
         }
     }
-    let numeral = pystr::lower(TRAILING_ROMAN.find(name)?.group(1)?);
+    let numeral = (TRAILING_ROMAN.find(name)?.group(1)?).to_lowercase();
     ROMAN_SEASONS
         .iter()
         .find(|(roman, _)| *roman == numeral)
@@ -851,7 +899,7 @@ pub fn release_season(raw_title: &str) -> Option<i64> {
         SEASON_TAG
             .find(raw_title)
             .and_then(|tag| tag.group(1))
-            .map(pystr::int)
+            .map(number)
     })
 }
 
@@ -891,7 +939,10 @@ fn keep_season_in_title(raw_title: &str, parsed: &mut ParsedRelease) {
     if name_season(&name).is_none() || name_season(&parsed.title).is_some() {
         return;
     }
-    let name = pystr::strip(&TRAILING_NAME_SEPARATORS.replace_all(&name, "")).to_owned();
+    let name = TRAILING_NAME_SEPARATORS
+        .replace_all(&name, "")
+        .trim()
+        .to_owned();
     if !name.is_empty() {
         parsed.title = name;
     }
@@ -950,7 +1001,7 @@ pub fn match_parsed(
     }
 
     if let Some(found) = pattern.and_then(|regex| regex.find(raw_title)) {
-        let token = pystr::strip(found.as_str());
+        let token = found.as_str().trim();
         if !token.is_empty() {
             parsed.title = token.to_owned();
         }
@@ -973,8 +1024,11 @@ pub fn match_parsed(
 /// S02E01 … H.264-VARYG (Ao no Hako …)") and the torrent's file name
 /// ("Blue.Box.S02E01.….H.264-VARYG.mkv") name one release.
 pub fn release_key(name: &str) -> String {
-    let key = KEY_EXTENSION.replace_all(pystr::strip(name), "");
-    pystr::strip(&NOT_ALPHANUMERIC.replace_all(&pystr::lower(&key), " ")).to_owned()
+    let key = KEY_EXTENSION.replace_all(name.trim(), "");
+    NOT_ALPHANUMERIC
+        .replace_all(&key.to_lowercase(), " ")
+        .trim()
+        .to_owned()
 }
 
 /// Whether two names are one release: equal words, or one extends the other by whole words.

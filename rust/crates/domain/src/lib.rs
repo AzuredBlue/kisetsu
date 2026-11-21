@@ -8,8 +8,6 @@ pub mod matcher;
 pub mod numbering;
 pub mod parsing;
 pub mod patterns;
-mod pystr;
 pub mod rx;
 pub mod schedule;
 pub mod status;
-mod unicode;

@@ -5,8 +5,6 @@
 
 use std::collections::BTreeSet;
 
-use crate::pystr;
-
 /// `fuzz.ratio`: the normalized Indel similarity of the two strings, from 0 to 100.
 pub fn ratio(s1: &str, s2: &str) -> f64 {
     let first: Vec<char> = s1.chars().collect();
@@ -26,8 +24,8 @@ pub fn token_sort_ratio(s1: &str, s2: &str) -> f64 {
 /// `fuzz.token_set_ratio`: the best `ratio` among the shared words alone and the shared words
 /// followed by each string's other words. 0 when either string has no words.
 pub fn token_set_ratio(s1: &str, s2: &str) -> f64 {
-    let words_a: BTreeSet<&str> = pystr::split(s1).collect();
-    let words_b: BTreeSet<&str> = pystr::split(s2).collect();
+    let words_a: BTreeSet<&str> = s1.split_whitespace().collect();
+    let words_b: BTreeSet<&str> = s2.split_whitespace().collect();
     if words_a.is_empty() || words_b.is_empty() {
         return 0.0;
     }
@@ -67,7 +65,7 @@ fn norm_distance(distance: usize, total: usize) -> f64 {
 }
 
 fn sorted_words(text: &str) -> String {
-    let mut words: Vec<&str> = pystr::split(text).collect();
+    let mut words: Vec<&str> = text.split_whitespace().collect();
     words.sort_unstable();
     words.join(" ")
 }

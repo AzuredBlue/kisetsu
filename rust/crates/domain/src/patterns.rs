@@ -5,16 +5,16 @@ use std::fs;
 use std::path::{Component, Path, PathBuf, is_separator};
 use std::sync::LazyLock;
 
-use crate::pystr;
+use crate::parsing::{is_digit, is_number, number};
 use crate::rx::{Case, Regex};
 
-const ROMAN_TO_INT: [(&str, &str); 6] = [
-    ("I", "1"),
-    ("II", "2"),
-    ("III", "3"),
-    ("IV", "4"),
-    ("V", "5"),
-    ("VI", "6"),
+const ROMAN_TO_INT: [(&str, i64); 6] = [
+    ("I", 1),
+    ("II", 2),
+    ("III", 3),
+    ("IV", 4),
+    ("V", 5),
+    ("VI", 6),
 ];
 pub const MIN_PATTERN_CHARS: usize = 6;
 /// Release groups join the words of a title with spaces, dots, underscores or hyphens (a feed title
@@ -50,18 +50,18 @@ static DOUBLE_DASH: LazyLock<Regex> =
     LazyLock::new(|| Regex::literal(r"\s*-\s*-\s*", Case::Sensitive));
 
 /// The season number a roman numeral stands for.
-fn roman_to_int(numeral: &str) -> Option<&'static str> {
+fn roman_to_int(numeral: &str) -> Option<i64> {
     ROMAN_TO_INT
         .iter()
         .find(|(roman, _)| *roman == numeral)
-        .map(|(_, number)| *number)
+        .map(|&(_, number)| number)
 }
 
-fn int_to_roman(number: &str) -> Option<&'static str> {
+fn int_to_roman(number: i64) -> Option<&'static str> {
     ROMAN_TO_INT
         .iter()
-        .find(|(_, value)| *value == number)
-        .map(|(roman, _)| *roman)
+        .find(|&&(_, value)| value == number)
+        .map(|&(roman, _)| roman)
 }
 
 /// Common release group season abbreviations of an alias ("Mushoku Tensei S3", "Mushoku Tensei
@@ -78,15 +78,12 @@ pub fn generate_season_variants(alias: &str) -> Vec<String> {
     else {
         return variants;
     };
-    // The season number as Python writes the int.
-    let season = if pystr::isdigit(token) {
-        pystr::int_text(token)
+    let season = if is_number(token) {
+        number(token)
     } else {
-        roman_to_int(&token.to_uppercase())
-            .unwrap_or("0")
-            .to_owned()
+        roman_to_int(&token.to_uppercase()).unwrap_or(0)
     };
-    if season == "0" {
+    if season == 0 {
         return variants;
     }
 
@@ -95,15 +92,15 @@ pub fn generate_season_variants(alias: &str) -> Vec<String> {
     // dangling ones left by the removal are trimmed.
     let base = SEASON_MARK.replace_all(alias, "");
     let base = SPACES.replace_all(&base, " ");
-    let base = DANGLING_SEPARATORS.replace_all(pystr::strip(&base), "");
-    let base = pystr::strip(&base);
+    let base = DANGLING_SEPARATORS.replace_all(base.trim(), "");
+    let base = base.trim();
 
     if base.chars().count() >= 3 {
-        let tag = if season.len() == 1 { "S0?" } else { "S" };
+        let tag = if season < 10 { "S0?" } else { "S" };
         variants.push(format!("{base} {tag}{season}"));
         variants.push(format!("{base} Season {season}"));
         variants.push(format!("{base} {season}"));
-        if let Some(roman) = int_to_roman(&season) {
+        if let Some(roman) = int_to_roman(season) {
             variants.push(format!("{base} {roman}"));
         }
     }
@@ -115,27 +112,27 @@ pub fn generate_season_variants(alias: &str) -> Vec<String> {
 /// "Foo 3" must not match "Foo 30" and "Foo II" must not match "Foo III", but "Foo 3 - 01" and
 /// "Foo S03E01" still match.
 pub fn name_end_guard(name: &str) -> &'static str {
-    let stripped = pystr::strip(name);
-    let last = stripped
-        .chars()
-        .last()
-        .map(String::from)
-        .unwrap_or_default();
-    if pystr::isdigit(&last) {
+    let stripped = name.trim();
+    if stripped.chars().next_back().is_some_and(is_digit) {
         return r"(?!\d)";
     }
-    let words: Vec<&str> = pystr::split(stripped).collect();
+    let words: Vec<&str> = stripped.split_whitespace().collect();
     match words.as_slice() {
         [_, .., last] if roman_to_int(&last.to_uppercase()).is_some() => r"(?![A-Za-z0-9])",
         _ => "",
     }
 }
 
+/// A letter, not a character such as a roman numeral that only counts as alphabetic.
+fn is_letter(c: char) -> bool {
+    c.is_alphabetic() && !c.is_numeric()
+}
+
 fn short_end_guard(alias: &str) -> &'static str {
-    let stripped = pystr::strip(alias);
+    let stripped = alias.trim();
     let letters_and_digits = stripped.chars().filter(char::is_ascii_alphanumeric).count();
     if letters_and_digits <= SHORT_ALIAS_CHARS
-        && stripped.chars().last().is_some_and(pystr::is_alpha)
+        && stripped.chars().next_back().is_some_and(is_letter)
     {
         r"(?![A-Za-z0-9])"
     } else {
@@ -152,7 +149,7 @@ pub fn sanitize_regex_token(title: &str) -> String {
         .replace("(0?)", "\0ZERO_OPT_P\0")
         .replace("0?", "\0ZERO_OPT\0");
     let escaped = METACHARACTER
-        .replace_all(pystr::strip(&protected), r"\$1")
+        .replace_all(protected.trim(), r"\$1")
         .replace("\0ZERO_OPT_P\0", "(0?)")
         .replace("\0ZERO_OPT\0", "0?");
     SPACES.replace_all(&escaped, " ").into_owned()
@@ -164,7 +161,7 @@ pub fn sanitize_regex_token(title: &str) -> String {
 /// with only regex metacharacters escaped. The episode number and quality tags are not part of the
 /// name, which keeps the pattern valid for every later episode of the same show.
 pub fn build_release_name_pattern(release_name: &str) -> String {
-    let stripped = pystr::strip(release_name);
+    let stripped = release_name.trim();
     if stripped.is_empty() {
         return String::new();
     }
@@ -176,7 +173,7 @@ pub fn build_release_name_pattern(release_name: &str) -> String {
 /// Only the words are fixed; "Blue Box S02", "Blue.Box.S02" and "Blue_Box_S02" all match, while a
 /// missing separator ("BlueBox") does not.
 pub fn build_tolerant_name_pattern(name: &str) -> String {
-    let stripped = pystr::strip(name);
+    let stripped = name.trim();
     let tokens: Vec<&str> = stripped
         .split(is_name_separator)
         .filter(|token| !token.is_empty())
@@ -190,7 +187,7 @@ pub fn build_tolerant_name_pattern(name: &str) -> String {
         .iter()
         .map(|token| {
             let mut safe = sanitize_regex_token(token).replace('\'', "['\u{2019}]?");
-            if pystr::isdigit(token) {
+            if is_number(token) {
                 // "Foo 3" must not match "Foo 30".
                 safe.push_str(r"\b");
             }
@@ -198,7 +195,7 @@ pub fn build_tolerant_name_pattern(name: &str) -> String {
         })
         .collect();
     let mut pattern = escaped.join(NAME_SEPARATORS);
-    if tokens.last().is_some_and(|last| !pystr::isdigit(last)) {
+    if tokens.last().is_some_and(|last| !is_number(last)) {
         pattern.push_str(name_end_guard(&tokens.join(" ")));
     }
     pattern
@@ -213,7 +210,7 @@ pub fn show_match_patterns(
     matched_title: Option<&str>,
 ) -> (String, Option<String>) {
     let pattern = build_regex_pattern(aliases, None);
-    let learned = pystr::strip(matched_title.unwrap_or_default());
+    let learned = matched_title.unwrap_or_default().trim();
     if learned.chars().count() < MIN_PATTERN_CHARS {
         return (pattern, None);
     }
@@ -229,7 +226,7 @@ pub fn show_match_patterns(
 /// If `matched_title` is known, the pattern is that name; otherwise it is an alternation of the
 /// aliases.
 pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&str>) -> String {
-    if let Some(matched_title) = matched_title.filter(|title| !pystr::strip(title).is_empty()) {
+    if let Some(matched_title) = matched_title.filter(|title| !title.trim().is_empty()) {
         // The release group has already shown its naming, so the learned rule is exactly that
         // name. Season hedges ("S2", "Season 2", "II") belong on the armed path below, where the
         // naming is still unknown.
@@ -243,7 +240,7 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
 
     let valid: Vec<&str> = aliases
         .iter()
-        .map(|alias| pystr::strip(alias.as_ref()))
+        .map(|alias| alias.as_ref().trim())
         .filter(|alias| !alias.is_empty())
         .collect();
     let latin: Vec<&str> = valid
@@ -263,7 +260,7 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
         // part of the name only.
         let spaced = alias.replace(['[', ']'], " ");
         let unbracketed = SPACES.replace_all(&spaced, " ");
-        let unbracketed = pystr::strip(&unbracketed);
+        let unbracketed = unbracketed.trim();
         if unbracketed != alias && unbracketed.chars().count() >= MIN_PATTERN_CHARS {
             expanded.extend(generate_season_variants(unbracketed));
         }
@@ -318,7 +315,7 @@ pub fn compress_home_path(path: Option<&str>, home: &str) -> String {
     let Some(path) = path.filter(|path| !path.is_empty()) else {
         return String::new();
     };
-    let stripped = pystr::strip(path);
+    let stripped = path.trim();
     if stripped == home {
         return "~".to_owned();
     }
@@ -340,10 +337,10 @@ pub fn resolve_save_path(
     home: &str,
 ) -> String {
     let clean_name = sanitize_folder_name(display_name);
-    let base_template = pystr::strip(base_dir);
+    let base_template = base_dir.trim();
 
     if let Some(custom) = custom_save_folder
-        .map(pystr::strip)
+        .map(str::trim)
         .filter(|custom| !custom.is_empty())
     {
         let raw = if custom.contains("{name}") {
