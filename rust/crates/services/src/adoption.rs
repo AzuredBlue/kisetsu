@@ -645,8 +645,8 @@ pub fn reattribute(ctx: &mut Context<'_>) -> Result<usize> {
         let Some(mut show) = Show::find(ctx.conn, "WHERE id = ?", [episode.show_id])? else {
             continue;
         };
-        let hash = dl.info_hash.clone().unwrap_or_default();
-        let Some((feed, item)) = carriers(ctx, &show, &dl.title, &hash)? else {
+        let hash = dl.info_hash.as_deref().unwrap_or_default();
+        let Some((feed, item)) = carriers(ctx, &show, &dl.title, hash)? else {
             continue;
         };
         dl.feed_id = feed.id;

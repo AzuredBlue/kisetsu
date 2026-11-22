@@ -260,9 +260,9 @@ pub fn housekeeping(ctx: &mut Context<'_>) -> Result<Removed> {
 pub fn palette_targets(ctx: &Context<'_>) -> Result<Vec<PaletteTarget>> {
     let mut targets = Vec::new();
     for show in Show::select(ctx.conn, "ORDER BY id", [])? {
-        let banner = show.banner_image.clone().unwrap_or_default();
-        let cover = show.cover_image.clone().unwrap_or_default();
-        let source = if banner.is_empty() { &cover } else { &banner };
+        let banner = show.banner_image.as_deref().unwrap_or_default();
+        let cover = show.cover_image.as_deref().unwrap_or_default();
+        let source = if banner.is_empty() { cover } else { banner };
         if source.is_empty() {
             continue;
         }
@@ -272,8 +272,8 @@ pub fn palette_targets(ctx: &Context<'_>) -> Result<Vec<PaletteTarget>> {
             targets.push(PaletteTarget {
                 show_id: show.id.unwrap_or_default(),
                 key,
-                banner,
-                cover,
+                banner: banner.to_owned(),
+                cover: cover.to_owned(),
             });
         }
     }

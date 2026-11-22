@@ -252,8 +252,8 @@ pub fn failed_versions(ctx: &Context<'_>, episode: &Episode) -> Result<BTreeSet<
 
 /// The torrent qBittorrent holds for a download: by info hash, else by its operation tag.
 pub fn locate(ctx: &mut Context<'_>, dl: &mut Download) -> Result<Option<Torrent>> {
-    if let Some(hash) = dl.info_hash.clone().filter(|hash| !hash.is_empty()) {
-        if let Some(torrent) = torrent_of(ctx, &hash)? {
+    if let Some(hash) = dl.info_hash.as_deref().filter(|hash| !hash.is_empty()) {
+        if let Some(torrent) = torrent_of(ctx, hash)? {
             return Ok(Some(torrent));
         }
     }
