@@ -1,7 +1,7 @@
 import { html, useEffect, useMemo, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
-import { settings as settingsData } from '../data.js';
+import { settings as settingsData, tray as trayData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
 import { exportBackup, restoreBackup } from '../components/Backup.js';
 import { Seg, SaveBar, SetRow, Swatches } from '../components/Controls.js';
@@ -47,6 +47,7 @@ async function applyNow(patch, undo) {
 
 export function Settings() {
   const { data, error, reload } = useResource(settingsData);
+  const { data: trayState, reload: reloadTray } = useResource(trayData);
   const theme = useTheme();
   const initial = useMemo(() => (data ? initialForm(data) : {}), [data]);
   const form = useDraft(initial, 'settings');
@@ -86,6 +87,10 @@ export function Settings() {
   };
 
   const setNotifications = async (on) => { await applyNow({ desktop_notifications: on }); reload(); };
+  const setTray = async (visible) => {
+    try { await apiFetch('/api/tray', { method: 'PUT', json: { visible } }); } catch (err) { /* shown by apiFetch */ }
+    reloadTray();
+  };
   const setMinResolution = async (value) => { if (await applyNow({ min_resolution: value })) reload(); };
   const setDeleteWatched = async (on) => {
     if (on === data.delete_watched) return;
@@ -180,6 +185,7 @@ export function Settings() {
             <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
             <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
             <${SetRow} name="Colour tint"><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
+            ${trayState ? html`<${SetRow} name="Tray icon" hint=${trayState.available ? 'The icon in the notification area: open Kisetsu, pause all, quit.' : 'Not available in this run (Windows only, and not with --no-tray).'}><div inert=${!trayState.available} style=${trayState.available ? undefined : 'opacity:.55'}><${Seg} label="Tray icon" value=${trayState.visible} onChange=${setTray} options=${[[true, 'On'], [false, 'Off']]} /></div><//>` : null}
           </div>
         </section>
       </div>

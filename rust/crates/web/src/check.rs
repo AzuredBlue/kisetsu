@@ -275,6 +275,10 @@ impl<'p> Reader<'p> {
         self.field(object, name, false, boolean).unwrap_or(false)
     }
 
+    pub fn required_flag(&mut self, object: &Value, name: &str) -> Option<bool> {
+        self.field(object, name, true, boolean)
+    }
+
     pub fn optional_flag(&mut self, object: &Value, name: &str) -> Option<bool> {
         self.optional(object, name, boolean)
     }

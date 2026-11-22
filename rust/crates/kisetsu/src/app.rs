@@ -18,12 +18,12 @@ use kisetsu_engine::remote::{Remote, WebRemote};
 use kisetsu_engine::runner::{Engine, Parts, QbitFactory};
 use kisetsu_engine::scheduler::Scheduler;
 use kisetsu_services::context::Notify;
-use kisetsu_web::{App, Assets, Guard, LogRing, Runtime, ServeError, Server};
+use kisetsu_web::{App, Assets, Guard, LogRing, Runtime, ServeError, Server, TrayControl};
 use tracing::{info, warn};
 
 use crate::cli::Args;
 use crate::config;
-use crate::tray;
+use crate::tray::TrayHandle;
 
 /// How long the jobs get to finish what they are doing once the app is told to stop.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -153,7 +153,15 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     jobs.register();
     scheduler.start();
 
-    let runtime = Runtime::new(
+    let tray = Arc::new(TrayHandle::new(
+        args.tray_available(),
+        &args.host,
+        args.port,
+        sandbox,
+        &engine,
+        &tray_stop,
+    ));
+    let mut runtime = Runtime::new(
         Arc::clone(&engine),
         scheduler.clone(),
         Arc::clone(&jobs),
@@ -161,23 +169,20 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
         logs,
         sandbox,
     );
+    runtime.tray = Arc::clone(&tray) as Arc<dyn TrayControl>;
+    // A choice that cannot be read leaves the icon on, as it is by default.
+    let tray_wanted = runtime.tray_wanted().unwrap_or(true);
     let guard = Guard::new(Guard::machine_name(), &config::allowed_hosts(), sandbox);
     let app = Arc::new(App::new(runtime, guard, Assets::new(static_dir)));
     let mut server = Server::start(Arc::clone(&app), &args.host, args.port)?;
     info!("Listening on http://{}:{}", args.host, args.port);
 
-    let tray = if args.no_tray {
-        None
-    } else {
-        tray::start(&args.host, args.port, sandbox, &engine, &tray_stop)
-    };
+    tray.set_visible(tray_wanted);
 
     // The signal handler and the tray's Quit only send; the stop itself happens here.
     let _ = stopped.recv();
     info!("Shutting down.");
-    if let Some(tray) = tray {
-        tray.close();
-    }
+    tray.close();
     engine.stop();
     bus.shutdown();
     server.stop();

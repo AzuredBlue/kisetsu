@@ -1,10 +1,11 @@
 //! The notification-area icon: open the UI, pause all downloads, quit. Windows only; other
 //! platforms run without one.
 
-use std::sync::Arc;
 use std::sync::mpsc::Sender;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use kisetsu_engine::runner::Engine;
+use kisetsu_web::TrayControl;
 
 /// The address the browser should use to reach a server bound to `host`.
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -256,13 +257,118 @@ pub fn start(
     None
 }
 
+/// What to do with the icon when the choice or the run changes.
+#[derive(Debug, PartialEq, Eq)]
+enum Step {
+    Start,
+    Stop,
+    Keep,
+}
+
+/// The step that takes the icon from `shown` to what is `wanted`. Once the app is `closed`, no
+/// icon is started again.
+fn step(shown: bool, wanted: bool, closed: bool) -> Step {
+    match (shown, wanted && !closed) {
+        (false, true) => Step::Start,
+        (true, false) => Step::Stop,
+        _ => Step::Keep,
+    }
+}
+
+#[derive(Default)]
+struct Shown {
+    tray: Option<Tray>,
+    closed: bool,
+}
+
+/// The icon for one run, which the UI can show and remove while the app runs.
+pub struct TrayHandle {
+    available: bool,
+    host: String,
+    port: u16,
+    sandbox: bool,
+    engine: Arc<Engine>,
+    stop: Sender<()>,
+    shown: Mutex<Shown>,
+}
+
+impl TrayHandle {
+    pub fn new(
+        available: bool,
+        host: &str,
+        port: u16,
+        sandbox: bool,
+        engine: &Arc<Engine>,
+        stop: &Sender<()>,
+    ) -> Self {
+        Self {
+            available,
+            host: host.to_owned(),
+            port,
+            sandbox,
+            engine: Arc::clone(engine),
+            stop: stop.clone(),
+            shown: Mutex::new(Shown::default()),
+        }
+    }
+
+    /// Removes the icon for good; a later request cannot bring it back.
+    pub fn close(&self) {
+        self.apply(false, true);
+    }
+
+    fn apply(&self, wanted: bool, closing: bool) {
+        let mut shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+        shown.closed |= closing;
+        match step(shown.tray.is_some(), wanted, shown.closed) {
+            Step::Start => {
+                shown.tray = start(
+                    &self.host,
+                    self.port,
+                    self.sandbox,
+                    &self.engine,
+                    &self.stop,
+                );
+            }
+            Step::Stop => {
+                if let Some(tray) = shown.tray.take() {
+                    tray.close();
+                }
+            }
+            Step::Keep => {}
+        }
+    }
+}
+
+impl TrayControl for TrayHandle {
+    fn available(&self) -> bool {
+        self.available
+    }
+
+    fn set_visible(&self, visible: bool) {
+        if self.available {
+            self.apply(visible, false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{ICON_SIZE, browse_url, icon_rgba};
+    use super::{ICON_SIZE, Step, browse_url, icon_rgba, step};
 
     fn pixel(rgba: &[u8], x: u32, y: u32) -> &[u8] {
         let at = ((y * ICON_SIZE + x) * 4) as usize;
         &rgba[at..at + 4]
+    }
+
+    #[test]
+    fn the_icon_follows_the_choice_until_the_app_is_closed() {
+        assert_eq!(step(false, true, false), Step::Start);
+        assert_eq!(step(true, false, false), Step::Stop);
+        assert_eq!(step(true, true, false), Step::Keep);
+        assert_eq!(step(false, false, false), Step::Keep);
+        assert_eq!(step(false, true, true), Step::Keep);
+        assert_eq!(step(true, true, true), Step::Stop);
     }
 
     #[test]

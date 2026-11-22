@@ -23,6 +23,9 @@ tiny_http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+kisetsu-services = { path = "../services", features = ["fakes"] }
+
 [lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

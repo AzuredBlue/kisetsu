@@ -11,7 +11,12 @@ use kisetsu_engine::remote::Remote;
 use kisetsu_engine::runner::Engine;
 use kisetsu_engine::scheduler::Scheduler;
 
+use kisetsu_services::context::get_state;
+
 use crate::logs::LogRing;
+
+/// The state row that holds the choice: `on` or `off`.
+pub(crate) const TRAY_KEY: &str = "tray_icon";
 
 /// Jobs whose runs the UI shows.
 const VISIBLE_JOBS: [&str; 5] = [
@@ -29,6 +34,25 @@ const REQUESTS_PUBLISH: Duration = Duration::from_secs(2);
 pub type Probe =
     Box<dyn Fn(&str, &str, &str) -> Result<BTreeMap<String, String>, QbitError> + Send + Sync>;
 
+/// The notification-area icon, as far as the web layer may ask about it.
+pub trait TrayControl: Send + Sync {
+    /// Whether this run can show an icon at all.
+    fn available(&self) -> bool;
+    /// Shows or removes the icon.
+    fn set_visible(&self, visible: bool);
+}
+
+/// The control of a run that has no icon.
+struct NoTray;
+
+impl TrayControl for NoTray {
+    fn available(&self) -> bool {
+        false
+    }
+
+    fn set_visible(&self, _visible: bool) {}
+}
+
 /// Everything the handlers talk to.
 pub struct Runtime {
     pub engine: Arc<Engine>,
@@ -38,6 +62,7 @@ pub struct Runtime {
     pub logs: Arc<LogRing>,
     pub sandbox: bool,
     pub probe: Probe,
+    pub tray: Arc<dyn TrayControl>,
 }
 
 impl Runtime {
@@ -79,7 +104,18 @@ impl Runtime {
             logs,
             sandbox,
             probe: Box::new(probe_qbit),
+            tray: Arc::new(NoTray),
         }
+    }
+}
+
+impl Runtime {
+    /// Whether the user wants the icon: yes unless they turned it off.
+    pub fn tray_wanted(&self) -> Result<bool, kisetsu_engine::Error> {
+        let stored = self
+            .engine
+            .read(|ctx| get_state(ctx.conn, TRAY_KEY, "on"))?;
+        Ok(stored != "off")
     }
 }
 

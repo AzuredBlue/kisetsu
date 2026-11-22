@@ -7,6 +7,7 @@ mod settings;
 mod setup;
 mod shows;
 mod status;
+mod tray;
 
 use std::time::Duration;
 
@@ -96,6 +97,8 @@ pub(crate) const ROUTES: &[Route] = &[
     route("POST", "/api/setup/check-anilist", setup::check_anilist),
     route("POST", "/api/setup/complete", setup::complete),
     route("GET", "/api/status", status::get),
+    route("GET", "/api/tray", tray::get),
+    route("PUT", "/api/tray", tray::set),
     route("GET", "/api/attention", status::attention),
     route("POST", "/api/attention/dismiss", status::dismiss_attention),
     route("GET", "/api/logs", status::logs),

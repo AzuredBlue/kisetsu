@@ -16,6 +16,13 @@ pub struct Args {
     pub no_tray: bool,
 }
 
+impl Args {
+    /// Whether this run can show an icon: only on Windows, and not when declined.
+    pub fn tray_available(&self) -> bool {
+        cfg!(windows) && !self.no_tray
+    }
+}
+
 /// What to do, once the command line is read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -125,6 +132,12 @@ mod tests {
     fn the_tray_is_shown_unless_declined() {
         assert!(!run(&[]).no_tray);
         assert!(run(&["--no-tray"]).no_tray);
+    }
+
+    #[test]
+    fn the_flag_takes_the_icon_away() {
+        assert!(!run(&["--no-tray"]).tray_available());
+        assert_eq!(run(&[]).tray_available(), cfg!(windows));
     }
 
     #[test]
