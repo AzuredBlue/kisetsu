@@ -133,7 +133,7 @@
 }
 @media (min-width: 768px) { .show-body { padding: 0 2rem 1.5rem; } }
 @media (min-width: 1024px) {
-  .show-body { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 22rem; grid-template-rows: auto minmax(0, 1fr); padding-bottom: 1.5rem; }
+  .show-body { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 23rem; grid-template-rows: auto minmax(0, 1fr); padding-bottom: 1.5rem; }
   .show-top { grid-column: 1 / -1; }
   .show-lists, .show-side { display: flex; flex-direction: column; min-height: 0; }
   .show-side { overflow-y: auto; }
@@ -161,7 +161,7 @@
 .show-facts .feed-fact { display: inline-flex; align-items: center; gap: .375rem; min-width: 0; font-size: var(--fs-xs); }
 .show-progress { display: flex; align-items: center; gap: .75rem; max-width: 24rem; margin-top: .75rem; font-size: var(--fs-xs); & .bar { flex: 1; height: .5rem; border-radius: var(--r-full); background: rgb(var(--text) / .15); } }
 
-.pane-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 2.125rem; margin-bottom: .5rem; padding: 0 .25rem; }
+.pane-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 2.125rem; margin-bottom: .5rem; padding: 0 .25rem; }
 .link { font-size: var(--fs-xs); color: rgb(var(--text-3)); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: rgb(var(--ac) / .5); transition: color .15s, text-decoration-color .15s; &:hover { color: rgb(var(--text)); text-decoration-color: rgb(var(--ac-soft)); } }
 .show-page .card { background: rgb(var(--surface) / .92); border-color: rgb(var(--line)); }
 /* In dark theme a secondary button's fill is as dark as the show's art behind it, so it is lifted towards the text colour. */
