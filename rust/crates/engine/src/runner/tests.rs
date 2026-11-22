@@ -50,7 +50,9 @@ fn feed_names(ctx: &mut Context<'_>) -> kisetsu_services::Result<Vec<String>> {
 
 #[test]
 fn every_call_runs_on_the_one_engine_thread_one_at_a_time_and_commits() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let engine = Arc::new(engine);
     let active = Arc::new(AtomicUsize::new(0));
     let peak = Arc::new(AtomicUsize::new(0));
@@ -82,7 +84,9 @@ fn every_call_runs_on_the_one_engine_thread_one_at_a_time_and_commits() {
 
 #[test]
 fn an_error_rolls_back_drops_the_caches_and_leaves_the_engine_usable() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     engine
         .call(|ctx| {
             ctx.caches.known_items = Some(HashSet::from([(1, "x".to_owned())]));
@@ -121,7 +125,9 @@ fn an_error_rolls_back_drops_the_caches_and_leaves_the_engine_usable() {
 
 #[test]
 fn a_panic_is_an_error_like_any_other_and_the_engine_goes_on() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let failed = engine.call(|ctx| -> kisetsu_services::Result<()> {
         feeds::add_feed(ctx, "Lost", "https://lost/rss", None)?;
         panic!("boom");
@@ -135,7 +141,9 @@ fn a_panic_is_an_error_like_any_other_and_the_engine_goes_on() {
 
 #[test]
 fn topics_are_published_once_the_work_is_committed() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let changes = engine.bus().subscribe();
     engine
         .call(|ctx| {
@@ -158,7 +166,12 @@ fn topics_are_published_once_the_work_is_committed() {
 
 #[test]
 fn the_qbit_connection_follows_the_settings_and_is_reused() {
-    let Fixture { engine, hosts, .. } = fixture();
+    let Fixture {
+        engine,
+        hosts,
+        _folder,
+        ..
+    } = fixture();
     engine.call(|_| Ok(())).unwrap();
     engine.call(|_| Ok(())).unwrap();
     assert_eq!(locked(&hosts).len(), 1);
@@ -177,7 +190,9 @@ fn the_qbit_connection_follows_the_settings_and_is_reused() {
 
 #[test]
 fn every_write_context_can_tag_a_torrent_it_adds() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let tags = engine
         .call(|ctx| Ok((ctx.next_download_tag()?, ctx.next_download_tag()?)))
         .unwrap();
@@ -190,7 +205,9 @@ fn every_write_context_can_tag_a_torrent_it_adds() {
 
 #[test]
 fn a_read_sees_committed_rows_saves_nothing_and_cannot_reach_qbit() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     engine
         .call(|ctx| feeds::add_feed(ctx, "A", "https://a/rss", None).map(drop))
         .unwrap();
@@ -214,7 +231,9 @@ fn a_read_sees_committed_rows_saves_nothing_and_cannot_reach_qbit() {
 
 #[test]
 fn a_dry_run_runs_on_the_engine_thread_and_saves_nothing() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let on_engine_thread = engine
         .dry_run(|ctx| {
             feeds::add_feed(ctx, "A", "https://a/rss", None)?;
@@ -232,7 +251,9 @@ fn a_dry_run_runs_on_the_engine_thread_and_saves_nothing() {
 
 #[test]
 fn a_read_is_given_what_the_last_pass_learned_of_stalled_and_carried() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     engine
         .call(|ctx| {
             ctx.caches.stalled = HashSet::from([7]);
@@ -257,7 +278,9 @@ fn a_read_is_given_what_the_last_pass_learned_of_stalled_and_carried() {
 
 #[test]
 fn a_read_does_not_wait_for_the_engine_thread() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let engine = Arc::new(engine);
     engine
         .call(|ctx| feeds::add_feed(ctx, "A", "https://a/rss", None).map(drop))
@@ -282,7 +305,9 @@ fn a_read_does_not_wait_for_the_engine_thread() {
 
 #[test]
 fn the_caller_named_in_the_request_counts_follows_the_work_onto_the_engine_thread() {
-    let Fixture { engine, .. } = fixture();
+    let Fixture {
+        engine, _folder, ..
+    } = fixture();
     let _caller = traffic::caller("jobs.grab");
     let seen = engine.call(|_| Ok(traffic::current_caller())).unwrap();
     assert_eq!(seen, "jobs.grab");
@@ -290,7 +315,12 @@ fn the_caller_named_in_the_request_counts_follows_the_work_onto_the_engine_threa
 
 #[test]
 fn a_closed_engine_refuses_work_ends_its_subscriptions_and_leaves_the_database_closed() {
-    let Fixture { engine, path, .. } = fixture();
+    let Fixture {
+        engine,
+        path,
+        _folder,
+        ..
+    } = fixture();
     let changes = engine.bus().subscribe();
     engine.call(|_| Ok(())).unwrap();
     engine.stop();
