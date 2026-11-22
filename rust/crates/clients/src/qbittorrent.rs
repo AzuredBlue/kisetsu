@@ -660,7 +660,9 @@ impl QbitClient {
                 return Err(self.unavailable(&failure));
             }
         };
-        let accepted = reply.status == 200 && matches!(reply.body.as_str(), "" | "Ok.");
+        // Newer versions accept a login with 204 and no body.
+        let accepted =
+            (200..300).contains(&reply.status) && matches!(reply.body.as_str(), "" | "Ok.");
         match (accepted, reply.cookie) {
             (true, Some(cookie)) => {
                 traffic::record(kind, &host, Outcome::Ok);
@@ -1125,6 +1127,17 @@ mod tests {
         *clock.0.lock().unwrap() += 301.0;
         assert!(client.versions().is_err());
         assert_eq!(log.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_login_accepted_without_content_lets_the_requests_through() {
+        let (url, log) = serve(|key| match key {
+            "POST /api/v2/auth/login" => (204, String::new()),
+            _ => (200, "v5.2.0".to_owned()),
+        });
+        let (mut client, _) = client(&url);
+        assert_eq!(client.versions().unwrap().app_version, "v5.2.0");
+        assert_eq!(log.lock().unwrap().len(), 3);
     }
 
     #[test]
