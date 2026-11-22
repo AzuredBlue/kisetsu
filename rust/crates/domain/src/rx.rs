@@ -4,6 +4,10 @@
 //! `regex` engine and runs only the ones with look-around on its backtracking matcher. Character
 //! classes, word boundaries and case-insensitive matching use the crates' Unicode rules.
 //!
+//! Patterns written in the code spell digits as `[0-9０-９]`, the ASCII and full-width digits
+//! titles are numbered with. `\d` would take every script's digits, which makes each pattern that
+//! uses it many times larger in memory.
+//!
 //! Offsets are byte offsets into the searched text.
 
 use std::borrow::Cow;

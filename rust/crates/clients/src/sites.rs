@@ -30,7 +30,7 @@ pub const SUBSPLEASE_SCHEDULE_URL: &str = "https://subsplease.org/api/?f=schedul
 static SEGMENT_SPLIT: LazyLock<Regex> = LazyLock::new(|| compiled(r"\s*[:：–—]\s*|\s+-\s+"));
 static MARKERS: LazyLock<Regex> = LazyLock::new(|| {
     compiled(
-        r"(?i)\b(?:the\s+)?final\s+season\b|\b(?:season|stage|part|cour|s)\s*\d+\b|\b\d+(?:st|nd|rd|th)(?:\s+(?:season|stage|part|cour))?\b|\b(?:season|stage|part|cour)\b",
+        r"(?i)\b(?:the\s+)?final\s+season\b|\b(?:season|stage|part|cour|s)\s*[0-9０-９]+\b|\b[0-9０-９]+(?:st|nd|rd|th)(?:\s+(?:season|stage|part|cour))?\b|\b(?:season|stage|part|cour)\b",
     )
 });
 static PUNCTUATION: LazyLock<Regex> = LazyLock::new(|| compiled(r"[^\w\s']"));

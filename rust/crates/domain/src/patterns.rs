@@ -27,11 +27,10 @@ const WORD_START: &str = r"(?<![A-Za-z0-9])";
 const SHORT_ALIAS_CHARS: usize = 4;
 
 regexes! {
-    SEASON_MARK = r"\b(?:season|s)\s*(\d+)\b|\b(\d+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b", Insensitive;
+    SEASON_MARK = r"\b(?:season|s)\s*([0-9０-９]+)\b|\b([0-9０-９]+)(?:st|nd|rd|th)\s+season\b|\b(?:season|part)\s+(I|II|III|IV|V|VI)\b|\b(II|III|IV|V|VI)\b", Insensitive;
     SPACES = r"\s+", Sensitive;
     DANGLING_SEPARATORS = r"^[\s:\-_–—/]+|[\s:\-_–—/]+$", Sensitive;
     METACHARACTER = r"([\\^$.|?*+()\[\]{}])", Sensitive;
-    SLASH_IN_NAME = r"(\w+)[/](\w+)", Sensitive;
     SLASH = r"[/\\|]", Sensitive;
     COLON = r":\s*", Sensitive;
     FORBIDDEN = r#"[<>:"/\\|?*\x00-\x1f]"#, Sensitive;
@@ -273,7 +272,7 @@ pub fn build_regex_pattern(aliases: &[impl AsRef<str>], matched_title: Option<&s
 /// - Collapses multiple hyphens and whitespace
 /// - Strips leading/trailing dots and spaces
 pub fn sanitize_folder_name(name: &str) -> String {
-    let s = SLASH_IN_NAME.replace_all(name, "$1-$2");
+    let s = join_slashed_words(name);
     let s = SLASH.replace_all(&s, " - ");
     let s = COLON.replace_all(&s, " - ");
     let s = FORBIDDEN.replace_all(&s, "");
@@ -283,6 +282,29 @@ pub fn sanitize_folder_name(name: &str) -> String {
         "" => "Anime".to_owned(),
         s => s.to_owned(),
     }
+}
+
+/// `name` with each slash between two words written as a hyphen ('Fate/stay' -> 'Fate-stay'). A
+/// word after a joined slash is used up by it, so 'a/b/c' becomes 'a-b/c'.
+fn join_slashed_words(name: &str) -> String {
+    let is_word = |c: char| c.is_alphanumeric() || c == '_';
+    let mut joined = String::with_capacity(name.len());
+    let mut previous = None;
+    let mut in_joined_word = false;
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        let between_words =
+            previous.is_some_and(is_word) && chars.peek().is_some_and(|&next| is_word(next));
+        if c == '/' && between_words && !in_joined_word {
+            joined.push('-');
+            in_joined_word = true;
+        } else {
+            in_joined_word &= is_word(c);
+            joined.push(c);
+        }
+        previous = Some(c);
+    }
+    joined
 }
 
 /// A path inside the home directory `home` with that prefix written as '~', for display.
@@ -370,5 +392,15 @@ mod tests {
     #[test]
     fn every_regex_written_in_the_code_compiles() {
         assert!(written_regexes().iter().all(|regex| regex.compiled()));
+    }
+
+    #[test]
+    fn a_slash_between_words_becomes_a_hyphen_and_others_a_separator() {
+        assert_eq!(sanitize_folder_name("Ranma 1/2"), "Ranma 1-2");
+        assert_eq!(sanitize_folder_name("Fate/stay night"), "Fate-stay night");
+        assert_eq!(sanitize_folder_name("Shōjo/Kageki"), "Shōjo-Kageki");
+        assert_eq!(sanitize_folder_name("a/b/c"), "a-b - c");
+        assert_eq!(sanitize_folder_name("Show / Other"), "Show - Other");
+        assert_eq!(sanitize_folder_name("/Lead"), "- Lead");
     }
 }

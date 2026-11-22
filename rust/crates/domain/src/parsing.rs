@@ -115,11 +115,11 @@ const NAME_FILLERS: &[&str] = &["episode", "ep", "tv", "anime", "uncut", "dub", 
 const ROMAN_SEASONS: &[(&str, i64)] = &[("ii", 2), ("iii", 3), ("iv", 4), ("v", 5), ("vi", 6)];
 
 regexes! {
-    VERSION_REGEX = r"(E\d+|\b\d+)v\d+", Insensitive;
+    VERSION_REGEX = r"(E[0-9０-９]+|\b[0-9０-９]+)v[0-9０-９]+", Insensitive;
     ROMAN_NUMERAL = r"\b(x|ix|viii|vii|vi|v|iv|iii|ii)\b", Sensitive;
     BRACKETED = r"\[.*?\]|\(.*?\)", Sensitive;
-    ORDINAL_SEASON = r"\b(\d+)(?:st|nd|rd|th)\s+season\b", Sensitive;
-    SHORT_SEASON = r"\bs(\d+)\b", Sensitive;
+    ORDINAL_SEASON = r"\b([0-9０-９]+)(?:st|nd|rd|th)\s+season\b", Sensitive;
+    SHORT_SEASON = r"\bs([0-9０-９]+)\b", Sensitive;
     PUNCTUATION = r#"[:\-_/\\.|+~'\"`]"#, Sensitive;
     /// "SPY×FAMILY" is "Spy x Family".
     TIMES = r"[×✕]", Sensitive;
@@ -132,29 +132,29 @@ regexes! {
     /// or to "WEB-DL".
     SCENE_GROUP = r"-([A-Za-z0-9_]+)(?:\s*\(|\s*\[|\s*\.|\s*$)", Sensitive;
     BRACKET_CONTENT = r"\[(.*?)\]", Sensitive;
-    VERSION_TAG = r"(?:E\d+|\b\d+)v(\d+)\b|[\[(]v(\d+)[\])]|\b(?:v|ver\.?|version)\s*(\d+)\b", Insensitive;
-    REPACK_OR_PROPER = r"\bREPACK\d*\b|\bPROPER\d*\b", Insensitive;
-    REPACK_NUMBER = r"\bREPACK(\d+)\b", Insensitive;
+    VERSION_TAG = r"(?:E[0-9０-９]+|\b[0-9０-９]+)v([0-9０-９]+)\b|[\[(]v([0-9０-９]+)[\])]|\b(?:v|ver\.?|version)\s*([0-9０-９]+)\b", Insensitive;
+    REPACK_OR_PROPER = r"\bREPACK[0-9０-９]*\b|\bPROPER[0-9０-９]*\b", Insensitive;
+    REPACK_NUMBER = r"\bREPACK([0-9０-９]+)\b", Insensitive;
     COUNTS_SOMETHING_ELSE = r"\b(?:season|part|cour|vol(?:ume)?)\.?$", Insensitive;
     /// A standalone episode number. A "." after it is a file extension, never a fraction ("12.5"
     /// is a recap, not episode 12). "more" is set when an episode title (" - The Hero's Party",
     /// " - 2 Heroes") or a language tag ("VOSTFR") follows the number.
     EPISODE_NUMBER = concat!(
-        r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>\d{1,4})(?:\s+(?:END|FINAL|REPACK\d*|PROPER\d*))?",
-        r"(?:\s*\(|\s*\[|\s*\.(?!\d)|\s*$|(?P<more>(?=\s+-\s+(?:[^\d\s]|\d+\s+[^\W\d_])|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
+        r"(?P<pre>\s*-\s*|\s+)(?:EP?|#)?(?P<num>[0-9０-９]{1,4})(?:\s+(?:END|FINAL|REPACK[0-9０-９]*|PROPER[0-9０-９]*))?",
+        r"(?:\s*\(|\s*\[|\s*\.(?![0-9０-９])|\s*$|(?P<more>(?=\s+-\s+(?:[^0-9０-９\s]|[0-9０-９]+\s+[^\W0-9０-９_])|\s+(?:VOSTFR|VOSTA|VOSTEN|VF|RAW)\b)))",
     ), Insensitive;
     VIDEO_EXTENSION = r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$", Insensitive;
     AUDIO_CHANNELS = r"\b(?:DDP?|EAC-?3|AC3|AAC|FLAC|OPUS|DTS(?:-HD)?|TrueHD|PCM|DD\+?|Dolby|Atmos)?\s*(?:[1-7]\.[0-2]|2\.0|5\.1|7\.1)\b", Insensitive;
-    FRAME_RATE = r"\b\d+(?:\.\d+)?\s*fps\b", Insensitive;
-    BIT_DEPTH = r"\b\d{1,2}\s*-?\s*bits?\b", Insensitive;
+    FRAME_RATE = r"\b[0-9０-９]+(?:\.[0-9０-９]+)?\s*fps\b", Insensitive;
+    BIT_DEPTH = r"\b[0-9０-９]{1,2}\s*-?\s*bits?\b", Insensitive;
     QUALITY_TAGS = r"\b(?:2160p|1080p|1080i|720p|576p|540p|480p|4k|8k|UHD|FHD|HD|WEB-?DL|WEBRip|BDRip|BluRay|BD|HDTV|DVD(?:Rip)?|REMUX|Dual-Audio|Multi-Audio|Multi-Subs?|MultiSub|Uncensored|Batch|Complete)\b", Insensitive;
-    DUAL_NUMBERING = r"-\s*(\d{1,4})\s*\(\s*S(\d{1,2})E(\d{1,4})\s*\)", Insensitive;
-    SEASON_EPISODE = r"\bS(\d{1,2})\s*[-_.]?\s*E(\d{1,4})\b", Insensitive;
-    SEASON_DASH_EPISODE = r"\b(?:S|Season\s*)(\d{1,2})\s*-\s*(\d{1,4})\b", Insensitive;
-    SEASON_ONLY = r"\b(?:S|Season\s*)(\d{1,2})\b", Insensitive;
-    YEAR = r"\b(?:19|20)\d{2}\b", Sensitive;
+    DUAL_NUMBERING = r"-\s*([0-9０-９]{1,4})\s*\(\s*S([0-9０-９]{1,2})E([0-9０-９]{1,4})\s*\)", Insensitive;
+    SEASON_EPISODE = r"\bS([0-9０-９]{1,2})\s*[-_.]?\s*E([0-9０-９]{1,4})\b", Insensitive;
+    SEASON_DASH_EPISODE = r"\b(?:S|Season\s*)([0-9０-９]{1,2})\s*-\s*([0-9０-９]{1,4})\b", Insensitive;
+    SEASON_ONLY = r"\b(?:S|Season\s*)([0-9０-９]{1,2})\b", Insensitive;
+    YEAR = r"\b(?:19|20)[0-9０-９]{2}\b", Sensitive;
     TRAILING_TAG = concat!(
-        r"\b(?:2160p|1080p|1080i|720p|576p|540p|480p|4k|8k|UHD|FHD|HD|WEB-?DL|WEBRip|BDRip|BluRay|BD|HDTV|DVD(?:Rip)?|REMUX|AVC|HEVC|x264|x265|H\.?264|H\.?265|AV1|VP9|AAC|FLAC|OPUS|DDP?|EAC3|AC3|TrueHD|PCM|Dual-Audio|Multi-Audio|Multi-Subs?|MultiSub|DUAL|NF|CR|AMZN|HIDIVE|BILI|REPACK\d?|PROPER|Uncensored|Batch|Complete)\b",
+        r"\b(?:2160p|1080p|1080i|720p|576p|540p|480p|4k|8k|UHD|FHD|HD|WEB-?DL|WEBRip|BDRip|BluRay|BD|HDTV|DVD(?:Rip)?|REMUX|AVC|HEVC|x264|x265|H\.?264|H\.?265|AV1|VP9|AAC|FLAC|OPUS|DDP?|EAC3|AC3|TrueHD|PCM|Dual-Audio|Multi-Audio|Multi-Subs?|MultiSub|DUAL|NF|CR|AMZN|HIDIVE|BILI|REPACK[0-9０-９]?|PROPER|Uncensored|Batch|Complete)\b",
         r"[\s\-_|/:\(\[\{.]*$",
     ), Insensitive;
     TRAILING_SEPARATORS = r"[\s\-_|/:\(\[\{.]+$", Sensitive;
@@ -162,21 +162,21 @@ regexes! {
     RESOLUTION = r"\b(2160|1080|720|576|540|480|360)p\b|\b(4k)\b", Insensitive;
     /// A frame size, "1280x720". A cropped picture ("1920x804") is as wide as a full one, so the
     /// width decides when it says more.
-    FRAME_SIZE = r"\b(\d{3,4})x(\d{3,4})\b", Insensitive;
+    FRAME_SIZE = r"\b([0-9０-９]{3,4})x([0-9０-９]{3,4})\b", Insensitive;
     /// "Collection" only counts set apart in brackets: titles contain the word ("Kantai
     /// Collection").
     BATCH_REGEX = r"\b(?:batch|complete\s+series|complete\s+season)\b|[\[(]\s*collection\s*[\])]", Insensitive;
     BATCH_WORDS = r"[\[(]?\s*\b(?:batch|complete(?:\s+(?:series|season))?)\b\s*[\])]?|[\[(]\s*collection\s*[\])]", Insensitive;
     /// A file's name, or the CRC of one: what a single file is posted under, and a batch is not.
-    SINGLE_FILE = r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$|[\[(](?=\d*[A-Fa-f])[0-9A-Fa-f]{8}[\])]", Insensitive;
+    SINGLE_FILE = r"\.(?:mkv|mp4|avi|webm|mov|m4v|ts)$|[\[(](?=[0-9０-９]*[A-Fa-f])[0-9A-Fa-f]{8}[\])]", Insensitive;
     OTHER_FORMAT = r"\b(?:movie|film|gekijouban|ova|oav|oads?|ona|specials?|recaps?)\b", Insensitive;
-    SEASON_MARKERS = r"\bS\d{1,2}\b|\bseason\s*\d+\b|\b\d+(?:st|nd|rd|th)\s+season\b", Insensitive;
-    STAGE = r"(\d+)\s*(?:st|nd|rd|th)?\s*(?:-\s*\d+\s*(?:st|nd|rd|th)?\s*)?stage", Sensitive;
-    DIGITS = r"\d+", Sensitive;
-    PART = r"part\s*(\d+)", Sensitive;
-    SEASON_NUMBER = r"season\s*(\d+)", Sensitive;
-    EPISODE_TOKEN = r"\bS\d{1,2}\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b|\s-\s*\d{1,4}(?:v\d+)?(?=[\s\[(.]|$)", Insensitive;
-    SEASON_TAG = r"\bS(\d{1,2})\s*[-_.]?\s*E\d{1,4}(?:v\d+)?\b", Insensitive;
+    SEASON_MARKERS = r"\bS[0-9０-９]{1,2}\b|\bseason\s*[0-9０-９]+\b|\b[0-9０-９]+(?:st|nd|rd|th)\s+season\b", Insensitive;
+    STAGE = r"([0-9０-９]+)\s*(?:st|nd|rd|th)?\s*(?:-\s*[0-9０-９]+\s*(?:st|nd|rd|th)?\s*)?stage", Sensitive;
+    DIGITS = r"[0-9０-９]+", Sensitive;
+    PART = r"part\s*([0-9０-９]+)", Sensitive;
+    SEASON_NUMBER = r"season\s*([0-9０-９]+)", Sensitive;
+    EPISODE_TOKEN = r"\bS[0-9０-９]{1,2}\s*[-_.]?\s*E[0-9０-９]{1,4}(?:v[0-9０-９]+)?\b|\s-\s*[0-9０-９]{1,4}(?:v[0-9０-９]+)?(?=[\s\[(.]|$)", Insensitive;
+    SEASON_TAG = r"\bS([0-9０-９]{1,2})\s*[-_.]?\s*E[0-9０-９]{1,4}(?:v[0-9０-９]+)?\b", Insensitive;
     TRAILING_ROMAN = r"\s(ii|iii|iv|v|vi)\s*$", Insensitive;
     LEADING_GROUP = r"^\s*\[[^\]]*\]\s*", Sensitive;
     TRAILING_NAME_SEPARATORS = r"[\s\-_|/:]+$", Sensitive;
@@ -187,36 +187,37 @@ regexes! {
 /// An episode range: "S01E01-E12", "(01-12)", "[01 ~ 24]", "01~12", a bare "E1-E12", "01-12" or
 /// "- 1-12" set apart by spaces, or "- 12 + 13". A bare "1-2" is left out: it is part of a title as
 /// often as not ("Ranma 1-2 2024 S03E03").
-static RANGE_REGEXES: LazyLock<[Regex; 7]> = LazyLock::new(|| {
-    [
+static RANGE_REGEXES: LazyLock<[Regex; 7]> =
+    LazyLock::new(|| {
+        [
         (
-            r"\bS\d{1,2}E(\d{1,4})\s*-\s*E?(\d{1,4})\b",
+            r"\bS[0-9０-９]{1,2}E([0-9０-９]{1,4})\s*-\s*E?([0-9０-９]{1,4})\b",
             Case::Insensitive,
         ),
         (
-            r"[\[(]\s*(?:EP?\s*)?(\d{1,4})\s*[-~]\s*(?:EP?\s*)?(\d{1,4})\s*[\])]",
+            r"[\[(]\s*(?:EP?\s*)?([0-9０-９]{1,4})\s*[-~]\s*(?:EP?\s*)?([0-9０-９]{1,4})\s*[\])]",
             Case::Insensitive,
         ),
-        (r"\b(\d{1,4})\s*~\s*(\d{1,4})\b", Case::Sensitive),
+        (r"\b([0-9０-９]{1,4})\s*~\s*([0-9０-９]{1,4})\b", Case::Sensitive),
         (
-            r"(?:^|\s)EP?(\d{1,4})-(?:EP?)?(\d{1,4})(?=$|\s)",
+            r"(?:^|\s)EP?([0-9０-９]{1,4})-(?:EP?)?([0-9０-９]{1,4})(?=$|\s)",
             Case::Insensitive,
         ),
-        (r"(?:^|\s)(\d{2,4})-(\d{2,4})(?=$|\s)", Case::Sensitive),
-        (r"\s-\s+(\d{1,4})-(\d{1,4})(?=$|\s)", Case::Sensitive),
+        (r"(?:^|\s)([0-9０-９]{2,4})-([0-9０-９]{2,4})(?=$|\s)", Case::Sensitive),
+        (r"\s-\s+([0-9０-９]{1,4})-([0-9０-９]{1,4})(?=$|\s)", Case::Sensitive),
         (
-            r"\s-\s+(\d{1,4})\s*[+&]\s*(\d{1,4})(?=$|[\s\[(])",
+            r"\s-\s+([0-9０-９]{1,4})\s*[+&]\s*([0-9０-９]{1,4})(?=$|[\s\[(])",
             Case::Sensitive,
         ),
     ]
     .map(|(pattern, flags)| Regex::literal(pattern, flags))
-});
+    });
 
 static SEASON_NAME_PATTERNS: LazyLock<[Regex; 3]> = LazyLock::new(|| {
     [
-        r"\bseason\s*(\d{1,2})\b",
-        r"\b(\d{1,2})(?:st|nd|rd|th)\s+season\b",
-        r"\bS(\d{1,2})\b",
+        r"\bseason\s*([0-9０-９]{1,2})\b",
+        r"\b([0-9０-９]{1,2})(?:st|nd|rd|th)\s+season\b",
+        r"\bS([0-9０-９]{1,2})\b",
     ]
     .map(|pattern| Regex::literal(pattern, Case::Insensitive))
 });
