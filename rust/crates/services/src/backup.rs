@@ -25,8 +25,7 @@ use kisetsu_db::schema::{
 };
 use kisetsu_db::store;
 use kisetsu_domain::patterns::compress_home_path;
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
 use tracing::info;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -114,6 +113,34 @@ struct Manifest<'a> {
     schema: i64,
     exported_at: String,
     theme: Option<&'a str>,
+}
+
+/// A manifest field that is read when it is text and ignored when it is anything else.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Text {
+    Str(String),
+    Other(serde::de::IgnoredAny),
+}
+
+impl Text {
+    fn into_text(self) -> Option<String> {
+        match self {
+            Text::Str(text) => Some(text),
+            Text::Other(_) => None,
+        }
+    }
+}
+
+/// The manifest as read from a backup. Only `app` and `format` decide whether the file is accepted.
+#[derive(Deserialize)]
+struct ManifestHeader {
+    app: String,
+    format: i64,
+    #[serde(default)]
+    exported_at: Option<Text>,
+    #[serde(default)]
+    theme: Option<Text>,
 }
 
 fn write_failed(error: impl std::fmt::Display) -> BackupError {
@@ -260,7 +287,7 @@ fn zip_up(
 
 /// Unpacks the database and returns the manifest. Only the two known names are ever read from the
 /// zip.
-fn extract(archive: &Path, db_path: &Path) -> std::result::Result<Value, BackupError> {
+fn extract(archive: &Path, db_path: &Path) -> std::result::Result<ManifestHeader, BackupError> {
     let mut bundle =
         ZipArchive::new(File::open(archive).map_err(unreadable)?).map_err(unreadable)?;
     let manifest = {
@@ -273,7 +300,11 @@ fn extract(archive: &Path, db_path: &Path) -> std::result::Result<Value, BackupE
             .take(MAX_MANIFEST_BYTES)
             .read_to_end(&mut text)
             .map_err(unreadable)?;
-        serde_json::from_slice::<Value>(&text).map_err(unreadable)?
+        // A JSON array would otherwise be read field by field.
+        if text.trim_ascii_start().first() != Some(&b'{') {
+            return Err(BackupError::NotABackup);
+        }
+        serde_json::from_slice::<ManifestHeader>(&text).map_err(unreadable)?
     };
     let mut packed = bundle.by_name(DB_FILE).map_err(unreadable)?;
     if packed.size() > MAX_BACKUP_BYTES {
@@ -281,11 +312,10 @@ fn extract(archive: &Path, db_path: &Path) -> std::result::Result<Value, BackupE
     }
     let mut out = File::create(db_path).map_err(unreadable)?;
     io::copy(&mut (&mut packed).take(MAX_BACKUP_BYTES), &mut out).map_err(unreadable)?;
-    let known = manifest["app"] == "kisetsu";
-    let Some(format) = manifest["format"].as_i64().filter(|_| known) else {
+    if manifest.app != "kisetsu" {
         return Err(BackupError::NotABackup);
-    };
-    if format > FORMAT {
+    }
+    if manifest.format > FORMAT {
         return Err(BackupError::FromNewerRelease);
     }
     Ok(manifest)
@@ -340,14 +370,14 @@ pub fn unpack(archive: &Path, scratch: &Path) -> std::result::Result<Staged, Bac
     let db_path = scratch.join(DB_FILE);
     let manifest = extract(archive, &db_path)?;
     let summary = checked_summary(&db_path)?;
-    let exported_at = manifest["exported_at"]
-        .as_str()
-        .filter(|text| text.parse::<Timestamp>().is_ok() || text.parse::<DateTime>().is_ok())
-        .map(str::to_owned);
-    let theme = manifest["theme"]
-        .as_str()
-        .filter(|theme| THEMES.contains(theme))
-        .map(str::to_owned);
+    let exported_at = manifest
+        .exported_at
+        .and_then(Text::into_text)
+        .filter(|text| text.parse::<Timestamp>().is_ok() || text.parse::<DateTime>().is_ok());
+    let theme = manifest
+        .theme
+        .and_then(Text::into_text)
+        .filter(|theme| THEMES.contains(&theme.as_str()));
     Ok(Staged {
         db_path,
         summary,
@@ -560,6 +590,82 @@ mod tests {
         std::fs::write(&file, b"not a zip").unwrap();
         assert!(matches!(
             unpack(&file, dir.path()),
+            Err(BackupError::NotABackup)
+        ));
+    }
+    /// A backup file whose manifest is `manifest`, around a database made here.
+    fn archive_with(dir: &Path, manifest: &str, with_db: bool) -> PathBuf {
+        let db_path = dir.join("inner.db");
+        drop(open(&db_path).unwrap());
+        let archive = dir.join("custom.zip");
+        let mut bundle = ZipWriter::new(File::create(&archive).unwrap());
+        let options = SimpleFileOptions::default();
+        bundle.start_file(MANIFEST_FILE, options).unwrap();
+        bundle.write_all(manifest.as_bytes()).unwrap();
+        if with_db {
+            bundle.start_file(DB_FILE, options).unwrap();
+            io::copy(&mut File::open(&db_path).unwrap(), &mut bundle).unwrap();
+        }
+        bundle.finish().unwrap();
+        archive
+    }
+
+    fn unpacked(manifest: &str, with_db: bool) -> std::result::Result<Staged, BackupError> {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive_with(dir.path(), manifest, with_db);
+        let scratch = dir.path().join("scratch");
+        std::fs::create_dir(&scratch).unwrap();
+        unpack(&archive, &scratch)
+    }
+
+    #[test]
+    fn a_manifest_field_that_is_not_text_is_ignored() {
+        let staged = unpacked(
+            r#"{"app": "kisetsu", "format": 1, "exported_at": 5, "theme": ["dark"]}"#,
+            true,
+        )
+        .unwrap();
+        assert_eq!(staged.exported_at, None);
+        assert_eq!(staged.theme, None);
+        let staged = unpacked(
+            r#"{"app": "kisetsu", "format": 1, "exported_at": "2026-01-02T03:04:05+00:00", "theme": "light"}"#,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            staged.exported_at.as_deref(),
+            Some("2026-01-02T03:04:05+00:00")
+        );
+        assert_eq!(staged.theme.as_deref(), Some("light"));
+        let staged = unpacked(r#"{"app": "kisetsu", "format": 1, "theme": "pink"}"#, true).unwrap();
+        assert_eq!(staged.theme, None);
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_name_this_app_or_a_format_is_refused() {
+        for manifest in [
+            r#"{"app": "other", "format": 1}"#,
+            r#"{"app": "kisetsu"}"#,
+            r#"{"app": "kisetsu", "format": "1"}"#,
+            r#"{"app": "other", "format": 99}"#,
+            r#"["kisetsu", 1]"#,
+        ] {
+            assert!(
+                matches!(unpacked(manifest, true), Err(BackupError::NotABackup)),
+                "{manifest}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_newer_format_is_told_apart_only_once_the_database_is_there() {
+        let newer = r#"{"app": "kisetsu", "format": 99}"#;
+        assert!(matches!(
+            unpacked(newer, true),
+            Err(BackupError::FromNewerRelease)
+        ));
+        assert!(matches!(
+            unpacked(newer, false),
             Err(BackupError::NotABackup)
         ));
     }
