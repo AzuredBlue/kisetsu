@@ -1,7 +1,9 @@
 //! Parsing RSS feeds, as nyaa and SubsPlease write them: items, dates, info hashes and magnet links.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::hash::Hash;
 
 use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone};
@@ -452,14 +454,14 @@ fn add_text(
 
 /// Per-key exponential backoff, so a failing feed is retried less and less often.
 #[derive(Debug, Clone)]
-pub struct Backoff {
+pub struct Backoff<K = String> {
     base: SignedDuration,
     cap: SignedDuration,
-    failures: HashMap<String, u32>,
-    retry_at: HashMap<String, Timestamp>,
+    failures: HashMap<K, u32>,
+    retry_at: HashMap<K, Timestamp>,
 }
 
-impl Backoff {
+impl<K: Hash + Eq> Backoff<K> {
     pub fn new(base: SignedDuration, cap: SignedDuration) -> Self {
         Self {
             base,
@@ -470,7 +472,11 @@ impl Backoff {
     }
 
     /// Records a failure of `key` at `now` and returns when it may be tried again.
-    pub fn failed(&mut self, key: &str, now: Timestamp) -> Timestamp {
+    pub fn failed<Q>(&mut self, key: &Q, now: Timestamp) -> Timestamp
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ToOwned<Owned = K> + ?Sized,
+    {
         let count = self.failures.entry(key.to_owned()).or_default();
         *count += 1;
         let doublings = (*count - 1).min(32);
@@ -483,17 +489,25 @@ impl Backoff {
         retry_at
     }
 
-    pub fn succeeded(&mut self, key: &str) {
+    pub fn succeeded<Q>(&mut self, key: &Q)
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.failures.remove(key);
         self.retry_at.remove(key);
     }
 
-    pub fn ready(&self, key: &str, now: Timestamp) -> bool {
+    pub fn ready<Q>(&self, key: &Q, now: Timestamp) -> bool
+    where
+        K: Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
         self.retry_at.get(key).is_none_or(|&at| now >= at)
     }
 }
 
-impl Default for Backoff {
+impl<K: Hash + Eq> Default for Backoff<K> {
     fn default() -> Self {
         Self::new(SignedDuration::from_mins(1), SignedDuration::from_mins(30))
     }

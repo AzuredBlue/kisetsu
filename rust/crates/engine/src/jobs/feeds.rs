@@ -16,7 +16,7 @@ impl Jobs {
         let due: Vec<FeedRef> = {
             let state = locked(&self.state);
             refs.into_iter()
-                .filter(|feed| state.backoff.ready(&feed.id.to_string(), now))
+                .filter(|feed| state.backoff.ready(&feed.id, now))
                 .collect()
         };
         let results = map_limited(&due, due.len(), |feed| {
@@ -30,10 +30,10 @@ impl Jobs {
         for (feed, result) in due.iter().zip(results) {
             match &result {
                 Err(_) => {
-                    state.backoff.failed(&feed.id.to_string(), now);
+                    state.backoff.failed(&feed.id, now);
                 }
                 Ok(articles) => {
-                    state.backoff.succeeded(&feed.id.to_string());
+                    state.backoff.succeeded(&feed.id);
                     // A feed is a page of its site's search: how many it lists says how many a
                     // search's page holds.
                     let count = u64::try_from(articles.len()).unwrap_or(u64::MAX);

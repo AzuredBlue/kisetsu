@@ -86,7 +86,7 @@ pub struct Health {
 /// What the jobs remember between runs.
 struct State {
     health: Health,
-    backoff: Backoff,
+    backoff: Backoff<i64>,
     backfill_requests: BTreeSet<i64>,
     backfill_all: bool,
     refresh_all: bool,
