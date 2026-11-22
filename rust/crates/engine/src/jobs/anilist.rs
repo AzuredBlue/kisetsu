@@ -167,11 +167,13 @@ impl Jobs {
             fetched.owed.clone_from(&full);
             let since = back(now, SCHEDULE_FULL_LOOKBACK);
             let covering = self.remote.upcoming_schedules(&full, since)?;
-            fetched.schedules.extend(covering.clone());
-            let asked = full.clone();
-            full = self
-                .engine
-                .call(move |ctx| cycle::uncovered(ctx, &asked, &covering))?;
+            let asked = std::mem::take(&mut full);
+            let (uncovered, covering) = self.engine.call(move |ctx| {
+                let uncovered = cycle::uncovered(ctx, &asked, &covering)?;
+                Ok((uncovered, covering))
+            })?;
+            fetched.schedules.extend(covering);
+            full = uncovered;
             fetched.owed.clone_from(&full);
         }
         if !full.is_empty() {
