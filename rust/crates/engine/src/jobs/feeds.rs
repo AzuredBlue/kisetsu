@@ -105,7 +105,7 @@ impl Jobs {
         let interval = Duration::try_from(interval).unwrap_or(Duration::ZERO);
         Ok(match at {
             None => interval,
-            Some(at) => interval.max(secs(at.duration_since(self.engine.now()).as_secs_f64())),
+            Some(at) => interval.max(until(self.engine.now(), at)),
         })
     }
 
@@ -130,23 +130,26 @@ impl Jobs {
         let now = self.engine.now();
         let hunted = !info.show_ids.is_empty();
         if hunted && !info.feeds.is_empty() {
-            let wait = secs(info.interval_minutes as f64 * 60.0);
-            locked(&self.state).hunt_read_at = Some(later(now, wait.as_secs_f64()));
+            let wait = Duration::from_secs(
+                u64::try_from(info.interval_minutes)
+                    .unwrap_or(0)
+                    .saturating_mul(60),
+            );
+            locked(&self.state).hunt_read_at = Some(later(now, wait));
             return Ok(Some(wait));
         }
         if let Some(wait_seconds) = info.wait_seconds.filter(|_| hunted) {
             // Their feeds were just read by another job: hunt once the first of them is an
             // interval old.
-            locked(&self.state).hunt_read_at = Some(later(now, wait_seconds));
-            return Ok(Some(secs(wait_seconds).max(HUNT_FLOOR)));
+            let wait = secs(wait_seconds);
+            locked(&self.state).hunt_read_at = Some(later(now, wait));
+            return Ok(Some(wait.max(HUNT_FLOOR)));
         }
         let start = info.plan.next_start;
         locked(&self.state).hunt_read_at = start;
         Ok(Some(match start {
             None => HUNT_IDLE_MAX,
-            Some(start) => secs(start.duration_since(now).as_secs_f64())
-                .min(HUNT_IDLE_MAX)
-                .max(HUNT_FLOOR),
+            Some(start) => until(now, start).min(HUNT_IDLE_MAX).max(HUNT_FLOOR),
         }))
     }
 }

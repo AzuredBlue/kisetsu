@@ -150,8 +150,15 @@ fn secs(seconds: f64) -> Duration {
     Duration::try_from_secs_f64(seconds).unwrap_or(Duration::ZERO)
 }
 
-fn later(from: Timestamp, seconds: f64) -> Timestamp {
-    from.saturating_add(SignedDuration::try_from_secs_f64(seconds).unwrap_or_default())
+/// The wait until `at`; none when `at` has passed.
+fn until(now: Timestamp, at: Timestamp) -> Duration {
+    Duration::try_from(at.duration_since(now)).unwrap_or(Duration::ZERO)
+}
+
+fn later(from: Timestamp, wait: Duration) -> Timestamp {
+    SignedDuration::try_from(wait)
+        .ok()
+        .and_then(|wait| from.saturating_add(wait).ok())
         .unwrap_or(from)
 }
 

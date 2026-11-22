@@ -66,7 +66,7 @@ impl Jobs {
             SETTLE_IDLE
         };
         if let Some(next_due) = result.next_due {
-            let wait = secs(next_due.duration_since(self.engine.now()).as_secs_f64());
+            let wait = until(self.engine.now(), next_due);
             delay = delay.min(wait.max(Duration::from_secs(1)));
         }
         Ok(Some(delay))
