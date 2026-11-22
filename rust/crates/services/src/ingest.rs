@@ -10,7 +10,6 @@ use kisetsu_db::storage::{Column, format_timestamp};
 use kisetsu_domain::matcher::{broad_match, build_matcher, matching_show_ids, signature};
 use kisetsu_domain::parsing::{is_batch, parse_release_title};
 use kisetsu_domain::schedule::{PREMIERE_SLACK, premiere_out_of_reach};
-use serde_json::Value;
 
 use crate::context::{Context, MatcherSet, get_state, set_state};
 use crate::error::Result;
@@ -253,12 +252,12 @@ fn store_signatures(ctx: &Context<'_>, signatures: &BTreeMap<i64, String>) -> Re
 /// right one. Returns whether anything was redone.
 pub fn ensure_matches_current(ctx: &mut Context<'_>) -> Result<bool> {
     let set = matchers(ctx)?;
-    let stored = serde_json::from_str::<Value>(&get_state(ctx.conn, SIGNATURE_KEY, "")?)
-        .ok()
-        .and_then(|value| match value {
-            Value::Object(map) => Some(map),
-            _ => None,
-        });
+    let stored = serde_json::from_str::<HashMap<String, Option<String>>>(&get_state(
+        ctx.conn,
+        SIGNATURE_KEY,
+        "",
+    )?)
+    .ok();
     let Some(stored) = stored else {
         // Nothing to compare with (a new database, or one from before signatures were kept per show).
         rematch(ctx, None)?;
@@ -266,7 +265,7 @@ pub fn ensure_matches_current(ctx: &mut Context<'_>) -> Result<bool> {
     };
     let stored: HashMap<i64, Option<&str>> = stored
         .iter()
-        .filter_map(|(id, value)| Some((id.parse().ok()?, value.as_str())))
+        .filter_map(|(id, value)| Some((id.parse().ok()?, value.as_deref())))
         .collect();
     let changed: BTreeSet<i64> = set
         .signatures
