@@ -52,6 +52,8 @@ fn configure(conn: &Connection) -> Result<()> {
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
+    // The database is small and the disk cache holds it, so each connection keeps few pages.
+    conn.pragma_update(None, "cache_size", -128)?;
     Ok(())
 }
 
