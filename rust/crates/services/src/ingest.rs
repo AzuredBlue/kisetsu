@@ -7,7 +7,7 @@ use jiff::SignedDuration;
 use kisetsu_clients::rss::FeedArticle;
 use kisetsu_db::schema::{Feed, FeedItem, FeedItemMatch, Show};
 use kisetsu_db::storage::{Column, format_timestamp};
-use kisetsu_domain::matcher::{broad_match, build_matcher, matching_show_ids, signature};
+use kisetsu_domain::matcher::{Matcher, broad_match, build_matcher, matching_show_ids, signature};
 use kisetsu_domain::parsing::{is_batch, parse_release_title};
 use kisetsu_domain::schedule::{PREMIERE_SLACK, premiere_out_of_reach};
 
@@ -52,16 +52,13 @@ pub fn followed_shows(ctx: &Context<'_>) -> Result<Vec<Show>> {
 pub(crate) fn matchers(ctx: &mut Context<'_>) -> Result<Arc<MatcherSet>> {
     let shows = followed_shows(ctx)?;
     let minimum = ctx.settings.min_resolution;
-    let extra = format!("min_resolution={minimum}");
     let aliases: Vec<Vec<String>> = shows.iter().map(Show::effective_aliases).collect();
-    // The minimum resolution decides what matches too, so a change to it rematches every show.
     let signatures: BTreeMap<i64, String> = shows
         .iter()
         .zip(&aliases)
         .filter_map(|(show, aliases)| {
             let id = show.id?;
-            let learned = show.learned_name.as_deref().unwrap_or_default();
-            Some((id, signature([(id, aliases.as_slice(), learned)], &extra)))
+            Some((id, matcher_signature(show, id, aliases, minimum)))
         })
         .collect();
     if let Some(cached) = ctx
@@ -86,6 +83,35 @@ pub(crate) fn matchers(ctx: &mut Context<'_>) -> Result<Arc<MatcherSet>> {
     });
     ctx.caches.matchers = Some(Arc::clone(&set));
     Ok(set)
+}
+
+/// What a show's matcher is built from. The minimum resolution decides what matches too, so a
+/// change to it rematches every show.
+fn matcher_signature(show: &Show, id: i64, aliases: &[String], min_resolution: i64) -> String {
+    let learned = show.learned_name.as_deref().unwrap_or_default();
+    let extra = format!("min_resolution={min_resolution}");
+    signature([(id, aliases, learned)], &extra)
+}
+
+/// The show's matcher from the cache `matchers` keeps, when it was built from what the show is
+/// now.
+pub(crate) fn cached_matcher(ctx: &Context<'_>, show: &Show) -> Option<Matcher> {
+    let set = ctx.caches.matchers.as_ref()?;
+    let id = show.id?;
+    let built_from = set.signatures.get(&id)?;
+    let now = matcher_signature(
+        show,
+        id,
+        &show.effective_aliases(),
+        ctx.settings.min_resolution,
+    );
+    if *built_from != now {
+        return None;
+    }
+    set.matchers
+        .iter()
+        .find(|(of, _)| *of == id)
+        .map(|(_, matcher)| matcher.clone())
 }
 
 /// The `(feed id, guid)` of every stored item, read once.

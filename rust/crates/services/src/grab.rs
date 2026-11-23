@@ -192,11 +192,13 @@ fn offset_of(ctx: &Context<'_>, show: &Show, feed: &Feed) -> Result<Option<Episo
 
 /// How to tell the show's releases from other titles, on any feed it is not locked to.
 pub fn show_matcher(ctx: &Context<'_>, show: &Show) -> Matcher {
-    build_matcher(
-        &show.effective_aliases(),
-        show.learned_name.as_deref(),
-        ctx.settings.min_resolution,
-    )
+    ingest::cached_matcher(ctx, show).unwrap_or_else(|| {
+        build_matcher(
+            &show.effective_aliases(),
+            show.learned_name.as_deref(),
+            ctx.settings.min_resolution,
+        )
+    })
 }
 
 /// How to tell the show's releases from other titles on this feed.
