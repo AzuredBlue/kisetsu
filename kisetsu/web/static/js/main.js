@@ -158,25 +158,7 @@ function App() {
   return html`${setup.data.setup_completed ? html`<${Shell} />` : html`<${Setup} sandbox=${setup.data.sandbox} />`}<${ModalHost} /><${Toasts} />`;
 }
 
-// While something scrolls, the rows passing under a still pointer each took their hover colours and transitions,
-// which repainted every frame (History scrolled at 30 fps). Its contents ignore the pointer until it stops; the
-// scroller itself keeps it, so the wheel goes on scrolling it. Not during a drag, whose drop targets are those rows.
-function holdHoverWhileScrolling() {
-  const timers = new Map();
-  let dragging = false;
-  document.addEventListener('dragstart', () => { dragging = true; }, true);
-  document.addEventListener('dragend', () => { dragging = false; }, true);
-  document.addEventListener('scroll', (e) => {
-    const el = e.target;
-    if (dragging || !(el instanceof Element)) return;
-    if (timers.has(el)) clearTimeout(timers.get(el));
-    else el.classList.add('scrolling');
-    timers.set(el, setTimeout(() => { timers.delete(el); el.classList.remove('scrolling'); }, 150));
-  }, { capture: true, passive: true });
-}
-
 setErrorHandler((message) => toast(message, 'error'));
-holdHoverWhileScrolling();
 applyTheme();
 connect();
 render(html`<${App} />`, document.getElementById('app'));
