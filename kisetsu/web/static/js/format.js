@@ -9,35 +9,43 @@ const toDate = (iso) => {
 // A date in the browser's language. `toLocale*String` with options builds a new formatter on every call, which costs
 // far more than formatting; a list of rows did that hundreds of times per render. Every option set used names at
 // least one field, so the result is the same as theirs.
-const formatters = new Map();
+// Formatters are found by the options object itself, so callers pass options held in a constant.
+const formatters = new WeakMap();
+const byKey = new Map();
 export function formatDate(date, options) {
-  const key = JSON.stringify(options);
-  let formatter = formatters.get(key);
+  let formatter = formatters.get(options);
   if (!formatter) {
-    formatter = new Intl.DateTimeFormat([], options);
-    formatters.set(key, formatter);
+    const key = JSON.stringify(options);
+    formatter = byKey.get(key) || new Intl.DateTimeFormat([], options);
+    byKey.set(key, formatter);
+    formatters.set(options, formatter);
   }
   return formatter.format(date);
 }
 
+const CLOCK = { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+const CLOCK_SECONDS = { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
+const DAY_TIME = { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+const SHORT_DATE = { day: 'numeric', month: 'short' };
+const WEEKDAY_TIME = { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' };
+const LONG_DAY = { weekday: 'long', day: 'numeric', month: 'long' };
+
 export function localTime(iso, seconds = false) {
   const d = toDate(iso);
   if (!d) return '';
-  return formatDate(d, seconds
-    ? { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' }
-    : { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return formatDate(d, seconds ? CLOCK_SECONDS : CLOCK);
 }
 
 export function localDateTime(iso) {
   const d = toDate(iso);
   if (!d) return '';
-  return formatDate(d, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  return formatDate(d, DAY_TIME);
 }
 
 export function localDate(iso) {
   const d = toDate(iso);
   if (!d) return '';
-  return formatDate(d, { day: 'numeric', month: 'short' });
+  return formatDate(d, SHORT_DATE);
 }
 
 // "2d 1h" until the time, or "Aired" once it has passed; null without a time.
@@ -59,8 +67,8 @@ export function countdown(iso, now = Date.now()) {
 export function airTime(iso, now = Date.now()) {
   const d = toDate(iso);
   if (!d) return '';
-  if (d.getTime() - now >= 6 * 86400000) return formatDate(d, { month: 'short', day: 'numeric' });
-  return formatDate(d, { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+  if (d.getTime() - now >= 6 * 86400000) return formatDate(d, SHORT_DATE);
+  return formatDate(d, WEEKDAY_TIME);
 }
 
 export function relativeTime(iso, now = Date.now()) {
@@ -85,7 +93,7 @@ export function dayLabel(iso, now = new Date()) {
   const days = Math.round((startOf(now) - startOf(d)) / 86400000);
   if (days <= 0) return 'Today';
   if (days === 1) return 'Yesterday';
-  return capitalize(formatDate(d, { weekday: 'long', day: 'numeric', month: 'long' }));
+  return capitalize(formatDate(d, LONG_DAY));
 }
 
 // "in 4m 12s" for a wait of `seconds`.

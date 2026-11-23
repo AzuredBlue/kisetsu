@@ -12,7 +12,10 @@ import { capitalize, formatDate, releaseState, shownExpected } from '../format.j
 
 const WEEK = 7 * 86400000;
 const SEASON_WEEKS = 4;
-const time = (date) => formatDate(date, { hour: 'numeric', minute: '2-digit' });
+const TIME = { hour: 'numeric', minute: '2-digit' };
+const WEEKDAY = { weekday: 'short' };
+const DAY = { month: 'short', day: 'numeric' };
+const time = (date) => formatDate(date, TIME);
 const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
@@ -77,8 +80,8 @@ export function buildWeek(shows, today, offset = 0) {
     days.push({
       date, slots, today: date.getTime() === startOfToday.getTime(), past: date < startOfToday,
       quiet: !slots.length && busy.size > 0 && !busy.has(d),
-      name: capitalize(formatDate(date, { weekday: 'short' })),
-      label: formatDate(date, { month: 'short', day: 'numeric' }),
+      name: capitalize(formatDate(date, WEEKDAY)),
+      label: formatDate(date, DAY),
     });
   }
   const range = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' }).formatRange(monday, sunday);
