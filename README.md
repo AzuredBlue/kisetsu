@@ -1,6 +1,6 @@
 # Kisetsu
 
-Kisetsu reads your AniList watching list and has qBittorrent download each new episode of your seasonal anime, by adding each torrent itself.
+A small, lightweight, rust-based app that reads your AniList watching list and has qBittorrent download each new episode of your seasonal anime, by adding each torrent itself.
 
 The WebUI is available at `http://localhost:8085`.
 
@@ -29,25 +29,19 @@ The WebUI is available at `http://localhost:8085`.
 
 ## Installation
 
-### Option 1:  `pipx` (Easiest)
-```bash
-pipx install git+https://github.com/AzuredBlue/kisetsu.git
+### Option 1: A release archive
+Each release on GitHub has a Windows `.zip` and a Linux `.tar.gz`. Unpack it anywhere and run `kisetsu` (`kisetsu.exe` on Windows); the `static` folder beside it holds the web UI.
 
-# Run directly from anywhere
-kisetsu
-```
+### Option 2: Build from source
+Needs [Rust](https://rustup.rs) (1.85 or newer).
 
-### Option 2: Clone & Run
 ```bash
 git clone https://github.com/AzuredBlue/kisetsu.git
-cd kisetsu
+cd kisetsu/rust
+cargo build --release
 
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-
-# Run:
-kisetsu
+# Run (it finds the web UI in the checkout):
+./target/release/kisetsu
 ```
 
 ---
@@ -62,15 +56,11 @@ After syncing with your AniList and making sure it can connect to qBit's WebUI, 
 
 ## Updating
 
-Stop Kisetsu, update it and start it again:
+Stop Kisetsu, update it and start it again: unpack the new release over the old one, or in a source checkout:
 
 ```bash
-# Installed with pipx
-pipx upgrade kisetsu
-
-# Cloned
 git pull
-pip install -e .    # only needed when the dependencies changed
+cd rust && cargo build --release
 ```
 
 The database is migrated by itself the first time the new version starts. Before each migration step, a copy of it (`kisetsu.db.v<version>.<date>.bak`) is saved next to it. The copies a migration makes are all kept, along with the newest earlier ones up to three in all; older ones are deleted. A database made by a newer version is refused rather than touched, so go back to that version or point Kisetsu at another database.
@@ -81,8 +71,7 @@ The database is migrated by itself the first time the new version starts. Before
 |:---|:---|
 | `kisetsu [PORT]` | Starts the app. `--port` (default 8085) and `--host` (default `127.0.0.1`) change where it listens. |
 | `kisetsu --sandbox` | Runs a throwaway copy on port 8086 with a temporary database. Downloads are only pretended and logged; your real settings, qBittorrent and files are not touched. |
-| `kisetsu import-legacy [FILE]` | Copies the settings, feeds, dismissed shows and per-show overrides from the database of the earlier releases (`anime.db` in the settings folder unless you give a file). It is opened read-only. |
-| `kisetsu --adopt-report [FILE]` | A dry run of the first start on a throwaway database: imports the same old data, reads AniList and the feeds, adopts what qBittorrent already holds and lists what one grab pass would add. qBittorrent is only ever read. |
+| `kisetsu --no-tray` | On Windows, runs without the tray icon. |
 
 ## How it downloads
 
