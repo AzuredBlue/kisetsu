@@ -29,8 +29,8 @@ The WebUI is available at `http://localhost:8085`.
 
 ## Installation
 
-### Option 1: A release archive
-Each release on GitHub has a Windows `.zip` and a Linux `.tar.gz`. Unpack it anywhere and run `kisetsu` (`kisetsu.exe` on Windows); the `static` folder beside it holds the web UI.
+### Option 1: A release
+Each release on GitHub has the program for Windows (`kisetsu-<version>-x86_64-pc-windows-msvc.exe`) and Linux (`kisetsu-<version>-x86_64-unknown-linux-gnu`). It is the whole app, web UI included: put it in a folder of its own and run it. On Linux, make it executable first (`chmod +x`).
 
 ### Option 2: Build from source
 Needs [Rust](https://rustup.rs) (1.85 or newer).
@@ -40,7 +40,7 @@ git clone https://github.com/AzuredBlue/kisetsu.git
 cd kisetsu/rust
 cargo build --release
 
-# Run (it finds the web UI in the checkout):
+# Run:
 ./target/release/kisetsu
 ```
 
@@ -56,7 +56,9 @@ After syncing with your AniList and making sure it can connect to qBit's WebUI, 
 
 ## Updating
 
-Stop Kisetsu, update it and start it again: unpack the new release over the old one, or in a source checkout:
+A release checks GitHub for a newer version once a day. When there is one, **Settings** shows it with an **Update** button: Kisetsu downloads the new program, checks its signature, and restarts into it. Kisetsu needs to be able to write to its own folder for this; otherwise, download the new release and replace the program yourself while Kisetsu is stopped.
+
+A build from source never updates itself. To update it:
 
 ```bash
 git pull
@@ -72,6 +74,8 @@ The database is migrated by itself the first time the new version starts. Before
 | `kisetsu [PORT]` | Starts the app. `--port` (default 8085) and `--host` (default `127.0.0.1`) change where it listens. |
 | `kisetsu --sandbox` | Runs a throwaway copy on port 8086 with a temporary database. Downloads are only pretended and logged; your real settings, qBittorrent and files are not touched. |
 | `kisetsu --no-tray` | On Windows, runs without the tray icon. |
+
+`KISETSU_STATIC_DIR` makes Kisetsu serve the web UI from a folder (such as `kisetsu/web/static` in a checkout) instead of the copy built into it, so UI changes show without a rebuild.
 
 ## How it downloads
 
