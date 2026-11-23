@@ -27,7 +27,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             suffix: ''
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       # The app compares its own version with the latest tag, so they must agree.
       - name: Check the tag matches the version
@@ -63,7 +63,7 @@ jobs:
         shell: bash
         run: cp "rust/target/${{ matrix.target }}/release/kisetsu${{ matrix.suffix }}" "kisetsu-${GITHUB_REF_NAME}-${{ matrix.target }}${{ matrix.suffix }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
           path: kisetsu-v*
@@ -76,7 +76,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
