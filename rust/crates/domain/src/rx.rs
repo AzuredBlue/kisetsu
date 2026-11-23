@@ -43,9 +43,6 @@ macro_rules! regexes {
 }
 pub(crate) use regexes;
 
-/// The size of the lazily built automaton a search may keep, in bytes.
-const DEFAULT_DFA_CACHE: usize = 2 * 1024 * 1024;
-
 /// A compiled pattern.
 ///
 /// A search that fails (the backtracking limit of a pattern with look-around) finds nothing.
@@ -56,28 +53,25 @@ pub struct Regex {
 }
 
 impl Regex {
-    /// A pattern that is kept for a long time, such as a show's: compiled and searched with as
-    /// little memory as possible, which makes a search slower than a built-in pattern's.
+    /// A pattern compiled to search with as little memory as possible. Each thread that searches
+    /// keeps its own scratch space per pattern, so a lazily built automaton would be kept once
+    /// per thread; without it a search runs slower.
     pub fn new(pattern: &str, case: Case) -> Result<Self, Error> {
-        Self::build(pattern, case, 0)
-    }
-
-    /// A pattern written in the code. The tests compile every one.
-    pub(crate) fn literal(pattern: &str, case: Case) -> Self {
-        Self::build(pattern, case, DEFAULT_DFA_CACHE).unwrap_or(Self { program: None })
-    }
-
-    fn build(pattern: &str, case: Case, dfa_cache: usize) -> Result<Self, Error> {
         let program = RegexBuilder::new(pattern)
             .case_insensitive(case == Case::Insensitive)
             // Skips to where a match can start instead of trying every position of a pattern
             // with look-around.
             .seek(true)
-            .delegate_dfa_size_limit(dfa_cache)
+            .delegate_dfa_size_limit(0)
             .build()?;
         Ok(Self {
             program: Some(program),
         })
+    }
+
+    /// A pattern written in the code. The tests compile every one.
+    pub(crate) fn literal(pattern: &str, case: Case) -> Self {
+        Self::new(pattern, case).unwrap_or(Self { program: None })
     }
 
     #[cfg(test)]
