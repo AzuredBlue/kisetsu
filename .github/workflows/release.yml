@@ -22,12 +22,28 @@ jobs:
         include:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: zip
+            suffix: .exe
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: tar.gz
+            suffix: ''
     steps:
       - uses: actions/checkout@v4
+
+      # The app compares its own version with the latest tag, so they must agree.
+      - name: Check the tag matches the version
+        shell: bash
+        working-directory: rust
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "The tag $GITHUB_REF_NAME does not match version $version in rust/Cargo.toml." >&2; exit 1; }
+
+      # The public key built into the app, which checks an update's signature before installing it.
+      - name: Check the update key is set
+        shell: bash
+        env:
+          KISETSU_UPDATE_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+        run: |
+          printf '%s' "$KISETSU_UPDATE_KEY" | grep -Eqx 'RW[A-Za-z0-9+/=]{54}' || { echo "The MINISIGN_PUBLIC_KEY variable must be the key line of minisign.pub (RW...), alone." >&2; exit 1; }
 
       - name: Install the target
         shell: bash
@@ -38,32 +54,19 @@ jobs:
       - name: Build
         shell: bash
         working-directory: rust
+        env:
+          KISETSU_UPDATE_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
         run: cargo build --release --locked --package kisetsu --target "${{ matrix.target }}"
 
-      - name: Package for Windows
-        if: matrix.archive == 'zip'
-        shell: pwsh
-        run: |
-          $name = "kisetsu-$env:GITHUB_REF_NAME-${{ matrix.target }}"
-          $stage = New-Item -ItemType Directory -Path "stage"
-          Copy-Item "rust/target/${{ matrix.target }}/release/kisetsu.exe" $stage
-          Copy-Item "kisetsu/web/static" (Join-Path $stage "static") -Recurse
-          Compress-Archive -Path "$stage/*" -DestinationPath "$name.zip"
-
-      - name: Package for Linux
-        if: matrix.archive == 'tar.gz'
+      # The program is the whole app: the UI is built into it.
+      - name: Name the program
         shell: bash
-        run: |
-          name="kisetsu-${GITHUB_REF_NAME}-${{ matrix.target }}"
-          mkdir stage
-          cp "rust/target/${{ matrix.target }}/release/kisetsu" stage/
-          cp -r kisetsu/web/static stage/static
-          tar -C stage -czf "$name.tar.gz" kisetsu static
+        run: cp "rust/target/${{ matrix.target }}/release/kisetsu${{ matrix.suffix }}" "kisetsu-${GITHUB_REF_NAME}-${{ matrix.target }}${{ matrix.suffix }}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: kisetsu-*.${{ matrix.archive }}
+          path: kisetsu-v*
           if-no-files-found: error
 
   release:
@@ -95,6 +98,13 @@ jobs:
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
           minisign -S -s "$key" -m SHA256SUMS -x SHA256SUMS.minisig
           rm -f "$key"
+
+      # The apps check updates with this public key, so it must belong to the secret key.
+      - name: Verify the signature with the public key
+        working-directory: dist
+        env:
+          MINISIGN_PUBLIC_KEY: ${{ vars.MINISIGN_PUBLIC_KEY }}
+        run: minisign -V -m SHA256SUMS -x SHA256SUMS.minisig -P "$MINISIGN_PUBLIC_KEY"
 
       - name: Create the release
         working-directory: dist
