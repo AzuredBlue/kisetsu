@@ -1,6 +1,6 @@
 // Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings, #add and #show/<id>.
 import { useEffect, useState } from './ui.js';
-import { feedMatches, showPage } from './data.js';
+import { feedMatches, feeds, showPage } from './data.js';
 
 export const TABS = ['shows', 'calendar', 'history', 'feeds', 'logs', 'settings', 'add'];
 
@@ -36,8 +36,11 @@ function appear(find, limit = 250) {
 }
 
 // Resolves when the element's picture can be drawn, or after a short wait; an undecoded picture is captured as an empty box.
+// A lazy picture does not start loading while a view transition holds rendering, so one being waited for is made eager:
+// otherwise every open and close sat out the whole wait.
 function decoded(scope, limit = 300, loading = false) {
   const pictures = [...(scope ? scope.querySelectorAll('img') : [])].filter(img => img.src && (loading ? !img.complete || img.naturalWidth : img.complete && img.naturalWidth));
+  if (loading) pictures.forEach(img => { if (img.loading === 'lazy') img.loading = 'eager'; });
   return Promise.race([Promise.all(pictures.map(img => img.decode().catch(() => {}))), new Promise(done => setTimeout(done, limit))]);
 }
 
@@ -54,9 +57,24 @@ const shape = (el, end) => {
   document.documentElement.style.setProperty(`--vt-s-${end}`, styleOf(el, 'boxShadow', 'none'));
 };
 
-// Starts loading a show's page, so that opening it can start at once.
+// Starts loading a show's page, so that opening it can start at once: its data, the feed list it shows, and the
+// picture its banner and backdrop are drawn from. A picture that arrived during the opening animation was decoded
+// and uploaded in the middle of it, which dropped frames.
+const artWarmed = new Set();
 export function prefetch(id) {
-  [showPage(id), feedMatches(id)].filter(r => r.data === null && !r.inflight).forEach(r => r.load());
+  const page = showPage(id);
+  [page, feedMatches(id), feeds].filter(r => r.data === null && !r.inflight).forEach(r => r.load());
+  Promise.resolve(page.inflight).then(() => {
+    const data = page.data;
+    const art = data && (data.banner || data.cover);
+    if (!art || artWarmed.has(art)) return;
+    artWarmed.add(art);
+    const img = new Image();
+    // Asked for the way the page asks (a cover with CORS, so its pixels can be read), so the page finds it cached.
+    if (!data.banner) img.crossOrigin = 'anonymous';
+    img.src = art;
+    img.decode().catch(() => { artWarmed.delete(art); });
+  });
 }
 
 // Opening or closing a show page morphs the poster between the card and the page while the content rises.
@@ -136,18 +154,21 @@ export function useRoute() {
 }
 
 // One shared one-second clock, running only while something that shows a countdown is on screen.
+// A component re-renders only when the time crosses a `step`: a view that shows nothing finer than minutes passes
+// 60000, so its rows are not drawn again every second.
 const tickers = new Set();
 let timer = null;
-export function useNow() {
-  const [now, setNow] = useState(Date.now());
+export function useNow(step = 1000) {
+  const [now, setNow] = useState(Date.now);
   useEffect(() => {
-    const fn = () => setNow(Date.now());
+    const fn = (at) => setNow(held => (Math.floor(held / step) === Math.floor(at / step) ? held : at));
+    fn(Date.now());
     tickers.add(fn);
-    if (!timer) timer = setInterval(() => tickers.forEach(f => f()), 1000);
+    if (!timer) timer = setInterval(() => { const at = Date.now(); tickers.forEach(f => f(at)); }, 1000);
     return () => {
       tickers.delete(fn);
       if (!tickers.size) { clearInterval(timer); timer = null; }
     };
-  }, []);
+  }, [step]);
   return now;
 }

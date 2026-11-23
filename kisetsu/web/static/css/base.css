@@ -17,6 +17,8 @@ table { border-collapse: collapse; width: 100%; }
 img { display: block; max-width: 100%; }
 svg { flex: none; }
 [hidden] { display: none !important; }
+/* Set by main.js while an element scrolls: what passes under the pointer is not hovered, so nothing repaints. */
+.scrolling > * { pointer-events: none; }
 :focus-visible { outline: 2px solid rgb(var(--ac)); outline-offset: 2px; }
 @media (forced-colors: active) { :focus-visible { outline-color: Highlight; } }
 .mono { font-family: var(--font-mono); font-size: var(--fs-mono); }

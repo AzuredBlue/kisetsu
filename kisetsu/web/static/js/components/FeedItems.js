@@ -81,7 +81,7 @@ export function FeedItems({ feeds, selected, onSelect }) {
   const [at, setAt] = useState({ key: '', page: 0 });
   const list = useRef(null);
   const last = useRef(null);
-  const now = useNow();
+  const now = useNow(60000);
   useEffect(() => {
     const media = window.matchMedia(WIDE);
     const change = () => setWide(media.matches);

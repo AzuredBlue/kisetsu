@@ -8,11 +8,11 @@ import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag, whenClass } from '../components/ShowSummary.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
-import { capitalize, releaseState, shownExpected } from '../format.js';
+import { capitalize, formatDate, releaseState, shownExpected } from '../format.js';
 
 const WEEK = 7 * 86400000;
 const SEASON_WEEKS = 4;
-const time = (date) => date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const time = (date) => formatDate(date, { hour: 'numeric', minute: '2-digit' });
 const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
@@ -77,8 +77,8 @@ export function buildWeek(shows, today, offset = 0) {
     days.push({
       date, slots, today: date.getTime() === startOfToday.getTime(), past: date < startOfToday,
       quiet: !slots.length && busy.size > 0 && !busy.has(d),
-      name: capitalize(date.toLocaleDateString([], { weekday: 'short' })),
-      label: date.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+      name: capitalize(formatDate(date, { weekday: 'short' })),
+      label: formatDate(date, { month: 'short', day: 'numeric' }),
     });
   }
   const range = new Intl.DateTimeFormat([], { month: 'short', day: 'numeric', year: 'numeric' }).formatRange(monday, sunday);
@@ -135,7 +135,7 @@ function Slot({ slot }) {
 
 export function Calendar() {
   const { data, error, reload } = useResource(showsData);
-  const now = useNow();
+  const now = useNow(60000);
   const minute = Math.floor(now / 60000);
   const [offset, setOffset] = useState(0);
   const week = useMemo(() => buildWeek(data || [], new Date(minute * 60000), offset), [data, minute, offset]);

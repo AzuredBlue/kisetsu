@@ -68,7 +68,7 @@ export function Shows() {
   const [query, setQuery] = useState(lastQuery);
   const filter = useRef(null);
   useSlashFocus(filter);
-  const now = useNow();
+  const now = useNow(60000);
   const minute = Math.floor(now / 60000);
   const groups = useMemo(() => {
     const needle = query.trim().toLowerCase();

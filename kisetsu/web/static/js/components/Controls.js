@@ -11,8 +11,10 @@ export function Seg({ value, options, onChange, small = false, icons = false, la
     const place = () => {
       const on = el.querySelector('[aria-pressed="true"]');
       if (!on) { el.style.setProperty('--thumb-w', '0px'); return; }
-      el.style.setProperty('--thumb-x', `${on.offsetLeft}px`);
-      el.style.setProperty('--thumb-w', `${on.offsetWidth}px`);
+      // Both read before either is written, so the page is laid out once, not twice.
+      const x = on.offsetLeft, w = on.offsetWidth;
+      el.style.setProperty('--thumb-x', `${x}px`);
+      el.style.setProperty('--thumb-w', `${w}px`);
       requestAnimationFrame(() => el.classList.add('placed'));
     };
     place();

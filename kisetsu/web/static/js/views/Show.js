@@ -70,7 +70,7 @@ export function Show({ route }) {
   const feedsRes = useResource(feedsData);
   const settings = useResource(settingsData);
   const knownShows = useResource(showsData);
-  const now = useNow();
+  const now = useNow(60000);
   const [listTab, setListTab] = useState('episodes');
   const [sideTab, setSideTab] = useState('feed');
   const [saving, setSaving] = useState(false);

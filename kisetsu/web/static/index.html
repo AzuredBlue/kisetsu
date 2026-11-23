@@ -14,6 +14,26 @@
       document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
     })();
   </script>
+  <script>
+    // The data the first view shows is asked for now, while the scripts load; store.js takes these answers
+    // instead of asking again. Each is used once, and only for a few seconds.
+    (function () {
+      var hash = location.hash.replace(/^#\/?/, '');
+      var show = /^show\/(\d+)$/.exec(hash);
+      var paths = ['/api/setup/status', '/api/status', '/api/settings'];
+      var byView = { '': ['/api/shows', '/api/attention'], shows: ['/api/shows', '/api/attention'], calendar: ['/api/shows'],
+        history: ['/api/history?limit=100'], feeds: ['/api/feeds'], settings: ['/api/tray', '/api/update'] };
+      if (show) paths.push('/api/shows/' + show[1], '/api/shows/' + show[1] + '/feed-matches', '/api/feeds', '/api/shows');
+      else paths = paths.concat(byView[hash] || []);
+      var early = {};
+      paths.forEach(function (path) {
+        var answer = fetch(path);
+        answer.catch(function () {});
+        early[path] = { answer: answer, at: Date.now() };
+      });
+      window.__kisetsuEarly = early;
+    })();
+  </script>
   <link rel="stylesheet" href="/static/css/tokens.css?v=@@v:css/tokens.css@@">
   <link rel="stylesheet" href="/static/css/base.css?v=@@v:css/base.css@@">
   <link rel="stylesheet" href="/static/css/components.css?v=@@v:css/components.css@@">
@@ -31,6 +51,18 @@
   <div id="app" style="display:contents"></div>
   <noscript>Kisetsu needs JavaScript.</noscript>
   <script type="importmap">@@importmap@@</script>
+  <script>
+    // Every module is fetched at once, instead of one level of imports after another.
+    try {
+      var modules = JSON.parse(document.querySelector('script[type="importmap"]').textContent).imports;
+      Object.keys(modules).forEach(function (name) {
+        var link = document.createElement('link');
+        link.rel = 'modulepreload';
+        link.href = modules[name];
+        document.head.appendChild(link);
+      });
+    } catch (err) {}
+  </script>
   <script type="module" src="/static/js/main.js?v=@@v:js/main.js@@"></script>
 </body>
 </html>

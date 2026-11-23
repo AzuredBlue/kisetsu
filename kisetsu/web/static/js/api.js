@@ -41,10 +41,29 @@ export async function apiDownload(path) {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 
+// How long an answer the page asked for before the scripts loaded (index.html) may stand in for a request.
+const EARLY_FOR_MS = 5000;
+
+// When the page asked for `path` early, if it did and that answer is still to be taken.
+export function earlyAt(path) {
+  const early = window.__kisetsuEarly;
+  return early && early[path] ? early[path].at : null;
+}
+
+// The page's own early request for `path`, once: only for a plain GET, and only while it is recent.
+function takeEarly(path, options) {
+  const early = window.__kisetsuEarly;
+  const found = early && early[path];
+  if (!found) return null;
+  delete early[path];
+  if (options.method !== 'GET' || options.body !== undefined || Date.now() - found.at > EARLY_FOR_MS) return null;
+  return found.answer;
+}
+
 async function send(path, options, quiet) {
   let response;
   try {
-    response = await fetch(path, options);
+    response = await (takeEarly(path, options) || fetch(path, options));
   } catch (err) {
     const error = new ApiError('Kisetsu did not answer.', 0, null);
     if (!quiet) onError(error.message);

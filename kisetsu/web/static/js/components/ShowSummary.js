@@ -208,11 +208,19 @@ function RowActions({ show }) {
 const feedName = (show) => (show.feed ? show.feed.name : 'No feed');
 
 // The poster's own bottom edge colours what it sits on; AniList's cover colour stands in for the title until
-// the edge is read, or when the edge is too grey to give it a hue. A component using it calls useEdges().
+// the edge is read, or when the edge is too grey to give it a hue. A component using it calls useEdges(), with the
+// cover's URL when it shows only that one.
+// Worked out once per colours and theme, as every card and history row asks on each render.
+const posterVarsMade = new Map();
 export function posterVars({ cover, cover_color }, mode) {
-  const edge = posterEdgeColors(edgeOf(cover) || null, mode);
+  const edgeHex = edgeOf(cover) || null;
+  const key = `${edgeHex}|${cover_color}|${mode}`;
+  if (posterVarsMade.has(key)) return posterVarsMade.get(key);
+  const edge = posterEdgeColors(edgeHex, mode);
   const text = (edge && edge.text) || posterTextColor(cover_color, mode);
-  return [text && `--show-text:${text}`, edge && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
+  const vars = [text && `--show-text:${text}`, edge && `--show-panel:${edge.panel}`].filter(Boolean).join(';') || undefined;
+  posterVarsMade.set(key, vars);
+  return vars;
 }
 
 // The air line comes before the title: every poster is the same height, so it lines up across a row whatever the title's length.
@@ -221,7 +229,7 @@ export function ShowCard({ show, now }) {
   const hasCount = show.progress.done > 0 || show.progress.total > 0;
   const hasAir = !!(air.ep || air.info);
   const { resolved } = useTheme();
-  useEdges();
+  useEdges(show.cover || '');
   return html`<div class="show-card" role="link" tabindex="0" style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
     <div class="poster-frame">
       <${Poster} show=${show} />

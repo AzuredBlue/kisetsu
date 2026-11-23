@@ -12,7 +12,12 @@ const SAMPLE_H = 12;
 const MIN_WEIGHT = 0.02;
 
 const known = new Map(load());
+// Listeners for every edge, and for one cover's.
 const listeners = new Set();
+const listenersOf = new Map();
+// Covers loaded and waiting to be read while the browser is idle, so a page full of new covers does not stall.
+const queued = new Map();
+let saving = null;
 
 function load() {
   try { return Object.entries(JSON.parse(localStorage.getItem(STORE_KEY) || '{}')); } catch (err) { return []; }
@@ -25,30 +30,60 @@ function save() {
   } catch (err) { /* storage is a convenience: without it edges are read again next visit */ }
 }
 
+const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { timeout: 1000 }) : setTimeout(() => fn({ timeRemaining: () => 8 }), 16));
+
 // The edge colour of a cover: "#rrggbb", "" for none, undefined while not read yet.
 export function edgeOf(url) { return url ? known.get(url) : undefined; }
 
-// Re-render when an edge is read.
-export function useEdges() {
+// Re-render when an edge is read: only that cover's when `url` is given, else any.
+export function useEdges(url) {
   const [, rerender] = useState(0);
   useEffect(() => {
     const fn = () => rerender(n => n + 1);
-    listeners.add(fn);
-    return () => listeners.delete(fn);
-  }, []);
+    const set = url === undefined ? listeners : (listenersOf.get(url) || listenersOf.set(url, new Set()).get(url));
+    set.add(fn);
+    return () => {
+      set.delete(fn);
+      if (url !== undefined && !set.size) listenersOf.delete(url);
+    };
+  }, [url]);
 }
 
 // Read the edge of a loaded <img> once per cover URL.
 export function readEdge(img, url) {
-  if (!url || known.has(url)) return;
-  let color = '';
-  try { color = edgeColor(img) || ''; } catch (err) { /* a cover that may not be read (no CORS) has no edge */ }
-  known.set(url, color);
-  save();
-  listeners.forEach(fn => fn());
+  if (!url || known.has(url) || queued.has(url)) return;
+  queued.set(url, img);
+  if (queued.size === 1) readQueued();
 }
 
-function edgeColor(img) {
+// One cover at a time, each when the browser is idle.
+async function readQueued() {
+  while (queued.size) {
+    await new Promise(idle);
+    const [url, img] = queued.entries().next().value;
+    let color = '';
+    try { color = (await edgeColor(img, url)) || ''; } catch (err) { /* a cover that may not be read (no CORS) has no edge */ }
+    queued.delete(url);
+    known.set(url, color);
+    (listenersOf.get(url) || []).forEach(fn => fn());
+    listeners.forEach(fn => fn());
+  }
+  if (!saving) saving = setTimeout(() => { saving = null; save(); }, 1000);
+}
+
+// The cover's file, from the browser's cache: decoding a file happens off the main thread, while drawing the
+// <img> decoded the whole cover on it, several milliseconds a cover.
+async function stripOf(img, url, top, sw, sh) {
+  const w = img.naturalWidth, h = img.naturalHeight;
+  const options = { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'medium' };
+  try {
+    const answer = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    if (answer.ok) return await createImageBitmap(await answer.blob(), 0, top, w, h - top, options);
+  } catch (err) { /* read from the <img> instead */ }
+  return createImageBitmap(img, 0, top, w, h - top, options);
+}
+
+async function edgeColor(img, url) {
   const w = img.naturalWidth, h = img.naturalHeight;
   if (!w || !h) return null;
   const top = Math.floor(h * (1 - STRIP));
@@ -57,7 +92,13 @@ function edgeColor(img) {
   const canvas = document.createElement('canvas');
   canvas.width = sw; canvas.height = sh;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, top, w, h - top, 0, 0, sw, sh);
+  if (window.createImageBitmap) {
+    const strip = await stripOf(img, url, top, sw, sh);
+    ctx.drawImage(strip, 0, 0, sw, sh);
+    strip.close();
+  } else {
+    ctx.drawImage(img, 0, top, w, h - top, 0, 0, sw, sh);
+  }
   const data = ctx.getImageData(0, 0, sw, sh).data;
   // An OKLab average weighted by how colourful each pixel is; near-black and near-white pixels are left out.
   let total = 0, sl = 0, sa = 0, sb = 0;

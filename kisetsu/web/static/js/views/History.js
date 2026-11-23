@@ -57,7 +57,7 @@ function Row({ item, now, mode }) {
 
 export function History() {
   const { data, error, reload } = useResource(historyData);
-  const now = useNow();
+  const now = useNow(60000);
   const { resolved } = useTheme();
   useEdges();
   const minute = Math.floor(now / 60000);

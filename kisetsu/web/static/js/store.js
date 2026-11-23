@@ -1,7 +1,7 @@
 // Server data lives here. A resource is fetched when a view first uses it and again whenever the
 // server says (over the event stream) that its topic changed. Nothing polls.
 import { useEffect, useState } from './ui.js';
-import { apiFetch } from './api.js';
+import { apiFetch, earlyAt } from './api.js';
 
 // Components that show the connection state; each resource keeps its own listeners.
 const connectionListeners = new Set();
@@ -34,7 +34,8 @@ export class Resource {
   async load() {
     if (this.inflight) { this.again = true; return this.inflight; }
     this.stale = false;
-    this.started = Date.now();
+    // An answer the page asked for before the scripts ran holds the data of that moment.
+    this.started = earlyAt(this.url()) ?? Date.now();
     this.inflight = apiFetch(this.url(), { quiet: true })
       .then((answer) => { this.data = this.take(answer); this.at = Date.now(); this.error = null; })
       .catch((err) => { this.error = err; this.stale = true; })
@@ -115,19 +116,25 @@ function matches(r, topics) {
   return mine.some(t => topics.includes(t));
 }
 
-export function invalidate(topics) {
-  resources.forEach(r => { if (matches(r, topics)) r.invalidate(); });
+// `since`: only data fetched before then is stale.
+export function invalidate(topics, since = Infinity) {
+  resources.forEach(r => { if (r.started < since && matches(r, topics)) r.invalidate(); });
 }
 
-// Opens the event stream. The server sends "*" first on every (re)connect, which refetches whatever is in use.
+// Opens the event stream. The server sends "*" first on every (re)connect, which refetches whatever is in use and
+// was fetched before the stream opened: anything asked for since then already holds every change the stream has
+// not told of yet, so a page that has just loaded does not fetch it all twice.
 export function connect() {
   document.addEventListener('visibilitychange', () => { if (!document.hidden) resources.forEach(r => r.refresh()); });
   const source = new EventSource('/api/stream');
+  let opened = null;
+  source.onopen = () => { opened = Date.now(); };
   source.onmessage = (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch (err) { return; }
     if (!connection.online) { connection = { online: true }; notifyConnection(); }
-    invalidate(message.changed || ['*']);
+    invalidate(message.changed || ['*'], opened === null ? Infinity : opened);
+    opened = null;
   };
   source.onerror = () => {
     if (connection.online) { connection = { online: false }; notifyConnection(); }
