@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
 use percent_encoding::percent_decode_str;
 use tiny_http::{Header, Method, Response as WireResponse, StatusCode};
@@ -18,8 +17,6 @@ use crate::http::{Body, Request, Response};
 /// so it never takes one of these. Each worker keeps its own scratch space for every pattern it
 /// searches with, so a few are kept.
 const WORKERS: usize = 3;
-/// How often an idle worker looks whether the server was stopped.
-const POLL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ServeError {
@@ -75,6 +72,10 @@ impl Server {
     /// engine's change bus is shut down.
     pub fn stop(&mut self) {
         self.stopping.store(true, Ordering::Release);
+        // Each call wakes one worker waiting for a request, now or once it is done with one.
+        for _ in &self.workers {
+            self.listener.unblock();
+        }
         for worker in self.workers.drain(..) {
             let _ = worker.join();
         }
@@ -87,11 +88,12 @@ impl Drop for Server {
     }
 }
 
+/// Answers requests until the server is stopped. A waiting worker sleeps until a request comes.
 fn work(app: &Arc<App>, listener: &tiny_http::Server, stopping: &AtomicBool) {
-    while !stopping.load(Ordering::Acquire) {
-        match listener.recv_timeout(POLL) {
-            Ok(Some(request)) => answer(app, request),
-            Ok(None) => {}
+    loop {
+        match listener.recv() {
+            Ok(request) => answer(app, request),
+            Err(_) if stopping.load(Ordering::Acquire) => break,
             Err(error) => {
                 warn!("The web server stopped listening: {error}");
                 break;
