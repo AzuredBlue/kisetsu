@@ -10,6 +10,7 @@ mod config;
 mod console;
 mod logfile;
 mod tray;
+mod update;
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
@@ -53,7 +54,14 @@ fn main() -> ExitCode {
         .with(RingLayer(Arc::clone(&logs)))
         .init();
     match app::run(&args, logs) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(None) => ExitCode::SUCCESS,
+        Ok(Some(staged)) => match update::restart_into(&staged) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                error!("Could not start the new version: {error}");
+                ExitCode::FAILURE
+            }
+        },
         Err(error) => {
             error!("{error}");
             ExitCode::FAILURE

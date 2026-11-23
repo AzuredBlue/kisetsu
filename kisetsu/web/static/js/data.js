@@ -9,6 +9,8 @@ export const feeds = resource('/api/feeds', ['feeds', 'shows']);
 export const settings = resource('/api/settings', ['settings']);
 // Whether the notification-area icon is shown, and whether this run can show one.
 export const tray = resource('/api/tray', ['tray']);
+// This version, and a newer release when there is one.
+export const update = resource('/api/update', ['update']);
 export const history = resource('/api/history?limit=100', ['history']);
 // Episodes across every show that need the user's eye (Shows page).
 export const attention = resource('/api/attention', ['shows', 'episodes', 'history']);

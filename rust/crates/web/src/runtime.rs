@@ -53,6 +53,37 @@ impl TrayControl for NoTray {
     fn set_visible(&self, _visible: bool) {}
 }
 
+/// A newer release, as far as the web layer may ask about it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateStatus {
+    /// The newest release's version, when it is later than this one.
+    pub latest: Option<String>,
+    /// That release's page.
+    pub page: Option<String>,
+    /// Why it cannot be installed from the app, when it cannot.
+    pub blocked: Option<String>,
+}
+
+/// Finding and installing newer releases.
+pub trait UpdateControl: Send + Sync {
+    fn status(&self) -> UpdateStatus;
+    /// Downloads and checks the newer release, then restarts into it; the message says why not.
+    fn install(&self) -> Result<(), String>;
+}
+
+/// The control of a run that does not update itself: a build of its own, or a sandbox.
+struct NoUpdates;
+
+impl UpdateControl for NoUpdates {
+    fn status(&self) -> UpdateStatus {
+        UpdateStatus::default()
+    }
+
+    fn install(&self) -> Result<(), String> {
+        Err("This copy of Kisetsu does not update itself.".to_owned())
+    }
+}
+
 /// Everything the handlers talk to.
 pub struct Runtime {
     pub engine: Arc<Engine>,
@@ -63,6 +94,7 @@ pub struct Runtime {
     pub sandbox: bool,
     pub probe: Probe,
     pub tray: Arc<dyn TrayControl>,
+    pub updates: Arc<dyn UpdateControl>,
 }
 
 impl Runtime {
@@ -105,6 +137,7 @@ impl Runtime {
             sandbox,
             probe: Box::new(probe_qbit),
             tray: Arc::new(NoTray),
+            updates: Arc::new(NoUpdates),
         }
     }
 }

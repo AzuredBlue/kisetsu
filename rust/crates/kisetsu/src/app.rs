@@ -18,12 +18,15 @@ use kisetsu_engine::remote::{Remote, WebRemote};
 use kisetsu_engine::runner::{Engine, Parts, QbitFactory};
 use kisetsu_engine::scheduler::Scheduler;
 use kisetsu_services::context::Notify;
-use kisetsu_web::{App, Assets, Guard, LogRing, Runtime, ServeError, Server, TrayControl};
+use kisetsu_web::{
+    App, Assets, Guard, LogRing, Runtime, ServeError, Server, TrayControl, UpdateControl,
+};
 use tracing::{info, warn};
 
 use crate::cli::Args;
 use crate::config;
 use crate::tray::TrayHandle;
+use crate::update::Updater;
 
 /// How long the jobs get to finish what they are doing once the app is told to stop.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
@@ -108,7 +111,8 @@ fn desktop_notices(database: &Path) -> Arc<dyn Notify + Send + Sync> {
 }
 
 /// Runs Kisetsu until Ctrl+C (or the platform's stop signal).
-pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
+/// Runs until stopped. Returns the new program to restart into when an update stopped the run.
+pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<Option<PathBuf>, Error> {
     // A sandbox started with the flag has a database of its own, thrown away when it ends.
     let sandbox_dir = if args.sandbox {
         Some(
@@ -126,6 +130,7 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     };
     let (stop, stopped) = mpsc::channel();
     let tray_stop = stop.clone();
+    let update_stop = stop.clone();
     ctrlc::set_handler(move || {
         let _ = stop.send(());
     })?;
@@ -146,6 +151,12 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     ));
     let bus = engine.bus().clone();
     jobs.register();
+    let updater = (!sandbox)
+        .then(|| Updater::for_this_build(update_stop, bus.clone()))
+        .flatten();
+    if let Some(updater) = &updater {
+        updater.schedule(&scheduler);
+    }
     scheduler.start();
 
     let tray = Arc::new(TrayHandle::new(
@@ -165,6 +176,9 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
         sandbox,
     );
     runtime.tray = Arc::clone(&tray) as Arc<dyn TrayControl>;
+    if let Some(updater) = &updater {
+        runtime.updates = Arc::clone(updater) as Arc<dyn UpdateControl>;
+    }
     // A choice that cannot be read leaves the icon on, as it is by default.
     let tray_wanted = runtime.tray_wanted().unwrap_or(true);
     let guard = Guard::new(Guard::machine_name(), &config::allowed_hosts(), sandbox);
@@ -193,5 +207,5 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     scheduler.clear();
     engine.close();
     drop(lock);
-    Ok(())
+    Ok(updater.and_then(|updater| updater.staged()))
 }

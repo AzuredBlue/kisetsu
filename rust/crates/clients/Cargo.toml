@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 image.workspace = true
 jiff.workspace = true
+minisign-verify.workspace = true
 serde.workspace = true
 quick-xml.workspace = true
 regex.workspace = true

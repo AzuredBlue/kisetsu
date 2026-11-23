@@ -21,5 +21,5 @@ pub use assets::Assets;
 pub use guard::Guard;
 pub use http::{Body, Request, Response};
 pub use logs::{LogRing, RingLayer};
-pub use runtime::{Probe, Runtime, TrayControl};
+pub use runtime::{Probe, Runtime, TrayControl, UpdateControl, UpdateStatus};
 pub use server::{ServeError, Server};

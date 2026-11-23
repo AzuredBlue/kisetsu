@@ -1,7 +1,7 @@
 import { html, useEffect, useMemo, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
-import { settings as settingsData, tray as trayData } from '../data.js';
+import { settings as settingsData, tray as trayData, update as updateData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
 import { exportBackup, restoreBackup } from '../components/Backup.js';
 import { Seg, SaveBar, SetRow, Swatches } from '../components/Controls.js';
@@ -40,6 +40,19 @@ function deleteWatchedDialog(preview) {
     </div>`, { wide: some });
 }
 
+// Polls until a different version answers, then reloads the page into it.
+async function reloadWhenRestarted(oldVersion) {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    try {
+      const response = await fetch('/api/update');
+      if (response.ok && (await response.json()).version !== oldVersion) { location.reload(); return; }
+    } catch (err) { /* still restarting */ }
+  }
+  toast('Kisetsu did not come back after the update. Start it again.', 'error');
+}
+
 // A setting that applies the moment it is clicked; the previous value comes back if the server refuses it.
 async function applyNow(patch, undo) {
   try { return await apiFetch('/api/settings', { method: 'POST', json: patch }); } catch (err) { if (undo) undo(); return null; }
@@ -48,6 +61,8 @@ async function applyNow(patch, undo) {
 export function Settings() {
   const { data, error, reload } = useResource(settingsData);
   const { data: trayState, reload: reloadTray } = useResource(trayData);
+  const { data: updateState } = useResource(updateData);
+  const [updating, setUpdating] = useState(false);
   const theme = useTheme();
   const initial = useMemo(() => (data ? initialForm(data) : {}), [data]);
   const form = useDraft(initial, 'settings');
@@ -137,6 +152,24 @@ export function Settings() {
     setExporting(false);
   };
 
+  const runUpdate = async () => {
+    const ok = await confirmDialog({
+      title: `Update to ${updateState.latest}?`,
+      body: html`<p>Kisetsu downloads the new version, checks its signature and restarts into it. This page reloads when it is back.</p>`,
+      confirm: 'Update',
+    });
+    if (!ok) return;
+    setUpdating(true);
+    try {
+      await apiFetch('/api/update', { method: 'POST' });
+    } catch (err) {
+      // No answer at all means it is already restarting.
+      if (err.status) { setUpdating(false); return; }
+    }
+    toast('Restarting into the new version…', 'info');
+    reloadWhenRestarted(updateState.version);
+  };
+
   const accent = currentAccent();
   return html`<div class="page wide settings">
     <div class="settings-cols">
@@ -159,6 +192,15 @@ export function Settings() {
             <${SetRow} name="Restore" hint="Replaces everything, after a preview. The current data is saved first."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
           </div>
         </section>
+        ${updateState ? html`<section class="sec-version">
+          <h3 class="section-title section-gap">Kisetsu</h3>
+          <div class="card card-divided form-grid">
+            <${SetRow} name="Version"><span class="tabular">${updateState.version}</span><//>
+            ${updateState.latest ? html`<${SetRow} name=${`Version ${updateState.latest} is available`} hint=${updateState.blocked || html`<a href=${updateState.page} target="_blank" rel="noopener noreferrer">What's new</a>`}>
+              ${updateState.blocked ? html`<a class="btn sm" href=${updateState.page} target="_blank" rel="noopener noreferrer">Download</a>` : html`<button type="button" class="btn sm primary" onClick=${runUpdate} disabled=${updating}>${updating ? 'Updating…' : 'Update'}</button>`}
+            <//>` : null}
+          </div>
+        </section>` : null}
       </div>
       <div class="settings-col">
         <section class="sec-connections">
