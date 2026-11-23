@@ -15,8 +15,9 @@ use crate::app::App;
 use crate::http::{Body, Request, Response};
 
 /// How many requests are answered at the same time. A stream is written on a thread of its own,
-/// so it never takes one of these.
-const WORKERS: usize = 6;
+/// so it never takes one of these. Each worker keeps its own scratch space for every pattern it
+/// searches with, so a few are kept.
+const WORKERS: usize = 3;
 /// How often an idle worker looks whether the server was stopped.
 const POLL: Duration = Duration::from_millis(250);
 
