@@ -21,15 +21,10 @@ use kisetsu_services::feeds;
 
 use crate::bus::ChangeBus;
 use crate::jobs::Jobs;
+use crate::locked;
 use crate::remote::Remote;
 use crate::runner::{Engine, Parts};
 use crate::scheduler::{Monotonic, Scheduler};
-
-pub fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
 
 /// A fake qBittorrent the test keeps a hand on while the engine owns the client: both lock the
 /// same [`FakeQbit`].

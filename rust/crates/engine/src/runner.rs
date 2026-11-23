@@ -25,6 +25,7 @@ use tracing::warn;
 
 use crate::bus::ChangeBus;
 use crate::error::{Error, Result};
+use crate::locked;
 use crate::scheduler::panic_message;
 
 /// How many reads run at the same time, kept apart from the engine thread so a slow read never
@@ -227,12 +228,6 @@ impl Worker {
 enum Message {
     Work(Box<dyn FnOnce(&mut Worker) + Send>),
     Close,
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The reader connections: [`READ_CONNECTIONS`] slots, each opened when first used.

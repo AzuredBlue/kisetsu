@@ -6,13 +6,14 @@
 
 use std::any::Any;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tracing::warn;
 
 use crate::error::Result;
+use crate::locked;
 
 /// A job that failed is tried again after this long.
 pub const ERROR_RETRY: Duration = Duration::from_secs(60);
@@ -179,12 +180,6 @@ struct Inner {
     /// Told when a job becomes due earlier, when one ends, and when the scheduler stops.
     changed: Condvar,
     listener: Mutex<Option<Listener>>,
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Runs each registered job when it is due. Cloning gives another handle to the same jobs.

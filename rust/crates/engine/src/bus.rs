@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 use tracing::warn;
 
+use crate::locked;
+
 /// How many changes a slow subscriber may lag behind before it is told to refetch everything.
 pub const SUBSCRIBER_BACKLOG: usize = 64;
 /// Changes published this close together reach the UI as one message, so a burst (a colour stored
@@ -42,12 +44,6 @@ struct QueueState {
 struct Queue {
     state: Mutex<QueueState>,
     ready: Condvar,
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Queue {

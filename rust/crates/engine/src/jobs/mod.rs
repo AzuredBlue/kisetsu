@@ -11,7 +11,7 @@ mod upkeep;
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jiff::{SignedDuration, Timestamp};
@@ -25,6 +25,7 @@ use kisetsu_services::context::setup_completed;
 use tracing::{info, warn};
 
 use crate::error::{Error, Result};
+use crate::locked;
 use crate::remote::Remote;
 use crate::runner::Engine;
 use crate::scheduler::{JobFn, JobResult, Scheduler};
@@ -137,12 +138,6 @@ pub struct Jobs {
     feeds_lock: Mutex<()>,
     anilist_lock: Mutex<()>,
     search_locks: Mutex<HashMap<i64, Arc<Mutex<()>>>>,
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A wait of `seconds`; a negative or unusable number is no wait.
