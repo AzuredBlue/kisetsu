@@ -18,22 +18,15 @@ const idle = (fn) => (window.requestIdleCallback ? requestIdleCallback(fn, { tim
 
 export function warmFonts() {
   const fonts = FACES.flatMap(([family, size, weights]) => weights.map(weight => `${weight} ${size}px "${family}"`));
-  const box = document.createElement('div');
-  box.setAttribute('aria-hidden', 'true');
-  box.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;overflow:hidden;visibility:hidden;pointer-events:none;white-space:nowrap';
-  // The files are fetched first (the mono one is not used until a page needs it), then laid out one at a time.
+  // Measured on a canvas, which builds the same instances without laying out the page.
+  const ctx = document.createElement('canvas').getContext('2d');
   Promise.all(fonts.map(font => document.fonts.load(font).catch(() => {}))).then(() => {
-    document.body.appendChild(box);
     const step = (deadline) => {
-      while (fonts.length && deadline.timeRemaining() > 4) {
-        const span = document.createElement('span');
-        span.style.font = fonts.shift();
-        span.textContent = SAMPLE;
-        box.appendChild(span);
-        void span.offsetWidth;
+      while (fonts.length && deadline.timeRemaining() > 2) {
+        ctx.font = fonts.shift();
+        ctx.measureText(SAMPLE);
       }
       if (fonts.length) idle(step);
-      else box.remove();
     };
     idle(step);
   });
