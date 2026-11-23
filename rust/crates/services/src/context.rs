@@ -171,8 +171,6 @@ pub struct Context<'a> {
     pub topics: BTreeSet<String>,
     pub notifier: Option<&'a dyn Notify>,
     pub download_tags: Option<&'a mut dyn TagSource>,
-    pub feeds: Option<&'a dyn FeedSource>,
-    pub anilist: Option<&'a dyn AniListSource>,
     /// While set, the torrents just added, which one sync looks for together afterwards.
     pub pending_adds: Option<Vec<PendingAdd>>,
 }
@@ -197,8 +195,6 @@ impl<'a> Context<'a> {
             topics: BTreeSet::new(),
             notifier: None,
             download_tags: None,
-            feeds: None,
-            anilist: None,
             pending_adds: None,
         })
     }
@@ -215,16 +211,6 @@ impl<'a> Context<'a> {
 
     pub fn with_download_tags(mut self, tags: &'a mut dyn TagSource) -> Self {
         self.download_tags = Some(tags);
-        self
-    }
-
-    pub fn with_feeds(mut self, feeds: &'a dyn FeedSource) -> Self {
-        self.feeds = Some(feeds);
-        self
-    }
-
-    pub fn with_anilist(mut self, anilist: &'a dyn AniListSource) -> Self {
-        self.anilist = Some(anilist);
         self
     }
 
