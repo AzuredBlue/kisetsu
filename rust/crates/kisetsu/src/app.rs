@@ -38,10 +38,6 @@ pub enum Error {
     Sandbox(#[from] std::io::Error),
     #[error("There is no home folder to keep the database in; set KISETSU_DB_PATH.")]
     NoDatabasePath,
-    #[error(
-        "The UI's files were not found; set KISETSU_STATIC_DIR to the folder that holds index.html."
-    )]
-    NoStaticFiles,
     #[error(transparent)]
     Serve(#[from] ServeError),
     #[error("Cannot listen for the stop signal: {0}")]
@@ -128,7 +124,6 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
         Some(dir) => dir.path().join("kisetsu.db"),
         None => config::database_path().ok_or(Error::NoDatabasePath)?,
     };
-    let static_dir = config::static_dir().ok_or(Error::NoStaticFiles)?;
     let (stop, stopped) = mpsc::channel();
     let tray_stop = stop.clone();
     ctrlc::set_handler(move || {
@@ -173,7 +168,11 @@ pub fn run(args: &Args, logs: Arc<LogRing>) -> Result<(), Error> {
     // A choice that cannot be read leaves the icon on, as it is by default.
     let tray_wanted = runtime.tray_wanted().unwrap_or(true);
     let guard = Guard::new(Guard::machine_name(), &config::allowed_hosts(), sandbox);
-    let app = Arc::new(App::new(runtime, guard, Assets::new(static_dir)));
+    let app = Arc::new(App::new(
+        runtime,
+        guard,
+        config::static_dir().map_or_else(Assets::embedded, Assets::new),
+    ));
     let mut server = Server::start(Arc::clone(&app), &args.host, args.port)?;
     info!("Listening on http://{}:{}", args.host, args.port);
 

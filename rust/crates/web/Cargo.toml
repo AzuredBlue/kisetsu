@@ -24,6 +24,9 @@ tiny_http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[build-dependencies]
+sha1_smol.workspace = true
+
 [dev-dependencies]
 kisetsu-services = { path = "../services", features = ["fakes"] }
 

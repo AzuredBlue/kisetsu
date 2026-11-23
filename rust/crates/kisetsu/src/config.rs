@@ -1,7 +1,7 @@
 //! Where the app keeps its data and which mode it runs in.
 
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The environment variable that makes a run a sandbox (`1`), like `--sandbox` but on the
 /// database the environment names.
@@ -12,8 +12,6 @@ const STATIC_VARIABLE: &str = "KISETSU_STATIC_DIR";
 /// Names, comma separated, the host names other than this machine's own that the UI may be
 /// reached by.
 const ALLOWED_HOSTS_VARIABLE: &str = "KISETSU_ALLOWED_HOSTS";
-/// Where the UI's files are in a source checkout.
-const CHECKOUT_STATIC: [&str; 3] = ["kisetsu", "web", "static"];
 
 /// Whether the environment asks for a sandbox: qBittorrent is read, but every change to it is only
 /// logged and pretended.
@@ -37,25 +35,8 @@ pub fn allowed_hosts() -> Vec<String> {
         .collect()
 }
 
-fn holds_the_page(folder: &Path) -> bool {
-    folder.join("index.html").is_file()
-}
-
-/// The folder with the UI's files: the one `KISETSU_STATIC_DIR` names, else `static` beside the
-/// program, else the one of the source checkout the program was built in.
+/// The folder `KISETSU_STATIC_DIR` names, to serve the UI's files from instead of the ones built
+/// into the program.
 pub fn static_dir() -> Option<PathBuf> {
-    if let Some(named) = env::var_os(STATIC_VARIABLE) {
-        return Some(PathBuf::from(named));
-    }
-    let program = env::current_exe().ok()?;
-    let beside = program.parent()?.join("static");
-    if holds_the_page(&beside) {
-        return Some(beside);
-    }
-    program.ancestors().skip(1).find_map(|folder| {
-        let candidate = CHECKOUT_STATIC
-            .iter()
-            .fold(folder.to_path_buf(), |path, part| path.join(part));
-        holds_the_page(&candidate).then_some(candidate)
-    })
+    env::var_os(STATIC_VARIABLE).map(PathBuf::from)
 }

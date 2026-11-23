@@ -1,5 +1,6 @@
 //! The UI's files: the page, and everything under `/static`.
 
+use std::borrow::Cow;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
@@ -22,20 +23,45 @@ const HASH_MARK_END: &str = "@@";
 /// A year, for files whose URL carries their hash.
 const CACHE_FOREVER: &str = "public, max-age=31536000, immutable";
 
-/// The UI's files, read from a folder.
+include!(concat!(env!("OUT_DIR"), "/embedded.rs"));
+
+/// The UI's files: built into the program, or read from a folder.
 #[derive(Debug, Clone)]
 pub struct Assets {
-    dir: PathBuf,
+    dir: Option<PathBuf>,
+}
+
+/// A file's bytes, the tag that changes with them, and when it last changed if that is known.
+struct Found {
+    bytes: Cow<'static, [u8]>,
+    etag: String,
+    modified: Option<i64>,
 }
 
 impl Assets {
+    /// The files in `dir`, read on every request, so changes show without a rebuild.
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self { dir: Some(dir) }
+    }
+
+    /// The files built into the program.
+    pub fn embedded() -> Self {
+        Self { dir: None }
+    }
+
+    fn built_in(relative: &str) -> Option<&'static (&'static str, &'static [u8], &'static str)> {
+        let relative = relative.trim_start_matches('/');
+        EMBEDDED.iter().find(|(path, _, _)| *path == relative)
     }
 
     /// The first ten hex digits of the SHA-1 of the file, or `0` when it cannot be read.
     fn digest(&self, relative: &str) -> String {
-        self.locate(relative)
+        let Some(dir) = &self.dir else {
+            return Self::built_in(relative)
+                .map_or("0", |(_, _, digest)| digest)
+                .to_owned();
+        };
+        locate(dir, relative)
             .and_then(|path| fs::read(path).ok())
             .map_or_else(
                 || "0".to_owned(),
@@ -50,17 +76,69 @@ impl Assets {
             )
     }
 
+    /// The paths of the scripts under [`MODULE_DIRS`].
+    fn modules(&self) -> Vec<String> {
+        let Some(dir) = &self.dir else {
+            return EMBEDDED
+                .iter()
+                .map(|(path, _, _)| *path)
+                .filter(|path| {
+                    path.ends_with(".js")
+                        && MODULE_DIRS.iter().any(|folder| {
+                            path.strip_prefix(folder)
+                                .is_some_and(|rest| rest.starts_with('/'))
+                        })
+                })
+                .map(str::to_owned)
+                .collect();
+        };
+        let mut modules = Vec::new();
+        for folder in MODULE_DIRS {
+            collect_scripts(&dir.join(folder), &mut modules);
+        }
+        modules
+            .iter()
+            .filter_map(|path| path.strip_prefix(dir).ok())
+            .map(slashed)
+            .collect()
+    }
+
+    fn read(&self, relative: &str) -> Option<Found> {
+        let Some(dir) = &self.dir else {
+            let (_, bytes, digest) = Self::built_in(relative)?;
+            return Some(Found {
+                bytes: Cow::Borrowed(bytes),
+                etag: format!("\"{digest}\""),
+                modified: None,
+            });
+        };
+        let path = locate(dir, relative)?;
+        let meta = fs::metadata(&path).ok()?;
+        let bytes = fs::read(&path).ok()?;
+        let modified = meta
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
+        Some(Found {
+            bytes: Cow::Owned(bytes),
+            etag: format!(
+                "\"{:x}-{:x}\"",
+                meta.len(),
+                modified.map_or(0, |elapsed| elapsed.as_nanos())
+            ),
+            modified: Some(
+                modified.map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0)),
+            ),
+        })
+    }
+
     /// Every module under [`MODULE_DIRS`] mapped to its URL with its hash, so the modules a
     /// module imports are versioned too.
     fn import_map(&self) -> String {
-        let mut modules = Vec::new();
-        for folder in MODULE_DIRS {
-            collect_scripts(&self.dir.join(folder), &mut modules);
-        }
-        let mut urls: Vec<String> = modules
+        let mut urls: Vec<String> = self
+            .modules()
             .iter()
-            .filter_map(|path| path.strip_prefix(&self.dir).ok())
-            .map(|relative| format!("/static/{}", slashed(relative)))
+            .map(|relative| format!("/static/{relative}"))
             .collect();
         urls.sort();
         let entries: Vec<String> = urls
@@ -79,11 +157,11 @@ impl Assets {
     /// `index.html` with every `@@v:path@@` replaced by a hash of that file and `@@importmap@@`
     /// by the import map, so a deploy busts the browser cache.
     pub fn page(&self) -> Response {
-        let Ok(raw) = fs::read_to_string(self.dir.join("index.html")) else {
+        let Some(found) = self.read("index.html") else {
             return not_found();
         };
         // The page reads the same whatever line endings the files were checked out with.
-        let raw = raw.replace("\r\n", "\n");
+        let raw = String::from_utf8_lossy(&found.bytes).replace("\r\n", "\n");
         let mut html = String::with_capacity(raw.len());
         let mut rest = raw.as_str();
         while let Some(start) = rest.find(HASH_MARK_START) {
@@ -112,41 +190,33 @@ impl Assets {
     /// A file under `/static`: served for a year when the URL carries its hash, and revalidated
     /// otherwise. Honours ranges and conditional requests.
     pub fn file(&self, relative: &str, request: &Request<'_>) -> Response {
-        let Some(path) = self.locate(relative) else {
-            return not_found();
-        };
-        let Ok(meta) = fs::metadata(&path) else {
-            return not_found();
-        };
-        let Ok(bytes) = fs::read(&path) else {
+        let Some(Found {
+            bytes,
+            etag,
+            modified,
+        }) = self.read(relative)
+        else {
             return not_found();
         };
         let versioned = request.raw_query.contains("v=");
         let cache = if versioned { CACHE_FOREVER } else { "no-cache" };
-        let modified = meta
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
-        let seconds = modified.map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0));
-        let etag = format!(
-            "\"{:x}-{:x}\"",
-            meta.len(),
-            modified.map_or(0, |elapsed| elapsed.as_nanos())
-        );
-        if is_unchanged(request, &etag, seconds) {
+        if is_unchanged(request, &etag, modified) {
             return Response::new(304, Body::Empty)
                 .with("cache-control", cache)
                 .with("etag", etag);
         }
         let size = bytes.len();
         let base = |response: Response| {
-            response
+            let response = response
                 .with("accept-ranges", "bytes")
                 .with("cache-control", cache)
-                .with("etag", etag.clone())
-                .with("last-modified", http_date(seconds))
+                .with("etag", etag.clone());
+            match modified {
+                Some(seconds) => response.with("last-modified", http_date(seconds)),
+                None => response,
+            }
         };
-        let content_type = content_type_of(&path);
+        let content_type = content_type_of(Path::new(relative));
         match request.header("range").map(|range| byte_range(range, size)) {
             Some(ByteRange::Unsatisfiable) => {
                 return Response::text(416, "text/plain; charset=utf-8", "Range Not Satisfiable")
@@ -162,22 +232,22 @@ impl Assets {
             }
             Some(ByteRange::Whole) | None => {}
         }
-        base(Response::new(200, Body::Bytes(bytes)).with("content-type", content_type))
+        base(Response::new(200, Body::Bytes(bytes.into_owned())).with("content-type", content_type))
     }
+}
 
-    /// The file a path under `/static` names, if it is one inside the folder.
-    fn locate(&self, relative: &str) -> Option<PathBuf> {
-        let mut path = self.dir.clone();
-        for part in Path::new(relative.trim_start_matches('/')).components() {
-            match part {
-                Component::Normal(name) if !name.to_string_lossy().contains(['\\', ':']) => {
-                    path.push(name);
-                }
-                _ => return None,
+/// The file a path under `/static` names, if it is one inside `dir`.
+fn locate(dir: &Path, relative: &str) -> Option<PathBuf> {
+    let mut path = dir.to_path_buf();
+    for part in Path::new(relative.trim_start_matches('/')).components() {
+        match part {
+            Component::Normal(name) if !name.to_string_lossy().contains(['\\', ':']) => {
+                path.push(name);
             }
+            _ => return None,
         }
-        path.is_file().then_some(path)
     }
+    path.is_file().then_some(path)
 }
 
 fn not_found() -> Response {
@@ -238,7 +308,7 @@ pub(crate) fn http_date(seconds: i64) -> String {
 
 /// Whether the client holds the current file: its `ETag`, or else the time it was fetched after
 /// the file last changed.
-fn is_unchanged(request: &Request<'_>, etag: &str, modified: i64) -> bool {
+fn is_unchanged(request: &Request<'_>, etag: &str, modified: Option<i64>) -> bool {
     if let Some(held) = request.header("if-none-match") {
         return held
             .split(',')
@@ -248,7 +318,9 @@ fn is_unchanged(request: &Request<'_>, etag: &str, modified: i64) -> bool {
     request
         .header("if-modified-since")
         .and_then(|date| rfc2822::parse(without_weekday(date)).ok())
-        .is_some_and(|date| modified <= date.timestamp().as_second())
+        .is_some_and(|date| {
+            modified.is_some_and(|modified| modified <= date.timestamp().as_second())
+        })
 }
 
 /// The date without its day name, which is not checked against the date.
