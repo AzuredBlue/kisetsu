@@ -46,10 +46,6 @@ const MAX_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Fade(pub f64, pub f64);
 
-impl Fade {
-    pub const WHOLE: Fade = Fade(0.0, 1.0);
-}
-
 /// The colours that stand for an image.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Hues {

@@ -70,13 +70,3 @@ pub enum AniListError {
     #[error("AniList answered with an unexpected shape: {0}")]
     Unexpected(String),
 }
-
-impl AniListError {
-    /// The deferral, when AniList should simply be asked again later.
-    pub fn deferral(&self) -> Option<&Deferral> {
-        match self {
-            Self::Deferred(deferral) => Some(deferral),
-            _ => None,
-        }
-    }
-}
