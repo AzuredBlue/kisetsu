@@ -177,6 +177,9 @@ impl Fetcher {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .user_agent(USER_AGENT)
+            // Requests are minutes apart, and an idle connection would keep its buffers and TLS
+            // state until the next one.
+            .max_idle_connections(0)
             .timeout_connect(Some(config.connect_timeout))
             .timeout_per_read(Some(config.read_timeout))
             .build()

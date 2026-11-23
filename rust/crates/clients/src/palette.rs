@@ -108,6 +108,9 @@ impl Default for WebImages {
             // Redirects stay off: the host allow-list only covers the address asked for.
             .max_redirects(0)
             .max_redirects_will_error(false)
+            // Requests are minutes apart, and an idle connection would keep its buffers and TLS
+            // state until the next one.
+            .max_idle_connections(0)
             .timeout_connect(Some(timeout))
             .timeout_per_read(Some(timeout))
             .build()

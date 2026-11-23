@@ -64,6 +64,9 @@ impl UreqTransport {
             .http_status_as_error(false)
             .max_redirects(0)
             .max_redirects_will_error(false)
+            // Requests are minutes apart, and an idle connection would keep its buffers and TLS
+            // state until the next one.
+            .max_idle_connections(0)
             .timeout_connect(Some(timeout))
             .timeout_per_read(Some(timeout))
             .build()
