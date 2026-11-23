@@ -52,9 +52,12 @@ const visible = (el) => {
 
 // The corner radius and shadow the poster is drawn with: its own, or those of the frame around it.
 const styleOf = (el, prop, none) => [el, el.parentElement].map(e => e ? getComputedStyle(e)[prop] : none).find(v => v !== none && v !== '0px') || none;
+// Both are read before either is written: a property set on the root restyles the whole page on the next read.
 const shape = (el, end) => {
-  document.documentElement.style.setProperty(`--vt-r-${end}`, styleOf(el, 'borderTopLeftRadius', '0px'));
-  document.documentElement.style.setProperty(`--vt-s-${end}`, styleOf(el, 'boxShadow', 'none'));
+  const radius = styleOf(el, 'borderTopLeftRadius', '0px');
+  const shadow = styleOf(el, 'boxShadow', 'none');
+  document.documentElement.style.setProperty(`--vt-r-${end}`, radius);
+  document.documentElement.style.setProperty(`--vt-s-${end}`, shadow);
 };
 
 // Starts loading a show's page, so that opening it can start at once: its data, the feed list it shows, and the
