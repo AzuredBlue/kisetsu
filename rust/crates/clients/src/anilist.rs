@@ -8,7 +8,7 @@ mod transport;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use jiff::Timestamp;
@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
 use crate::fetch::{Clock, SystemClock};
+use crate::locked;
 use crate::traffic::{self, Outcome};
 
 pub use error::{AiringEpisode, AniListError, Deferral, DeferralKind, Schedules};
@@ -129,12 +130,6 @@ enum Verdict {
     Answered(Payload),
     /// The request failed in a way that may pass, for this reason.
     Retry(String),
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// The user's list as last fetched.

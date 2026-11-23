@@ -6,13 +6,14 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use jiff::Timestamp;
 use sha1_smol::Sha1;
 use tracing::{debug, info};
 
+use crate::locked;
 use crate::qbittorrent::{
     AddTorrent, ContentLayout, Qbit, QbitError, QbitResult, RssStoreFeed, SyncResult, Torrent,
     Versions,
@@ -184,12 +185,6 @@ fn base_name(path: &str) -> String {
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
-}
-
-fn locked(state: &SharedSandbox) -> MutexGuard<'_, SandboxState> {
-    state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// A qBittorrent that reads the real one underneath and pretends every change.

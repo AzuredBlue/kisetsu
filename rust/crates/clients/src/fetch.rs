@@ -2,11 +2,12 @@
 //! retrying a refused connection.
 
 use std::collections::HashMap;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use jiff::Timestamp;
 
+use crate::locked;
 use crate::net::{Failure, classify};
 use crate::rss::{FeedArticle, FeedFetchError, feed_wall_zone, parse_date, parse_feed};
 use crate::traffic::{self, Outcome};
@@ -164,12 +165,6 @@ impl Default for Fetcher {
     fn default() -> Self {
         Self::new(FetchConfig::default(), Box::<SystemClock>::default())
     }
-}
-
-fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl Fetcher {

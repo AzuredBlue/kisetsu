@@ -4,11 +4,12 @@
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use jiff::Timestamp;
 use serde::Serialize;
 
+use crate::locked;
 use crate::url;
 
 /// How a request ended.
@@ -119,16 +120,10 @@ thread_local! {
     static CALLER: RefCell<String> = RefCell::new(String::from("?"));
 }
 
-fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
 /// Counts one request. The listener, when set, runs afterwards on the calling thread.
 pub fn record(kind: &str, host: &str, outcome: Outcome) {
-    lock(&COUNTS).record(kind, host, outcome);
-    let listener = lock(&LISTENER).clone();
+    locked(&COUNTS).record(kind, host, outcome);
+    let listener = locked(&LISTENER).clone();
     if let Some(listener) = listener {
         listener();
     }
@@ -136,17 +131,17 @@ pub fn record(kind: &str, host: &str, outcome: Outcome) {
 
 /// Sets what runs after each counted request, or clears it. Whatever shows the counts uses it.
 pub fn set_listener(listener: Option<Listener>) {
-    *lock(&LISTENER) = listener;
+    *locked(&LISTENER) = listener;
 }
 
 /// The counts so far.
 pub fn snapshot() -> Snapshot {
-    lock(&COUNTS).snapshot()
+    locked(&COUNTS).snapshot()
 }
 
 /// Starts counting from zero.
 pub fn reset() {
-    lock(&COUNTS).reset(Timestamp::now());
+    locked(&COUNTS).reset(Timestamp::now());
 }
 
 /// The host of a URL, or the whole text when it has none.
