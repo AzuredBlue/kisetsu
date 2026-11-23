@@ -78,10 +78,6 @@ pub trait AniListSource {
         media_ids: &[i64],
         since: Timestamp,
     ) -> std::result::Result<Schedules, AniListError>;
-
-    fn seconds_since_last_sync(&self, now: Timestamp) -> Option<f64>;
-
-    fn is_sync_due(&self, min_age_seconds: f64, now: Timestamp) -> bool;
 }
 
 /// The matchers of the followed shows, rebuilt when `signatures` change.

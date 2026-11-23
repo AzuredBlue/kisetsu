@@ -278,18 +278,6 @@ impl AniListClient {
         locked(&self.state).last_sync_at
     }
 
-    /// Seconds from the last successful query to `now`, or `None` if there has not been one.
-    pub fn seconds_since_last_sync(&self, now: Timestamp) -> Option<f64> {
-        self.last_sync_at()
-            .map(|at| now.duration_since(at).as_secs_f64())
-    }
-
-    /// Whether the schedule is older than `min_age_seconds`, or absent.
-    pub fn is_sync_due(&self, min_age_seconds: f64, now: Timestamp) -> bool {
-        self.seconds_since_last_sync(now)
-            .is_none_or(|age| age >= min_age_seconds)
-    }
-
     /// When AniList may be asked again, and in how many seconds; `None` when it is not blocked.
     pub fn rate_limit_status(&self) -> RateLimitStatus {
         let governor = locked(&self.governor);

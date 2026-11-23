@@ -181,13 +181,4 @@ impl AniListSource for FakeAniList {
             })
             .collect())
     }
-
-    fn seconds_since_last_sync(&self, now: Timestamp) -> Option<f64> {
-        self.last_sync_at
-            .map(|last| now.duration_since(last).as_secs_f64())
-    }
-
-    fn is_sync_due(&self, _min_age_seconds: f64, _now: Timestamp) -> bool {
-        self.due
-    }
 }
