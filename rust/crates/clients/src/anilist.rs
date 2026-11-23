@@ -140,7 +140,10 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// The user's list as last fetched.
 #[derive(Debug, Default)]
 struct Listing {
+    /// Empty once the list is saved to disk: it is read back from there when asked for.
     entries: Vec<ListEntry>,
+    /// Whether the list is the one saved to disk.
+    saved: bool,
     fetched_at: Option<Timestamp>,
     /// Whose list `entries` is, when it was fetched in this run.
     of: Option<String>,
@@ -203,7 +206,8 @@ impl AniListClient {
         match serde_json::from_str::<SavedList>(&text) {
             Ok(saved) => {
                 locked(&self.state).listing = Listing {
-                    entries: saved.entries,
+                    entries: Vec::new(),
+                    saved: true,
                     fetched_at: Some(saved.fetched_at),
                     of: None,
                 };
@@ -212,19 +216,44 @@ impl AniListClient {
         }
     }
 
-    fn save_list(&self, listing: &Listing) {
+    /// Saves the list to disk and lets go of it in memory; a list that could not be saved is
+    /// kept.
+    fn save_list(&self, listing: &mut Listing) {
         let (Some(path), Some(fetched_at)) = (&self.cache_path, listing.fetched_at) else {
             return;
         };
         let saved = SavedList {
             fetched_at,
-            entries: listing.entries.clone(),
+            entries: std::mem::take(&mut listing.entries),
         };
         let written = serde_json::to_string(&saved)
             .map_err(|error| error.to_string())
             .and_then(|text| std::fs::write(path, text).map_err(|error| error.to_string()));
-        if let Err(error) = written {
-            tracing::warn!("Could not save the AniList list: {error}");
+        match written {
+            Ok(()) => listing.saved = true,
+            Err(error) => {
+                tracing::warn!("Could not save the AniList list: {error}");
+                listing.entries = saved.entries;
+            }
+        }
+    }
+
+    /// The entries of the list saved to disk; none when it cannot be read.
+    fn saved_entries(&self) -> Vec<ListEntry> {
+        let Some(path) = &self.cache_path else {
+            return Vec::new();
+        };
+        let read = std::fs::read_to_string(path)
+            .map_err(|error| error.to_string())
+            .and_then(|text| {
+                serde_json::from_str::<SavedList>(&text).map_err(|error| error.to_string())
+            });
+        match read {
+            Ok(saved) => saved.entries,
+            Err(error) => {
+                tracing::warn!("Could not read the saved AniList list: {error}");
+                Vec::new()
+            }
         }
     }
 
@@ -232,7 +261,12 @@ impl AniListClient {
 
     /// The list as last fetched or loaded from disk.
     pub fn user_list(&self) -> Vec<ListEntry> {
-        locked(&self.state).listing.entries.clone()
+        let state = locked(&self.state);
+        if state.listing.saved {
+            drop(state);
+            return self.saved_entries();
+        }
+        state.listing.entries.clone()
     }
 
     /// When `user_list` was fetched.
@@ -386,7 +420,7 @@ impl AniListClient {
     /// seconds to report.
     pub fn user_exists(&self, username: &str) -> Result<bool, AniListError> {
         match self.fetch_list(username, 1) {
-            Ok(()) => Ok(true),
+            Ok(_) => Ok(true),
             Err(AniListError::NotFound { .. }) => Ok(false),
             Err(error) => Err(error),
         }
@@ -416,13 +450,13 @@ impl AniListClient {
                     })
             })
         };
-        if !fresh {
-            self.fetch_list(username, DEFAULT_RETRIES)?;
+        if fresh {
+            return Ok(self.user_list());
         }
-        Ok(self.user_list())
+        self.fetch_list(username, DEFAULT_RETRIES)
     }
 
-    fn fetch_list(&self, username: &str, max_retries: u32) -> Result<(), AniListError> {
+    fn fetch_list(&self, username: &str, max_retries: u32) -> Result<Vec<ListEntry>, AniListError> {
         let username = username.trim();
         let payload = self.post_query(
             USER_LIST_QUERY,
@@ -437,15 +471,18 @@ impl AniListClient {
                 .map_err(|error| AniListError::Unexpected(error.to_string()))?,
         };
         let now = self.clock.wall();
-        let mut state = locked(&self.state);
-        state.last_sync_at = Some(now);
-        state.listing = Listing {
-            entries: collection.into_entries(),
+        let entries = collection.into_entries();
+        let mut listing = Listing {
+            entries: entries.clone(),
+            saved: false,
             fetched_at: Some(now),
             of: Some(username.to_owned()),
         };
-        self.save_list(&state.listing);
-        Ok(())
+        self.save_list(&mut listing);
+        let mut state = locked(&self.state);
+        state.last_sync_at = Some(now);
+        state.listing = listing;
+        Ok(entries)
     }
 
     /// The user's entries Kisetsu acts on (see [`select_seasonal`]), each with its own list status.
