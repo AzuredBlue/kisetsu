@@ -16,6 +16,9 @@ use crate::traffic::{self, Outcome};
 
 const CONNECT_TIMEOUT_SECONDS: u64 = 3;
 const READ_TIMEOUT_SECONDS: u64 = 10;
+/// The size of each of a connection's two buffers. Bodies stream through them, so the size only
+/// bounds a response's headers.
+const BUFFER_BYTES: usize = 16 * 1024;
 /// While qBittorrent is unreachable, calls fail at once for this long (in seconds), doubling per failure.
 const UNAVAILABLE_BACKOFF_SECONDS: [f64; 4] = [30.0, 60.0, 120.0, 300.0];
 /// A rejected login is not retried for a while: qBittorrent bans an address after a few failed logins.
@@ -566,6 +569,13 @@ impl QbitClient {
         let agent = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .tls_config(tls)
+            // While downloads run, qBittorrent is asked every few seconds, so one connection is
+            // kept for the next request. qBittorrent closes an idle one within seconds, and small
+            // buffers keep a closed one cheap until it is dropped.
+            .max_idle_connections(1)
+            .input_buffer_size(BUFFER_BYTES)
+            .output_buffer_size(BUFFER_BYTES)
+            .max_response_header_size(BUFFER_BYTES)
             .timeout_connect(Some(std::time::Duration::from_secs(
                 CONNECT_TIMEOUT_SECONDS,
             )))
