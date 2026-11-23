@@ -90,7 +90,7 @@ export function NeedsAttention() {
     <div class="page-head"><div class="row"><h2 class="section-title">Needs attention</h2><span class="count-badge">${data.length}</span></div></div>
     <div class="card card-divided attention-card">
       ${data.map(row => html`<div class="attention-row" key=${row.keys[0]} role="link" tabindex="0" onClick=${() => go(row.show_id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(row.show_id); }}>
-        <div class="sr-poster"><${Poster} show=${{ id: row.show_id, title: row.show, cover: row.cover }} dim=${false} /></div>
+        <div class="sr-poster"><${Poster} show=${{ id: row.show_id, title: row.show, cover: row.cover }} dim=${false} small /></div>
         <div class="attention-main">
           <div class="history-title"><span class="history-show">${row.show}</span><span class="ep tabular">Ep ${episodeLabel(row.episodes)}</span><span class=${`state ${KIND_TONES[row.kind]}`}>${KIND_LABELS[row.kind]}</span></div>
           <div class="attention-reason">${row.reason}</div>

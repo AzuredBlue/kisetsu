@@ -4,6 +4,7 @@ import { apiFetch } from '../api.js';
 import { paletteFromHues, posterEdgeColors, posterTextColor } from '../color.js';
 import { edgeOf, readEdge, useEdges } from '../edges.js';
 import { countdown, expectedNote, initials, localDateTime, localTime, plural, progressFraction, releaseState, shownExpected } from '../format.js';
+import { coverSet, mediumCover } from '../covers.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
@@ -83,15 +84,16 @@ export function StatusTag({ show }) {
   return tag ? html`<span class=${`pill ${tag[0]}`} title=${tag[1]}>${show.status_label}</span>` : null;
 }
 
-// The cover, or the show's initials when it has none or it does not load.
+// The cover, or the show's initials when it has none or it does not load. A `small` poster loads the medium cover;
+// one given `sizes` (how wide it is drawn) loads whichever cover is sharp at that width.
 // The cover is asked for with CORS, so its edge colour can be read from it (``edges.js``); should that ever be
 // refused, it is shown without.
-export function Poster({ show, dim: dimmedOverride }) {
+export function Poster({ show, dim: dimmedOverride, small = false, sizes }) {
   const [broken, setBroken] = useState(false);
   const [plain, setPlain] = useState(false);
   const dim = (dimmedOverride === undefined ? dimmed(show) : dimmedOverride) ? ' dim' : '';
   const art = show.cover && !broken
-    ? html`<img key=${plain ? 'plain' : 'cors'} src=${show.cover} alt=${show.title} loading="lazy" class=${dim.trim()}
+    ? html`<img key=${plain ? 'plain' : 'cors'} sizes=${sizes} srcset=${sizes ? coverSet(show.cover) : undefined} src=${small ? mediumCover(show.cover) : show.cover} alt=${show.title} loading="lazy" class=${dim.trim()}
         crossorigin=${plain ? undefined : 'anonymous'}
         onLoad=${(e) => { if (!plain) readEdge(e.currentTarget, show.cover); }}
         onError=${() => (plain ? setBroken(true) : setPlain(true))} />`
@@ -250,7 +252,7 @@ export function ShowCard({ show, now }) {
 export function ShowRow({ show, now }) {
   const air = airSummary(show, now);
   return html`<div class="show-row" role="link" tabindex="0" onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)} onKeyDown=${(e) => { if (e.key === 'Enter') go(show.id); }}>
-    <div class="sr-poster"><${Poster} show=${show} /></div>
+    <div class="sr-poster"><${Poster} show=${show} small /></div>
     <div class="sr-title">
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       <div class="sr-feed-sub truncate" title=${feedName(show)}>${feedName(show)}${show.counts.failed ? html`<span class="bad"> ${show.counts.failed} failed</span>` : null}${show.counts.missed ? html`<span class="warn"> ${show.counts.missed} missed</span>` : null}</div>

@@ -1,6 +1,7 @@
 // Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings, #add and #show/<id>.
 import { useEffect, useState } from './ui.js';
 import { feedMatches, feeds, showPage } from './data.js';
+import { coverSet, SHOW_POSTER_SIZES } from './covers.js';
 
 export const TABS = ['shows', 'calendar', 'history', 'feeds', 'logs', 'settings', 'add'];
 
@@ -61,23 +62,33 @@ const shape = (el, end) => {
 };
 
 // Starts loading a show's page, so that opening it can start at once: its data, the feed list it shows, and the
-// picture its banner and backdrop are drawn from. A picture that arrived during the opening animation was decoded
-// and uploaded in the middle of it, which dropped frames.
+// pictures it draws: its poster's cover and its banner. A picture that arrived during the opening animation was
+// decoded and uploaded in the middle of it, which dropped frames.
 const artWarmed = new Set();
 export function prefetch(id) {
   const page = showPage(id);
   [page, feedMatches(id), feeds].filter(r => r.data === null && !r.inflight).forEach(r => r.load());
   Promise.resolve(page.inflight).then(() => {
     const data = page.data;
-    const art = data && (data.banner || data.cover);
-    if (!art || artWarmed.has(art)) return;
-    artWarmed.add(art);
-    const img = new Image();
-    // Asked for the way the page asks (a cover with CORS, so its pixels can be read), so the page finds it cached.
-    if (!data.banner) img.crossOrigin = 'anonymous';
-    img.src = art;
-    img.decode().catch(() => { artWarmed.delete(art); });
+    if (!data) return;
+    warm(data.cover, true);
+    warm(data.banner, false);
   });
+}
+
+// Asked for the way the page asks (a cover with CORS, so its pixels can be read, and at the size its poster takes),
+// so the page finds it cached.
+function warm(art, cors) {
+  if (!art || artWarmed.has(art)) return;
+  artWarmed.add(art);
+  const img = new Image();
+  if (cors) {
+    img.crossOrigin = 'anonymous';
+    const set = coverSet(art);
+    if (set) { img.sizes = SHOW_POSTER_SIZES; img.srcset = set; }
+  }
+  img.src = art;
+  img.decode().catch(() => { artWarmed.delete(art); });
 }
 
 // Opening or closing a show page morphs the poster between the card and the page while the content rises.

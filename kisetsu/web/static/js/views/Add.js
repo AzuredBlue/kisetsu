@@ -16,7 +16,7 @@ function EntryRow({ entry, onPick }) {
   const facts = [entry.list_label, AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(', ');
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
   return html`<li><button type="button" class="add-entry" onClick=${() => (entry.followed ? go(entry.show_id) : onPick(entry))}>
-    <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
+    <div class="sr-poster"><${Poster} show=${art} dim=${false} small /></div>
     <div class="grow">
       <div class="add-entry-title truncate" title=${entry.title}>${entry.title}</div>
       <div class="muted truncate">${facts}</div>
@@ -199,7 +199,7 @@ function PickReleases({ entry, onBack }) {
   return html`<div class="stack add-step" ref=${step}>
     <button type="button" class="btn plain sm add-back" onClick=${onBack}><${Icon} name="back" small /><span>Your list</span></button>
     <div class="add-picked">
-      <div class="sr-poster"><${Poster} show=${art} dim=${false} /></div>
+      <div class="sr-poster"><${Poster} show=${art} dim=${false} small /></div>
       <div class="grow">
         <h2 class="section-title truncate" title=${entry.title}>${entry.title}</h2>
         <p class="muted">${[entry.list_label, AIR_LABELS[entry.status] || null, entry.total_episodes ? `${entry.total_episodes} episodes` : null].filter(Boolean).join(', ')}</p>

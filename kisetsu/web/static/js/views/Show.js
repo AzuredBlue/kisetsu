@@ -2,6 +2,7 @@ import { html, useEffect, useLayoutEffect, useMemo, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { go, leaveTarget, useNow } from '../router.js';
+import { mediumCover, SHOW_POSTER_SIZES } from '../covers.js';
 import { applyShowPalette } from '../theme.js';
 import { feedMatches, feeds as feedsData, settings as settingsData, shows as showsData, showPage } from '../data.js';
 import { Icon, Spinner } from '../components/Icon.js';
@@ -107,7 +108,7 @@ export function Show({ route }) {
     const known = (knownShows.data || []).find(sh => sh.id === id);
     return html`<div class="show-page">
       <div class="show-banner on-art"><button type="button" class="back" onClick=${leave} aria-label="Back" title="Back (Esc)"><${Icon} name="back" /></button></div>
-      <div class="show-body"><div class="show-top">${known ? html`<div class="show-poster"><${Poster} show=${known} /></div>` : null}</div></div>
+      <div class="show-body"><div class="show-top">${known ? html`<div class="show-poster"><${Poster} show=${known} sizes=${SHOW_POSTER_SIZES} /></div>` : null}</div></div>
     </div>`;
   }
 
@@ -178,7 +179,8 @@ export function Show({ route }) {
     setSearching(false);
   };
 
-  const art = data.banner || data.cover;
+  // A cover is drawn blurred behind the page, where the medium one is as good as the large.
+  const art = data.banner || (data.cover && mediumCover(data.cover));
   // The cover is asked for with CORS by its poster; asking for it without would load it again, as AniList varies on Origin.
   const artCors = data.banner ? undefined : 'anonymous';
   const matchData = matches.data;
@@ -191,7 +193,7 @@ export function Show({ route }) {
     </div>
     <div class="show-body">
       <div class="show-top">
-        <div class="show-poster"><${Poster} show=${data} /></div>
+        <div class="show-poster"><${Poster} show=${data} sizes=${SHOW_POSTER_SIZES} /></div>
         <${Header} page=${data} now=${now} />
       </div>
       <section class="show-lists">

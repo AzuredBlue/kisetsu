@@ -10,7 +10,7 @@ import { EmptyState } from '../components/EmptyState.js';
 import { confirmDialog } from '../components/Modal.js';
 import { Poster, posterVars } from '../components/ShowSummary.js';
 import { toast } from '../components/Toast.js';
-import { go } from '../router.js';
+import { go, prefetch } from '../router.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
 
@@ -36,12 +36,12 @@ function Row({ item, now, mode }) {
   const [verb, icon] = KINDS[item.kind] || [item.kind, null];
   const title = item.show || item.title || 'Unknown show';
   const problem = PROBLEMS.includes(item.kind);
-  const poster = html`<div class="sr-poster"><${Poster} show=${{ id: item.show_id, title, cover: item.cover }} dim=${false} /></div>`;
+  const poster = html`<div class="sr-poster"><${Poster} show=${{ id: item.show_id, title, cover: item.cover }} dim=${false} small /></div>`;
   return html`<div class="history-row" style=${posterVars(item, mode)}>
-    ${item.show_id ? html`<a href=${`#show/${item.show_id}`} tabindex="-1" aria-hidden="true">${poster}</a>` : poster}
+    ${item.show_id ? html`<a href=${`#show/${item.show_id}`} tabindex="-1" aria-hidden="true" onPointerEnter=${() => prefetch(item.show_id)}>${poster}</a>` : poster}
     <div class="history-main">
       <div class="history-title">
-        ${item.show_id ? html`<a class="history-show" href=${`#show/${item.show_id}`} title=${title}>${title}</a>` : html`<span class="history-show" title=${title}>${title}</span>`}
+        ${item.show_id ? html`<a class="history-show" href=${`#show/${item.show_id}`} title=${title} onPointerEnter=${() => prefetch(item.show_id)}>${title}</a>` : html`<span class="history-show" title=${title}>${title}</span>`}
         ${item.episodes.length ? html`<span class="ep tabular">Ep ${episodeLabel(item.episodes)}</span>` : null}
       </div>
       ${problem && item.message ? html`<div class=${`history-reason ${item.title ? 'clamp-1' : 'clamp-2'}`} title=${item.message}>${item.message}</div>` : null}

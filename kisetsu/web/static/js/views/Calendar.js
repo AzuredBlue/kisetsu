@@ -123,7 +123,7 @@ function Slot({ slot }) {
         const { show, episode } = entry;
         const state = outcome(entry);
         return html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : state && state.settled ? ' settled' : ''}`} style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
-          <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} /></div>
+          <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} small /></div>
           <div class="cal-info">
             <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
             <div class="row wrap"><span class="ep">Ep ${episode}</span>${!state ? null : state.settled

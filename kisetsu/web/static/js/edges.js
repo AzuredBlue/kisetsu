@@ -77,7 +77,7 @@ async function stripOf(img, url, top, sw, sh) {
   const w = img.naturalWidth, h = img.naturalHeight;
   const options = { resizeWidth: sw, resizeHeight: sh, resizeQuality: 'medium' };
   try {
-    const answer = await fetch(url, { mode: 'cors', credentials: 'omit' });
+    const answer = await fetch(img.currentSrc || url, { mode: 'cors', credentials: 'omit' });
     if (answer.ok) return await createImageBitmap(await answer.blob(), 0, top, w, h - top, options);
   } catch (err) { /* read from the <img> instead */ }
   return createImageBitmap(img, 0, top, w, h - top, options);
