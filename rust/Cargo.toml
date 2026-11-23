@@ -36,3 +36,9 @@ percent-encoding = "2.3.2"
 gethostname = "1.1.0"
 tray-icon = { version = "=0.26.1", default-features = false }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+# The app runs in the background all day: a smaller program loads less into memory.
+[profile.release]
+strip = true
+lto = "fat"
+codegen-units = 1
