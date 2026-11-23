@@ -642,6 +642,7 @@ version = "0.1.0"
 dependencies = [
  "fancy-regex",
  "jiff",
+ "regex-automata",
  "sha1_smol",
 ]
 

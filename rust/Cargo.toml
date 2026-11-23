@@ -11,6 +11,7 @@ publish = false
 
 [workspace.dependencies]
 fancy-regex = { version = "0.20.2", default-features = false, features = ["std", "perf", "unicode"] }
+regex-automata = { version = "0.4.19", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm", "nfa-backtrack", "dfa-onepass", "unicode", "perf"] }
 jiff = "1.0.1"
 sha1_smol = "1.0.1"
 sha2 = { version = "0.11.1", default-features = false }

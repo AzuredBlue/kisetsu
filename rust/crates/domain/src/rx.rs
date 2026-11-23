@@ -1,8 +1,8 @@
 //! Regular expressions over release titles.
 //!
-//! Patterns are compiled by `fancy-regex`, which hands every pattern without look-around to the
-//! `regex` engine and runs only the ones with look-around on its backtracking matcher. Character
-//! classes, word boundaries and case-insensitive matching use the crates' Unicode rules.
+//! A pattern without look-around is compiled by `regex-automata`; one with look-around by
+//! `fancy-regex`, which runs it on its backtracking matcher. Character classes, word boundaries
+//! and case-insensitive matching use the crates' Unicode rules.
 //!
 //! Patterns written in the code spell digits as `[0-9０-９]`, the ASCII and full-width digits
 //! titles are numbered with. `\d` would take every script's digits, which makes each pattern that
@@ -12,7 +12,10 @@
 
 use std::borrow::Cow;
 
-use fancy_regex::{Captures, RegexBuilder};
+use fancy_regex::RegexBuilder;
+use regex_automata::meta;
+use regex_automata::util::captures::Captures as Groups;
+use regex_automata::util::syntax;
 
 pub use fancy_regex::Error;
 
@@ -49,23 +52,41 @@ pub(crate) use regexes;
 #[derive(Debug)]
 pub struct Regex {
     /// None for a pattern written in the code that does not compile: it matches nothing.
-    program: Option<fancy_regex::Regex>,
+    program: Option<Program>,
+}
+
+#[derive(Debug)]
+enum Program {
+    Plain(meta::Regex),
+    LookAround(fancy_regex::Regex),
 }
 
 impl Regex {
     /// A pattern compiled to search with as little memory as possible. Each thread that searches
     /// keeps its own scratch space per pattern, so a lazily built automaton would be kept once
-    /// per thread; without it a search runs slower.
+    /// per thread; without one a search runs slower, and the reverse automaton it would search
+    /// backwards with is not built either.
     pub fn new(pattern: &str, case: Case) -> Result<Self, Error> {
+        let insensitive = case == Case::Insensitive;
+        // One grammar decides what is a pattern, whichever engine then runs it.
+        fancy_regex::Expr::parse_tree(pattern)?;
+        let plain = meta::Regex::builder()
+            .configure(meta::Config::new().hybrid(false).dfa(false))
+            .syntax(syntax::Config::new().case_insensitive(insensitive))
+            .build(pattern);
+        if let Ok(plain) = plain {
+            return Ok(Self {
+                program: Some(Program::Plain(plain)),
+            });
+        }
         let program = RegexBuilder::new(pattern)
-            .case_insensitive(case == Case::Insensitive)
-            // Skips to where a match can start instead of trying every position of a pattern
-            // with look-around.
+            .case_insensitive(insensitive)
+            // Skips to where a match can start instead of trying every position.
             .seek(true)
             .delegate_dfa_size_limit(0)
             .build()?;
         Ok(Self {
-            program: Some(program),
+            program: Some(Program::LookAround(program)),
         })
     }
 
@@ -80,30 +101,52 @@ impl Regex {
     }
 
     pub fn is_match(&self, text: &str) -> bool {
-        self.program
-            .as_ref()
-            .is_some_and(|program| program.is_match(text).unwrap_or(false))
+        match &self.program {
+            None => false,
+            Some(Program::Plain(program)) => program.is_match(text),
+            Some(Program::LookAround(program)) => program.is_match(text).unwrap_or(false),
+        }
     }
 
     /// The first match.
     pub fn find<'h>(&self, text: &'h str) -> Option<Match<'h>> {
-        let captures = self.program.as_ref()?.captures(text).ok().flatten()?;
-        Match::new(captures)
+        match self.program.as_ref()? {
+            Program::Plain(program) => {
+                let mut groups = program.create_captures();
+                program.captures(text, &mut groups);
+                Match::plain(text, groups)
+            }
+            Program::LookAround(program) => {
+                Match::look_around(program.captures(text).ok().flatten()?)
+            }
+        }
     }
 
     /// The matches from left to right.
-    pub fn find_iter<'h>(&self, text: &'h str) -> impl Iterator<Item = Match<'h>> {
-        self.program
-            .iter()
-            .flat_map(|program| program.captures_iter(text))
-            .map_while(|captures| Match::new(captures.ok()?))
+    pub fn find_iter<'r, 'h: 'r>(
+        &'r self,
+        text: &'h str,
+    ) -> Box<dyn Iterator<Item = Match<'h>> + 'r> {
+        match &self.program {
+            None => Box::new(std::iter::empty()),
+            Some(Program::Plain(program)) => Box::new(
+                program
+                    .captures_iter(text)
+                    .map_while(move |groups| Match::plain(text, groups)),
+            ),
+            Some(Program::LookAround(program)) => Box::new(
+                program
+                    .captures_iter(text)
+                    .map_while(|captures| Match::look_around(captures.ok()?)),
+            ),
+        }
     }
 
     /// Every match replaced by `template`, in which `$1` and `${name}` insert a group (nothing for
     /// a group that did not take part) and `$$` a dollar sign.
     pub fn replace_all<'h>(&self, text: &'h str, template: &str) -> Cow<'h, str> {
         if template.contains('$') {
-            self.replace_each(text, |found, out| found.captures.expand(template, out))
+            self.replace_each(text, |found, out| found.expand(template, out))
         } else {
             self.replace_each(text, |_, out| out.push_str(template))
         }
@@ -142,20 +185,42 @@ impl Regex {
 /// One match and its groups.
 #[derive(Debug)]
 pub struct Match<'h> {
-    captures: Captures<'h, str>,
+    captures: Found<'h>,
     start: usize,
     end: usize,
 }
 
+#[derive(Debug)]
+enum Found<'h> {
+    Plain { text: &'h str, groups: Groups },
+    LookAround(fancy_regex::Captures<'h, str>),
+}
+
 impl<'h> Match<'h> {
-    fn new(captures: Captures<'h, str>) -> Option<Self> {
+    fn plain(text: &'h str, groups: Groups) -> Option<Self> {
+        let whole = groups.get_group(0)?;
+        Some(Self {
+            start: whole.start,
+            end: whole.end,
+            captures: Found::Plain { text, groups },
+        })
+    }
+
+    fn look_around(captures: fancy_regex::Captures<'h, str>) -> Option<Self> {
         let whole = captures.get(0)?;
         let (start, end) = (whole.start(), whole.end());
         Some(Self {
-            captures,
+            captures: Found::LookAround(captures),
             start,
             end,
         })
+    }
+
+    fn expand(&self, template: &str, out: &mut String) {
+        match &self.captures {
+            Found::Plain { text, groups } => groups.interpolate_string_into(text, template, out),
+            Found::LookAround(captures) => captures.expand(template, out),
+        }
     }
 
     pub fn start(&self) -> usize {
@@ -172,19 +237,30 @@ impl<'h> Match<'h> {
 
     /// A group by number; None when it did not take part in the match.
     pub fn group(&self, index: usize) -> Option<&'h str> {
-        self.captures.get(index).map(|group| group.as_str())
+        match &self.captures {
+            Found::Plain { text, groups } => groups.get_group(index).map(|span| &text[span]),
+            Found::LookAround(captures) => captures.get(index).map(|group| group.as_str()),
+        }
     }
 
     /// A group by name.
     pub fn name(&self, name: &str) -> Option<&'h str> {
-        self.captures.name(name).map(|group| group.as_str())
+        match &self.captures {
+            Found::Plain { text, groups } => groups.get_group_by_name(name).map(|span| &text[span]),
+            Found::LookAround(captures) => captures.name(name).map(|group| group.as_str()),
+        }
     }
 
     /// The start and end of a group, or None when it did not take part in the match.
     pub fn span(&self, index: usize) -> Option<(usize, usize)> {
-        self.captures
-            .get(index)
-            .map(|group| (group.start(), group.end()))
+        match &self.captures {
+            Found::Plain { groups, .. } => {
+                groups.get_group(index).map(|span| (span.start, span.end))
+            }
+            Found::LookAround(captures) => captures
+                .get(index)
+                .map(|group| (group.start(), group.end())),
+        }
     }
 }
 
