@@ -13,7 +13,6 @@ use crate::context::{AniListSource, Clock};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AniListCall {
     UserExists(String),
-    FetchUserList(String),
     FetchUserSeasonalAnime(String),
     FetchMediaAiringSchedules(Vec<i64>),
     FetchUpcomingAiringSchedules(Vec<i64>),
@@ -126,15 +125,6 @@ impl AniListSource for FakeAniList {
     fn user_exists(&self, username: &str) -> Result<bool, AniListError> {
         self.ask(AniListCall::UserExists(username.to_owned()))?;
         Ok(self.users.contains(username))
-    }
-
-    fn fetch_user_list(
-        &self,
-        username: &str,
-        _reuse_within: Option<f64>,
-    ) -> Result<Vec<ListEntry>, AniListError> {
-        self.ask(AniListCall::FetchUserList(username.to_owned()))?;
-        Ok(self.fetched_list())
     }
 
     fn fetch_user_seasonal_anime(

@@ -55,12 +55,6 @@ pub trait FeedSource {
 pub trait AniListSource {
     fn user_exists(&self, username: &str) -> std::result::Result<bool, AniListError>;
 
-    fn fetch_user_list(
-        &self,
-        username: &str,
-        reuse_within: Option<f64>,
-    ) -> std::result::Result<Vec<ListEntry>, AniListError>;
-
     fn fetch_user_seasonal_anime(
         &self,
         username: &str,
