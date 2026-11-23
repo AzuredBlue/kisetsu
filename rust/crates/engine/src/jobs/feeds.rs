@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use kisetsu_clients::sites::host_of;
+use kisetsu_clients::traffic::host_of;
 use kisetsu_services::feedsync::{self, FeedRef, FetchFailure, FetchResult, Outcome};
 
 use super::*;

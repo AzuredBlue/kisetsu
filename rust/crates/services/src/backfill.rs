@@ -6,6 +6,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use jiff::{SignedDuration, Timestamp};
 use kisetsu_clients::rss::{FeedArticle, FeedFetchError};
 use kisetsu_clients::sites::{self, Grouping, Site};
+use kisetsu_clients::traffic;
 use kisetsu_db::rusqlite::Params;
 use kisetsu_db::schema::{Episode, Feed, Show};
 use kisetsu_db::storage::format_timestamp;
@@ -614,7 +615,7 @@ impl SiteSearch<'_> {
             }
             let before = covered.clone();
             let mut releases: Vec<(i64, Option<Timestamp>)> = Vec::new();
-            let host = sites::host_of(&feed.url);
+            let host = traffic::host_of(&feed.url);
             let site = sites::site_of(&feed.url);
             // Several names in one search is nyaa's form; even there it is used only once checked.
             let groupable = grouping.is_some() && site == Some(Site::Nyaa) && item.terms.len() > 1;
@@ -787,7 +788,7 @@ pub fn search(
 /// The feed a show's search starts with and its host, when that feed is on nyaa.
 fn first_nyaa_feed(item: &Due) -> Option<(&Feed, String)> {
     let feed = item.feeds.first()?;
-    (sites::site_of(&feed.url) == Some(Site::Nyaa)).then(|| (feed, sites::host_of(&feed.url)))
+    (sites::site_of(&feed.url) == Some(Site::Nyaa)).then(|| (feed, traffic::host_of(&feed.url)))
 }
 
 /// A show whose own search would check whether its first feed's host takes several names at
