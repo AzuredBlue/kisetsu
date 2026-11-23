@@ -39,7 +39,8 @@ const PASS_BUDGET: f64 = 30.0;
 const PASS_RESUME: f64 = 30.0;
 /// Shows asked about in one batched schedule query.
 const UPCOMING_CHUNK: usize = 40;
-/// Pages of air times one request asks for, each under its own alias: AniList answers them all at once.
+/// Pages of air times one request asks for, each under its own alias. AniList counts every alias
+/// against its rate limit, so a request asks only for pages known to be wanted.
 const PAGES_PER_REQUEST: usize = 8;
 /// The longest part of an error body that goes into a message, in characters.
 const ERROR_BODY_CHARS: usize = 200;
@@ -487,10 +488,10 @@ impl AniListClient {
 
     /// Every page of air times each filter selects, several pages in each request.
     ///
-    /// A request asks for up to [`PAGES_PER_REQUEST`] pages under aliases, shared among the filters
-    /// whose pages are still coming: a filter alone gets them all, so one request usually brings
-    /// everything. The result holds each filter's nodes, `None` for a filter AniList answered with
-    /// an error. A deferral carries the filters finished so far.
+    /// A request asks for the next page of up to [`PAGES_PER_REQUEST`] filters, each under its own
+    /// alias; a filter's next page is asked for only once AniList says it has one. The result holds
+    /// each filter's nodes, `None` for a filter AniList answered with an error. A deferral carries
+    /// the filters finished so far.
     fn schedule_pages(
         &self,
         filters: &[String],
@@ -519,16 +520,11 @@ impl AniListClient {
                     finished: finished(&nodes, &remaining),
                 });
             }
-            let share = (PAGES_PER_REQUEST / remaining.len()).max(1);
-            let mut asked: Vec<(usize, usize)> = Vec::new();
-            for &key in &remaining {
-                if asked.len() >= PAGES_PER_REQUEST {
-                    break;
-                }
-                let first = next_page[key];
-                let end = (first + share).min(MAX_SCHEDULE_PAGES + 1);
-                asked.extend((first..end).map(|page| (key, page)));
-            }
+            let asked: Vec<(usize, usize)> = remaining
+                .iter()
+                .take(PAGES_PER_REQUEST)
+                .map(|&key| (key, next_page[key]))
+                .collect();
             let pages: Vec<(String, usize)> = asked
                 .iter()
                 .map(|&(key, page)| (filters[key].clone(), page))
