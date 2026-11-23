@@ -293,7 +293,8 @@ impl AniListClient {
     /// Any other HTTP error is the request's own fault and is not retried.
     ///
     /// With `allow_partial` an answer that carries both `data` and `errors` returns the usable
-    /// part, so one bad alias cannot discard the whole batch.
+    /// part, so one bad alias cannot discard the whole batch. `cost` is how much of the rate limit
+    /// the query uses: AniList counts every page asked for under an alias.
     fn post_query(
         &self,
         query: &str,
@@ -301,13 +302,14 @@ impl AniListClient {
         max_retries: u32,
         allow_partial: bool,
         kind: Query,
+        cost: usize,
     ) -> Result<Payload, AniListError> {
         let body = json!({"query": query, "variables": variables}).to_string();
         let mut backoff = RETRY_BACKOFF_START;
         let mut problem = String::from("AniList did not answer.");
         for attempt in 0..max_retries {
             let wait = locked(&self.governor)
-                .acquire(self.clock.now())
+                .acquire(self.clock.now(), cost)
                 .map_err(AniListError::Deferred)?;
             if wait > 0.0 {
                 self.clock.sleep(wait);
@@ -447,6 +449,7 @@ impl AniListClient {
             max_retries,
             false,
             Query::UserList,
+            1,
         )?;
         let collection = match payload.data.get("MediaListCollection") {
             None | Some(Value::Null) => Collection::default(),
@@ -536,6 +539,7 @@ impl AniListClient {
                 DEFAULT_RETRIES,
                 true,
                 kind,
+                pages.len(),
             ) {
                 Ok(payload) => payload,
                 Err(AniListError::Deferred(deferral)) => {

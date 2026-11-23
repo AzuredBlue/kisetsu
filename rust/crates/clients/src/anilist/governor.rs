@@ -91,12 +91,12 @@ impl RateGovernor {
     }
 
     /// Takes this request's turn and returns how long to wait for it, or says why it may not go out:
-    /// AniList is blocked, or the wait would be too long.
+    /// AniList is blocked, or the wait would be too long. A request uses `cost` of the budget.
     ///
     /// Requests go out a short gap apart until the minute's budget is spent; then the next waits
-    /// until the oldest of them is a minute old. No minute ever holds more than the budget, yet a
+    /// until enough of them are a minute old. No minute ever holds more than the budget, yet a
     /// burst (a first sync) is not spread out.
-    pub fn acquire(&mut self, now: f64) -> Result<f64, Deferral> {
+    pub fn acquire(&mut self, now: f64, cost: usize) -> Result<f64, Deferral> {
         if now < self.blocked_until {
             let wait = self.blocked_until - now;
             return Err(match self.blocked_by {
@@ -117,9 +117,12 @@ impl RateGovernor {
         }
         let mut slot = now.max(self.next_slot);
         let budget = self.budget();
-        if self.sent.len() >= budget {
-            if let Some(&oldest_in_window) = self.sent.get(self.sent.len() - budget) {
-                slot = slot.max(oldest_in_window + 60.0);
+        // A request larger than the whole budget still goes out, once the minute is empty.
+        let cost = cost.clamp(1, budget);
+        let over = (self.sent.len() + cost).saturating_sub(budget);
+        if over > 0 {
+            if let Some(&freed_at) = self.sent.get(over - 1) {
+                slot = slot.max(freed_at + 60.0);
             }
         }
         let wait = slot - now;
@@ -130,15 +133,23 @@ impl RateGovernor {
                 wait,
             ));
         }
-        self.sent.push_back(slot);
+        self.sent.extend(std::iter::repeat_n(slot, cost));
         self.next_slot = slot + MIN_REQUEST_GAP;
         Ok(wait)
     }
 
-    /// Takes the limit AniList reports, and stops asking once it says none is left.
+    /// Takes the limit AniList reports, counts as used what AniList says is used (other programs
+    /// on the same address count too), and stops asking once it says none is left.
     pub fn note_response(&mut self, now: f64, headers: &RateHeaders) {
         if let Some(limit) = headers.limit.filter(|&limit| limit > 0.0) {
             self.limit = limit as u32;
+        }
+        if let Some(remaining) = headers.remaining.filter(|&remaining| remaining >= 0.0) {
+            let used = (f64::from(self.limit) - remaining).max(0.0) as usize;
+            while self.sent.len() < used {
+                let at = self.sent.partition_point(|&sent| sent <= now);
+                self.sent.insert(at, now);
+            }
         }
         if headers.remaining.is_some_and(|remaining| remaining <= 0.0) {
             self.block(now, BLOCK_FALLBACK, Cause::RateLimit);
@@ -167,5 +178,34 @@ impl RateGovernor {
         let wait = (BREAKER_START * 2f64.powi(exponent)).min(BREAKER_MAX);
         self.block(now, wait, Cause::Failures);
         wait
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_request_of_several_pages_uses_that_much_of_the_minute() {
+        let mut governor = RateGovernor::default();
+        assert_eq!(governor.acquire(0.0, 20), Ok(0.0));
+        // 25 a minute: five more fit, a sixth waits for the minute to pass.
+        assert!(governor.acquire(1.0, 5).is_ok());
+        assert!(governor.acquire(2.0, 1).is_err());
+        assert!(governor.acquire(61.0, 8).is_ok());
+    }
+
+    #[test]
+    fn what_anilist_reports_as_used_counts_against_the_minute() {
+        let mut governor = RateGovernor::default();
+        assert!(governor.acquire(0.0, 1).is_ok());
+        let headers = RateHeaders {
+            limit: Some(30.0),
+            remaining: Some(8.0),
+            ..RateHeaders::default()
+        };
+        governor.note_response(0.5, &headers);
+        assert!(governor.acquire(1.0, 3).is_ok());
+        assert!(governor.acquire(2.0, 3).is_err());
     }
 }
