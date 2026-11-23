@@ -587,7 +587,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "clap",
  "ctrlc",
@@ -606,7 +606,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-clients"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "image",
  "jiff",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-db"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "jiff",
  "kisetsu-domain",
@@ -639,7 +639,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-domain"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fancy-regex",
  "jiff",
@@ -649,7 +649,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-engine"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "fs4",
  "jiff",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-services"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "jiff",
  "kisetsu-clients",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "kisetsu-web"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "gethostname",
  "jiff",
