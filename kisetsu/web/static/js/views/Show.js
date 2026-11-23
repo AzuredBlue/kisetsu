@@ -50,6 +50,7 @@ function Header({ page, now }) {
         ${subtitle ? html`<p class="muted truncate" style="margin-top:.25rem">${subtitle}</p>` : null}
       </div>
       <div class="row">
+        <button type="button" class="btn sm show-delete" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }} title="Delete show"><${Icon} name="trash" small />Delete</button>
         ${page.status !== 'completed' ? html`<button type="button" class="btn sm" onClick=${() => togglePause(page)} title=${page.paused ? 'Resume downloads for this show' : 'Pause downloads for this show'}><${Icon} name=${page.paused ? 'play' : 'pause'} small />${page.paused ? 'Resume' : 'Pause'}</button>` : null}
       </div>
     </div>
@@ -249,7 +250,6 @@ export function Show({ route }) {
               </div>
             </div>`}
         </div>
-        <button type="button" class="btn sm plain show-delete" onClick=${async () => { if (await deleteShow(data)) go(leaveTarget()); }}>Delete show</button>
       </aside>
       <${SaveBar} open=${dirty} saving=${saving} onDiscard=${form.reset} onSave=${() => save()} />
     </div>

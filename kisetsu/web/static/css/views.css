@@ -150,7 +150,7 @@
 }
 @media (min-width: 1024px) { .show-poster { width: 13.5rem; margin-top: -10rem; } }
 /* Deleting is rare and final, so it sits under the show's settings, away from Pause. */
-.show-delete.btn { align-self: flex-end; margin-top: .25rem; padding-block: .25rem; color: rgb(var(--bad)); &:hover:not(:disabled) { background: var(--danger); color: rgb(var(--bad-fg)); } }
+.show-delete.btn { color: rgb(var(--bad)); &:hover:not(:disabled) { background: var(--danger); color: rgb(var(--bad-fg)); } }
 .show-head { flex: 1; min-width: 0; padding-bottom: .25rem; }
 .show-head-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: .75rem 1rem; }
 .show-head .grow { flex: 1 1 16rem; min-width: 0; }
