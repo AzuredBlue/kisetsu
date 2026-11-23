@@ -99,14 +99,6 @@ impl Response {
             .find(|(key, _)| key.eq_ignore_ascii_case(name))
             .map(|(_, value)| value.as_str())
     }
-
-    /// The body of a response that holds its bytes.
-    pub fn bytes(&self) -> &[u8] {
-        match &self.body {
-            Body::Bytes(bytes) => bytes,
-            _ => &[],
-        }
-    }
 }
 
 /// How long an event stream waits for a message before it writes a comment, so a proxy does not

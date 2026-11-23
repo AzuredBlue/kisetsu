@@ -33,10 +33,6 @@ impl Assets {
         Self { dir }
     }
 
-    pub fn exists(&self) -> bool {
-        self.dir.is_dir()
-    }
-
     /// The first ten hex digits of the SHA-1 of the file, or `0` when it cannot be read.
     fn digest(&self, relative: &str) -> String {
         self.locate(relative)

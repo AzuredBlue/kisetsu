@@ -1,7 +1,7 @@
 //! Serving the app over HTTP.
 
 use std::io::{self, Write};
-use std::net::{SocketAddr, TcpListener};
+use std::net::TcpListener;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
@@ -71,11 +71,6 @@ impl Server {
             stopping,
             workers,
         })
-    }
-
-    /// Where the server listens, when it listens on an address.
-    pub fn address(&self) -> Option<SocketAddr> {
-        self.listener.server_addr().to_ip()
     }
 
     /// Stops taking requests and waits for the ones being answered. Open streams end when the
