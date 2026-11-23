@@ -190,13 +190,22 @@ fn offset_of(ctx: &Context<'_>, show: &Show, feed: &Feed) -> Result<Option<Episo
     )?)
 }
 
-/// How to tell the show's releases from other titles on this feed.
-pub fn matcher_for(ctx: &Context<'_>, show: &Show, state: &ShowState, feed: &Feed) -> Matcher {
-    let base = build_matcher(
+/// How to tell the show's releases from other titles, on any feed it is not locked to.
+pub fn show_matcher(ctx: &Context<'_>, show: &Show) -> Matcher {
+    build_matcher(
         &show.effective_aliases(),
         show.learned_name.as_deref(),
         ctx.settings.min_resolution,
-    );
+    )
+}
+
+/// How to tell the show's releases from other titles on this feed.
+pub fn matcher_for(ctx: &Context<'_>, show: &Show, state: &ShowState, feed: &Feed) -> Matcher {
+    narrowed_for(show_matcher(ctx, show), show, state, feed)
+}
+
+/// `base`, the show's matcher, narrowed to the feed when the show is locked to it.
+fn narrowed_for(base: Matcher, show: &Show, state: &ShowState, feed: &Feed) -> Matcher {
     if show.feed_state != FeedState::Locked || show.feed_id != feed.id {
         return base;
     }
@@ -252,6 +261,8 @@ pub struct ResolveOptions<'a> {
     /// Collects the items numbered by their air date alone, the only ones a feed's numbering is
     /// learned from.
     pub dated: Option<&'a mut Vec<FeedItem>>,
+    /// The show's matcher (`show_matcher`), when the caller reads several feeds with it.
+    pub matcher: Option<&'a Matcher>,
 }
 
 /// Which episode each stored item of a feed is for, and the newest usable version of each.
@@ -265,7 +276,11 @@ pub fn resolve(
     feed: &Feed,
     mut options: ResolveOptions<'_>,
 ) -> Result<(Vec<Resolved>, BTreeMap<i64, i64>)> {
-    let matcher = matcher_for(ctx, show, state, feed);
+    let base = match options.matcher {
+        Some(matcher) => matcher.clone(),
+        None => show_matcher(ctx, show),
+    };
+    let matcher = narrowed_for(base, show, state, feed);
     let items = items_of(ctx, show, feed)?;
     let parsed: Vec<ParsedRelease> = items
         .iter()
@@ -423,21 +438,18 @@ pub fn why_not_matched(ctx: &Context<'_>, matcher: &Matcher, title: &str) -> Str
 }
 
 /// The feed's recent items that carry the show's name but were never matched to it: batches and
-/// lower resolutions.
+/// lower resolutions. `matcher` is the show's (`show_matcher`).
 pub fn unmatched_releases(
     ctx: &Context<'_>,
-    show: &Show,
+    matcher: &Matcher,
     feed: &Feed,
     seen: &HashSet<i64>,
     limit: usize,
 ) -> Result<Vec<(FeedItem, String)>> {
-    let aliases = show.effective_aliases();
-    let relaxed = build_matcher(&aliases, show.learned_name.as_deref(), 0);
-    let strict = build_matcher(
-        &aliases,
-        show.learned_name.as_deref(),
-        ctx.settings.min_resolution,
-    );
+    let relaxed = Matcher {
+        min_resolution: 0,
+        ..matcher.clone()
+    };
     let rows = FeedItem::select(
         ctx.conn,
         "WHERE feed_id = ? ORDER BY published_at DESC, id DESC LIMIT ?",
@@ -454,7 +466,7 @@ pub fn unmatched_releases(
             item.title.clone()
         };
         if broad_match(&relaxed, &parse_release_title(&name)) {
-            let why = why_not_matched(ctx, &strict, &item.title);
+            let why = why_not_matched(ctx, matcher, &item.title);
             found.push((item, why));
         }
     }
@@ -755,6 +767,7 @@ fn grab_show(
     // Choosing a feed reads every candidate without learning from it; only the feed taken is
     // read again with learning, and only when it has something to learn from.
     let mut resolved_by_feed: Vec<FeedRead> = Vec::new();
+    let matcher = show_matcher(ctx, show);
     for feed in &candidates {
         let mut dated = Vec::new();
         let (resolved, best) = resolve(
@@ -764,6 +777,7 @@ fn grab_show(
             feed,
             ResolveOptions {
                 dated: Some(&mut dated),
+                matcher: Some(&matcher),
                 ..ResolveOptions::default()
             },
         )?;

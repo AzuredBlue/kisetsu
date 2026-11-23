@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use sha1_smol::Sha1;
 
@@ -21,17 +22,17 @@ use crate::rx::{Case, Regex};
 
 /// A name pattern kept with the text it was compiled from.
 ///
-/// Text that does not compile matches nothing.
-#[derive(Debug)]
+/// Text that does not compile matches nothing. Clones share the compiled pattern.
+#[derive(Clone, Debug)]
 pub struct Pattern {
     text: String,
-    regex: Option<Regex>,
+    regex: Option<Arc<Regex>>,
 }
 
 impl Pattern {
     pub fn new(text: impl Into<String>) -> Self {
         let text = text.into();
-        let regex = Regex::new(&text, Case::Insensitive).ok();
+        let regex = Regex::new(&text, Case::Insensitive).ok().map(Arc::new);
         Self { text, regex }
     }
 
@@ -40,7 +41,7 @@ impl Pattern {
     }
 
     fn regex(&self) -> Option<&Regex> {
-        self.regex.as_ref()
+        self.regex.as_deref()
     }
 
     fn is_match(&self, title: &str) -> bool {
@@ -49,8 +50,8 @@ impl Pattern {
 }
 
 /// How to tell a show's releases from other titles. It owns its compiled patterns, so it is
-/// built once for a show and used for every title.
-#[derive(Debug)]
+/// built once for a show and used for every title; clones share them.
+#[derive(Clone, Debug)]
 pub struct Matcher {
     pub aliases: Vec<String>,
     pub prepared: Vec<(String, String)>,

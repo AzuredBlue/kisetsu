@@ -4,6 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use kisetsu_db::schema::{Download, DownloadState, Episode, Feed, FeedItem, FeedState, Show};
 use kisetsu_domain::enums::EpisodeStatus;
+use kisetsu_domain::matcher::Matcher;
 use kisetsu_domain::parsing::{resolution_rank, same_release};
 use kisetsu_domain::schedule::RELEASE_HOLDING;
 
@@ -252,6 +253,18 @@ pub fn candidates(
     ctx: &mut Context<'_>,
     show: &Show,
     feed_list: Option<&[Feed]>,
+    rejected: Option<&mut Rejections>,
+) -> Result<Vec<Candidate>> {
+    let matcher = grab::show_matcher(ctx, show);
+    candidates_with(ctx, show, &matcher, feed_list, rejected)
+}
+
+/// `candidates`, read with the show's matcher (`grab::show_matcher`).
+fn candidates_with(
+    ctx: &mut Context<'_>,
+    show: &Show,
+    matcher: &Matcher,
+    feed_list: Option<&[Feed]>,
     mut rejected: Option<&mut Rejections>,
 ) -> Result<Vec<Candidate>> {
     let own;
@@ -280,6 +293,7 @@ pub fn candidates(
                 learn: false,
                 rejected: Some(&mut turned_down),
                 dated: None,
+                matcher: Some(matcher),
             },
         )?;
         if let Some(rejected) = rejected.as_deref_mut() {
@@ -387,8 +401,9 @@ pub fn feed_matches(ctx: &mut Context<'_>, show: &Show, limit: usize) -> Result<
     let own_ids: HashSet<i64> = own.iter().map(|feed| id_of(feed.id)).collect();
     let mut groups: Vec<FeedGroup> = Vec::new();
 
+    let matcher = grab::show_matcher(ctx, show);
     let mut rejected = Rejections::new();
-    let own_found = candidates(ctx, show, None, Some(&mut rejected))?;
+    let own_found = candidates_with(ctx, show, &matcher, Some(&own), Some(&mut rejected))?;
     for candidate in &own_found {
         let group = group_for(
             &mut groups,
@@ -413,7 +428,7 @@ pub fn feed_matches(ctx: &mut Context<'_>, show: &Show, limit: usize) -> Result<
         let mut notes = turned_down;
         notes.extend(grab::unmatched_releases(
             ctx,
-            show,
+            &matcher,
             feed,
             &seen,
             UNMATCHED_LIMIT,
@@ -438,15 +453,14 @@ pub fn feed_matches(ctx: &mut Context<'_>, show: &Show, limit: usize) -> Result<
                 .collect(),
         );
     }
-    for feed in &all_feeds {
-        if own_ids.contains(&id_of(feed.id)) {
-            continue;
-        }
-        for candidate in candidates(ctx, show, Some(std::slice::from_ref(feed)), None)? {
-            let group = group_for(&mut groups, feed, Role::Other, false);
-            if group.matches.len() < limit {
-                group.matches.push(describe(ctx, &candidate, false)?);
-            }
+    let others: Vec<Feed> = all_feeds
+        .into_iter()
+        .filter(|feed| !own_ids.contains(&id_of(feed.id)))
+        .collect();
+    for candidate in candidates_with(ctx, show, &matcher, Some(&others), None)? {
+        let group = group_for(&mut groups, &candidate.feed, Role::Other, false);
+        if group.matches.len() < limit {
+            group.matches.push(describe(ctx, &candidate, false)?);
         }
     }
     // A feed that could not be read has nothing stored, so it would simply be missing here.
