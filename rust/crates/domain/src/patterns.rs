@@ -116,6 +116,12 @@ fn is_letter(c: char) -> bool {
     c.is_alphabetic() && !c.is_numeric()
 }
 
+/// Whether every letter of the name is an English one. Digits and symbols ("２", "–", "＆", "Ⅱ")
+/// are not letters, so an English name written with them still is one.
+pub fn in_english_letters(name: &str) -> bool {
+    name.chars().all(|c| c.is_ascii() || !is_letter(c))
+}
+
 fn short_end_guard(alias: &str) -> &'static str {
     let stripped = alias.trim();
     let letters_and_digits = stripped.chars().filter(char::is_ascii_alphanumeric).count();
@@ -388,6 +394,18 @@ fn join(base: &str, name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn english_letters_allow_digits_and_symbols_of_any_width() {
+        assert!(in_english_letters(
+            "JoJo's Bizarre Adventure: Part 7–Steel Ball Run"
+        ));
+        assert!(in_english_letters("Ao no Hako Season２"));
+        assert!(in_english_letters("Ranma ½ Ⅱ ＆ more"));
+        assert!(!in_english_letters("アオのハコ Season２"));
+        assert!(!in_english_letters("Монолог фармацевта 3"));
+        assert!(!in_english_letters("Die Tagebücher der Apothekerin"));
+    }
 
     #[test]
     fn every_regex_written_in_the_code_compiles() {

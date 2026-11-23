@@ -21,7 +21,7 @@ use kisetsu_domain::parsing::{
     batch_range, is_batch, is_single_file, names_something_else, parse_release_title,
     release_season, resolution_rank, strip_batch,
 };
-use kisetsu_domain::patterns::sanitize_folder_name;
+use kisetsu_domain::patterns::{in_english_letters, sanitize_folder_name};
 use tracing::{debug, info};
 
 use crate::context::Context;
@@ -252,11 +252,14 @@ fn titles(entry: &ListEntry) -> Vec<&str> {
         .collect()
 }
 
-/// The matcher for the names of a list entry.
+/// The matcher for the names of a list entry: its titles and its other names written in English
+/// letters, as a followed show is matched.
 pub fn matcher_for(entry: &ListEntry, min_resolution: i64) -> Matcher {
     let mut seen = HashSet::new();
+    let own = [entry.title_romaji.as_str(), entry.title_english.as_str()];
     let names: Vec<String> = titles(entry)
         .into_iter()
+        .filter(|name| own.contains(name) || in_english_letters(name))
         .filter(|title| seen.insert(*title))
         .map(str::to_owned)
         .collect();

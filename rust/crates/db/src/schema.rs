@@ -2,6 +2,7 @@
 
 use jiff::Timestamp;
 use kisetsu_domain::enums::EpisodeStatus;
+use kisetsu_domain::patterns::in_english_letters;
 
 use crate::storage::{decode_list, encode_list, stored_enum, table};
 
@@ -268,9 +269,19 @@ impl Show {
         self.custom_aliases_json = encode_list(aliases);
     }
 
-    /// Everything a release may be matched against.
+    /// Everything a release may be matched against: the romaji and English titles, the other
+    /// AniList names written in English letters, and the user's own aliases. Releases are named
+    /// in English, and every name adds to the patterns built from them.
     pub fn effective_aliases(&self) -> Vec<String> {
-        let mut all = self.aliases();
+        let titles = [self.title_romaji.as_deref(), self.title_english.as_deref()];
+        let mut all: Vec<String> = self
+            .aliases()
+            .into_iter()
+            .filter(|alias| {
+                in_english_letters(alias)
+                    || titles.iter().flatten().any(|title| title.trim() == alias)
+            })
+            .collect();
         all.extend(self.custom_aliases());
         let mut seen = std::collections::HashSet::new();
         all.retain(|alias| seen.insert(alias.clone()));
