@@ -193,13 +193,12 @@ export function Settings() {
           </div>
         </section>
         ${updateState ? html`<section class="sec-version">
-          <h3 class="section-title section-gap">Kisetsu</h3>
-          <div class="card card-divided form-grid">
-            <${SetRow} name="Version"><span class="tabular">${updateState.version}</span><//>
-            ${updateState.latest ? html`<${SetRow} name=${`Version ${updateState.latest} is available`} hint=${updateState.blocked || html`<a href=${updateState.page} target="_blank" rel="noopener noreferrer">What's new</a>`}>
+          <h3 class="section-title section-gap">Kisetsu <span class="version-tag muted tabular">v${updateState.version}</span></h3>
+          ${updateState.latest ? html`<div class="card card-divided form-grid">
+            <${SetRow} name=${`Version ${updateState.latest} is available`} hint=${updateState.blocked || html`<a href=${updateState.page} target="_blank" rel="noopener noreferrer">What's new</a>`}>
               ${updateState.blocked ? html`<a class="btn sm" href=${updateState.page} target="_blank" rel="noopener noreferrer">Download</a>` : html`<button type="button" class="btn sm primary" onClick=${runUpdate} disabled=${updating}>${updating ? 'Updating…' : 'Update'}</button>`}
-            <//>` : null}
-          </div>
+            <//>
+          </div>` : null}
         </section>` : null}
       </div>
       <div class="settings-col">

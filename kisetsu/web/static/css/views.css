@@ -405,6 +405,7 @@ section + section { margin-top: .5rem; }
 /* ---- Settings ------------------------------------------------------------------------------- */
 
 .section-gap { margin-bottom: .5rem; }
+.version-tag { margin-left: .375rem; font-size: var(--fs-sm); font-weight: 400; }
 .test-ok { color: rgb(var(--ok)); font-size: var(--fs-xs); font-weight: 600; }
 .test-bad { color: rgb(var(--bad)); font-size: var(--fs-xs); }
 .test-wait { color: rgb(var(--text-3)); font-size: var(--fs-xs); }
