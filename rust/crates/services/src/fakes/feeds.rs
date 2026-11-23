@@ -62,10 +62,6 @@ impl FakeFeeds {
         );
     }
 
-    pub fn heal(&mut self, url: &str) {
-        self.errors.remove(url);
-    }
-
     /// The addresses fetched, in order.
     pub fn fetched(&self) -> Vec<String> {
         self.fetched.borrow().clone()

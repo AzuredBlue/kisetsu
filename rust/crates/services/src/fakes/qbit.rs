@@ -252,12 +252,6 @@ impl FakeQbit {
         });
     }
 
-    /// Puts a torrent given its address or its hash in `state`.
-    pub fn fail(&mut self, target: &str, state: &str) {
-        let hash = self.hash_of(target);
-        self.update(&hash, |torrent| state.clone_into(&mut torrent.state));
-    }
-
     /// The user deletes a torrent in qBittorrent.
     pub fn remove(&mut self, target: &str) {
         let hash = self.hash_of(target);
@@ -295,26 +289,6 @@ impl FakeQbit {
     /// Makes torrents added while `hide_added` was set visible.
     pub fn reveal(&mut self) {
         self.truth.append(&mut self.hidden);
-    }
-
-    /// Ends the checks that `hold_checks` kept running.
-    pub fn finish_checks(&mut self) {
-        let checking: Vec<String> = self
-            .truth
-            .values()
-            .filter(|torrent| torrent.checking())
-            .map(|torrent| torrent.hash.clone())
-            .collect();
-        for hash in checking {
-            self.update(&hash, |torrent| {
-                torrent.state = if torrent.finished() {
-                    "stoppedUP"
-                } else {
-                    "stoppedDL"
-                }
-                .to_owned();
-            });
-        }
     }
 }
 
