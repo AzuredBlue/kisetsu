@@ -33,6 +33,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 notify-rust = { version = "4.19.0", default-features = false, features = ["z"] }
 tauri-winrt-notification = "0.8.1"
 tiny_http = { version = "0.12.0", default-features = false }
+socket2 = "0.6.5"
 percent-encoding = "2.3.2"
 gethostname = "1.1.0"
 tray-icon = { version = "=0.26.1", default-features = false }

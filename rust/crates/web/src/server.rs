@@ -1,12 +1,13 @@
 //! Serving the app over HTTP.
 
 use std::io::{self, Write};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::{self, JoinHandle};
 
 use percent_encoding::percent_decode_str;
+use socket2::SockRef;
 use tiny_http::{Header, Method, Response as WireResponse, StatusCode};
 use tracing::{debug, warn};
 
@@ -37,10 +38,19 @@ impl Server {
     /// Starts answering requests to `app` on `host:port`.
     pub fn start(app: Arc<App>, host: &str, port: u16) -> Result<Self, ServeError> {
         let address = format!("{host}:{port}");
-        let listener = tiny_http::Server::http(&address).map_err(|error| ServeError::Listen {
+        let listen_error = |reason: String| ServeError::Listen {
             address: address.clone(),
-            reason: error.to_string(),
-        })?;
+            reason,
+        };
+        let socket =
+            TcpListener::bind(&address).map_err(|error| listen_error(error.to_string()))?;
+        // Accepted connections inherit this. Without it a response written in two parts waits for
+        // the client's delayed ACK, about 40 ms, on every request after the first on a connection.
+        SockRef::from(&socket)
+            .set_tcp_nodelay(true)
+            .map_err(|error| listen_error(error.to_string()))?;
+        let listener = tiny_http::Server::from_listener(socket, None)
+            .map_err(|error| listen_error(error.to_string()))?;
         let listener = Arc::new(listener);
         let stopping = Arc::new(AtomicBool::new(false));
         let mut workers = Vec::with_capacity(WORKERS);
