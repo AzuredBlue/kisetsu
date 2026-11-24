@@ -291,12 +291,20 @@ pub fn setup_completed(conn: &Connection) -> Result<bool> {
 }
 
 /// Set from the end of the first-run setup until the user decides whether the first downloads
-/// start; every show stays paused meanwhile.
+/// start; every show stays paused meanwhile. `1` while the setup shows the review, `later` once
+/// the user went into the app and confirms from the Shows page.
 pub const SETUP_REVIEW_KEY: &str = "setup_review";
+pub const SETUP_REVIEW_LATER: &str = "later";
 
 /// Whether the first-run setup is waiting for the user to confirm its first downloads.
 pub fn setup_reviewing(conn: &Connection) -> Result<bool> {
-    Ok(get_state(conn, SETUP_REVIEW_KEY, "")? == "1")
+    let value = get_state(conn, SETUP_REVIEW_KEY, "")?;
+    Ok(value == "1" || value == SETUP_REVIEW_LATER)
+}
+
+/// Whether the first downloads wait to be confirmed from the Shows page.
+pub fn setup_review_later(conn: &Connection) -> Result<bool> {
+    Ok(get_state(conn, SETUP_REVIEW_KEY, "")? == SETUP_REVIEW_LATER)
 }
 
 #[cfg(test)]

@@ -8,7 +8,7 @@ use jiff::Timestamp;
 use kisetsu_clients::traffic;
 use kisetsu_db::schema::EventKind;
 use kisetsu_engine::bus::{Change, RecvError, Subscription};
-use kisetsu_services::context::{Context, set_state};
+use kisetsu_services::context::{Context, set_state, setup_review_later};
 use kisetsu_services::{Error, Result};
 use serde_json::{Value, json};
 
@@ -22,7 +22,7 @@ use crate::views::{self, ATTENTION_DISMISSED_KEY, HISTORY_KINDS, iso};
 /// The most history a page may ask for.
 const HISTORY_LIMIT_MAX: i64 = 500;
 
-/// The counts, and the feeds' last read.
+/// The counts, the feeds' last read, and whether the first downloads wait to be confirmed.
 fn totals(ctx: &mut Context<'_>) -> Result<Value> {
     let Value::Object(mut body) = views::counts(ctx)? else {
         return Ok(Value::Null);
@@ -33,6 +33,11 @@ fn totals(ctx: &mut Context<'_>) -> Result<Value> {
         .query_row([], |row| row.get(0))?;
     let last_read = last_read.and_then(|text| kisetsu_db::storage::parse_timestamp(&text));
     body.insert("last_feed_read_at".to_owned(), iso(last_read));
+    // The first downloads wait for the Shows page to confirm them.
+    body.insert(
+        "review_pending".to_owned(),
+        json!(setup_review_later(ctx.conn)?),
+    );
     Ok(Value::Object(body))
 }
 

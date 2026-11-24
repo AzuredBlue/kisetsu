@@ -7,7 +7,8 @@ use kisetsu_db::schema::{DismissedShow, Show};
 use kisetsu_engine::jobs::LIST_REUSE_SECONDS;
 use kisetsu_services::backfill::grabbable;
 use kisetsu_services::context::{
-    SETUP_KEY, SETUP_REVIEW_KEY, set_state, setup_completed, setup_reviewing,
+    SETUP_KEY, SETUP_REVIEW_KEY, SETUP_REVIEW_LATER, get_state, set_state, setup_completed,
+    setup_reviewing,
 };
 use kisetsu_services::{ingest, shows};
 use serde_json::{Value, json};
@@ -49,10 +50,13 @@ fn finished() -> ApiResult {
 }
 
 pub(super) fn status(call: &mut Call<'_, '_>) -> ApiResult {
-    let (done, reviewing) = call
-        .runtime()
-        .engine
-        .read(|ctx| Ok((setup_completed(ctx.conn)?, setup_reviewing(ctx.conn)?)))?;
+    // Once the user went into the app the Shows page asks instead.
+    let (done, reviewing) = call.runtime().engine.read(|ctx| {
+        Ok((
+            setup_completed(ctx.conn)?,
+            get_state(ctx.conn, SETUP_REVIEW_KEY, "")? == "1",
+        ))
+    })?;
     ok(&json!({
         "setup_completed": done,
         "reviewing": reviewing,
@@ -186,6 +190,23 @@ pub(super) fn review(call: &mut Call<'_, '_>) -> ApiResult {
         })
         .collect();
     ok(&json!({"shows": shows}))
+}
+
+/// Leaves the setup while the search goes on; the Shows page asks for the confirm once it ends.
+pub(super) fn later(call: &mut Call<'_, '_>) -> ApiResult {
+    let moved = call.runtime().engine.call(|ctx| {
+        if get_state(ctx.conn, SETUP_REVIEW_KEY, "")? != "1" {
+            return Ok(false);
+        }
+        set_state(ctx.conn, SETUP_REVIEW_KEY, SETUP_REVIEW_LATER)?;
+        ctx.emit(&["settings", "status"]);
+        Ok(true)
+    })?;
+    if moved {
+        success()
+    } else {
+        Ok(Response::json(409, &json!({"detail": DECIDED})))
+    }
 }
 
 /// Starts the first downloads (`download`), or leaves every show paused for now.

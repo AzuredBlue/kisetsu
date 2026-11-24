@@ -500,6 +500,11 @@ section + section { margin-top: .5rem; }
 .setup-show-title { flex: 1; min-width: 0; font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .setup-show-eps { flex: none; font-size: var(--fs-xs); color: rgb(var(--text-3)); }
 .setup-idle { & > summary { font-size: var(--fs-sm); color: rgb(var(--text-3)); margin-bottom: .375rem; } & .setup-shows { max-height: 12rem; } }
+/* Shows page: the first downloads, when the user went on while the search ran. */
+.first-downloads { display: flex; flex-direction: column; gap: .75rem; max-width: 40rem; padding: 1rem; margin-bottom: 1.5rem;
+  & .adv > summary { font-size: var(--fs-sm); color: rgb(var(--text-3)); }
+}
+.first-downloads-foot { justify-content: flex-end; flex-wrap: wrap; & .field-hint { flex: 1; min-width: 12rem; } }
 
 .show-section { gap: 1rem; }
 /* Shows page: episodes of any show that need a look, each with its action. */
