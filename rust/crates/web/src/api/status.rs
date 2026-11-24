@@ -8,8 +8,7 @@ use jiff::Timestamp;
 use kisetsu_clients::traffic;
 use kisetsu_db::schema::EventKind;
 use kisetsu_engine::bus::{Change, RecvError, Subscription};
-use kisetsu_services::context::{Context, get_state, set_state};
-use kisetsu_services::cycle::LAST_SYNC_KEY;
+use kisetsu_services::context::{Context, set_state};
 use kisetsu_services::{Error, Result};
 use serde_json::{Value, json};
 
@@ -23,8 +22,7 @@ use crate::views::{self, ATTENTION_DISMISSED_KEY, HISTORY_KINDS, iso};
 /// The most history a page may ask for.
 const HISTORY_LIMIT_MAX: i64 = 500;
 
-/// The feeds' last read, and the first-run checklist: whether AniList was ever read and whether
-/// anything was ever downloaded.
+/// The counts, and the feeds' last read.
 fn totals(ctx: &mut Context<'_>) -> Result<Value> {
     let Value::Object(mut body) = views::counts(ctx)? else {
         return Ok(Value::Null);
@@ -34,21 +32,7 @@ fn totals(ctx: &mut Context<'_>) -> Result<Value> {
         .prepare_cached("SELECT MAX(last_fetch_at) FROM feeds")?
         .query_row([], |row| row.get(0))?;
     let last_read = last_read.and_then(|text| kisetsu_db::storage::parse_timestamp(&text));
-    let synced = get_state(ctx.conn, LAST_SYNC_KEY, "")?;
-    let any_download = ctx
-        .conn
-        .prepare_cached("SELECT 1 FROM downloads LIMIT 1")?
-        .exists([])?;
     body.insert("last_feed_read_at".to_owned(), iso(last_read));
-    body.insert(
-        "anilist_synced_at".to_owned(),
-        if synced.is_empty() {
-            Value::Null
-        } else {
-            json!(synced)
-        },
-    );
-    body.insert("any_download".to_owned(), json!(any_download));
     Ok(Value::Object(body))
 }
 

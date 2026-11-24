@@ -1,53 +1,13 @@
-// The top of the Shows page: what a new user still has to set up, and the episodes that need a look across every show.
+// The top of the Shows page: the episodes that need a look across every show.
 import { html, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
 import { go } from '../router.js';
-import { attention as attentionData, status as statusData } from '../data.js';
-import { episodeLabel, localTime, relativeTime } from '../format.js';
+import { attention as attentionData } from '../data.js';
+import { episodeLabel, localTime } from '../format.js';
 import { Icon, Spinner } from './Icon.js';
 import { Poster } from './ShowSummary.js';
 import { toast } from './Toast.js';
-
-// Until the first download has happened: each thing Kisetsu needs, done or not, with where to fix it.
-export function Checklist() {
-  const { data: info } = useResource(statusData);
-  const [syncing, setSyncing] = useState(false);
-  if (!info || info.any_download) return null;
-  const sync = async () => {
-    setSyncing(true);
-    try { await apiFetch('/api/refresh', { method: 'POST' }); toast('Reading your AniList list and the feeds.', 'success'); } catch (err) { /* shown by apiFetch */ }
-    setSyncing(false);
-  };
-  const steps = [
-    {
-      // Connected only once startup has read qBittorrent; until then no error does not mean it answered.
-      done: info.ready && !info.qbit_error, title: 'qBittorrent connected',
-      todo: info.qbit_error
-        ? html`Kisetsu can't reach qBittorrent. <a class="link" href="#settings">Check the connection in Settings</a>.`
-        : html`Connecting to qBittorrent…`,
-    },
-    {
-      done: info.feeds > 0, title: `${info.feeds} RSS feed${info.feeds === 1 ? '' : 's'}`,
-      todo: html`No RSS feeds yet, so nothing can be found. <a class="link" href="#feeds">Add a feed</a>.`,
-    },
-    {
-      done: !!info.anilist_synced_at, title: info.anilist_synced_at ? `AniList read ${relativeTime(info.anilist_synced_at, Date.now())}` : '',
-      todo: html`Your AniList list hasn't been read yet. <button type="button" class="link" onClick=${sync} disabled=${syncing}>${syncing ? 'Syncing…' : 'Sync now'}</button>`,
-    },
-    {
-      done: false, title: '',
-      todo: html`Waiting for the first release. Each show is looked for in the feeds as its episodes air.`,
-    },
-  ];
-  return html`<section class="card checklist" aria-label="Getting started">
-    <h2 class="section-title">Getting started</h2>
-    <ul>${steps.map((step, i) => html`<li key=${i} class=${step.done ? 'ok' : 'todo'}>
-      <${Icon} name=${step.done ? 'check' : 'info'} small />
-      <span>${step.done ? step.title : step.todo}</span>
-    </li>`)}</ul>
-  </section>`;
-}
 
 const KIND_LABELS = { stalled: 'Stalled', failed: 'Failed', retrying: 'Retrying', missed: 'Missed', unfound: 'No feed' };
 const KIND_TONES = { stalled: 'warn', failed: 'bad', retrying: 'warn', missed: 'warn', unfound: 'warn' };

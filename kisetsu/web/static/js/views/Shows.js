@@ -6,7 +6,7 @@ import { Seg } from '../components/Controls.js';
 import { Icon, Spinner } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
 import { ShowCard, ShowRow } from '../components/ShowSummary.js';
-import { Checklist, NeedsAttention } from '../components/Attention.js';
+import { NeedsAttention } from '../components/Attention.js';
 import { EmptyState } from '../components/EmptyState.js';
 
 const read = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch (err) { return fallback; } };
@@ -99,7 +99,6 @@ export function Shows() {
     <${Seg} small icons label="View" value=${view} onChange=${changeView} options=${[['grid', 'Grid view', 'grid', 'Poster grid'], ['list', 'List view', 'list', 'Compact list']]} />
   </div>`;
   return html`<div class="page full">
-    <${Checklist} />
     <${NeedsAttention} />
     <${Section} title="Releasing" tone="" count=${groups.releasing.length} list=${groups.releasing} view=${view} swap=${swap} now=${now} empty=${filtering ? html`<${EmptyState} title=${`No releasing show matches "${query.trim()}"`} />` : html`<${EmptyState} title="Nothing airing right now" hint="Shows on your AniList Watching list that air this season appear here after a sync. Use Add show for anything else." />`} tools=${tools} />
     ${groups.completed.length ? html`<${Section} title="Completed" tone="done" count=${groups.completed.length} list=${groups.completed} view=${view} swap=${swap} now=${now} />` : null}
