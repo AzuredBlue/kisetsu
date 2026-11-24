@@ -1,5 +1,6 @@
-//! The notification-area icon: open the UI, pause all downloads, quit. Windows only; other
-//! platforms run without one.
+//! The notification-area icon: open the UI, pause all downloads, quit. On Windows it is a
+//! shell icon; on Linux a StatusNotifierItem, which KDE Plasma shows natively. Other platforms
+//! run without one.
 
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -7,11 +8,64 @@ use std::sync::{Arc, Mutex, PoisonError};
 use kisetsu_engine::runner::Engine;
 use kisetsu_web::TrayControl;
 
+/// The program's icon file, which also holds the tray's images.
+#[cfg(any(test, target_os = "linux"))]
+const ICON: &[u8] = include_bytes!("../../../../kisetsu/web/static/favicon.ico");
+
 /// The address the browser should use to reach a server bound to `host`.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn browse_url(host: &str, port: u16) -> String {
     let host = if host == "0.0.0.0" { "127.0.0.1" } else { host };
     format!("http://{host}:{port}/")
+}
+
+/// Pauses every show, as the menu's "Pause all downloads" asks.
+#[cfg(any(windows, target_os = "linux"))]
+fn pause_all(engine: &Engine) {
+    use kisetsu_services::shows;
+    use tracing::{info, warn};
+
+    match engine.call(shows::pause_all) {
+        Ok(paused) => info!("Paused {paused} shows from the tray."),
+        Err(error) => warn!("Cannot pause all downloads: {error}"),
+    }
+}
+
+/// The 32-bit bitmap images in an icon file, each as its side and RGBA rows from the top. PNG
+/// images and anything malformed are left out.
+#[cfg(any(test, target_os = "linux"))]
+fn icon_images(ico: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    let u16_at = |at: usize| Some(u16::from_le_bytes(ico.get(at..at + 2)?.try_into().ok()?));
+    let u32_at = |at: usize| Some(u32::from_le_bytes(ico.get(at..at + 4)?.try_into().ok()?));
+    let image = |entry: usize| -> Option<(u32, Vec<u8>)> {
+        let size = usize::try_from(u32_at(entry + 8)?).ok()?;
+        let offset = usize::try_from(u32_at(entry + 12)?).ok()?;
+        let data = ico.get(offset..offset.checked_add(size)?)?;
+        // A bitmap image starts with its header's length, then its width and doubled height
+        // (colour rows and the mask), then at byte 14 its bits per pixel.
+        let header = usize::try_from(u32::from_le_bytes(data.get(..4)?.try_into().ok()?)).ok()?;
+        let side = u32::from_le_bytes(data.get(4..8)?.try_into().ok()?);
+        let bits = u16::from_le_bytes(data.get(14..16)?.try_into().ok()?);
+        if header < 40 || bits != 32 || side == 0 {
+            return None;
+        }
+        let row = usize::try_from(side).ok()? * 4;
+        let pixels = data.get(header..header + row * usize::try_from(side).ok()?)?;
+        // Rows run from the bottom up, each pixel blue, green, red, alpha.
+        let rgba = pixels
+            .chunks_exact(row)
+            .rev()
+            .flat_map(|line| line.chunks_exact(4))
+            .flat_map(|pixel| [pixel[2], pixel[1], pixel[0], pixel[3]])
+            .collect();
+        Some((side, rgba))
+    };
+    if (u16_at(0), u16_at(2)) != (Some(0), Some(1)) {
+        return Vec::new();
+    }
+    (0..usize::from(u16_at(4).unwrap_or(0)))
+        .filter_map(|index| image(6 + 16 * index))
+        .collect()
 }
 
 #[cfg(windows)]
@@ -22,7 +76,6 @@ mod imp {
     use std::thread::JoinHandle;
 
     use kisetsu_engine::runner::Engine;
-    use kisetsu_services::shows;
     use tracing::{info, warn};
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
@@ -153,10 +206,7 @@ mod imp {
                 if event.id == *open.id() {
                     open_in_browser(url);
                 } else if event.id == *pause.id() {
-                    match engine.call(shows::pause_all) {
-                        Ok(paused) => info!("Paused {paused} shows from the tray."),
-                        Err(error) => warn!("Cannot pause all downloads: {error}"),
-                    }
+                    super::pause_all(engine);
                 } else if event.id == *quit.id() {
                     let _ = stop.send(());
                 }
@@ -165,11 +215,146 @@ mod imp {
     }
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+mod imp {
+    use std::process::Command;
+    use std::sync::Arc;
+    use std::sync::mpsc::Sender;
+
+    use kisetsu_engine::runner::Engine;
+    use ksni::blocking::{Handle, TrayMethods};
+    use ksni::menu::StandardItem;
+    use tracing::warn;
+
+    use super::{ICON, icon_images};
+
+    fn open_in_browser(url: &str) {
+        match Command::new("xdg-open").arg(url).spawn() {
+            // xdg-open can wait for the browser it starts, so it is waited for elsewhere.
+            Ok(mut child) => {
+                std::thread::spawn(move || child.wait());
+            }
+            Err(error) => warn!("Cannot open {url} in the browser: {error}"),
+        }
+    }
+
+    /// The icon's state, which the tray service reads and the menu acts on.
+    struct Item {
+        url: String,
+        tooltip: &'static str,
+        engine: Arc<Engine>,
+        stop: Sender<()>,
+        icons: Vec<ksni::Icon>,
+    }
+
+    impl ksni::Tray for Item {
+        fn id(&self) -> String {
+            "kisetsu".to_owned()
+        }
+
+        fn title(&self) -> String {
+            self.tooltip.to_owned()
+        }
+
+        /// Every size drawn for the icon, so the panel picks the one nearest its own.
+        fn icon_pixmap(&self) -> Vec<ksni::Icon> {
+            self.icons.clone()
+        }
+
+        fn tool_tip(&self) -> ksni::ToolTip {
+            ksni::ToolTip {
+                title: self.tooltip.to_owned(),
+                ..ksni::ToolTip::default()
+            }
+        }
+
+        /// A left click opens the UI.
+        fn activate(&mut self, _x: i32, _y: i32) {
+            open_in_browser(&self.url);
+        }
+
+        fn menu(&self) -> Vec<ksni::MenuItem<Self>> {
+            vec![
+                StandardItem {
+                    label: "Open Kisetsu".to_owned(),
+                    activate: Box::new(|item: &mut Self| open_in_browser(&item.url)),
+                    ..StandardItem::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "Pause all downloads".to_owned(),
+                    activate: Box::new(|item: &mut Self| super::pause_all(&item.engine)),
+                    ..StandardItem::default()
+                }
+                .into(),
+                StandardItem {
+                    label: "Quit".to_owned(),
+                    activate: Box::new(|item: &mut Self| {
+                        let _ = item.stop.send(());
+                    }),
+                    ..StandardItem::default()
+                }
+                .into(),
+            ]
+        }
+    }
+
+    /// The icon's D-Bus service, which runs on its own thread.
+    pub struct Tray {
+        handle: Handle<Item>,
+    }
+
+    impl Tray {
+        pub fn start(
+            url: String,
+            tooltip: &'static str,
+            engine: Arc<Engine>,
+            stop: Sender<()>,
+        ) -> Option<Self> {
+            // The service wants each pixel as alpha, red, green, blue.
+            let icons = icon_images(ICON)
+                .into_iter()
+                .filter_map(|(side, mut data)| {
+                    data.chunks_exact_mut(4)
+                        .for_each(|pixel| pixel.rotate_right(1));
+                    let side = i32::try_from(side).ok()?;
+                    Some(ksni::Icon {
+                        width: side,
+                        height: side,
+                        data,
+                    })
+                })
+                .collect();
+            let item = Item {
+                url,
+                tooltip,
+                engine,
+                stop,
+                icons,
+            };
+            // A panel that is not up yet, as when the app starts with the session, is waited
+            // for instead of failing the icon.
+            match item.assume_sni_available(true).spawn() {
+                Ok(handle) => Some(Self { handle }),
+                Err(error) => {
+                    warn!("Cannot create the tray icon; running without it: {error}");
+                    None
+                }
+            }
+        }
+
+        /// Removes the icon and ends its service.
+        pub fn close(self) {
+            self.handle.shutdown().wait();
+        }
+    }
+}
+
+#[cfg(any(windows, target_os = "linux"))]
 pub use imp::Tray;
 
 /// Shows a tray icon for the app at `host`:`port`, or `None` when there is none to show.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn start(
     host: &str,
     port: u16,
@@ -191,15 +376,15 @@ pub fn start(
 }
 
 /// There is no tray on this platform.
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub struct Tray;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl Tray {
     pub fn close(self) {}
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn start(
     _host: &str,
     _port: u16,
@@ -307,10 +492,7 @@ impl TrayControl for TrayHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{Step, browse_url, step};
-
-    /// The icon `build.rs` embeds in the program.
-    const ICON: &[u8] = include_bytes!("../../../../kisetsu/web/static/favicon.ico");
+    use super::{ICON, Step, browse_url, icon_images, step};
 
     #[test]
     fn the_icon_follows_the_choice_until_the_app_is_closed() {
@@ -335,6 +517,25 @@ mod tests {
             })
             .collect();
         assert_eq!(sizes, [16, 20, 24, 32, 48, 256]);
+    }
+
+    #[test]
+    fn the_bitmaps_read_as_a_white_k_on_the_blue_tile_with_clear_corners() {
+        let images = icon_images(ICON);
+        let sides: Vec<u32> = images.iter().map(|(side, _)| *side).collect();
+        assert_eq!(sides, [16, 20, 24, 32, 48]);
+        let (_, rgba) = &images[0];
+        let pixel = |x: usize, y: usize| &rgba[(y * 16 + x) * 4..(y * 16 + x) * 4 + 4];
+        // The top row is read first, the K's stem is white and the tile is the palette's blue.
+        assert_eq!(pixel(0, 0)[3], 0);
+        assert_eq!(pixel(5, 8), [255, 255, 255, 255]);
+        assert_eq!(pixel(14, 8), [0x42, 0x53, 0xA3, 255]);
+    }
+
+    #[test]
+    fn a_damaged_icon_file_has_no_images() {
+        assert!(icon_images(&[]).is_empty());
+        assert!(icon_images(&ICON[..40]).is_empty());
     }
 
     #[test]

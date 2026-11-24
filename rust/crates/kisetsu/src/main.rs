@@ -38,7 +38,13 @@ fn main() -> ExitCode {
         .and_then(|database| logfile::path_beside(&database))
         .and_then(|path| logfile::open(&path).ok());
     let logs = Arc::new(LogRing::new());
-    let info = || tracing_subscriber::filter::LevelFilter::from_level(Level::INFO);
+    // The D-Bus library behind the Linux tray and notifications warns about its own connection
+    // closing when the app quits; only its errors are worth logging.
+    let info = || {
+        tracing_subscriber::filter::Targets::new()
+            .with_default(Level::INFO)
+            .with_target("zbus", Level::ERROR)
+    };
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
