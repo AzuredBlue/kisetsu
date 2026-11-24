@@ -144,8 +144,8 @@ impl Default for Settings {
             hunt_interval_minutes: DEFAULT_HUNT_INTERVAL_MINUTES,
             early_air_tolerance_hours: DEFAULT_EARLY_AIR_TOLERANCE_HOURS,
             title_language: "english".to_owned(),
-            accent_color: "#2dd4bf".to_owned(),
-            accent_tint: "off".to_owned(),
+            accent_color: "kisetsu".to_owned(),
+            accent_tint: "subtle".to_owned(),
             desktop_notifications: false,
             delete_watched: false,
         }

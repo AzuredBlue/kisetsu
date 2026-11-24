@@ -99,8 +99,12 @@ fn in_range(
     Some(value)
 }
 
-fn is_color(text: &str) -> bool {
-    text.len() == 7 && text.starts_with('#') && text[1..].chars().all(|c| c.is_ascii_hexdigit())
+/// An accent is a `#rrggbb` colour or `kisetsu`, the app's own palette.
+fn is_accent(text: &str) -> bool {
+    text.eq_ignore_ascii_case("kisetsu")
+        || (text.len() == 7
+            && text.starts_with('#')
+            && text[1..].chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 impl SettingsPatch {
@@ -160,10 +164,14 @@ impl SettingsPatch {
         patch.accent_tint = lowered(reader, body, "accent_tint", &TINTS);
         if let Some(color) = reader.optional_string(body, "accent_color") {
             let color = color.trim().to_owned();
-            if is_color(&color) {
+            if is_accent(&color) {
                 patch.accent_color = Some(color.to_lowercase());
             } else {
-                reader.refuse_value("accent_color", &color, "must be a #rrggbb colour");
+                reader.refuse_value(
+                    "accent_color",
+                    &color,
+                    "must be a #rrggbb colour or kisetsu",
+                );
             }
         }
         reader.forbid_others(body, &PATCH_FIELDS);

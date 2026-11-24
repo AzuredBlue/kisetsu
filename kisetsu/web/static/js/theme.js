@@ -1,9 +1,9 @@
 // Theme (light, dark or follow the OS) is kept in this browser; the accent colour is a setting on the server.
 import { useEffect, useState } from './ui.js';
-import { DEFAULT_ACCENT, showPaletteVars, userAccentCss } from './color.js';
+import { KISETSU_ACCENT, showPaletteVars, userAccentCss } from './color.js';
 
 const THEME_KEY = 'kisetsu_theme';
-const ACCENT_CSS_KEY = 'kisetsu_accent_css5';
+const ACCENT_CSS_KEY = 'kisetsu_accent_css6';
 const listeners = new Set();
 
 export function themeMode() {
@@ -34,7 +34,7 @@ window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()
   if (themeMode() === 'system') applyTheme();
 });
 
-let accent = { color: DEFAULT_ACCENT, tint: 'off' };
+let accent = { color: KISETSU_ACCENT, tint: 'subtle' };
 export function currentAccent() { return accent; }
 
 export function applyUserAccent(color, tint, { persist = true } = {}) {

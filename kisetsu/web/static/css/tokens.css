@@ -1,5 +1,5 @@
 /* Colours are "r g b" triples so rules can add alpha: rgb(var(--ac) / .5). Dark is the default.
-   The values here are what color.js derives for the default accent with no tint; a user's accent or tint replaces them. */
+   The values here are what color.js gives Kisetsu with a subtle tint; another accent or tint replaces them. */
 @font-face { font-family: 'Inter'; font-weight: 100 900; font-display: swap; src: url('../fonts/inter-latin-opsz-wght.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
 @font-face { font-family: 'Inter'; font-weight: 100 900; font-display: swap; src: url('../fonts/inter-latin-ext-opsz-wght.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
 @font-face { font-family: 'IBM Plex Mono'; font-weight: 400 450; font-display: swap; src: url('../fonts/plex-mono-latin-400.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
@@ -15,28 +15,28 @@
   /* Type: 13px is the floor for any text, 14px for rows and controls, 15px for prose. Release names are mono at 12.5px. */
   --fs-xs: .8125rem; --fs-sm: .875rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-mono: .78125rem;
 
-  /* Accent: the colour of progress, links and selected controls. */
-  --ac-art: 45 212 191; --ac: 45 212 191; --ac-soft: 129 240 222; --ac-strong: 0 192 172; --ac-ink: 13 19 18; --ac2: 55 203 245;
+  /* Accent: the primary button, progress, links and focus. */
+  --ac-art: 144 166 247; --ac: 165 182 248; --ac-soft: 184 200 255; --ac-strong: 141 162 245; --ac-ink: 19 22 31; --ac2: 184 200 255;
 
   /* Surfaces, darkest to lightest, and the lines between them. --line-field edges a control. */
-  --bg: 17 17 17; --sunken: 12 12 12; --chrome: 21 21 21; --surface: 25 25 25; --field: 14 14 14;
-  --raised: 36 36 36; --raised2: 46 46 46;
-  --line: 51 51 51; --line-soft: 38 38 38; --line-hover: 69 69 69; --line-strong: 113 113 113; --line-field: 77 77 77;
+  --bg: 15 17 24; --sunken: 10 12 19; --chrome: 18 21 28; --surface: 22 24 32; --field: 12 14 21;
+  --raised: 34 36 44; --raised2: 43 45 54;
+  --line: 48 51 58; --line-soft: 35 38 45; --line-hover: 66 69 77; --line-strong: 110 113 122; --line-field: 73 77 89;
 
   /* Text. --text-4 is the same as --text-3: two greys that close read as one. */
-  --text: 240 240 240; --text-2: 199 199 199; --text-3: 168 168 168; --text-4: 168 168 168; --text-btn: 215 215 215; --text-seg: 171 171 171;
+  --text: 238 240 246; --text-2: 197 199 205; --text-3: 166 167 173; --text-4: 166 167 173; --text-btn: 213 215 221; --text-seg: 169 171 176;
 
   /* Meaning: done, attention, problem, information, finished. Each has a -fg for text on its own tinted fill. */
   --ok: 97 218 146; --warn: 255 189 88; --bad: 255 136 142; --info: 100 193 255; --done: 196 163 255;
   --ok-fg: 179 230 196; --warn-fg: 243 210 164; --bad-fg: 255 199 200; --info-fg: 177 222 255; --done-fg: 222 206 255;
 
-  /* A secondary button is a raised fill. With no tint it is grey; a tint gives it the accent's hue (color.js). */
-  --btn: 36 36 36; --btn-h: 46 46 46;
+  /* A secondary button is a raised fill; with an accent and a tint it takes the accent's hue (color.js). */
+  --btn: 34 36 44; --btn-h: 43 45 54;
 
-  /* Tonal containers mix the accent into the surface: what is selected. */
-  --tonal: color-mix(in srgb, rgb(var(--ac)) 16%, rgb(var(--surface)));
-  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 30%, rgb(var(--surface)));
-  --on-tonal: rgb(var(--ac-soft));
+  /* What is selected: Kisetsu lifts it one step above a hovered row; an accent mixes into the surface (color.js). */
+  --tonal: rgb(40 45 62);
+  --tonal-h: rgb(50 55 73);
+  --on-tonal: rgb(var(--ac-soft)); --nav-current: var(--tonal);
   --danger: color-mix(in srgb, rgb(var(--bad)) 16%, rgb(var(--surface)));
   --danger-h: color-mix(in srgb, rgb(var(--bad)) 24%, rgb(var(--surface)));
   --selection: .35;
@@ -48,17 +48,18 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
-  --ac-art: 45 212 191; --ac: 0 116 103; --ac-soft: 0 84 75; --ac-strong: 0 96 86; --ac-ink: 255 255 255; --ac2: 0 110 137;
-  --bg: 242 242 242; --sunken: 228 228 228; --chrome: 237 237 237; --surface: 253 253 253; --field: 253 253 253;
-  --raised: 233 233 233; --raised2: 222 222 222;
-  --line: 210 210 210; --line-soft: 223 223 223; --line-hover: 183 183 183; --line-strong: 122 122 122; --line-field: 161 161 161;
-  --text: 27 27 27; --text-2: 61 61 61; --text-3: 82 82 82; --text-4: 82 82 82; --text-btn: 46 46 46; --text-seg: 77 77 77;
+  --ac-art: 92 113 210; --ac: 58 73 148; --ac-soft: 66 83 163; --ac-strong: 66 83 163; --ac-ink: 255 255 255; --ac2: 66 83 163;
+  --bg: 240 242 249; --sunken: 226 228 235; --chrome: 234 237 243; --surface: 252 253 255; --field: 253 253 255;
+  --raised: 231 233 240; --raised2: 220 222 229;
+  --line: 208 210 216; --line-soft: 221 223 230; --line-hover: 181 183 189; --line-strong: 120 122 128; --line-field: 159 161 170;
+  --text: 26 26 29; --text-2: 60 61 64; --text-3: 81 82 85; --text-4: 81 82 85; --text-btn: 45 46 48; --text-seg: 76 77 80;
   --ok: 0 99 54; --warn: 119 79 0; --bad: 151 24 47; --info: 0 88 132; --done: 96 59 147;
   --ok-fg: 0 80 43; --warn-fg: 91 59 0; --bad-fg: 120 25 39; --info-fg: 0 71 108; --done-fg: 76 49 116;
   /* A raised fill alone barely shows on a pale page, so buttons sit one step darker. */
-  --btn: 222 222 222; --btn-h: 210 210 210;
-  --tonal: color-mix(in srgb, rgb(var(--ac)) 14%, rgb(var(--surface)));
-  --tonal-h: color-mix(in srgb, rgb(var(--ac)) 26%, rgb(var(--surface)));
+  --btn: 220 222 229; --btn-h: 208 210 217;
+  --tonal: rgb(216 220 234);
+  --tonal-h: rgb(206 210 224);
+  --on-tonal: rgb(var(--ac)); --nav-current: var(--tonal);
   --danger: color-mix(in srgb, rgb(var(--bad)) 10%, rgb(var(--surface)));
   --danger-h: color-mix(in srgb, rgb(var(--bad)) 16%, rgb(var(--surface)));
   --selection: .3;

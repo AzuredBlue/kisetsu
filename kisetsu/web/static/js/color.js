@@ -2,7 +2,19 @@
 // Colours are worked out in OKLCH: a colour keeps its hue as it lightens or darkens, and equal L reads as equally light,
 // so every accent and tint can be held to the same contrast with fixed lightness steps.
 
-export const DEFAULT_ACCENT = '#2dd4bf';
+// Kisetsu, the default: its own palette on pages tinted blue-violet. The hue fills only the primary button; elsewhere it
+// colours text, icons, the focus ring and bars, and selected controls are a neutral step of the page.
+export const KISETSU_ACCENT = 'kisetsu';
+const KISETSU_HUE = 272;
+// Chosen by hand rather than derived: the primary button (strong, ac on hover and for focus) with its ink at 7:1, the
+// accent for text (soft) and the progress bars (art). Text sits 9:1 or more on the dark page and 5.7:1 on the light one.
+const KISETSU_ROLES = {
+  dark: { strong: '141 162 245', ac: '165 182 248', ink: '19 22 31', soft: '184 200 255', ac2: '184 200 255', art: '144 166 247' },
+  light: { strong: '66 83 163', ac: '58 73 148', ink: '255 255 255', soft: '66 83 163', ac2: '66 83 163', art: '92 113 210' },
+};
+// Kisetsu's selected fill and its hover: one step above a hovered row, at twice the page's chroma. The label on it is
+// the accent, which holds 5.4:1 on it in light theme where the text accent (soft) would not.
+const KISETSU_SELECTED_L = { dark: [0.300, 0.340], light: [0.895, 0.865] };
 // A saved accent is one of these hexes or a custom colour. It is the seed: the colours drawn come from its hue and chroma.
 export const ACCENT_PRESETS = [
   ['Teal', '#2dd4bf'], ['Sky', '#38bdf8'], ['Indigo', '#818cf8'], ['Violet', '#a78bfa'], ['Pink', '#f472b6'],
@@ -107,17 +119,23 @@ export function hexToRgb(hex) {
 
 // The page greys for tint hue `h` (OKLCH) and chroma. Light pages take less of the hue, since it reads stronger on
 // pale surfaces, and warm hues less again, or they turn cream. Text takes half the chroma, lines a little less, a
-// control's edge a little more, and secondary buttons three times as much (up to .045, past which they compete with
-// the primary button and the selected controls), so with any tint on they read as tonal fills of the accent.
-function neutrals(h, chroma, mode) {
+// control's edge a little more, and secondary buttons `btnK` times as much (up to .045, past which they compete with
+// the primary button and the selected controls): three with an accent, so they read as tonal fills of it, and one
+// for Kisetsu, whose secondary buttons are plain raised fills.
+function pageChroma(h, chroma, mode) {
   const light = mode === 'light';
   let c = light ? chroma * 0.6 : chroma;
   if (light && h >= 50 && h <= 110) c *= 0.6;
-  const steps = NEUTRAL_L[light ? 'light' : 'dark'];
+  return c;
+}
+
+function neutrals(h, chroma, mode, btnK = 3) {
+  const c = pageChroma(h, chroma, mode);
+  const steps = NEUTRAL_L[mode === 'light' ? 'light' : 'dark'];
   const out = {};
   Object.keys(steps).forEach(key => {
     const btn = key.startsWith('btn');
-    const k = key.startsWith('text') ? 0.5 : key === 'lineField' ? 1.3 : key.startsWith('line') ? 0.9 : btn ? 3 : 1;
+    const k = key.startsWith('text') ? 0.5 : key === 'lineField' ? 1.3 : key.startsWith('line') ? 0.9 : btn ? btnK : 1;
     out[key] = oklch(steps[key], btn ? Math.min(c * k, 0.045) : c * k, h);
   });
   return out;
@@ -149,11 +167,31 @@ export function swatchColor(hex) {
 
 const ACCENT_VARS = { ac: '--ac', soft: '--ac-soft', strong: '--ac-strong', ink: '--ac-ink', ac2: '--ac2', art: '--ac-art' };
 
-function toVars(roles, neutral) {
+// Selected controls with an accent: the accent mixed into the surface, with the accent's text colour on top.
+// In light theme the current nav item mixes into the sidebar's own colour, which is darker than a card's.
+function tonalMix(mode) {
+  const [fill, hover] = mode === 'light' ? [14, 26] : [16, 30];
+  const mix = (pct, base) => `color-mix(in srgb, rgb(var(--ac)) ${pct}%, rgb(var(--${base})))`;
+  return {
+    '--tonal': mix(fill, 'surface'), '--tonal-h': mix(hover, 'surface'), '--on-tonal': 'rgb(var(--ac-soft))',
+    '--nav-current': mode === 'light' ? mix(20, 'chrome') : 'var(--tonal)',
+  };
+}
+
+function kisetsuTonal(chroma, mode) {
+  const c = Math.min(pageChroma(KISETSU_HUE, chroma, mode) * 2, 0.045);
+  const [fill, hover] = KISETSU_SELECTED_L[mode === 'light' ? 'light' : 'dark'];
+  return {
+    '--tonal': `rgb(${oklch(fill, c, KISETSU_HUE)})`, '--tonal-h': `rgb(${oklch(hover, c, KISETSU_HUE)})`,
+    '--on-tonal': mode === 'light' ? 'rgb(var(--ac))' : 'rgb(var(--ac-soft))', '--nav-current': 'var(--tonal)',
+  };
+}
+
+function toVars(roles, neutral, tonal) {
   const vars = {};
   Object.keys(ACCENT_VARS).forEach(key => { vars[ACCENT_VARS[key]] = roles[key]; });
   if (neutral) Object.keys(neutral).forEach(key => NEUTRAL_VARS[key].forEach(name => { vars[name] = neutral[key]; }));
-  return vars;
+  return { ...vars, ...tonal };
 }
 
 // The OKLCH hue of an HSL hue, read from a mid colour of it, where the two agree best.
@@ -188,17 +226,25 @@ export function posterEdgeColors(hex, mode = 'dark') {
   return { panel: color(panelL, panelC), text: C < 0.02 ? null : color(textL, 0.14) };
 }
 
-// The user's accent as one rule per theme; the light one is more specific, so it wins in light mode.
-// The default accent with no tint is exactly what tokens.css holds, so it needs no rule.
-export function userAccentCss(color, tint) {
+// The page colours for Kisetsu or an accent colour, in one theme.
+export function accentVars(color, tint, mode) {
   const chroma = ACCENT_TINTS[tint] ?? ACCENT_TINTS.subtle;
-  if (color === DEFAULT_ACCENT && !chroma) return '';
+  if (color === KISETSU_ACCENT) {
+    return toVars(KISETSU_ROLES[mode === 'light' ? 'light' : 'dark'], neutrals(KISETSU_HUE, chroma, mode, 1), kisetsuTonal(chroma, mode));
+  }
   const seed = hexToRgb(color);
   const [, seedChroma, hue] = rgbToOklch(seed);
   // A grey accent has no hue to lend the surfaces.
   const tintChroma = seedChroma < 0.02 ? 0 : chroma;
+  return toVars(accentRoles(seed, mode), neutrals(hue, tintChroma, mode), tonalMix(mode));
+}
+
+// The user's colours as one rule per theme; the light one is more specific, so it wins in light mode.
+// Kisetsu with a subtle tint is exactly what tokens.css holds, so it needs no rule.
+export function userAccentCss(color, tint) {
+  if (color === KISETSU_ACCENT && (tint === 'subtle' || !(tint in ACCENT_TINTS))) return '';
   const rule = (mode) => {
-    const vars = toVars(accentRoles(seed, mode), tintChroma ? neutrals(hue, tintChroma, mode) : null);
+    const vars = accentVars(color, tint, mode);
     return (mode === 'light' ? ':root[data-theme="light"]' : ':root') + '{' + Object.keys(vars).map(k => k + ':' + vars[k]).join(';') + '}';
   };
   return rule('dark') + rule('light');
@@ -211,6 +257,6 @@ export function showPaletteVars(hues, tint, mode) {
   const pal = paletteFromHues(hues, mode, chroma);
   const neutral = {};
   if (chroma) Object.keys(NEUTRAL_VARS).forEach(key => { neutral[key] = pal[key]; });
-  // On its own page the show's accent is drawn over the page as well as the art.
-  return toVars({ ...pal, art: pal.ac }, chroma ? neutral : null);
+  // On its own page the show's accent is drawn over the page as well as the art, and fills its selected controls.
+  return toVars({ ...pal, art: pal.ac }, chroma ? neutral : null, tonalMix(mode));
 }

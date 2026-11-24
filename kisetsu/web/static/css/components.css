@@ -130,7 +130,10 @@ textarea.field { resize: vertical; min-height: 4.5rem; }
   &:hover { box-shadow: 0 0 0 2px rgb(var(--bg)), 0 0 0 4px rgb(var(--text) / .3); }
   &[aria-pressed="true"], &.on { box-shadow: 0 0 0 2px rgb(var(--surface)), 0 0 0 4px rgb(var(--text)); }
   & input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  /* Kisetsu's primary button and text colours in each theme, as KISETSU_ROLES in color.js and tokens.css hold them. */
+  &.kisetsu { background: linear-gradient(135deg, #8da2f5 50%, #eef0f6 50%); }
 }
+:root[data-theme="light"] .swatch.kisetsu { background: linear-gradient(135deg, #4253a3 50%, #1a1a1d 50%); }
 
 .empty { padding: 3rem 1rem; text-align: center; font-size: var(--fs-md); color: rgb(var(--text-3)); & .empty-title { color: rgb(var(--text-2)); } & .field-hint { max-width: 32rem; margin-inline: auto; } }
 .error-text { color: rgb(var(--bad)); font-size: var(--fs-xs); }

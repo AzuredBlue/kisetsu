@@ -224,7 +224,7 @@ export function Settings() {
           <div class="card card-divided form-grid">
             <${SetRow} name="Theme"><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
             <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
-            <${SetRow} name="Accent colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
+            <${SetRow} name="Colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
             <${SetRow} name="Colour tint"><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
             ${trayState ? html`<${SetRow} name="Tray icon" hint=${trayState.available ? 'The icon in the notification area: open Kisetsu, pause all, quit.' : 'Not available in this run (Windows only, and not with --no-tray).'}><div inert=${!trayState.available} style=${trayState.available ? undefined : 'opacity:.55'}><${Seg} label="Tray icon" value=${trayState.visible} onChange=${setTray} options=${[[true, 'On'], [false, 'Off']]} /></div><//>` : null}
           </div>

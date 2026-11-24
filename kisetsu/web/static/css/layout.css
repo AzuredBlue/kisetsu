@@ -17,12 +17,10 @@
   display: flex; align-items: center; gap: .625rem; width: 100%; padding: .4rem .65rem; border-radius: var(--r-md);
   font-size: .875rem; font-weight: 500; color: rgb(var(--text-3)); transition: background-color .15s, color .15s;
   &:hover { background: rgb(var(--raised)); color: rgb(var(--text)); }
-  &[aria-current="page"] { background: var(--tonal); color: rgb(var(--text)); & .icon { color: rgb(var(--ac)); } }
+  &[aria-current="page"] { background: var(--nav-current); color: rgb(var(--text)); font-weight: 600; & .icon { color: rgb(var(--ac)); } }
   & .badge { margin-left: auto; font-size: var(--fs-xs); font-variant-numeric: tabular-nums; color: rgb(var(--text-4)); }
   &:hover .badge, &[aria-current="page"] .badge { color: rgb(var(--text-2)); }
 }
-/* In light theme the selected item mixes the accent into the sidebar's own colour, which is darker than a card's. */
-:root[data-theme="light"] .nav-item[aria-current="page"] { background: color-mix(in srgb, rgb(var(--ac)) 20%, rgb(var(--chrome))); }
 
 main { display: flex; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; background: rgb(var(--bg)); }
 .topbar {

@@ -1,5 +1,5 @@
 import { html, useLayoutEffect, useRef } from '../ui.js';
-import { ACCENT_PRESETS, swatchColor } from '../color.js';
+import { ACCENT_PRESETS, KISETSU_ACCENT, swatchColor } from '../color.js';
 import { Icon } from './Icon.js';
 
 // A row of mutually exclusive choices. `options` are [value, label] or [value, label, icon].
@@ -29,15 +29,17 @@ export function Seg({ value, options, onChange, small = false, icons = false, la
   </div>`;
 }
 
-// The accent presets and a custom colour picker, each drawn in the accent's bright colour.
+// Kisetsu, the accent presets and a custom colour picker, each drawn in the accent's bright colour.
 export function Swatches({ value, onPick, onPreview }) {
-  const preset = ACCENT_PRESETS.some(p => p[1] === value);
+  const kisetsu = value === KISETSU_ACCENT;
+  const preset = kisetsu || ACCENT_PRESETS.some(p => p[1] === value);
   const shown = ACCENT_PRESETS.map(([name, hex]) => [name, hex, swatchColor(hex)]);
   const wheel = `conic-gradient(${[...shown, shown[0]].map(s => s[2]).join(', ')})`;
   return html`<div class="swatches">
+    <button type="button" class="swatch kisetsu" title="Kisetsu" aria-label="Kisetsu" aria-pressed=${String(kisetsu)} onClick=${() => onPick(KISETSU_ACCENT)}></button>
     ${shown.map(([name, hex, color]) => html`<button type="button" class="swatch" key=${hex} title=${name} aria-label=${name} aria-pressed=${String(hex === value)} style=${`background:${color}`} onClick=${() => onPick(hex)}></button>`)}
     <label class=${`swatch${preset ? '' : ' on'}`} title="Custom colour" style=${`background:${preset ? wheel : swatchColor(value)}`}>
-      <input type="color" value=${value} aria-label="Custom colour" onInput=${(e) => onPreview && onPreview(e.target.value)} onChange=${(e) => onPick(e.target.value)} />
+      <input type="color" value=${kisetsu ? ACCENT_PRESETS[0][1] : value} aria-label="Custom colour" onInput=${(e) => onPreview && onPreview(e.target.value)} onChange=${(e) => onPick(e.target.value)} />
     </label>
   </div>`;
 }
