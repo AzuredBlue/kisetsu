@@ -19,6 +19,9 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 tray-icon.workspace = true
 windows-sys.workspace = true

@@ -14,62 +14,6 @@ fn browse_url(host: &str, port: u16) -> String {
     format!("http://{host}:{port}/")
 }
 
-/// The icon's side in pixels.
-const ICON_SIZE: u32 = 32;
-const CORNER_RADIUS: f32 = 7.0;
-const VIOLET: [f32; 3] = [167.0, 139.0, 250.0];
-const WHITE: [f32; 3] = [255.0, 255.0, 255.0];
-/// Half the thickness of the letter's strokes, in pixels of a 32 pixel icon.
-const STROKE_HALF_WIDTH: f32 = 2.6;
-/// The letter's strokes as segments on a 32 pixel icon: the stem, then the upper and lower arm.
-const STROKES: [([f32; 2], [f32; 2]); 3] = [
-    ([11.0, 8.0], [11.0, 24.0]),
-    ([12.5, 16.5], [22.0, 8.0]),
-    ([14.5, 14.5], [22.5, 24.0]),
-];
-
-/// How far the point is from the segment `from`..`to`.
-fn distance_to_segment(point: [f32; 2], from: [f32; 2], to: [f32; 2]) -> f32 {
-    let along = [to[0] - from[0], to[1] - from[1]];
-    let offset = [point[0] - from[0], point[1] - from[1]];
-    let length_squared = along[0] * along[0] + along[1] * along[1];
-    let t = ((offset[0] * along[0] + offset[1] * along[1]) / length_squared).clamp(0.0, 1.0);
-    (point[0] - (from[0] + t * along[0])).hypot(point[1] - (from[1] + t * along[1]))
-}
-
-/// The RGBA pixels of a white K on a violet rounded square, `size` pixels on a side. Edges are
-/// anti-aliased from how far each pixel centre lies from the shape.
-#[cfg_attr(not(windows), allow(dead_code))]
-fn icon_rgba(size: u32) -> Vec<u8> {
-    let scale = size as f32 / ICON_SIZE as f32;
-    let side = size as f32;
-    let radius = CORNER_RADIUS * scale;
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        for x in 0..size {
-            let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
-            let dx = (radius - cx).max(cx - (side - radius));
-            let dy = (radius - cy).max(cy - (side - radius));
-            let outside = dx.max(0.0).hypot(dy.max(0.0)) - radius;
-            let alpha = (0.5 - outside).clamp(0.0, 1.0);
-            let point = [cx / scale, cy / scale];
-            let letter = STROKES
-                .iter()
-                .map(|&(from, to)| {
-                    let reach = STROKE_HALF_WIDTH - distance_to_segment(point, from, to);
-                    (reach * scale + 0.5).clamp(0.0, 1.0)
-                })
-                .fold(0.0_f32, f32::max);
-            for channel in 0..3 {
-                let value = VIOLET[channel] + (WHITE[channel] - VIOLET[channel]) * letter;
-                rgba.push(value.round() as u8);
-            }
-            rgba.push((alpha * 255.0).round() as u8);
-        }
-    }
-    rgba
-}
-
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod imp {
@@ -83,16 +27,25 @@ mod imp {
     use tray_icon::menu::{Menu, MenuEvent, MenuItem};
     use tray_icon::{Icon, TrayIconBuilder};
 
-    use super::{ICON_SIZE, icon_rgba};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Shell::ShellExecuteW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, MSG, PostThreadMessageW, SW_SHOWNORMAL, TranslateMessage,
-        WM_QUIT,
+        DispatchMessageW, GetMessageW, GetSystemMetrics, MSG, PostThreadMessageW, SM_CXSMICON,
+        SM_CYSMICON, SW_SHOWNORMAL, TranslateMessage, WM_QUIT,
     };
 
+    /// The program's icon, which `build.rs` embeds as resource 1.
+    const ICON_RESOURCE: u16 = 1;
+
+    /// The embedded icon at the size Windows uses for small icons on this display, so it picks
+    /// the image drawn for that size.
     fn icon() -> Option<Icon> {
-        Icon::from_rgba(icon_rgba(ICON_SIZE), ICON_SIZE, ICON_SIZE).ok()
+        // SAFETY: plain calls with constant arguments.
+        let (width, height) =
+            unsafe { (GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON)) };
+        let size = (u32::try_from(width).ok()?, u32::try_from(height).ok()?);
+        info!("Tray icon at {}x{} pixels.", size.0, size.1);
+        Icon::from_resource(ICON_RESOURCE, Some(size)).ok()
     }
 
     fn wide(text: &str) -> Vec<u16> {
@@ -354,12 +307,10 @@ impl TrayControl for TrayHandle {
 
 #[cfg(test)]
 mod tests {
-    use super::{ICON_SIZE, Step, browse_url, icon_rgba, step};
+    use super::{Step, browse_url, step};
 
-    fn pixel(rgba: &[u8], x: u32, y: u32) -> &[u8] {
-        let at = ((y * ICON_SIZE + x) * 4) as usize;
-        &rgba[at..at + 4]
-    }
+    /// The icon `build.rs` embeds in the program.
+    const ICON: &[u8] = include_bytes!("../../../../kisetsu/web/static/favicon.ico");
 
     #[test]
     fn the_icon_follows_the_choice_until_the_app_is_closed() {
@@ -372,21 +323,18 @@ mod tests {
     }
 
     #[test]
-    fn the_icon_is_a_white_k_on_a_violet_square_with_clear_corners() {
-        let rgba = icon_rgba(ICON_SIZE);
-        assert_eq!(rgba.len(), (ICON_SIZE * ICON_SIZE * 4) as usize);
-        // The stem and both arms.
-        for (x, y) in [(11, 16), (11, 10), (11, 21), (19, 11), (19, 21)] {
-            let [r, g, b, a] = *pixel(&rgba, x, y) else {
-                unreachable!()
-            };
-            assert!(r > 240 && g > 240 && b > 240 && a == 255, "({x}, {y})");
-        }
-        // The square around the letter, and its corners.
-        assert_eq!(pixel(&rgba, 3, 16), [167, 139, 250, 255]);
-        for (x, y) in [(0, 0), (31, 0), (0, 31), (31, 31)] {
-            assert_eq!(pixel(&rgba, x, y)[3], 0, "({x}, {y})");
-        }
+    fn the_icon_holds_an_image_for_each_tray_and_program_size() {
+        let read = |at: usize| u16::from_le_bytes([ICON[at], ICON[at + 1]]);
+        // An icon file starts with 0, type 1 and its image count, then 16 bytes per image whose
+        // first byte is the width (0 meaning 256).
+        assert_eq!((read(0), read(2)), (0, 1));
+        let sizes: Vec<u32> = (0..usize::from(read(4)))
+            .map(|image| match ICON[6 + 16 * image] {
+                0 => 256,
+                width => u32::from(width),
+            })
+            .collect();
+        assert_eq!(sizes, [16, 20, 24, 32, 48, 256]);
     }
 
     #[test]
