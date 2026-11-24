@@ -1,6 +1,7 @@
 //! What went wrong with an HTTP request, by cause.
 
 use std::io::ErrorKind;
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs, UdpSocket};
 
 /// Why a request produced no answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,4 +45,26 @@ pub(crate) fn classify(error: &ureq::Error) -> Failure {
         Error::Tls(_) | Error::Rustls(_) | Error::Pem(_) => Failure::Tls(error.to_string()),
         _ => Failure::Other(error.to_string()),
     }
+}
+
+/// Whether this machine is online: AniList's name resolves and the system has a route to it.
+/// Nothing is sent to AniList, as connecting a UDP socket only picks the route. Behind a proxy
+/// the names may only resolve at the proxy, so the machine is taken to be online.
+pub fn online() -> bool {
+    if ureq::Proxy::try_from_env().is_some() {
+        return true;
+    }
+    let Ok(addresses) = (crate::anilist::HOST, 443).to_socket_addrs() else {
+        return false;
+    };
+    addresses.into_iter().any(|address| {
+        let local: SocketAddr = if address.is_ipv4() {
+            (Ipv4Addr::UNSPECIFIED, 0).into()
+        } else {
+            (Ipv6Addr::UNSPECIFIED, 0).into()
+        };
+        UdpSocket::bind(local)
+            .and_then(|socket| socket.connect(address))
+            .is_ok()
+    })
 }

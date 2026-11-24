@@ -30,7 +30,7 @@ pub use transport::{Answer, Transport, TransportError, UreqTransport};
 use list::{Collection, SavedList};
 
 pub const GRAPHQL_URL: &str = "https://graphql.anilist.co";
-const HOST: &str = "graphql.anilist.co";
+pub(crate) const HOST: &str = "graphql.anilist.co";
 
 /// The most pages of air times asked for per show.
 const MAX_SCHEDULE_PAGES: usize = 20;

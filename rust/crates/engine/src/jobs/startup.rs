@@ -15,6 +15,10 @@ impl Jobs {
         if !self.configured()? {
             return Ok(Some(SETUP_WAIT));
         }
+        // qBittorrent was already synced on a pass that then waited for the network.
+        if self.synced.load(Ordering::Acquire) && !self.online(true) {
+            return Ok(Some(NETWORK_RETRY));
+        }
         let synced = self.engine.call(|ctx| {
             ctx.qbit()?.sync(true)?;
             Ok(())
@@ -36,6 +40,10 @@ impl Jobs {
         // search has finished.
         self.synced.store(true, Ordering::Release);
         self.poke_now(&["settle"]);
+        // AniList, the feeds and the searches below all need the network.
+        if !self.online(true) {
+            return Ok(Some(NETWORK_RETRY));
+        }
         // AniList and the feeds are different sites, so they are read together. Items stored
         // before a show is added are matched to it by the grab pass (`ensure_matches_current`).
         let (sync, feeds, schedule) = thread::scope(|scope| {

@@ -70,6 +70,8 @@ const SYNC_RETRY_FLOOR: Duration = Duration::from_secs(30);
 const GAP_BACKFILL_DELAY: Duration = Duration::from_secs(5);
 /// The shortest wait the hunt takes between looks.
 const HUNT_FLOOR: Duration = Duration::from_secs(5);
+/// While the machine is offline, how often the jobs that need the network look again.
+const NETWORK_RETRY: Duration = Duration::from_secs(15);
 
 /// How long the running jobs get to end when they are held.
 const STOP_GRACE: Duration = Duration::from_secs(30);
@@ -95,6 +97,8 @@ struct State {
     hunt_read_at: Option<Timestamp>,
     /// Set once startup found qBittorrent away and handed AniList and the feeds to their own timers.
     offline_started: bool,
+    /// Set while the machine was last found offline.
+    network_down: bool,
     /// When `poke_soon` last let each job run, by the scheduler's time.
     poked_at: HashMap<&'static str, Duration>,
     /// SubsPlease's schedule: the titles, and when they were read.
@@ -187,6 +191,7 @@ impl Jobs {
                 refresh_all: false,
                 hunt_read_at: None,
                 offline_started: false,
+                network_down: false,
                 poked_at: HashMap::new(),
                 schedule: None,
                 schedule_at: None,
@@ -282,6 +287,7 @@ impl Jobs {
             state.refresh_all = false;
             state.hunt_read_at = None;
             state.offline_started = false;
+            state.network_down = false;
             state.health = Health::default();
         }
         if was_running {
@@ -421,6 +427,27 @@ impl Jobs {
     fn qbit_failed(&self, error: &QbitError) -> Option<Duration> {
         self.set_qbit(Some(error.to_string()));
         Some(QBIT_RETRY)
+    }
+
+    /// Whether the machine is online. It is asked when `check` is set or it was last found
+    /// offline; otherwise it is taken to be online. A change is logged.
+    fn online(&self, check: bool) -> bool {
+        if !check && !locked(&self.state).network_down {
+            return true;
+        }
+        let online = self.remote.online();
+        let changed = {
+            let mut state = locked(&self.state);
+            std::mem::replace(&mut state.network_down, !online) == online
+        };
+        if changed {
+            if online {
+                info!("Network connection is up.");
+            } else {
+                info!("Waiting for a network connection.");
+            }
+        }
+        online
     }
 
     fn configured(&self) -> Result<bool> {

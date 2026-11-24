@@ -2,6 +2,7 @@
 
 use std::time::Duration;
 
+use kisetsu_clients::rss::FeedFetchError;
 use kisetsu_clients::traffic::host_of;
 use kisetsu_services::feedsync::{self, FeedRef, FetchFailure, FetchResult, Outcome};
 
@@ -10,8 +11,9 @@ use crate::parallel::map_limited;
 
 impl Jobs {
     /// Reads the feeds in parallel; a feed backing off after failures is skipped. Returns what
-    /// each feed read gave, by feed id.
-    fn read_feeds(&self, refs: Vec<FeedRef>) -> Vec<(i64, FetchResult)> {
+    /// each feed read gave, by feed id, or `None` when no feed answered because the machine is
+    /// offline.
+    fn read_feeds(&self, refs: Vec<FeedRef>) -> Option<Vec<(i64, FetchResult)>> {
         let now = self.engine.now();
         let due: Vec<FeedRef> = {
             let state = locked(&self.state);
@@ -19,15 +21,22 @@ impl Jobs {
                 .filter(|feed| state.backoff.ready(&feed.id, now))
                 .collect()
         };
-        let results = map_limited(&due, due.len(), |feed| {
-            self.remote
-                .fetch_feed(&feed.url)
-                .map_err(|error| FetchFailure::from(&error))
-        });
+        let results = map_limited(&due, due.len(), |feed| self.remote.fetch_feed(&feed.url));
+        let unanswered = !results.is_empty()
+            && results.iter().all(|result| {
+                matches!(
+                    result,
+                    Err(FeedFetchError::Timeout { .. } | FeedFetchError::Unreachable { .. })
+                )
+            });
+        if unanswered && !self.online(true) {
+            return None;
+        }
         let mut state = locked(&self.state);
         let mut page_sizes = locked(&self.page_sizes);
         let mut read = Vec::with_capacity(due.len());
         for (feed, result) in due.iter().zip(results) {
+            let result = result.map_err(|error| FetchFailure::from(&error));
             match &result {
                 Err(_) => {
                     state.backoff.failed(&feed.id, now);
@@ -42,7 +51,7 @@ impl Jobs {
             }
             read.push((feed.id, result));
         }
-        read
+        Some(read)
     }
 
     /// Stores what the feeds listed and asks for what that calls for.
@@ -81,13 +90,21 @@ impl Jobs {
         if !self.configured()? {
             return Ok(None);
         }
+        if !self.online(false) {
+            return Ok(Some(NETWORK_RETRY));
+        }
         {
             let _reading = locked(&self.feeds_lock);
             let everything = everything || std::mem::take(&mut locked(&self.state).refresh_all);
             let refs = self
                 .engine
                 .call(move |ctx| feedsync::plan_fetch(ctx, everything))?;
-            let results = self.read_feeds(refs);
+            let Some(results) = self.read_feeds(refs) else {
+                if everything {
+                    locked(&self.state).refresh_all = true;
+                }
+                return Ok(Some(NETWORK_RETRY));
+            };
             if !results.is_empty() {
                 self.apply(results)?;
             }
@@ -114,13 +131,18 @@ impl Jobs {
         if !self.configured()? {
             return Ok(None);
         }
+        if !self.online(false) {
+            return Ok(Some(NETWORK_RETRY));
+        }
         // Planned under the lock, so a read still running (the startup one) counts as done
         // instead of being repeated.
         let info = {
             let _reading = locked(&self.feeds_lock);
             let info = self.engine.call(|ctx| feedsync::plan_hunt(ctx))?;
             if !info.show_ids.is_empty() && !info.feeds.is_empty() {
-                let results = self.read_feeds(info.feeds.clone());
+                let Some(results) = self.read_feeds(info.feeds.clone()) else {
+                    return Ok(Some(NETWORK_RETRY));
+                };
                 if !results.is_empty() {
                     self.apply(results)?;
                 }

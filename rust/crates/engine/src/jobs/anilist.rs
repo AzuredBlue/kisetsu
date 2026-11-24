@@ -69,6 +69,11 @@ impl Jobs {
                 return Ok(wait);
             }
         }
+        // Offline, every request would fail and pause AniList for a while after the network is back.
+        if !self.online(true) {
+            self.engine.call(cycle::rollover)?;
+            return Ok(NETWORK_RETRY);
+        }
         let monitored: HashSet<i64> = input.monitored_ids.iter().copied().collect();
         let reuse = startup.then_some(LIST_REUSE_SECONDS);
         let seasonal = match self.remote.seasonal(&input.username, &monitored, reuse) {

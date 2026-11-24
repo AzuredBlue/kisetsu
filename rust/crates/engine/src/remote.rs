@@ -62,6 +62,11 @@ pub trait Remote: Send + Sync {
 
     /// The whole air schedule of each show.
     fn media_schedules(&self, media_ids: &[i64]) -> Result<Schedules, AniListError>;
+
+    /// Whether this machine is online, so a failed request is the site's own failure.
+    fn online(&self) -> bool {
+        true
+    }
 }
 
 /// The real sites, over the network. One of these serves every job, since the pacing of requests
@@ -142,6 +147,10 @@ impl Remote for WebRemote {
 
     fn media_schedules(&self, media_ids: &[i64]) -> Result<Schedules, AniListError> {
         self.anilist.fetch_media_airing_schedules(media_ids)
+    }
+
+    fn online(&self) -> bool {
+        kisetsu_clients::online()
     }
 }
 

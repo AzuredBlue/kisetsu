@@ -21,6 +21,8 @@ pub mod toast;
 pub mod traffic;
 pub mod update;
 
+pub use net::online;
+
 /// Locks the mutex, also after a thread panicked while holding it.
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex

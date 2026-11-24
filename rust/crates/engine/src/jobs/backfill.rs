@@ -48,6 +48,9 @@ impl Jobs {
 
     /// Searches the feeds' sites for episodes no stored item supplies.
     pub(super) fn backfill(&self) -> JobResult {
+        if !self.online(false) {
+            return Ok(Some(NETWORK_RETRY));
+        }
         let requested = std::mem::take(&mut locked(&self.state).backfill_requests);
         let everything = std::mem::take(&mut locked(&self.state).backfill_all);
         let mut added = 0;
