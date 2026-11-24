@@ -97,6 +97,8 @@ pub(crate) const ROUTES: &[Route] = &[
     route("POST", "/api/setup/save", setup::save),
     route("POST", "/api/setup/check-anilist", setup::check_anilist),
     route("POST", "/api/setup/complete", setup::complete),
+    route("GET", "/api/setup/review", setup::review),
+    route("POST", "/api/setup/review", setup::decide),
     route("GET", "/api/status", status::get),
     route("GET", "/api/tray", tray::get),
     route("PUT", "/api/tray", tray::set),

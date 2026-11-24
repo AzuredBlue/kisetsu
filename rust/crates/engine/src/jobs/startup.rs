@@ -68,8 +68,10 @@ impl Jobs {
         self.poke_now(&["grab", "settle", "hunt", "palette"]);
         self.scheduler.delay("sync_anilist", next_sync);
         self.scheduler.delay("refresh_feeds", self.next_read()?);
-        self.backfill()?;
-        self.search_held(&unmatched)?;
+        let searched = self.backfill().and_then(|_| self.search_held(&unmatched));
+        // The setup review waits for these searches to end, however they ended.
+        self.finish_setup_progress()?;
+        searched?;
         self.scheduler.delay("backfill", BACKFILL_INTERVAL);
         Ok(None)
     }

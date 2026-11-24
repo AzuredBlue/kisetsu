@@ -155,7 +155,9 @@ function Shell() {
 function App() {
   const setup = useResource(setupStatus);
   if (!setup.data) return html`<div style="margin:auto">${setup.error ? html`<${LoadError} what="the page" error=${null} reload=${setup.reload} />` : null}</div>`;
-  return html`${setup.data.setup_completed ? html`<${Shell} />` : html`<${Setup} sandbox=${setup.data.sandbox} />`}<${ModalHost} /><${Toasts} />`;
+  // Setup stays up after it is finished until the user has confirmed (or put off) the first downloads.
+  const inSetup = !setup.data.setup_completed || setup.data.reviewing;
+  return html`${inSetup ? html`<${Setup} sandbox=${setup.data.sandbox} reviewing=${setup.data.reviewing} />` : html`<${Shell} />`}<${ModalHost} /><${Toasts} />`;
 }
 
 setErrorHandler((message) => toast(message, 'error'));

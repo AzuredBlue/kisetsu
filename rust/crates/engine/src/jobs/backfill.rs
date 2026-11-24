@@ -9,7 +9,7 @@ use kisetsu_clients::sites::Grouping;
 use kisetsu_db::schema::Show;
 use kisetsu_domain::matcher::Matcher;
 use kisetsu_services::backfill::{self, Due, DueOptions, Searched};
-use kisetsu_services::context::{Context, get_state, set_state};
+use kisetsu_services::context::{Context, get_state, set_state, setup_reviewing};
 use tracing::{debug, warn};
 
 use super::*;
@@ -21,6 +21,15 @@ use crate::scheduler::panic_message;
 fn matcher_of(ctx: &mut Context<'_>, show_id: i64) -> kisetsu_services::Result<Option<Matcher>> {
     let show = Show::find(ctx.conn, "WHERE id = ?", [show_id])?;
     Ok(show.map(|show| backfill::matcher_for(&show, ctx.settings.min_resolution)))
+}
+
+/// How many shows are followed: not finished.
+fn followed_count(ctx: &mut Context<'_>) -> kisetsu_services::Result<usize> {
+    let count: i64 = ctx
+        .conn
+        .prepare_cached("SELECT COUNT(*) FROM shows WHERE completed = 0")?
+        .query_row([], |row| row.get(0))?;
+    Ok(usize::try_from(count).unwrap_or(0))
 }
 
 /// What a run of searches has found out so far.
@@ -66,13 +75,21 @@ impl Jobs {
             let schedule = locked(&self.state).schedule.clone();
             self.engine
                 .call(move |ctx| backfill::note_schedule(ctx, schedule.as_deref()))?;
+            // Before the first downloads are confirmed every show is paused, and searched all the
+            // same so the user sees what would be downloaded.
+            let reviewing = self.engine.read(|ctx| setup_reviewing(ctx.conn))?;
             let options = DueOptions {
                 force: everything,
+                paused: reviewing,
                 ..DueOptions::default()
             };
-            let due = self
-                .engine
-                .call(move |ctx| backfill::due(ctx, options, None))?;
+            let (due, followed) = self.engine.call(move |ctx| {
+                let due = backfill::due(ctx, options, None)?;
+                Ok((due, followed_count(ctx)?))
+            })?;
+            if reviewing {
+                self.begin_setup_progress(followed, due.len());
+            }
             added += self.search(due, false)?;
         }
         if added > 0 {
@@ -168,6 +185,7 @@ impl Jobs {
                 if let Some(at) = due.iter().position(|item| item.show_id == show_id) {
                     let item = due.remove(at);
                     self.search_one(&item, exhaustive, &run)?;
+                    self.note_searched();
                 }
             }
             if locked(&run).stopped.is_none() {
@@ -192,6 +210,7 @@ impl Jobs {
                 self.search_one(item, exhaustive, run).inspect_err(|_| {
                     failed.store(true, Ordering::Release);
                 })?;
+                self.note_searched();
             }
             Ok(())
         };
@@ -275,6 +294,60 @@ impl Jobs {
         // missed.
         self.poke_soon("grab", BURST_GAP);
         Ok(())
+    }
+
+    /// Starts counting the setup review's searches; the shows with nothing to search for count
+    /// as searched. Once done, a later backfill leaves the count alone.
+    fn begin_setup_progress(&self, followed: usize, due: usize) {
+        {
+            let mut state = locked(&self.state);
+            if state.setup_progress.is_some_and(|progress| progress.done) {
+                return;
+            }
+            state.setup_progress = Some(SetupProgress {
+                searched: followed.saturating_sub(due),
+                total: followed,
+                done: false,
+            });
+        }
+        self.publish_status();
+    }
+
+    fn note_searched(&self) {
+        {
+            let mut state = locked(&self.state);
+            let Some(progress) = state
+                .setup_progress
+                .as_mut()
+                .filter(|progress| !progress.done)
+            else {
+                return;
+            };
+            progress.searched = (progress.searched + 1).min(progress.total);
+        }
+        self.publish_status();
+    }
+
+    /// Ends the setup review's count once startup's searches are over.
+    pub(super) fn finish_setup_progress(&self) -> Result<()> {
+        let reviewing = self.engine.read(|ctx| setup_reviewing(ctx.conn))?;
+        if !reviewing {
+            return Ok(());
+        }
+        let followed = self.engine.call(followed_count)?;
+        locked(&self.state).setup_progress = Some(SetupProgress {
+            searched: followed,
+            total: followed,
+            done: true,
+        });
+        self.publish_status();
+        Ok(())
+    }
+
+    /// Forgets the setup review's count once the user decided.
+    pub fn clear_setup_progress(&self) {
+        locked(&self.state).setup_progress = None;
+        self.publish_status();
     }
 
     /// Takes back what the searches learned of each site before a restart, so it is not checked

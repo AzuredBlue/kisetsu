@@ -1,7 +1,7 @@
 import { html, useEffect, useMemo, useState } from '../ui.js';
 import { apiFetch, ApiError } from '../api.js';
 import { useResource } from '../store.js';
-import { feeds as feedsData, settings as settingsData } from '../data.js';
+import { feeds as feedsData, settings as settingsData, status as statusData } from '../data.js';
 import { applyUserAccent, currentAccent, setThemeMode, themeMode, useTheme } from '../theme.js';
 import { restoreBackup } from '../components/Backup.js';
 import { Seg, SetRow, Swatches } from '../components/Controls.js';
@@ -10,18 +10,86 @@ import { useDraft } from '../components/useDraft.js';
 import { confirmDialog } from '../components/Modal.js';
 import { Spinner } from '../components/Icon.js';
 import { LoadError } from '../components/LoadError.js';
+import { Poster } from '../components/ShowSummary.js';
+import { toast } from '../components/Toast.js';
+import { episodeLabel } from '../format.js';
 
-const STEPS = ['welcome', 'qbit', 'feeds', 'downloads', 'appearance', 'anilist'];
+const STEPS = ['welcome', 'qbit', 'feeds', 'downloads', 'appearance', 'anilist', 'import', 'review'];
+// Once the AniList step is finished there is no going back: the shows are in and wait to be confirmed.
+const AFTER_FINISH = STEPS.indexOf('import');
+
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 async function save(patch) {
   await apiFetch('/api/setup/save', { method: 'POST', json: patch });
 }
 
-export function Setup({ sandbox }) {
+const problemOf = (info) => info && (info.qbit_error ? `Can't reach qBittorrent: ${info.qbit_error}` : info.anilist_error ? `AniList: ${info.anilist_error}` : Object.values(info.jobs_failing || {})[0]);
+
+// Until the shows are in and the feeds and qBittorrent are read; the search for older episodes goes on in the review.
+function Importing({ info, onDone }) {
+  const ready = !!(info && info.ready);
+  useEffect(() => { if (ready) onDone(); }, [ready]);
+  const phase = info && info.shows ? 'Checking the feeds and qBittorrent' : 'Reading your AniList list';
+  const problem = problemOf(info);
+  return html`
+    <h2>Importing your shows</h2>
+    <div class="setup-bar busy" role="progressbar" aria-label=${phase}><div></div></div>
+    <div class="setup-bar-meta"><span>${phase}</span></div>
+    ${problem ? html`<p class="setup-error" role="alert">${problem}</p>` : null}`;
+}
+
+// The search for older episodes is still going: no count yet, or one that has not ended.
+const searchingOf = (progress) => !progress || !progress.done;
+
+// What the first downloads will be, show by show, filling in while older episodes are searched for; the shows with nothing
+// to take yet fold away. The total is only a promise once the search has ended.
+function Review({ shows, progress, problem }) {
+  if (!shows) return html`<h2>Finding episodes</h2><${Spinner} />`;
+  const searching = searchingOf(progress);
+  const taking = shows.filter(s => s.episodes.length);
+  const idle = shows.filter(s => !s.episodes.length);
+  const total = taking.reduce((n, s) => n + s.episodes.length, 0);
+  const row = (show) => html`<li key=${show.id} class="setup-show">
+    <div class="sr-poster"><${Poster} show=${show} dim=${false} small /></div>
+    <span class="setup-show-title">${show.title}</span>
+    ${show.episodes.length ? html`<span class="setup-show-eps tabular">${show.episodes.length === 1 ? 'Episode' : 'Episodes'} ${episodeLabel(show.episodes)}</span>` : null}
+  </li>`;
+  if (!total && !searching) {
+    return html`
+      <h2>Nothing to download yet</h2>
+      <p class="page-sub">${shows.length ? `None of your ${plural(shows.length, 'show')} has a released episode to download. New episodes download as they air.` : 'No shows were imported. Add them later from Shows, Add show.'}</p>
+      ${shows.length ? html`<ul class="setup-shows card">${shows.map(row)}</ul>` : null}`;
+  }
+  const searched = progress ? progress.searched : 0;
+  const of = progress ? progress.total : shows.length;
+  return html`
+    <h2>${searching ? 'Finding episodes' : 'Ready to download'}</h2>
+    <p class="setup-total">${searching
+      ? html`<strong class="tabular">${plural(total, 'episode')}</strong> from ${plural(taking.length, 'show')} found so far.`
+      : html`<strong class="tabular">${plural(total, 'episode')}</strong> from ${plural(taking.length, 'show')} will be added to qBittorrent.`}</p>
+    ${searching ? html`<div class="setup-search">
+      <div class="setup-bar" role="progressbar" aria-label="Looking for older episodes" aria-valuemin="0" aria-valuemax=${of} aria-valuenow=${searched}>
+        <div style=${`width:${of ? Math.round((searched / of) * 100) : 0}%`}></div>
+      </div>
+      <div class="setup-bar-meta"><span>Looking for older episodes</span><span class="tabular">${searched} / ${of}</span></div>
+    </div>` : null}
+    ${problem ? html`<p class="setup-error" role="alert">${problem}</p>` : null}
+    ${taking.length ? html`<ul class="setup-shows card">${taking.map(row)}</ul>` : null}
+    ${idle.length ? html`<details class="adv setup-idle">
+      <summary>${plural(idle.length, 'show')} with nothing to download yet</summary>
+      <ul class="setup-shows card">${idle.map(row)}</ul>
+    </details>` : null}
+    <p class="field-hint">Not yet keeps every show paused until you choose Resume all in the sidebar.</p>`;
+}
+
+export function Setup({ sandbox, reviewing }) {
   useTheme();
   const settings = useResource(settingsData);
   const feeds = useResource(feedsData);
-  const [step, setStep] = useState(0);
+  const info = useResource(statusData).data;
+  const [step, setStep] = useState(reviewing ? AFTER_FINISH : 0);
+  const [review, setReview] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [tested, setTested] = useState({ state: '', text: '' });
@@ -36,6 +104,12 @@ export function Setup({ sandbox }) {
   const form = useDraft(initial, 'setup');
   const name = STEPS[step];
   useEffect(() => { setError(''); }, [step]);
+  const progress = info && info.setup_progress;
+  // Read again each time a search finishes, so the list grows with what it found.
+  useEffect(() => {
+    if (name !== 'review') return;
+    apiFetch('/api/setup/review', { quiet: true }).then(setReview, (err) => setError(err.message));
+  }, [name, progress && progress.searched, progress && progress.done]);
   if (!data) return html`<div class="setup">${settings.error ? html`<${LoadError} what="the settings" error=${settings.error} reload=${settings.reload} />` : html`<${Spinner} />`}</div>`;
 
   const connection = () => {
@@ -81,14 +155,21 @@ export function Setup({ sandbox }) {
       if (name === 'anilist') {
         await apiFetch('/api/setup/complete', { method: 'POST', json: { anilist_username: form.value('anilist_username') }, quiet: true });
         settings.reload();
-        setBusy(false);
-        return;
       }
       setStep(step + 1);
     } catch (err) { setError(err instanceof ApiError || err instanceof Error ? err.message : String(err)); }
     setBusy(false);
   };
+  const decide = async (download) => {
+    setBusy(true);
+    setError('');
+    try {
+      await apiFetch('/api/setup/review', { method: 'POST', json: { download }, quiet: true });
+      if (!download) toast('Every show is paused. Choose Resume all in the sidebar when you are ready.', 'info');
+    } catch (err) { setError(err.message); setBusy(false); }
+  };
   const blocked = (name === 'qbit' && tested.state !== 'ok') || (name === 'anilist' && checked.state !== 'ok');
+  const total = review ? review.shows.reduce((n, s) => n + s.episodes.length, 0) : 0;
   const accent = currentAccent();
   const applyAppearance = async (patch, undo) => {
     try { await save(patch); settings.reload(); } catch (err) { if (undo) undo(); }
@@ -140,13 +221,19 @@ export function Setup({ sandbox }) {
           <input class="field" placeholder="AniList username" aria-label="AniList username" autofocus ...${form.bind('anilist_username')} onInput=${(e) => { form.set('anilist_username', e.target.value); setChecked({ state: '', text: '' }); }} onKeyDown=${(e) => { if (e.key !== 'Enter' || busy || checked.state === 'wait' || !form.value('anilist_username').trim()) return; if (checked.state === 'ok') next(); else checkAnilist(); }} />
           <div class="row"><button type="button" class="btn sm" onClick=${checkAnilist} disabled=${!form.value('anilist_username').trim() || checked.state === 'wait'}>Check</button><span class=${`test-${checked.state}`} role="status">${checked.text}</span></div>
         </div>` : null}
+      ${name === 'import' ? html`<${Importing} info=${info} onDone=${() => setStep(STEPS.indexOf('review'))} />` : null}
+      ${name === 'review' ? html`<${Review} shows=${review && review.shows} progress=${progress} problem=${problemOf(info)} />` : null}
       ${error ? html`<p class="setup-error" role="alert">${error}</p>` : null}
       <div class="setup-foot">
         <div class="setup-dots" aria-label=${`Step ${step + 1} of ${STEPS.length}`}>${STEPS.map((s, i) => html`<span key=${s} class=${i === step ? 'on' : ''}></span>`)}</div>
         <div class="row">
           ${name === 'welcome' && !sandbox ? html`<button type="button" class="btn" onClick=${() => restoreBackup(setBusy)} disabled=${busy}>Restore a backup</button>` : null}
-          ${step > 0 ? html`<button type="button" class="btn" onClick=${() => setStep(step - 1)} disabled=${busy}>Back</button>` : null}
-          <button type="button" class="btn primary" onClick=${next} disabled=${busy || blocked}>${busy ? 'Working…' : name === 'welcome' ? 'Get started' : name === 'anilist' ? 'Finish' : 'Next'}</button>
+          ${step > 0 && step < AFTER_FINISH ? html`<button type="button" class="btn" onClick=${() => setStep(step - 1)} disabled=${busy}>Back</button>` : null}
+          ${name === 'review' && (total || searchingOf(progress)) ? html`<button type="button" class="btn" onClick=${() => decide(false)} disabled=${busy}>Not yet</button>` : null}
+          ${name === 'review'
+            ? html`<button type="button" class="btn primary" onClick=${() => decide(true)} disabled=${busy || !review || searchingOf(progress)}>${busy ? 'Working…' : searchingOf(progress) ? 'Download' : total ? `Download ${plural(total, 'episode')}` : 'Finish'}</button>`
+            : name === 'import' ? null
+            : html`<button type="button" class="btn primary" onClick=${next} disabled=${busy || blocked}>${busy ? 'Working…' : name === 'welcome' ? 'Get started' : name === 'anilist' ? 'Import shows' : 'Next'}</button>`}
         </div>
       </div>
     </div>

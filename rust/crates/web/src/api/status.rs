@@ -104,6 +104,12 @@ fn live(call: &Call<'_, '_>) -> Value {
         // Background jobs whose last run raised; each is retried a minute later.
         "jobs_failing": failing,
         "anilist_blocked_until": iso(blocked),
+        // Only while the first-run setup waits for the user to confirm its first downloads.
+        "setup_progress": runtime.jobs.setup_progress().map(|progress| json!({
+            "searched": progress.searched,
+            "total": progress.total,
+            "done": progress.done,
+        })),
         "rev": runtime.engine.bus().rev(),
     })
 }

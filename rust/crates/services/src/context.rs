@@ -290,6 +290,15 @@ pub fn setup_completed(conn: &Connection) -> Result<bool> {
     Ok(get_state(conn, SETUP_KEY, "")? == "1")
 }
 
+/// Set from the end of the first-run setup until the user decides whether the first downloads
+/// start; every show stays paused meanwhile.
+pub const SETUP_REVIEW_KEY: &str = "setup_review";
+
+/// Whether the first-run setup is waiting for the user to confirm its first downloads.
+pub fn setup_reviewing(conn: &Connection) -> Result<bool> {
+    Ok(get_state(conn, SETUP_REVIEW_KEY, "")? == "1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

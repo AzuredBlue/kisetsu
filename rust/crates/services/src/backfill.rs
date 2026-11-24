@@ -64,6 +64,8 @@ pub struct DueOptions {
     pub unmanaged: bool,
     /// A search the user asked for: feeds that seem not to carry the show are asked too.
     pub everywhere: bool,
+    /// Also the paused shows.
+    pub paused: bool,
 }
 
 fn hash_of(terms: &[String], feeds: &[Feed], missing: &[i64]) -> u64 {
@@ -274,8 +276,8 @@ pub fn due(
         Some(id) => Show::select(ctx.conn, "WHERE id = ?", [id])?,
         None => Show::select(
             ctx.conn,
-            "WHERE completed = 0 AND paused = 0 ORDER BY id",
-            [],
+            "WHERE completed = 0 AND (paused = 0 OR ?) ORDER BY id",
+            [options.paused],
         )?,
     };
     let mut result = Vec::new();
@@ -397,6 +399,20 @@ fn outstanding(ctx: &Context<'_>, show: &Show, unmanaged: bool) -> Result<Vec<i6
     Ok(numbers)
 }
 
+/// The show's aired, still wanted episodes that a stored feed item can supply: what the grab takes
+/// once the show is not paused.
+pub fn grabbable(ctx: &mut Context<'_>, show: &Show) -> Result<Vec<i64>> {
+    let wanted = outstanding(ctx, show, false)?;
+    if wanted.is_empty() {
+        return Ok(wanted);
+    }
+    let covered = grab::covered_numbers(ctx, show)?;
+    Ok(wanted
+        .into_iter()
+        .filter(|number| covered.contains(number))
+        .collect())
+}
+
 /// Whether the show's aired episodes were searched for, or no search has anything left to look
 /// for.
 ///
@@ -443,6 +459,7 @@ pub fn missing_episodes(ctx: &mut Context<'_>, show_id: i64, unmanaged: bool) ->
         force: true,
         unmanaged,
         everywhere: true,
+        paused: false,
     };
     Ok(due(ctx, options, None)?
         .into_iter()
@@ -459,6 +476,7 @@ pub fn search_unavailable(ctx: &mut Context<'_>, show_id: i64, unmanaged: bool) 
         force: true,
         unmanaged,
         everywhere: false,
+        paused: false,
     };
     due(ctx, options, Some(&mut skipped))?;
     Ok(skipped.contains(&show_id))

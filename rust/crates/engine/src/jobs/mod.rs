@@ -86,6 +86,16 @@ pub struct Health {
     pub grab: Option<String>,
 }
 
+/// How far the searches before the first-run review got: shows searched (or with nothing to search
+/// for) out of the followed shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SetupProgress {
+    pub searched: usize,
+    pub total: usize,
+    /// Set once startup's searches are over, however they ended.
+    pub done: bool,
+}
+
 /// What the jobs remember between runs.
 struct State {
     health: Health,
@@ -106,6 +116,8 @@ struct State {
     schedule_at: Option<Timestamp>,
     /// What of the grouping is stored; `None` until it is read back.
     grouping_kept: Option<String>,
+    /// Only while the first-run setup waits for the user to confirm its first downloads.
+    setup_progress: Option<SetupProgress>,
 }
 
 /// What the jobs remember, for a test to set.
@@ -196,6 +208,7 @@ impl Jobs {
                 schedule: None,
                 schedule_at: None,
                 grouping_kept: None,
+                setup_progress: None,
             }),
             grouping: Grouping::new(Box::new(wall_seconds)),
             page_sizes: Mutex::new(Vec::new()),
@@ -357,6 +370,10 @@ impl Jobs {
     /// Whether startup has seen what qBittorrent holds, so grabbing has begun.
     pub fn is_ready(&self) -> bool {
         self.ready.load(Ordering::Acquire)
+    }
+
+    pub fn setup_progress(&self) -> Option<SetupProgress> {
+        locked(&self.state).setup_progress
     }
 
     fn publish_status(&self) {
