@@ -32,7 +32,7 @@ export function describe(ep, { paused, now, delay, watched = null }) {
   let tone = '';
   if (ep.stalled) { label = 'stalled'; tone = 'warn'; }
   else if (ep.status === 'completed' && ep.release && ep.release.watched) label = ep.release.watched === 'deleted' ? 'watched, deleted' : 'watched';
-  else if (ep.status === 'completed') { label = ep.release && ep.release.completed_at ? relativeTime(ep.release.completed_at, now) : 'completed'; tone = 'ok'; }
+  else if (ep.status === 'completed') { label = ep.release && ep.release.completed_at ? relativeTime(ep.release.completed_at, now) : 'completed'; }
   else if (ep.status === 'failed') { label = 'failed'; tone = 'bad'; }
   else if (ep.status === 'missed') { label = 'missed'; tone = 'warn'; }
   else if (ep.status === 'skipped') label = watched !== null && ep.number <= watched ? 'watched' : 'skipped';

@@ -319,7 +319,7 @@
 }
 .history-status {
   grid-area: status; display: flex; align-items: center; justify-content: flex-end; gap: .25rem; white-space: nowrap;
-  &.grabbed { color: rgb(var(--queued)); } &.replaced { color: rgb(var(--info)); } &.done .icon { color: rgb(var(--ok)); }
+  &.grabbed { color: rgb(var(--queued)); } &.replaced { color: rgb(var(--info)); }
   &.failed { color: rgb(var(--bad)); } &.missed { color: rgb(var(--warn)); }
 }
 .history-row .history-reason { margin-top: .125rem; font-size: var(--fs-xs); line-height: 1rem; color: rgb(var(--text-2)); }
