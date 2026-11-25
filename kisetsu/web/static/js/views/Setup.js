@@ -27,7 +27,7 @@ function Importing({ info, onDone }) {
   const phase = info && info.shows ? 'Checking the feeds and qBittorrent' : 'Reading your AniList list';
   const problem = problemOf(info);
   return html`
-    <h2>Importing your shows</h2>
+    <h1>Importing your shows</h1>
     <div class="setup-bar busy" role="progressbar" aria-label=${phase}><div></div></div>
     <div class="setup-bar-meta"><span>${phase}</span></div>
     ${problem ? html`<p class="setup-error" role="alert">${problem}</p>` : null}`;
@@ -36,18 +36,18 @@ function Importing({ info, onDone }) {
 // The setup's last step: the first downloads, filling in while older episodes are searched for; the shows with nothing to
 // take yet fold away.
 function Review({ shows, progress, problem }) {
-  if (!shows) return html`<h2>Finding episodes</h2><${Spinner} />`;
+  if (!shows) return html`<h1>Finding episodes</h1><${Spinner} />`;
   const searching = searchingOf(progress);
   const taking = shows.filter(s => s.episodes.length);
   const idle = shows.filter(s => !s.episodes.length);
   if (!totalOf(shows) && !searching) {
     return html`
-      <h2>Nothing to download yet</h2>
+      <h1>Nothing to download yet</h1>
       <p class="page-sub">${shows.length ? `None of your ${plural(shows.length, 'show')} has a released episode to download. New episodes download as they air.` : 'No shows were imported. Add them later from Shows, Add show.'}</p>
       ${shows.length ? html`<${ShowList} shows=${shows} />` : null}`;
   }
   return html`
-    <h2>${searching ? 'Finding episodes' : 'Ready to download'}</h2>
+    <h1>${searching ? 'Finding episodes' : 'Ready to download'}</h1>
     <${Summary} shows=${shows} progress=${progress} />
     ${problem ? html`<p class="setup-error" role="alert">${problem}</p>` : null}
     ${taking.length ? html`<${ShowList} shows=${taking} />` : null}
@@ -80,7 +80,7 @@ export function Setup({ sandbox, reviewing }) {
   useEffect(() => { setError(''); }, [step]);
   const progress = info && info.setup_progress;
   const review = useFirstDownloads(progress, name === 'review');
-  if (!data) return html`<div class="setup">${settings.error ? html`<${LoadError} what="the settings" error=${settings.error} reload=${settings.reload} />` : html`<${Spinner} />`}</div>`;
+  if (!data) return html`<main class="setup">${settings.error ? html`<${LoadError} what="the settings" error=${settings.error} reload=${settings.reload} />` : html`<${Spinner} />`}</main>`;
 
   const connection = () => {
     const body = { qbit_host: form.value('qbit_host'), qbit_username: form.value('qbit_username') };
@@ -146,14 +146,14 @@ export function Setup({ sandbox, reviewing }) {
     try { await save(patch); settings.reload(); } catch (err) { if (undo) undo(); }
   };
 
-  return html`<div class="setup">
+  return html`<main class="setup">
     <div class="setup-card" key=${name}>
       ${name === 'welcome' ? html`
-        <h2>Welcome to Kisetsu</h2>
+        <h1>Welcome to Kisetsu</h1>
         <p class="page-sub">Kisetsu follows your AniList watching list and has qBittorrent download each new episode as it airs. A few questions first.</p>
-        ${sandbox ? html`<p class="field-hint">Sandbox: downloads are pretended and logged. qBittorrent and your files are never changed, and nothing is kept once it stops.</p>` : null}` : null}
+        ${sandbox ? html`<p class="field-hint">Sandbox: Kisetsu only logs downloads. qBittorrent and your files stay as they are, and Kisetsu drops this data when it stops.</p>` : null}` : null}
       ${name === 'qbit' ? html`
-        <h2>qBittorrent</h2>
+        <h1>qBittorrent</h1>
         <p class="page-sub">Turn on the Web UI in qBittorrent (Options, Web UI), then enter its address and login.</p>
         <div class="stack">
           <input class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${form.bind('qbit_host')} onInput=${(e) => { form.set('qbit_host', e.target.value); setTested({ state: '', text: '' }); }} />
@@ -164,12 +164,12 @@ export function Setup({ sandbox, reviewing }) {
           <div class="row"><button type="button" class="btn sm" onClick=${testQbit}>Test connection</button><span class=${`mono test-${tested.state}`}>${tested.text}</span></div>
         </div>` : null}
       ${name === 'feeds' ? html`
-        <h2>RSS feeds</h2>
+        <h1>RSS feeds</h1>
         <p class="page-sub">Where releases are found. When one is in several feeds, the higher one wins. You can change this later.</p>
         <div class="row"><button type="button" class="btn sm" onClick=${() => openFeedDialog()}>Add feed</button><button type="button" class="btn sm" onClick=${importFromQbit}>Import from qBittorrent</button></div>
         <div class="card" style="margin-top:.75rem">${feeds.data ? html`<${FeedsTable} feeds=${feeds.data} />` : feeds.error ? html`<${LoadError} what="the feeds" error=${feeds.error} reload=${feeds.reload} />` : null}</div>` : null}
       ${name === 'downloads' ? html`
-        <h2>Downloads</h2>
+        <h1>Downloads</h1>
         <div class="card card-divided">
           <${SetRow} name="Save to" htmlFor="su-base" hint="{name} becomes the show name. It must be a folder qBittorrent can see; with qBittorrent in Docker, the path inside the container. Blank uses qBittorrent's default." size="wide"><input id="su-base" class="field mono" placeholder="~/Anime/{name}" ...${form.bind('base_dir')} /><//>
           <${SetRow} name="Category" htmlFor="su-cat" size="mid"><input id="su-cat" class="field" placeholder="(blank)" ...${form.bind('default_category')} /><//>
@@ -177,7 +177,7 @@ export function Setup({ sandbox, reviewing }) {
           <${SetRow} name="Delete watched" hint="Skip episodes your AniList progress has passed, and delete each download with its files after you watch it, once it stops seeding."><${Seg} label="Delete watched" value=${form.value('delete_watched')} onChange=${(v) => form.set('delete_watched', v)} options=${[[true, 'On'], [false, 'Off']]} /><//>
         </div>` : null}
       ${name === 'appearance' ? html`
-        <h2>Appearance</h2>
+        <h1>Appearance</h1>
         <div class="card card-divided">
           <${SetRow} name="Theme"><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
           <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${(v) => applyAppearance({ title_language: v })} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
@@ -186,7 +186,7 @@ export function Setup({ sandbox, reviewing }) {
           <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes downloading."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${(v) => applyAppearance({ desktop_notifications: v })} options=${[[true, 'On'], [false, 'Off']]} /><//>
         </div>` : null}
       ${name === 'anilist' ? html`
-        <h2>AniList</h2>
+        <h1>AniList</h1>
         <p class="page-sub">Your username. Kisetsu follows what airs this season or next on your Watching and Planning lists; anything else can be added later from Shows, Add show.</p>
         <div class="stack">
           <input class="field" placeholder="AniList username" aria-label="AniList username" autofocus ...${form.bind('anilist_username')} onInput=${(e) => { form.set('anilist_username', e.target.value); setChecked({ state: '', text: '' }); }} onKeyDown=${(e) => { if (e.key !== 'Enter' || busy || checked.state === 'wait' || !form.value('anilist_username').trim()) return; if (checked.state === 'ok') next(); else checkAnilist(); }} />
@@ -196,7 +196,7 @@ export function Setup({ sandbox, reviewing }) {
       ${name === 'review' ? html`<${Review} shows=${review.shows} progress=${progress} problem=${problemOf(info) || review.error} />` : null}
       ${error ? html`<p class="setup-error" role="alert">${error}</p>` : null}
       <div class="setup-foot">
-        <div class="setup-dots" aria-label=${`Step ${step + 1} of ${STEPS.length}`}>${STEPS.map((s, i) => html`<span key=${s} class=${i === step ? 'on' : ''}></span>`)}</div>
+        <div class="setup-steps"><div class="setup-dots" aria-hidden="true">${STEPS.map((s, i) => html`<span key=${s} class=${i < step ? 'past' : i === step ? 'on' : ''}></span>`)}</div><span>Step ${step + 1} of ${STEPS.length}</span></div>
         <div class="row">
           ${name === 'welcome' && !sandbox ? html`<button type="button" class="btn" onClick=${() => restoreBackup(setBusy)} disabled=${busy}>Restore a backup</button>` : null}
           ${step > 0 && step < AFTER_FINISH ? html`<button type="button" class="btn" onClick=${() => setStep(step - 1)} disabled=${busy}>Back</button>` : null}
@@ -210,5 +210,5 @@ export function Setup({ sandbox, reviewing }) {
         </div>
       </div>
     </div>
-  </div>`;
+  </main>`;
 }
