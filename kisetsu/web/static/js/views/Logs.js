@@ -19,9 +19,9 @@ function Requests() {
     try { await apiFetch('/api/requests', { method: 'DELETE' }); reload(); } catch (err) { /* shown by apiFetch */ }
   };
   const minutes = Math.max(1, (Date.now() - Date.parse(data.since)) / 60000);
-  return html`<details class="card requests-card">
-    <summary class="row"><b class="tabular">${data.total}</b> requests sent since ${localTime(data.since, true)}<span class="muted tabular">(${(data.total / minutes).toFixed(1)}/min)</span>
-      <button type="button" class="btn sm plain" onClick=${reset}>Reset</button></summary>
+  // Reset sits over the summary's end rather than inside it, as a button within a summary can't be reached properly.
+  return html`<div class="requests-wrap"><button type="button" class="btn sm plain requests-reset" onClick=${reset}>Reset</button><details class="card requests-card">
+    <summary class="row"><b class="tabular">${data.total}</b> requests sent since ${localTime(data.since, true)}<span class="muted tabular">(${(data.total / minutes).toFixed(1)}/min)</span></summary>
     ${data.rows.length ? html`<table class="requests-table tabular">
       <thead><tr><th>Kind</th><th>Site</th><th class="num">Requests</th><th class="num">Rate-limited</th><th class="num">Failed</th></tr></thead>
       <tbody>${data.rows.map(r => html`<tr key=${`${r.kind}|${r.host}`}>
@@ -29,7 +29,7 @@ function Requests() {
         <td class=${`num ${r.rate_limited ? 'warn' : 'muted'}`}>${r.rate_limited}</td><td class=${`num ${r.error ? 'bad' : 'muted'}`}>${r.error}</td>
       </tr>`)}</tbody>
     </table>` : html`<p class="muted">None yet.</p>`}
-  </details>`;
+  </details></div>`;
 }
 
 export function Logs() {
@@ -51,7 +51,7 @@ export function Logs() {
     ${info && info.sandbox ? html`<${Requests} />` : null}
     <div class="log-pane">
       <div class="log-head muted">${plural(data ? data.length : 0, 'entry', 'entries')}<button type="button" class="btn sm plain" onClick=${copy}><${Icon} name="copy" small />Copy</button></div>
-      <div class="log-lines mono" ref=${box} onScroll=${onScroll}>
+      <div class="log-lines mono" ref=${box} onScroll=${onScroll} tabindex="0" role="log" aria-label="Log entries">
         ${!data && error ? html`<${LoadError} what="the logs" error=${error} reload=${reload} />` : !data || !data.length ? html`<${EmptyState} title="No activity logged yet" hint="What Kisetsu does is written here as it happens." />` : data.map((l) => {
           const mark = MARKS[l.level];
           return html`<div class="log-line" key=${l.seq}>
