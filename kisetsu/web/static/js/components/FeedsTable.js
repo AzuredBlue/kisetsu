@@ -135,7 +135,7 @@ export function FeedsTable({ feeds, editable = true, selected = null, onSelect =
           <button type="button" class="btn plain icon-only sm" draggable="false" disabled=${index === list.length - 1} onClick=${() => move(index, index + 1)} aria-label="Move down" title="Move down"><${Icon} name="down" small /></button>
         </span>
         <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${async () => { await openFeedDialog(feed); }} title="Edit feed" aria-label="Edit feed"><${Icon} name="edit" small /></button>
-        <button type="button" class="btn plain icon-only sm" draggable="false" onClick=${() => deleteFeed(feed)} title="Delete feed" aria-label="Delete feed"><${Icon} name="trash" small /></button>
+        <button type="button" class="btn plain icon-only sm feed-delete" draggable="false" onClick=${() => deleteFeed(feed)} title="Delete feed" aria-label="Delete feed"><${Icon} name="trash" small /></button>
       </div>` : null}
     </li>`)}
   </ul>`;
