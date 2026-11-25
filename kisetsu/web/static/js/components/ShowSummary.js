@@ -212,7 +212,7 @@ function RowActions({ show }) {
   </div>`;
 }
 
-const feedName = (show) => (show.feed ? show.feed.name : 'No feed');
+const feedName = (show) => (show.feed ? show.feed.name : 'Auto-discover');
 
 // The poster's own bottom edge colours what it sits on; AniList's cover colour stands in for the title until
 // the edge is read, or when the edge is too grey to give it a hue. A component using it calls useEdges(), with the

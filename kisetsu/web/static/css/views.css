@@ -71,7 +71,7 @@
   & > * { min-width: 0; }
   &:hover { background: rgb(var(--surface) / .6); border-color: rgb(var(--line-hover)); }
   & .sr-poster { flex: none; width: 2.5rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: .875rem; } }
-  & .sr-title { flex: 1 1 0; & h3 { font-size: .875rem; font-weight: 500; color: rgb(var(--text-2)); } }
+  & .sr-title { flex: 1 1 0; & h3 { font-size: .875rem; font-weight: 500; color: rgb(var(--text)); } }
   & .sr-feed-sub { font-size: var(--fs-xs); color: rgb(var(--text-3)); }
   & .sr-air { flex: none; width: 10rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .8125rem; }
   & .sr-feed, & .sr-progress, & .sr-chip { display: none; flex: none; white-space: nowrap; font-size: var(--fs-xs); color: rgb(var(--text-3)); }
@@ -239,7 +239,7 @@
   &.paused h3, &.settled h3 { color: rgb(var(--text-3)); }
   @media (hover: hover) {
     &:hover::before { background: rgb(var(--show-panel, var(--raised))); }
-    &:hover h4 { color: rgb(var(--show-text, var(--ac-soft))); }
+    &:hover h3 { color: rgb(var(--show-text, var(--ac-soft))); }
     &:hover .ep:not(.ok) { color: rgb(var(--text-2)); }
   }
 }
@@ -315,7 +315,7 @@
 .history-status {
   grid-area: status; display: flex; align-items: center; justify-content: flex-end; gap: .25rem; white-space: nowrap;
   &.grabbed { color: rgb(var(--queued)); } &.replaced { color: rgb(var(--info)); }
-  &.failed { color: rgb(var(--bad)); } &.missed { color: rgb(var(--warn)); }
+  &.failed { color: rgb(var(--bad)); } &.missed { color: rgb(var(--warn)); } &.done .icon { color: rgb(var(--ok)); }
 }
 .history-row .history-reason { margin-top: .125rem; font-size: var(--fs-xs); line-height: 1rem; color: rgb(var(--text-2)); }
 .history-time { grid-area: time; min-width: 2.5rem; text-align: right; }
@@ -405,6 +405,7 @@ section + section { margin-top: .5rem; }
 .test-bad { color: rgb(var(--bad)); font-size: var(--fs-xs); }
 .test-wait { color: rgb(var(--text-3)); font-size: var(--fs-xs); }
 .danger-zone { border-color: color-mix(in srgb, rgb(var(--bad)) 30%, rgb(var(--line-soft))); }
+.adv > .card + .danger-zone { margin-top: 1.25rem; }
 .page.medium { & .adv { display: block; } }
 /* Settings: the main sections side by side when there is room, so they read at a glance; Advanced and Clear all span both.
    On one column the sections keep their natural order. */
