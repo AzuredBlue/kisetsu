@@ -227,16 +227,16 @@
   position: relative; isolation: isolate; display: flex; align-items: flex-start; gap: .75rem; width: 100%; text-align: left; transition: opacity .15s;
   /* Hover puts the poster's edge colour behind the item, as on a grid card. It reaches past the item, so nothing moves. */
   &::before { content: ''; position: absolute; inset: -.375rem; z-index: -1; border-radius: var(--r-md); transition: background-color .2s ease; }
-  &.settled .cal-poster { opacity: .7; transition: opacity .15s; } &.settled:hover .cal-poster { opacity: 1; } &.paused { filter: grayscale(1); opacity: .5; &:hover { opacity: .8; } }
+  &.settled .cal-poster { opacity: .7; transition: opacity .15s; } &.settled:hover .cal-poster { opacity: 1; } &.paused .cal-poster { filter: grayscale(1); opacity: .5; transition: opacity .15s; } &.paused:hover .cal-poster { opacity: .8; }
   & .cal-poster { flex: none; width: 4rem; border-radius: var(--r-sm); overflow: hidden; }
   & .no-art { font-size: 1rem; }
   & .cal-info { flex: 1; min-width: 0; padding-top: .125rem; }
   /* An inline icon sits at the top of its line box; as a block the row centres it on the text. */
   & .ep.ok .icon { display: block; }
-  & h4 { font-size: .875rem; font-weight: 500; line-height: 1.35; color: rgb(var(--text)); text-wrap: balance; transition: color .15s; }
+  & h3 { font-size: .875rem; font-weight: 500; line-height: 1.35; color: rgb(var(--text)); text-wrap: balance; transition: color .15s; }
   & .ep { font-size: var(--fs-xs); font-weight: 500; font-variant-numeric: tabular-nums; color: rgb(var(--text-3)); transition: color .2s ease; &.ok { color: rgb(var(--ok)); } }
   & .when { font-size: var(--fs-xs); }
-  &.paused h4, &.settled h4 { color: rgb(var(--text-3)); }
+  &.paused h3, &.settled h3 { color: rgb(var(--text-3)); }
   @media (hover: hover) {
     &:hover::before { background: rgb(var(--show-panel, var(--raised))); }
     &:hover h4 { color: rgb(var(--show-text, var(--ac-soft))); }
@@ -589,3 +589,6 @@ textarea.path-field { min-height: 0; resize: none; overflow-wrap: anywhere; line
 /* A status tag over a poster stays light on dark in both themes, like any text on cover art. Paused keeps its own grey. */
 .tag-slot .pill:not(.pill-idle) { background: rgb(12 14 20 / .72); color: rgb(235 236 240); backdrop-filter: blur(4px); }
 .tag-slot .pill-info { color: rgb(177 222 255); }
+
+.requests-wrap { position: relative; }
+.requests-reset { position: absolute; top: .5rem; right: .75rem; z-index: 1; }

@@ -139,13 +139,17 @@ export async function togglePause(show) {
   } catch (err) { /* shown by apiFetch */ }
 }
 
+// A file about to be deleted is named in full. A long name may break after its separators, so it wraps between
+// words of the name rather than inside one; its extension stays on the line before it.
+const breakable = (name) => name.split(/(?<=[._\-\])\s])(?!\.?\w{1,4}$)/).flatMap((part, i) => (i ? [html`<wbr />`, part] : [part]));
+
 function torrentList(torrents) {
   if (!Array.isArray(torrents)) return html`<p class="field-hint">The list of torrents is not available.</p>`;
   if (!torrents.length) return html`<p class="field-hint">No torrents in qBittorrent belong to this show.</p>`;
   return html`<div>
     <div class="field-label">Torrents <span class="count-badge">${torrents.length}</span></div>
-    <ul class="torrent-list">${torrents.map(t => html`<li key=${t.hash}>
-      <span class="mono truncate" title=${t.name || t.hash}>${t.name || t.hash}</span>${t.tracked ? null : html`<span class="muted">found in its folder</span>`}
+    <ul class="torrent-list" tabindex="0" aria-label="Torrents">${torrents.map(t => html`<li key=${t.hash}>
+      <span class="mono file-name">${breakable(t.name || t.hash)}</span>${t.tracked ? null : html`<span class="muted">found in its folder</span>`}
     </li>`)}</ul>
   </div>`;
 }
@@ -154,8 +158,8 @@ function folderNote(folder) {
   if (!folder || !folder.exists) return null;
   if (!folder.remove) return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>`;
   const more = folder.leftover_count - folder.leftovers.length;
-  return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is deleted too${folder.leftover_count ? ', with these files no torrent owns:' : '.'}</p>
-    ${folder.leftover_count ? html`<ul class="torrent-list">${folder.leftovers.map(name => html`<li key=${name}><span class="mono truncate" title=${name}>${name}</span></li>`)}
+  return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is deleted too${folder.leftover_count ? ', with these other files in it:' : '.'}</p>
+    ${folder.leftover_count ? html`<ul class="torrent-list" tabindex="0" aria-label="Other files">${folder.leftovers.map(name => html`<li key=${name}><span class="mono file-name">${breakable(name)}</span></li>`)}
       ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
 }
 
@@ -188,6 +192,7 @@ export async function deleteShow(show) {
     danger: true,
     confirm: 'Delete',
     body: html`<${DeleteBody} preview=${preview} keep=${keep} />`,
+    wide: !!preview && Array.isArray(preview.torrents) && hasFiles(preview),
   });
   if (!confirmed) return false;
   try {

@@ -102,7 +102,8 @@ textarea.field { resize: vertical; min-height: 4.5rem; }
 .modal-head { display: flex; align-items: center; gap: .75rem; margin-bottom: .75rem; & h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; } }
 .modal-badge { flex: none; display: grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: 50%; background: var(--tonal); color: var(--on-tonal); &.danger { background: var(--danger); color: rgb(var(--bad-fg)); } }
 .modal .body { color: rgb(var(--text-2)); font-size: .875rem; display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; overflow-wrap: anywhere; }
-.modal .actions { display: flex; justify-content: flex-end; gap: .5rem; margin-top: 1.25rem; }
+/* The buttons stay in view while a long dialog scrolls. */
+.modal .actions { position: sticky; bottom: -1.25rem; display: flex; justify-content: flex-end; gap: .5rem; margin: .5rem -1.25rem -1.25rem; padding: .75rem 1.25rem 1.25rem; background: rgb(var(--surface)); }
 /* A dialog's destructive confirm is a solid fill, set apart from Cancel. */
 .modal .actions .btn.danger {
   background: rgb(var(--bad)); color: rgb(var(--sunken)); font-weight: 600;

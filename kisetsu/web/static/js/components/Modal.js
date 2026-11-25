@@ -25,6 +25,9 @@ export function ModalHost() {
   useEffect(() => {
     if (!modal) return undefined;
     const previous = document.activeElement;
+    // The dialog is named by its heading.
+    const heading = panel.current && panel.current.querySelector('h2');
+    if (heading) { heading.id = 'modal-title'; panel.current.setAttribute('aria-labelledby', 'modal-title'); }
     const focusable = panel.current && panel.current.querySelector('input, button.primary, button.danger, button');
     if (focusable) focusable.focus();
     const onKey = (e) => { if (e.key === 'Escape') close(undefined); };
