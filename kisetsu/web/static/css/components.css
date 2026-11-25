@@ -73,7 +73,7 @@ textarea.field { resize: vertical; min-height: 4.5rem; }
   & .set-stack { display: flex; flex-direction: column; gap: .5rem; }
   & .set-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 }
-@media (max-width: 639px) { .set-row .set-ctl { flex: 1 1 100%; width: 100% !important; } }
+@media (max-width: 639px) { .set-row .set-ctl:not(.num) { flex: 1 1 100%; width: 100% !important; } }
 
 .adv > summary {
   display: flex; align-items: center; gap: .4rem; width: max-content; margin-bottom: .5rem; padding: 0 .25rem; cursor: pointer; list-style: none;

@@ -175,7 +175,7 @@ export function Settings() {
     <div class="settings-cols">
       <div class="settings-col">
         <section class="sec-downloads">
-          <h3 class="section-title section-gap">Downloads</h3>
+          <h2 class="section-title section-gap">Downloads</h2>
           <div class="card card-divided form-grid">
             <${SetRow} name="Save to" htmlFor="set-base-dir" hint="{name} becomes the show name. Blank uses qBittorrent's default." size="wide"><input id="set-base-dir" class="field mono" placeholder="~/Anime/{name}" title="A folder as qBittorrent sees it (with Docker, the path inside the container)" ...${bind('base_dir')} /><//>
             <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(none)" ...${bind('default_category')} /><//>
@@ -186,14 +186,14 @@ export function Settings() {
           </div>
         </section>
         <section class="sec-backup">
-          <h3 class="section-title section-gap">Backup</h3>
+          <h2 class="section-title section-gap">Backup</h2>
           <div class="card card-divided form-grid">
             <${SetRow} name="Export" hint="Settings, shows, feeds and history. Keep it private: feed addresses can hold keys."><button type="button" class="btn sm" onClick=${runExport} disabled=${exporting}>${exporting ? 'Exporting…' : 'Export backup'}</button><//>
             <${SetRow} name="Restore" hint="Replaces everything, after a preview. The current data is saved first."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
           </div>
         </section>
         ${updateState ? html`<section class="sec-version">
-          <h3 class="section-title section-gap">Kisetsu <span class="version-tag muted tabular">v${updateState.version}</span></h3>
+          <h2 class="section-title section-gap">Kisetsu <span class="version-tag muted tabular">v${updateState.version}</span></h2>
           ${updateState.latest ? html`<div class="card card-divided form-grid">
             <${SetRow} name=${`Version ${updateState.latest} is available`} hint=${updateState.blocked || html`<a href=${updateState.page} target="_blank" rel="noopener noreferrer">What's new</a>`}>
               ${updateState.blocked ? html`<a class="btn sm" href=${updateState.page} target="_blank" rel="noopener noreferrer">Download</a>` : html`<button type="button" class="btn sm primary" onClick=${runUpdate} disabled=${updating}>${updating ? 'Updating…' : 'Update'}</button>`}
@@ -203,14 +203,14 @@ export function Settings() {
       </div>
       <div class="settings-col">
         <section class="sec-connections">
-          <h3 class="section-title section-gap">Connections</h3>
+          <h2 class="section-title section-gap">Connections</h2>
           <div class="card card-divided form-grid">
-            <${SetRow} name="qBittorrent" htmlFor="set-qbit-host" size="wide">
+            <${SetRow} name="qBittorrent" size="wide">
               <div class="set-stack">
-                <input id="set-qbit-host" class="field" placeholder="http://localhost:8080" aria-label="qBittorrent host or URL" ...${bind('qbit_host')} />
+                <div><label class="field-label" for="set-qbit-host">Address</label><input id="set-qbit-host" class="field" placeholder="http://localhost:8080" ...${bind('qbit_host')} /></div>
                 <div class="set-pair">
-                  <input class="field" placeholder="Username" aria-label="qBittorrent username" ...${bind('qbit_username')} />
-                  <input class="field" type="password" placeholder="Password" aria-label="qBittorrent password" autocomplete="new-password" ...${bind('qbit_password')} />
+                  <div><label class="field-label" for="set-qbit-user">Username</label><input id="set-qbit-user" class="field" ...${bind('qbit_username')} /></div>
+                  <div><label class="field-label" for="set-qbit-pass">Password</label><input id="set-qbit-pass" class="field" type="password" autocomplete="new-password" ...${bind('qbit_password')} /></div>
                 </div>
                 <p class="field-hint">Leave the password blank to keep the saved one.</p>
                 <div class="row"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`test-${test.state}`}>${test.text}</span></div>
@@ -220,12 +220,12 @@ export function Settings() {
           </div>
         </section>
         <section class="sec-appearance">
-          <h3 class="section-title section-gap">Appearance</h3>
+          <h2 class="section-title section-gap">Appearance</h2>
           <div class="card card-divided form-grid">
             <${SetRow} name="Theme"><${Seg} label="Theme" value=${themeMode()} onChange=${setThemeMode} options=${[['system', 'System'], ['light', 'Light'], ['dark', 'Dark']]} /><//>
             <${SetRow} name="Anime names"><${Seg} label="Anime names" value=${data.title_language} onChange=${setLanguage} options=${[['english', 'English'], ['romaji', 'Romaji']]} /><//>
             <${SetRow} name="Colour"><${Swatches} value=${accent.color} onPick=${(color) => setAccent(color.toLowerCase(), accent.tint)} onPreview=${(color) => applyUserAccent(color.toLowerCase(), accent.tint, { persist: false })} /><//>
-            <${SetRow} name="Colour tint"><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
+            <${SetRow} name="Colour tint" hint="How much of the colour goes into backgrounds and panels."><${Seg} label="Colour tint" value=${accent.tint} onChange=${(tint) => setAccent(accent.color, tint)} options=${[['off', 'Off'], ['subtle', 'Subtle'], ['full', 'Full']]} /><//>
             ${trayState ? html`<${SetRow} name="Tray icon" hint=${trayState.available ? 'The icon in the notification area: open Kisetsu, pause all, quit.' : 'Not available in this run (Windows only, and not with --no-tray).'}><div inert=${!trayState.available} style=${trayState.available ? undefined : 'opacity:.55'}><${Seg} label="Tray icon" value=${trayState.visible} onChange=${setTray} options=${[[true, 'On'], [false, 'Off']]} /></div><//>` : null}
           </div>
         </section>
@@ -240,11 +240,10 @@ export function Settings() {
         <${SetRow} name="Check after airing (min)" htmlFor="set-hunt" hint="Right after an episode airs, how often its show's feed is read until the release turns up." size="num"><input id="set-hunt" type="number" min="2" max="60" class="field num" ...${bind('hunt_interval_minutes')} /><//>
         <${SetRow} name="Look early for new shows (h)" htmlFor="set-early" hint="For a show's first episodes only: start looking this long before AniList's air time. 0 waits for the stated time." size="num"><input id="set-early" type="number" min="0" max="168" class="field num" ...${bind('early_air_tolerance_hours')} /><//>
       </div>
+      <div class="card form-grid danger-zone">
+        <${SetRow} name="Clear all shows" hint="Removes every show and the history. Downloads are kept."><button type="button" class="btn danger sm" onClick=${clearAll}>Clear all</button><//>
+      </div>
     </details>
-
-    <div class="card form-grid danger-zone">
-      <${SetRow} name="Clear all shows" hint="Removes every show and the history. Downloads are kept."><button type="button" class="btn danger sm" onClick=${clearAll}>Clear all</button><//>
-    </div>
 
     <${SaveBar} open=${form.dirty} saving=${saving} onDiscard=${form.reset} onSave=${save} />
   </div>`;
