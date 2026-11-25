@@ -116,7 +116,7 @@ export function EpisodeList({ episodes, groups, paused, delay, watched = null, n
       })}
       ${folded ? html`<li class="list-empty" key="g:done-more"><button type="button" class="link" onClick=${() => setAllDone(true)}>Show ${folded} older completed episode${folded === 1 ? '' : 's'}</button></li>` : null}`;
   });
-  return html`<ul class="list">${body.some(Boolean) ? body : html`<li class="list-empty">No episode records yet.</li>`}</ul>`;
+  return html`<ul class="list" tabindex="0" aria-label="Episodes">${body.some(Boolean) ? body : html`<li class="list-empty">No episode records yet.</li>`}</ul>`;
 }
 
 function NotUsed({ group }) {
@@ -135,16 +135,19 @@ function NotUsed({ group }) {
     </li>`) : null}`;
 }
 
+const EPISODE_STATES = { completed: 'Downloaded', downloading: 'Downloading', failed: 'Failed', missed: 'Missed', wanted: 'Wanted', skipped: 'Skipped' };
+const stateLabel = (status) => EPISODE_STATES[status] || status;
+
 // What a release row that can't be downloaded says: the episode's state, but nothing when the episode has another copy.
 function matchState(m) {
-  if (m.this_release) return m.episode_status;
-  return m.episode_status === 'completed' || m.episode_status === 'downloading' ? '' : m.episode_status;
+  if (m.this_release) return stateLabel(m.episode_status);
+  return m.episode_status === 'completed' || m.episode_status === 'downloading' ? '' : stateLabel(m.episode_status);
 }
 
 export function ReleaseList({ groups, actions, loading, onUseFeed }) {
-  if (loading) return html`<ul class="list"><li class="list-empty">Checking the feed…</li></ul>`;
+  if (loading) return html`<ul class="list" aria-label="Releases"><li class="list-empty">Checking the feed…</li></ul>`;
   const any = (groups || []).some(g => g.matches.length || (g.rejected && g.rejected.length));
-  return html`<ul class="list">
+  return html`<ul class="list" tabindex="0" aria-label="Releases">
     ${any ? groups.map(g => html`<li class="list-head" key=${`h:${g.feed_id}`}>
         <span class="truncate">${g.feed_name}</span>
         ${ROLE_LABELS[g.role] ? html`<span class="muted">${ROLE_LABELS[g.role]}</span>` : null}

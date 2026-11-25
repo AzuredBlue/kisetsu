@@ -1,7 +1,7 @@
 import { html, useEffect, useLayoutEffect, useMemo, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
 import { useResource } from '../store.js';
-import { go, leaveTarget, useNow } from '../router.js';
+import { go, leaveTarget, onLeave, useNow } from '../router.js';
 import { mediumCover, SHOW_POSTER_SIZES } from '../covers.js';
 import { applyShowPalette } from '../theme.js';
 import { feedMatches, feeds as feedsData, settings as settingsData, shows as showsData, showPage } from '../data.js';
@@ -40,7 +40,7 @@ function Header({ page, now }) {
   const alt = [page.title_romaji, page.title_english].find(t => t && t !== page.title);
   const subtitle = [alt, page.season].filter(Boolean).join(', ');
   const { done, total } = page.progress;
-  const showProgress = done > 0 || total > 0 || !!page.next_airing;
+  const showProgress = page.status !== 'upcoming' && (done > 0 || total > 0 || !!page.next_airing);
   return html`<div class="show-head">
     <div class="show-head-top">
       <div class="grow">
@@ -51,14 +51,14 @@ function Header({ page, now }) {
         ${subtitle ? html`<p class="muted truncate" style="margin-top:.25rem">${subtitle}</p>` : null}
       </div>
       <div class="row">
-        <button type="button" class="btn sm show-delete" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }} title="Delete show"><${Icon} name="trash" small />Delete</button>
         ${page.status !== 'completed' ? html`<button type="button" class="btn sm" onClick=${() => togglePause(page)} title=${page.paused ? 'Resume downloads for this show' : 'Pause downloads for this show'}><${Icon} name=${page.paused ? 'play' : 'pause'} small />${page.paused ? 'Resume' : 'Pause'}</button>` : null}
+        <button type="button" class="btn sm show-delete" onClick=${async () => { if (await deleteShow(page)) go(leaveTarget()); }} title="Delete show"><${Icon} name="trash" small />Delete</button>
       </div>
     </div>
     <div class="show-facts">
       <span class=${`pill ${{ working: 'pill-ok', testing: 'pill-info', waiting: 'pill-info', upcoming: 'pill-info', paused: 'pill-idle', completed: 'pill-done' }[page.status]}`}>${page.status_label}</span>
       ${air.ep || air.info ? html`<span><b>${air.ep}</b> <span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span></span>` : null}
-      <span class="feed-fact muted" title=${page.feed ? `${page.feed.name} (${page.feed.state_label})` : 'Auto-discover'}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? `${page.feed.name} (${page.feed.state_label.toLowerCase()})` : 'Auto-discover'}</span></span>
+      <span class="feed-fact" title=${page.feed ? `${page.feed.name}: ${feedHint(page)}` : feedHint(page)}><${Icon} name="feeds" small /><span class="truncate">${page.feed ? page.feed.name : 'Auto-discover'}</span>${page.feed ? html`<span class=${`feed-state ${page.feed.state}`}>${page.feed.state === 'locked' ? html`<${Icon} name="lock" small />` : null}${page.feed.state_label}</span>` : null}</span>
     </div>
     ${showProgress ? html`<div class="show-progress"><${ProgressBar} show=${page} /><span class="muted tabular">${doneText(page)}</span></div>` : null}
   </div>`;
@@ -86,6 +86,7 @@ export function Show({ route }) {
   }, [huesKey]);
 
   useEffect(() => { setListTab('episodes'); }, [id]);
+  useEffect(() => onLeave(leave));
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape' && !document.querySelector('.modal-backdrop')) leave(); };
     document.addEventListener('keydown', onKey);
@@ -107,7 +108,7 @@ export function Show({ route }) {
   if (!data) {
     const known = (knownShows.data || []).find(sh => sh.id === id);
     return html`<div class="show-page">
-      <div class="show-banner on-art"><button type="button" class="back" onClick=${leave} aria-label="Back" title="Back (Esc)"><${Icon} name="back" /></button></div>
+      <div class="show-banner on-art"></div>
       <div class="show-body"><div class="show-top">${known ? html`<div class="show-poster"><${Poster} show=${known} sizes=${SHOW_POSTER_SIZES} /></div>` : null}</div></div>
     </div>`;
   }
@@ -189,7 +190,6 @@ export function Show({ route }) {
     <div class="show-backdrop" aria-hidden="true">${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} crossorigin=${artCors} />` : null}</div>
     <div class="show-banner on-art">
       ${art ? html`<img src=${art} alt="" class=${data.banner ? 'sharp' : 'blur'} crossorigin=${artCors} />` : null}
-      <button type="button" class="back" onClick=${leave} aria-label="Back" title="Back (Esc)"><${Icon} name="back" /></button>
     </div>
     <div class="show-body">
       <div class="show-top">
@@ -200,8 +200,8 @@ export function Show({ route }) {
         <div class="pane-head">
           <${Seg} label="List" value=${listTab} onChange=${setListTab} options=${[['episodes', 'Episodes'], ['releases', 'Releases']]} />
           <span class="row">
-            <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} tracked` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : matches.error ? 'not loaded' : 'checking feed…'}</span>
-            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : html`<button type="button" class="btn sm" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
+            <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} episode${data.episodes.length === 1 ? '' : 's'}` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : matches.error ? 'not loaded' : 'checking feed…'}</span>
+            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : data.status === 'upcoming' ? null : html`<button type="button" class="btn sm" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
           </span>
         </div>
         <div class="card list-card">
@@ -211,10 +211,9 @@ export function Show({ route }) {
             : html`<${ReleaseList} groups=${matchData} loading=${!matchData} actions=${actions} onUseFeed=${(feedId) => save({ feed_id: feedId })} />`}
         </div>
       </section>
-      <aside class="show-side">
+      <aside class="show-side" aria-label="Show settings">
         <div class="pane-head">
           <${Seg} label="Settings" value=${sideTab} onChange=${setSideTab} options=${[['feed', 'Feed'], ['download', 'Download']]} />
-          ${sideTab === 'feed' ? html`<button type="button" class="btn sm" onClick=${rediscover} title="Let Kisetsu find the feed again by itself">Reset to auto-discover</button>` : null}
         </div>
         <div class="card side-card">
           ${sideTab === 'feed' ? html`
@@ -225,6 +224,7 @@ export function Show({ route }) {
                 ${feedList.map(f => html`<option value=${f.id} selected=${f.id === value('feed_id')}>#${f.priority} ${f.name}</option>`)}
               </select>
               <p class="field-hint">${feedHint(data)}${numbering && numbering.offset > 0 ? ` It numbers the season from episode ${numbering.offset + 1}.` : ''}</p>
+              ${data.feed && ['locked', 'pinned'].includes(data.feed.state) ? html`<button type="button" class="btn sm feed-reset" onClick=${rediscover} title="Let Kisetsu find the feed again by itself">${data.feed.state === 'locked' ? 'Unlock and auto-discover…' : 'Reset to auto-discover'}</button>` : null}
             </div>
             <div>
               <label for="show-aliases" class="field-label">Custom aliases</label>
@@ -235,16 +235,16 @@ export function Show({ route }) {
               <span class="field-label">Matched as</span>
               ${data.learned_name
                 ? html`<span class="matched-name"><span class="mono">${data.learned_name}</span>${data.matched_season ? ` (season ${data.matched_season})` : ''}</span>`
-                : html`<span class="field-hint">Name and aliases, until a release appears.</span>`}
+                : html`<span class="field-hint">By name and aliases until a release arrives.</span>`}
             </div>` : html`
             <div>
               <label for="show-save-path" class="field-label">Save path</label>
-              <input type="text" id="show-save-path" class="field mono" ...${form.bind('save_folder')} placeholder=${`~/Anime/${data.title}`} />
+              <textarea id="show-save-path" class="field mono path-field" rows="2" spellcheck="false" ...${form.bind('save_folder')} placeholder=${`~/Anime/${data.title}`}></textarea>
             </div>
             <div class="pair">
               <div>
                 <label for="show-category" class="field-label">Category</label>
-                <input type="text" id="show-category" class="field mono" ...${form.bind('category')} placeholder=${(settings.data && settings.data.default_category) || 'anime'} />
+                <input type="text" id="show-category" class="field" ...${form.bind('category')} placeholder=${(settings.data && settings.data.default_category) || 'anime'} />
               </div>
               <div>
                 <label for="show-ratio" class="field-label">Seed ratio</label>
