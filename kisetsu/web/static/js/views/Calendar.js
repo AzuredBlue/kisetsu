@@ -11,14 +11,12 @@ import { useTheme } from '../theme.js';
 import { capitalize, formatDate, releaseState, shownExpected } from '../format.js';
 
 const WEEK = 7 * 86400000;
-const SEASON_WEEKS = 4;
 const TIME = { hour: 'numeric', minute: '2-digit' };
 const WEEKDAY = { weekday: 'short' };
 const DAY = { month: 'short', day: 'numeric' };
 const time = (date) => formatDate(date, TIME);
 const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
-const weeksAfter = (date, weeks) => { const at = new Date(date); at.setDate(at.getDate() + 7 * weeks); return at; };
 // Air times are Japanese and never move for daylight saving, so a guessed week is exactly 7 days of time on.
 const airsWeeksAfter = (date, weeks) => new Date(date.getTime() + weeks * WEEK);
 
@@ -62,10 +60,6 @@ export function buildWeek(shows, today, offset = 0) {
     release: releaseState(a.at, show.release_delay_minutes, today),
     minutes: a.at.getHours() * 60 + a.at.getMinutes(),
   })));
-  // Weekdays something airs on this season, from the weeks around this one, so a quiet day can take less room
-  // without the columns shifting from week to week.
-  const busy = new Set(shows.flatMap(show => airingsBetween(show, weeksAfter(monday, -SEASON_WEEKS), weeksAfter(sunday, SEASON_WEEKS)))
-    .map(a => (a.at.getDay() + 6) % 7));
   const days = [];
   for (let d = 0; d < 7; d++) {
     const date = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + d);
@@ -79,7 +73,6 @@ export function buildWeek(shows, today, offset = 0) {
     });
     days.push({
       date, slots, today: date.getTime() === startOfToday.getTime(), past: date < startOfToday,
-      quiet: !slots.length && busy.size > 0 && !busy.has(d),
       name: capitalize(formatDate(date, WEEKDAY)),
       label: formatDate(date, DAY),
     });
@@ -125,7 +118,7 @@ function Slot({ slot }) {
         return html`<button type="button" key=${show.id} class=${`cal-item${show.paused ? ' paused' : state && state.settled ? ' settled' : ''}`} style=${posterVars(show, resolved)} onPointerEnter=${() => prefetch(show.id)} onClick=${() => go(show.id)}>
           <div class="cal-poster"><${Poster} show=${show} dim=${show.paused} small /></div>
           <div class="cal-info">
-            <h4 class="clamp-3" title=${show.title}>${show.title}</h4>
+            <h3 class="clamp-3" title=${show.title}>${show.title}</h3>
             <div class="row wrap"><span class="ep">Ep ${episode}</span>${!state ? null : state.settled
               ? html`<span class="ep ok" title="On disk"><${Icon} name="check" small /></span>`
               : html`<span class=${whenClass(state.tone)}>${state.text}</span>`}${expectedTag(entry, state)}<${StatusTag} show=${show} /></div>
@@ -144,8 +137,9 @@ export function Calendar() {
   const week = useMemo(() => buildWeek(data || [], new Date(minute * 60000), offset), [data, minute, offset]);
   if (!data && error) return html`<div class="page full"><${LoadError} what="the calendar" error=${error} reload=${reload} /></div>`;
   const nowLine = html`<div class="cal-now" key="now">Now</div>`;
-  // Quiet days get a narrow column, about the width of their name; the grid only applies it when the week is laid out side by side.
-  const cols = week.days.map(day => day.quiet ? 'minmax(5.5rem, .35fr)' : '1fr').join(' ');
+  // A day with nothing this week gets a narrow column, about the width of its name, so the busy days have room for
+  // their titles; the grid only applies it when the week is laid out side by side.
+  const cols = week.days.map(day => (day.slots.length ? '1fr' : 'minmax(5.5rem, .35fr)')).join(' ');
   return html`<div class="page full">
     <div class="cal-nav">
       <button type="button" class="btn plain icon-only sm" onClick=${() => setOffset(offset - 1)} aria-label="Previous week" title="Previous week"><${Icon} name="back" /></button>

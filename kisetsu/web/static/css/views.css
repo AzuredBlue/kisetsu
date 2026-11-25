@@ -412,7 +412,7 @@ section + section { margin-top: .5rem; }
 .settings { container-type: inline-size; & .adv { display: block; } }
 .settings-cols { display: grid; gap: 1.25rem; align-items: start; }
 .settings-col { display: contents; }
-.sec-downloads { order: 1; } .sec-connections { order: 2; } .sec-appearance { order: 3; } .sec-backup { order: 4; }
+.sec-downloads { order: 1; } .sec-connections { order: 2; } .sec-appearance { order: 3; } .sec-backup { order: 4; } .sec-version { order: 5; }
 @container (min-width: 60rem) {
   .settings-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; }
   .settings-col { display: grid; gap: 1.25rem; align-content: start; min-width: 0; }
@@ -467,11 +467,12 @@ section + section { margin-top: .5rem; }
   width: min(34rem, 100%); display: flex; flex-direction: column; gap: .75rem;
   background: rgb(var(--surface)); border: 1px solid rgb(var(--line)); border-radius: var(--r-lg); padding: 1.5rem;
   animation: setup-in .2s ease-out;
-  & h2 { margin: 0; font-size: 1.25rem; }
+  & h1 { margin: 0; font-size: 1.25rem; font-weight: 600; }
   & .stack { display: flex; flex-direction: column; gap: .5rem; }
 }
 .setup-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-top: .5rem; }
-.setup-dots { display: flex; gap: .375rem; & span { width: .375rem; height: .375rem; border-radius: 50%; background: rgb(var(--line)); &.on { background: rgb(var(--ac)); } } }
+.setup-steps { display: flex; align-items: center; gap: .75rem; font-size: var(--fs-xs); color: rgb(var(--text-3)); font-variant-numeric: tabular-nums; }
+.setup-dots { display: flex; gap: .375rem; & span { width: .5rem; height: .5rem; border-radius: 50%; background: rgb(var(--line-strong) / .5); &.past { background: rgb(var(--ac) / .55); } &.on { background: rgb(var(--ac)); } } }
 .setup-error { color: rgb(var(--bad)); font-size: .8125rem; margin: 0; }
 @keyframes setup-in { from { opacity: 0; transform: translateY(.25rem); } }
 @media (prefers-reduced-motion: reduce) { .setup-card { animation: none; } }
@@ -590,6 +591,23 @@ textarea.path-field { min-height: 0; resize: none; overflow-wrap: anywhere; line
 /* A status tag over a poster stays light on dark in both themes, like any text on cover art. Paused keeps its own grey. */
 .tag-slot .pill:not(.pill-idle) { background: rgb(12 14 20 / .72); color: rgb(235 236 240); backdrop-filter: blur(4px); }
 .tag-slot .pill-info { color: rgb(177 222 255); }
+
+.modal .torrent-list { max-height: min(16rem, 40vh); & .file-name { overflow-wrap: anywhere; } }
+
+/* On a phone a feed's name has its own line; when it was read and what uses it go below. */
+@media (max-width: 639px) {
+  .feed-row .feed-main .row { flex-wrap: wrap; row-gap: 0; }
+  .feed-row .feed-name { flex-basis: 100%; }
+  .feed-row .feed-use { margin-left: 0; padding-left: 0; }
+}
+/* A feed's edit and delete stay in view at the row's end, quiet until the row is hovered. */
+@media (hover: hover) {
+  .feed-row .feed-actions { position: static; flex: none; align-self: center; padding: 0; background: none; opacity: .6; }
+  .feed-row:hover .feed-actions, .feed-row .feed-actions:focus-within { opacity: 1; }
+}
+.feed-row .feed-delete:hover:not(:disabled), .feed-row .feed-delete:focus-visible { color: rgb(var(--bad)); }
+
+.add-note .btn { flex: none; margin: -.3rem 0 -.3rem auto; }
 
 .requests-wrap { position: relative; }
 .requests-reset { position: absolute; top: .5rem; right: .75rem; z-index: 1; }
