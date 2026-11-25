@@ -23,6 +23,14 @@ let returnTab = 'shows';
 // Where Back and Escape go: the tab the show was opened from.
 export const leaveTarget = () => returnTab;
 
+// A show's page can stop the user leaving it (unsaved changes); the title's way back asks it first.
+let leaveHandler = null;
+export function onLeave(fn) {
+  leaveHandler = fn;
+  return () => { if (leaveHandler === fn) leaveHandler = null; };
+}
+export const requestLeave = () => (leaveHandler ? leaveHandler() : go(returnTab));
+
 // Resolves once `find()` returns an element, or after a short wait. Frames are not drawn while a view transition waits for this, so it polls on a timer.
 function appear(find, limit = 250) {
   return new Promise(resolve => {

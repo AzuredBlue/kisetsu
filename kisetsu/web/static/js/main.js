@@ -2,10 +2,10 @@ import { html, render, useEffect, useState } from './ui.js';
 import { setErrorHandler, apiFetch } from './api.js';
 import { connect, useResource } from './store.js';
 import { applyTheme, applyUserAccent, toggleTheme, resolvedTheme, useTheme } from './theme.js';
-import { go, useNow, useRoute } from './router.js';
+import { go, leaveTarget, requestLeave, useNow, useRoute } from './router.js';
 import { wait } from './format.js';
 import { warmFonts } from './fonts.js';
-import { settings, setupStatus, status } from './data.js';
+import { settings, setupStatus, showPage, status } from './data.js';
 import { Icon, Spinner } from './components/Icon.js';
 import { LoadError } from './components/LoadError.js';
 import { ModalHost } from './components/Modal.js';
@@ -26,11 +26,10 @@ const NAV = [
   ['history', 'History', 'history'],
   ['feeds', 'RSS Feeds', 'feeds'],
   ['settings', 'Settings', 'settings'],
+  ['logs', 'Logs', 'logs'],
 ];
-const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show', logs: 'Logs' };
+const TITLES = { ...Object.fromEntries(NAV.map(([id, label]) => [id, label])), add: 'Add show' };
 const CHECK_JOBS = ['startup', 'refresh_feeds', 'sync_anilist', 'backfill'];
-// The page the Logs button returns to when pressed again on the Logs page.
-let beforeLogs = '#shows';
 
 function Notes({ info }) {
   if (!info) return null;
@@ -43,7 +42,7 @@ function Notes({ info }) {
   const jobs = Object.entries(info.jobs_failing || {});
   const background = [info.grab_error, ...jobs.map(([name, error]) => `${name}: ${error}`)].filter(Boolean);
   return html`<div class="notes">
-    ${info.sandbox ? html`<span class="note-info" title="A throwaway copy: downloads are pretended and logged (see Logs). qBittorrent and your files are never changed.">Sandbox</span>` : null}
+    ${info.sandbox ? html`<span class="pill pill-info" title="A throwaway copy: downloads are pretended and logged (see Logs). qBittorrent and your files are never changed.">Sandbox</span>` : null}
     ${offline ? html`<span class="note-bad" title="Kisetsu did not answer the last check. Trying again.">Not responding</span>` : null}
     ${info.all_paused ? html`<span class="note-warn">Paused</span>` : null}
     ${info.qbit_error ? html`<span class="note-bad" title=${info.qbit_error}>qBittorrent unreachable</span>` : null}
@@ -93,15 +92,15 @@ function Sidebar({ route, open, onClose, info, at }) {
   const light = resolvedTheme() === 'light';
   return html`
     ${open ? html`<div class="backdrop" onClick=${onClose}></div>` : null}
-    <aside class=${`sidebar${open ? ' open' : ''}`}>
+    <aside class=${`sidebar${open ? ' open' : ''}`} aria-label="Kisetsu">
       <div class="brand">
         <span>Kisetsu</span>
         <button type="button" class="btn plain icon-only sm" onClick=${toggleTheme} title=${light ? 'Switch to dark theme' : 'Switch to light theme'} aria-label=${light ? 'Switch to dark theme' : 'Switch to light theme'}>
           <${Icon} name=${light ? 'moon' : 'sun'} />
         </button>
       </div>
-      <nav>
-        ${NAV.map(([id, label, icon]) => html`<button type="button" class="nav-item" key=${id} aria-current=${route.name === id || (id === 'shows' && (route.name === 'show' || route.name === 'add')) ? 'page' : undefined} onClick=${() => { go(id); onClose(); }}>
+      <nav aria-label="Views">
+        ${NAV.map(([id, label, icon]) => html`<button type="button" class="nav-item" key=${id} aria-current=${route.name === id || (route.name === 'show' && id === leaveTarget()) || (id === 'shows' && route.name === 'add') ? 'page' : undefined} onClick=${() => { go(id); onClose(); }}>
           <${Icon} name=${icon} /><span>${label}</span>
           ${badge(id) !== null && badge(id) !== undefined ? html`<span class="badge">${badge(id)}</span>` : null}
         </button>`)}
@@ -110,22 +109,25 @@ function Sidebar({ route, open, onClose, info, at }) {
         <div class="next-check"><span>Next check</span><${NextCheck} info=${info} at=${at} /></div>
         <div class="row">
           <button type="button" class="btn sm" style="flex:1" onClick=${sync} disabled=${running} title="Re-sync AniList, read the RSS feeds, grab new episodes and reconcile with qBittorrent">
-            ${running ? html`<${Spinner} small />` : null}<span>Sync Now</span>
+            ${running ? html`<${Spinner} small />` : null}<span>Sync now</span>
           </button>
           <button type="button" class="btn sm icon-only" onClick=${togglePause} title=${paused ? 'Resume all downloads' : 'Pause all downloads'} aria-label=${paused ? 'Resume all downloads' : 'Pause all downloads'}>
             <${Icon} name=${paused ? 'play' : 'pause'} small />
-          </button>
-          <button type="button" class="btn sm icon-only" aria-current=${route.name === 'logs' ? 'page' : undefined} onClick=${() => { if (route.name === 'logs') window.location.hash = beforeLogs; else go('logs'); onClose(); }} title=${route.name === 'logs' ? 'Back from Logs' : 'Logs'} aria-label=${route.name === 'logs' ? 'Back from Logs' : 'Logs'}>
-            <${Icon} name="logs" small />
           </button>
         </div>
       </div>
     </aside>`;
 }
 
+// On a show's page the title is a trail: Shows, which leads back, then the show.
+function ShowTitle({ id }) {
+  const page = useResource(showPage(id));
+  const name = page.data ? page.data.title : '';
+  return html`<h1 class="crumbs"><button type="button" class="crumb" onClick=${requestLeave} title="Back (Esc)">${TITLES[leaveTarget()] || 'Shows'}</button>${name ? html`<${Icon} name="forward" small /><span class="truncate">${name}</span>` : null}</h1>`;
+}
+
 function Shell() {
   const route = useRoute();
-  if (route.name !== 'logs') beforeLogs = window.location.hash || '#shows';
   const [menu, setMenu] = useState(false);
   const live = useResource(status);
   const online = useResource(settings);
@@ -137,14 +139,14 @@ function Shell() {
     if (online.data) applyUserAccent(online.data.accent_color, online.data.accent_tint);
   }, [online.data && online.data.accent_color, online.data && online.data.accent_tint]);
   const View = { shows: Shows, show: Show, add: Add, calendar: Calendar, history: History, feeds: Feeds, logs: Logs, settings: Settings }[route.name];
-  const title = route.name === 'show' ? 'Shows' : TITLES[route.name];
+  const title = TITLES[route.name];
   return html`
     <${Sidebar} route=${route} open=${menu} onClose=${() => setMenu(false)} info=${info} at=${live.at} />
     <main>
       <header class="topbar">
         <div class="row" style="min-width:0">
           <button type="button" class="btn plain icon-only menu-btn" onClick=${() => setMenu(true)} aria-label="Open menu"><${Icon} name="menu" /></button>
-          <h1 class="truncate">${title}</h1>
+          ${route.name === 'show' ? html`<${ShowTitle} id=${route.id} />` : html`<h1 class="truncate">${title}</h1>`}
         </div>
         <${Notes} info=${info} />
       </header>

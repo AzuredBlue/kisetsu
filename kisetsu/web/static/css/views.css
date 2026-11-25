@@ -560,3 +560,8 @@ section + section { margin-top: .5rem; }
   .add-summary-feed { display: none; }
   .add-release { & .ep-no { width: 4rem; } & .release-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; } }
 }
+
+/* The sidebar's fill is close to a button's in light theme, so its buttons sit on the surface colour with an edge. */
+:root[data-theme="light"] .foot .btn:not(:disabled) { background: rgb(var(--surface)); border-color: rgb(var(--line-field) / .7); color: rgb(var(--text)); &:hover { background: rgb(var(--btn-h)); } }
+/* Touch screens get larger targets for the small icon buttons. */
+@media (pointer: coarse) { .btn.icon-only.sm { padding: .6rem; } .row-actions { gap: .375rem; } .swatch { width: 2rem; height: 2rem; } }
