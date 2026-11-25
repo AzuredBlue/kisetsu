@@ -30,7 +30,14 @@ function PickEntry({ onPick }) {
   const [list, setList] = useState(null);
   const [error, setError] = useState(null);
   const [text, setText] = useState('');
+  const [syncing, setSyncing] = useState(false);
   const load = () => { setError(null); apiFetch('/api/add/list', { quiet: true }).then(setList).catch(setError); };
+  // Reads the AniList list now, then asks for it again.
+  const sync = async () => {
+    setSyncing(true);
+    try { await apiFetch('/api/refresh', { method: 'POST' }); load(); } catch (err) { /* shown by apiFetch */ }
+    setSyncing(false);
+  };
   useEffect(load, []);
   const shown = useMemo(() => {
     if (!list) return [];
@@ -49,14 +56,14 @@ function PickEntry({ onPick }) {
         <${Icon} name="search" small />
         <input class="field" type="search" placeholder="Search your AniList list" value=${text} onInput=${(e) => setText(e.target.value)} autofocus aria-label="Search your AniList list" />
       </div>
-      ${list && list.fetched_at ? html`<p class="field-hint add-hint">Your AniList list, read ${relativeTime(list.fetched_at, Date.now())}. Sync Now reads it again. Planning entries are added by themselves once their season is the current or next one.</p>` : null}
+      ${list && list.fetched_at ? html`<p class="field-hint add-hint">AniList list read ${relativeTime(list.fetched_at, Date.now())}. Kisetsu adds Planning shows itself once their season is the current or next one.</p>` : null}
     </section>
-    ${error ? (error.status === 400 ? html`<p class="error-text">${error.message}</p>` : html`<${LoadError} what="your AniList list" error=${error} reload=${load} />`) : null}
+    ${error ? (error.status === 400 ? html`<div class="add-note info"><${Icon} name="info" small /><span>${error.message}</span><button type="button" class="btn sm" disabled=${syncing} onClick=${sync}>${syncing ? html`<${Spinner} small />` : null}Sync now</button></div>` : html`<${LoadError} what="your AniList list" error=${error} reload=${load} />`) : null}
     ${error ? null : html`<div class="card feeds-card"><ul class="feed-list">
       ${!list ? html`<li class="add-empty"><${Spinner} small /> Reading your list…</li>` : null}
       ${list && !shown.length ? html`<li class="add-empty">
         ${text ? 'Nothing on your list matches.' : 'Your list has no entries to add.'}
-        <p class="field-hint">Entries you are watching, rewatching, paused or dropped show here, but not Completed ones. Planning entries are added by themselves once their season is the current or next one. To add something else, put it on your Watching list on AniList, then press Sync Now.</p>
+        <p class="field-hint">Entries you are watching, rewatching, paused or dropped show here, but not Completed ones. Planning entries are added by themselves once their season is the current or next one. To add something else, put it on your Watching list on AniList, then press Sync now.</p>
       </li>` : null}
       ${shown.map((entry, i) => html`${i === firstFollowed ? html`<li class="list-head" key="followed-head"><span>Already following</span></li>` : null}<${EntryRow} key=${entry.anilist_id} entry=${entry} onPick=${onPick} />`)}
     </ul></div>`}
