@@ -8,14 +8,19 @@ export function showModal(build, { wide = false } = {}) {
   return new Promise(resolve => open({ build, wide, resolve }));
 }
 
-export function confirmDialog({ title, body, confirm = 'Confirm', danger = false, cancel = 'Cancel', icon = null, wide = false }) {
-  return showModal((close) => html`
+// A confirmation's heading, body and buttons; `close` is called with true on confirm and false on cancel.
+export function ConfirmFrame({ close, title, body, confirm = 'Confirm', danger = false, cancel = 'Cancel', icon = null }) {
+  return html`
     ${icon ? html`<div class="modal-head"><span class=${`modal-badge${danger ? ' danger' : ''}`}><${Icon} name=${icon} /></span><h2>${title}</h2></div>` : html`<h2>${title}</h2>`}
     <div class="body">${body}</div>
     <div class="actions">
       <button class="btn" onClick=${() => close(false)}>${cancel}</button>
       <button class=${`btn ${danger ? 'danger' : 'primary'}`} onClick=${() => close(true)}>${confirm}</button>
-    </div>`, { wide });
+    </div>`;
+}
+
+export function confirmDialog({ wide = false, ...frame }) {
+  return showModal((close) => html`<${ConfirmFrame} close=${close} ...${frame} />`, { wide });
 }
 
 export function ModalHost() {

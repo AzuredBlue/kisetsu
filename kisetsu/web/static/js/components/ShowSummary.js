@@ -8,7 +8,7 @@ import { coverSet, mediumCover } from '../covers.js';
 import { go, prefetch } from '../router.js';
 import { useTheme } from '../theme.js';
 import { Icon } from './Icon.js';
-import { confirmDialog } from './Modal.js';
+import { ConfirmFrame, showModal } from './Modal.js';
 import { toast } from './Toast.js';
 
 const TAGS = {
@@ -154,11 +154,12 @@ function torrentList(torrents) {
   </div>`;
 }
 
-function folderNote(folder) {
+function folderNote(folder, slash) {
   if (!folder || !folder.exists) return null;
-  if (!folder.remove) return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>`;
+  const path = slash === '/' ? folder.path.replaceAll('\\', '/') : folder.path;
+  if (!folder.remove) return html`<p class="field-hint">The folder <span class="mono">${path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>`;
   const more = folder.leftover_count - folder.leftovers.length;
-  return html`<p class="field-hint">The folder <span class="mono">${folder.path}</span> is deleted too${folder.leftover_count ? ', with these other files in it:' : '.'}</p>
+  return html`<p class="field-hint">The folder <span class="mono">${path}</span> is deleted too${folder.leftover_count ? ', with these other files in it:' : '.'}</p>
     ${folder.leftover_count ? html`<ul class="torrent-list" tabindex="0" aria-label="Other files">${folder.leftovers.map(name => html`<li key=${name}><span class="mono file-name">${breakable(name)}</span></li>`)}
       ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
 }
@@ -166,19 +167,29 @@ function folderNote(folder) {
 // A nameless torrent is a stale hash qBittorrent no longer lists, and a folder that stays loses nothing.
 const hasFiles = ({ torrents, folder }) => torrents.some(t => t.name) || !!(folder && folder.remove && folder.leftover_count);
 
-// The body re-renders on the switch; `keep` is what the caller reads once the dialog closes.
-function DeleteBody({ preview, keep }) {
-  const [kept, setKept] = useState(false);
+function DeleteBody({ preview, kept, onKeep, slash }) {
   if (preview && !hasFiles(preview)) {
     return html`<p class="field-hint" style="margin:0">Removes the show. It has no torrents or files to delete.</p>
-      ${preview.folder && preview.folder.remove ? folderNote(preview.folder) : null}`;
+      ${preview.folder && preview.folder.remove ? folderNote(preview.folder, slash) : null}`;
   }
   return html`<p class="field-hint" style="margin:0">${kept ? 'Removes the show and its torrents. The files stay on disk.' : 'Removes the show, its torrents and their files.'}</p>
-    ${torrentList(preview ? preview.torrents : null)}
-    ${kept ? null : folderNote(preview && preview.folder)}
     <label class="switch-row"><span>Keep files</span>
-      <input type="checkbox" class="sr-only" checked=${kept} onChange=${(e) => { keep.checked = e.target.checked; setKept(e.target.checked); }} />
-      <span class="switch" aria-hidden="true"></span></label>`;
+      <input type="checkbox" class="sr-only" checked=${kept} onChange=${(e) => onKeep(e.target.checked)} />
+      <span class="switch" aria-hidden="true"></span></label>
+    ${torrentList(preview ? preview.torrents : null)}
+    ${kept ? null : folderNote(preview && preview.folder, slash)}`;
+}
+
+// The switch is held here, so the confirm button follows it; `keep` is what the caller reads once the dialog closes.
+function DeleteDialog({ show, preview, keep, close }) {
+  const [kept, setKept] = useState(false);
+  const onKeep = (value) => { keep.checked = value; setKept(value); };
+  // Folder paths show in the separator the show's own save path is written in.
+  const own = show.save_folder || show.save_path || '';
+  const slash = own.includes('/') && !own.includes('\\') ? '/' : '\\';
+  const files = !(preview && !hasFiles(preview)) && !kept;
+  return html`<${ConfirmFrame} close=${close} title=${`Delete '${show.title}'?`} icon="trash" danger confirm=${files ? 'Delete show and files' : 'Delete show'}
+    body=${html`<${DeleteBody} preview=${preview} kept=${kept} onKeep=${onKeep} slash=${slash} />`} />`;
 }
 
 // Returns true when the show was deleted.
@@ -186,14 +197,8 @@ export async function deleteShow(show) {
   let preview = null;
   try { preview = await apiFetch(`/api/shows/${show.id}/delete-preview`, { quiet: true }); } catch (err) { /* the dialog says it is unavailable */ }
   const keep = { checked: false };
-  const confirmed = await confirmDialog({
-    title: `Delete '${show.title}'?`,
-    icon: 'trash',
-    danger: true,
-    confirm: 'Delete',
-    body: html`<${DeleteBody} preview=${preview} keep=${keep} />`,
-    wide: !!preview && Array.isArray(preview.torrents) && hasFiles(preview),
-  });
+  const confirmed = await showModal((close) => html`<${DeleteDialog} show=${show} preview=${preview} keep=${keep} close=${close} />`,
+    { wide: !!preview && Array.isArray(preview.torrents) && hasFiles(preview) });
   if (!confirmed) return false;
   try {
     const result = await apiFetch(`/api/shows/${show.id}?delete_torrents=true&delete_files=${!keep.checked}`, { method: 'DELETE' });
