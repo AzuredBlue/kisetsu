@@ -148,8 +148,18 @@ pub struct Jobs {
     /// How many results the feeds' pages held, waiting for the next search to take them in, so
     /// that reading a feed never waits for a search.
     page_sizes: Mutex<Vec<(String, u64)>>,
-    /// What the searches for shows being added found, by AniList id and when.
-    found: Mutex<HashMap<i64, (std::time::Instant, addshow::Found)>>,
+    /// What the searches for shows being added found, by AniList id and when, and the file lists
+    /// of their batches.
+    found: Mutex<
+        HashMap<
+            i64,
+            (
+                std::time::Instant,
+                addshow::Found,
+                kisetsu_services::addshow::TorrentFiles,
+            ),
+        >,
+    >,
     /// A direct call (startup, a new show, Search older) and the same job must never run at once.
     feeds_lock: Mutex<()>,
     anilist_lock: Mutex<()>,

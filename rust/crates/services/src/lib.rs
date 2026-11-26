@@ -23,6 +23,7 @@ pub mod ingest;
 pub mod legacy;
 pub mod library;
 pub mod manual;
+pub mod older_files;
 pub mod paths;
 pub mod shows;
 pub mod tags;

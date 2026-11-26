@@ -141,7 +141,9 @@ function outcome(group, picked, watched) {
   const seen = new Set();
   let fresh = 0;
   let disk = 0;
-  if (!group) return { fresh, disk };
+  // A batch whose files were not read only says how many episodes have a file, so the rest may still download.
+  let unsure = false;
+  if (!group) return { fresh, disk, unsure };
   (group.batches || []).filter(b => picked.has(b.item_key)).forEach(b => {
     const unwatched = b.numbers.filter(n => n > (watched || 0));
     const own = (unwatched.length ? unwatched : b.numbers).filter(n => !seen.has(n));
@@ -149,12 +151,13 @@ function outcome(group, picked, watched) {
     const held = Math.min(b.on_disk || 0, own.length);
     disk += held;
     fresh += own.length - held;
+    if (!b.files_known && held) unsure = true;
   });
   group.episodes.filter(e => picked.has(e.item_key) && !seen.has(e.number)).forEach(e => {
     seen.add(e.number);
     if (e.on_disk) disk += 1; else fresh += 1;
   });
-  return { fresh, disk };
+  return { fresh, disk, unsure };
 }
 
 const span = (numbers) => (numbers.length > 1 ? `Ep ${numbers[0]}–${numbers[numbers.length - 1]}` : `Ep ${numbers[0]}`);
@@ -211,6 +214,16 @@ function ReleaseRow({ release, label, checked, onToggle, children }) {
   </label></li>`;
 }
 
+// What a batch holds, set against the files already in the folder.
+function batchFacts(batch) {
+  if (!batch.on_disk && !(batch.newer && batch.newer.length)) return null;
+  if (!batch.files_known) return html`<span class="state ok">${batch.on_disk} ${batch.on_disk === 1 ? 'has' : 'have'} a file on disk</span>`;
+  const parts = [];
+  if (batch.on_disk) parts.push(`${batch.on_disk} on disk`);
+  if (batch.newer.length) parts.push(plural(batch.newer.length, 'newer version'));
+  return html`<span class="state ok">${parts.join(', ')}</span>`;
+}
+
 // The singles a ticked batch covers would only repeat it, so they stay out until the batch is unticked.
 function Releases({ group, picked, watched, onToggle }) {
   const { inBatch } = coverage(group, picked);
@@ -219,8 +232,8 @@ function Releases({ group, picked, watched, onToggle }) {
   const ticked = (group.batches || []).filter(b => picked.has(b.item_key)).length;
   return html`<ul class="feed-list add-releases">
     ${(group.batches || []).map(batch => html`<${ReleaseRow} key=${`b:${batch.item_key}`} release=${batch} label=${span(batch.numbers)} checked=${picked.has(batch.item_key)} onToggle=${() => onToggle(batch)}>
-      ${batch.on_disk ? html`<span class="state ok">${batch.on_disk} on disk</span>` : null}<span class="pill pill-idle">Batch</span>
-    <//>`)}
+      ${batchFacts(batch)}<span class="pill pill-idle">Batch</span>
+    <//>${batch.newer && batch.newer.length && picked.has(batch.item_key) ? html`<li key=${`n:${batch.item_key}`} class="add-hidden">Once the batch finishes, Kisetsu deletes your older files for the newer versions. Older files that another torrent in qBittorrent uses stay.</li>` : null}`)}
     ${hidden ? html`<li class="add-hidden">Untick the ${ticked === 1 ? 'batch' : 'batches'} to pick from ${plural(hidden, 'single episode')}.</li>` : null}
     ${singles.map(ep => html`<${ReleaseRow} key=${`e:${ep.item_key}`} release=${ep} label=${`Ep ${ep.number}${version(ep.version)}`} checked=${picked.has(ep.item_key)} onToggle=${() => onToggle(ep)}>
       ${ep.on_disk ? html`<span class="state ok">on disk</span>` : watched && ep.number <= watched ? html`<span class="state">watched</span>` : null}
@@ -292,6 +305,7 @@ function PickReleases({ entry, onBack }) {
     : !group ? 'Pick a feed to see its releases'
     : plan.fresh && plan.disk ? `${plan.fresh} to download, ${plan.disk} on disk`
     : plan.fresh ? `${plan.fresh} to download`
+    : plan.unsure ? `${plan.disk} on disk`
     : `${plan.disk} on disk, nothing to download`;
   const upcoming = entry.status === 'NOT_YET_RELEASED';
   const feedName = result && result.nothing_offered ? (feedId === 0 ? 'Auto-discover' : (result.feeds.find(g => g.feed_id === feedId) || {}).feed_name) : group && group.feed_name;

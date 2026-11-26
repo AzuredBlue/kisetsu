@@ -150,6 +150,8 @@ impl Monotonic for ManualMonotonic {
 pub struct FakeRemote {
     pub feeds: Mutex<FakeFeeds>,
     pub anilist: Mutex<FakeAniList>,
+    /// The `.torrent` files that can be fetched, by address.
+    pub torrents: Mutex<BTreeMap<String, Vec<u8>>>,
     /// The titles SubsPlease's schedule lists.
     pub schedule: Mutex<Option<Vec<String>>>,
     pub schedule_reads: AtomicUsize,
@@ -216,6 +218,7 @@ impl FakeRemote {
         Self {
             feeds: Mutex::new(FakeFeeds::default()),
             anilist: Mutex::new(FakeAniList::new(clock)),
+            torrents: Mutex::new(BTreeMap::new()),
             schedule: Mutex::new(None),
             schedule_reads: AtomicUsize::new(0),
             hue_calls: Mutex::new(Vec::new()),
@@ -259,6 +262,16 @@ impl Remote for FakeRemote {
             });
         }
         locked(&self.feeds).search(feed_url, term)
+    }
+
+    fn torrent_file(&self, url: &str) -> Result<Vec<u8>, FeedFetchError> {
+        locked(&self.torrents)
+            .get(url)
+            .cloned()
+            .ok_or_else(|| FeedFetchError::Status {
+                host: url.to_owned(),
+                status: 404,
+            })
     }
 
     fn subsplease_schedule(&self) -> Result<Option<Vec<String>>, FeedFetchError> {

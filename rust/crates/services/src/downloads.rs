@@ -26,6 +26,7 @@ use crate::error::{Error, Result};
 use crate::events::{self, Subject};
 use crate::feeds::{self, Evidence};
 use crate::library::{self, same_dir};
+use crate::older_files;
 use crate::tags;
 
 /// Marks every torrent Kisetsu added.
@@ -417,28 +418,49 @@ fn new_download(
     }
 }
 
+/// The torrent another episode of a batch follows.
+#[derive(Debug, Clone, Copy)]
+pub struct Follow<'a> {
+    pub info_hash: &'a str,
+    /// The feed's number of the episode.
+    pub source_episode: Option<i64>,
+    /// The download it replaces.
+    pub supersedes: Option<i64>,
+}
+
 /// Tracks another episode of a torrent already added (a batch, a double episode) on its hash,
 /// without adding it again.
+///
+/// With `supersedes`, the download replaces that one as `start_download` does: the old release stays
+/// the episode's until this one has finished.
 pub fn follow_download(
     ctx: &mut Context<'_>,
     show: &mut Show,
     feed: &Feed,
     episode: &mut Episode,
     item: &FeedItem,
-    info_hash: &str,
-    source_episode: Option<i64>,
+    follow: Follow<'_>,
 ) -> Result<Download> {
+    let Follow {
+        info_hash,
+        source_episode,
+        supersedes,
+    } = follow;
     let mut dl = new_download(ctx, feed, episode, item, source_episode);
     dl.info_hash = Some(info_hash.to_owned());
     dl.batch = true;
     dl.attempts = 1;
+    dl.supersedes_id = supersedes;
     dl.id = Some(dl.insert(ctx.conn)?);
-    if let Some(mut old) = current(ctx, episode)?.filter(|old| old.state != DownloadState::Done) {
-        old.state = DownloadState::Superseded;
-        save(ctx, &old)?;
+    if supersedes.is_none() {
+        if let Some(mut old) = current(ctx, episode)?.filter(|old| old.state != DownloadState::Done)
+        {
+            old.state = DownloadState::Superseded;
+            save(ctx, &old)?;
+        }
+        episode.current_download_id = dl.id;
+        episode.update(ctx.conn)?;
     }
-    episode.current_download_id = dl.id;
-    episode.update(ctx.conn)?;
     match torrent_of(ctx, info_hash)? {
         Some(torrent) => exposed(ctx, show, episode, &mut dl, &torrent)?,
         None => recompute_episode(ctx, episode)?,
@@ -461,6 +483,22 @@ pub fn follow_download(
         feed.name
     );
     Ok(dl)
+}
+
+/// The finished download of the episode when a newer release may replace it: its torrent must hold
+/// no other episode, since the replacement deletes the whole torrent.
+pub fn replaceable(ctx: &Context<'_>, episode: &Episode) -> Result<Option<Download>> {
+    let Some(old) = current(ctx, episode)?.filter(|old| old.state == DownloadState::Done) else {
+        return Ok(None);
+    };
+    let Some(hash) = old.info_hash.clone().filter(|hash| !hash.is_empty()) else {
+        return Ok(None);
+    };
+    let shared = ctx
+        .conn
+        .prepare_cached("SELECT 1 FROM downloads WHERE info_hash = ? AND id != ?")?
+        .exists((&hash, old.id))?;
+    Ok((!shared).then_some(old))
 }
 
 /// Puts the download back in the queue to be added again after `delay`.
@@ -1324,6 +1362,9 @@ pub fn settle(ctx: &mut Context<'_>, observe_only: bool) -> Result<Settled> {
         ctx.caches.stalled = stalled;
         result.changed = true;
     }
+    if !observe_only {
+        older_files::settle(ctx)?;
+    }
     if result.changed {
         let mut topics = vec!["episodes".to_owned(), "history".to_owned()];
         topics.extend(touched.iter().map(|show_id| format!("show:{show_id}")));
@@ -1612,7 +1653,12 @@ fn advance_replacement(
     match replacement_step(dl, torrent, ctx.now) {
         ReplacementStep::Wait | ReplacementStep::Hold => {}
         ReplacementStep::GiveUp => {
-            if let Err(error) = delete_torrent(ctx, dl.info_hash.as_deref(), old_hash.as_deref()) {
+            let removed = if is_batch_download(dl) {
+                drop_batch_torrent(ctx, dl)
+            } else {
+                delete_torrent(ctx, dl.info_hash.as_deref(), old_hash.as_deref())
+            };
+            if let Err(error) = removed {
                 // Given up now, the torrent would stay in qBittorrent with nothing following it.
                 return put_off(ctx, dl, qbit_error(error)?);
             }
@@ -1668,6 +1714,30 @@ fn advance_replacement(
             )?;
         }
     }
+    Ok(())
+}
+
+/// Removes the torrent of a batch replacement that gave up, and leaves every file where it is: the
+/// batch holds files the user already had, and other episodes may follow the same torrent, which
+/// then stays.
+fn drop_batch_torrent(ctx: &mut Context<'_>, dl: &Download) -> Result<()> {
+    let Some(hash) = dl.info_hash.clone().filter(|hash| !hash.is_empty()) else {
+        return Ok(());
+    };
+    let shared = ctx
+        .conn
+        .prepare_cached(&format!(
+            "SELECT 1 FROM downloads WHERE info_hash = ? AND id != ? AND state IN ({}, 'DONE')",
+            active_states()
+        ))?
+        .exists((&hash, dl.id))?;
+    if shared || torrent_of(ctx, &hash)?.is_none() {
+        return Ok(());
+    }
+    let hashes = [hash];
+    let qbit = ctx.qbit()?;
+    qbit.pause(&hashes)?;
+    qbit.delete(&hashes, false)?;
     Ok(())
 }
 

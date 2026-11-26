@@ -21,6 +21,7 @@ pub enum RequestKind {
     FeedRead,
     Search,
     Schedule,
+    TorrentFile,
 }
 
 impl RequestKind {
@@ -29,6 +30,7 @@ impl RequestKind {
             Self::FeedRead => "Feed read",
             Self::Search => "Search",
             Self::Schedule => "Schedule",
+            Self::TorrentFile => "Torrent file",
         }
     }
 }

@@ -5,9 +5,10 @@ use std::time::Instant;
 
 use kisetsu_clients::anilist::ListEntry;
 use kisetsu_clients::rss::FeedArticle;
-use kisetsu_services::addshow::{self, Preview};
+use kisetsu_clients::torrent;
+use kisetsu_services::addshow::{self, Preview, TorrentFiles};
 use kisetsu_services::backfill::{self, Due};
-use tracing::warn;
+use tracing::{debug, warn};
 
 use super::*;
 use crate::remote::RemoteSearch;
@@ -80,14 +81,58 @@ impl Jobs {
         }
         {
             let mut kept = locked(&self.found);
-            kept.retain(|_, (at, _)| at.elapsed() < FOUND_KEEP);
-            kept.insert(entry.anilist_id, (Instant::now(), articles.clone()));
+            kept.retain(|_, (at, ..)| at.elapsed() < FOUND_KEEP);
+            kept.insert(
+                entry.anilist_id,
+                (Instant::now(), articles.clone(), TorrentFiles::new()),
+            );
         }
         let (previewed, unsearchable) = (entry.clone(), plan.unsearchable);
-        let preview = self
+        let mut preview = self
             .engine
             .dry_run(move |ctx| addshow::preview(ctx, &previewed, &unsearchable, &articles))?;
+        let files = self.batch_files(&preview);
+        addshow::count_batch_files(&mut preview, &files);
+        if let Some(kept) = locked(&self.found).get_mut(&entry.anilist_id) {
+            kept.2 = files;
+        }
         Ok(NewShowSearch { preview, stopped })
+    }
+
+    /// The video files of each batch offered for a show whose folder exists already, read from the
+    /// batch's `.torrent` file. A magnet link has no file list, and a batch whose file cannot be
+    /// read is left out.
+    fn batch_files(&self, preview: &Preview) -> TorrentFiles {
+        let mut files = TorrentFiles::new();
+        if preview.folder.is_none() {
+            return files;
+        }
+        for batch in preview.feeds.iter().flat_map(|feed| &feed.batches) {
+            let url = &batch.torrent_url;
+            if url.is_empty() || url.starts_with("magnet:") {
+                continue;
+            }
+            match self.remote.torrent_file(url) {
+                Ok(bytes) => match torrent::file_list(&bytes) {
+                    Some(list) => {
+                        files.insert(batch.item_key.clone(), list);
+                    }
+                    None => debug!("The torrent file {url} lists no files."),
+                },
+                Err(error) => debug!("Could not read the torrent file {url}: {error}"),
+            }
+        }
+        files
+    }
+
+    /// The file lists of the batches the last search for this entry read, to take the batch's
+    /// older files into account when the show is added.
+    pub fn torrent_files_for(&self, anilist_id: i64) -> TorrentFiles {
+        locked(&self.found)
+            .get(&anilist_id)
+            .filter(|(at, ..)| at.elapsed() < FOUND_KEEP)
+            .map(|(.., files)| files.clone())
+            .unwrap_or_default()
     }
 
     /// What the last search for this entry found, to store when the show is added; kept until
@@ -95,8 +140,8 @@ impl Jobs {
     pub fn found_for(&self, anilist_id: i64) -> Vec<(i64, Vec<FeedArticle>)> {
         locked(&self.found)
             .get(&anilist_id)
-            .filter(|(at, _)| at.elapsed() < FOUND_KEEP)
-            .map(|(_, found)| found.clone())
+            .filter(|(at, ..)| at.elapsed() < FOUND_KEEP)
+            .map(|(_, found, _)| found.clone())
             .unwrap_or_default()
     }
 

@@ -58,6 +58,9 @@ fn batch_json(batch: &BatchOffer) -> Value {
         "ranged": batch.ranged,
         "published_at": iso(batch.published_at),
         "on_disk": batch.on_disk,
+        "newer": batch.newer,
+        "to_download": batch.to_download,
+        "files_known": batch.files_known,
     })
 }
 
@@ -165,9 +168,10 @@ pub(super) fn confirm(call: &mut Call<'_, '_>) -> ApiResult {
     let entry = entry_of(call, id)?;
     let runtime = call.runtime();
     let found = runtime.jobs.found_for(id);
-    let result = runtime
-        .engine
-        .call(move |ctx| addshow::confirm(ctx, &entry, feed_id, &item_keys, &found))?;
+    let torrent_files = runtime.jobs.torrent_files_for(id);
+    let result = runtime.engine.call(move |ctx| {
+        addshow::confirm(ctx, &entry, feed_id, &item_keys, &found, &torrent_files)
+    })?;
     // Dropped only once the add went through, so a refused confirm can be tried again.
     runtime.jobs.forget_found(id);
     let jobs = std::sync::Arc::clone(&runtime.jobs);

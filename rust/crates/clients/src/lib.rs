@@ -17,6 +17,7 @@ pub mod rss;
 pub mod sandbox;
 pub mod sites;
 pub mod toast;
+pub mod torrent;
 
 pub mod traffic;
 pub mod update;

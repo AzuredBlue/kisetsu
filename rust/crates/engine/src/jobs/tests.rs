@@ -946,3 +946,335 @@ fn a_job_still_running_after_the_grace_refuses_the_work_and_the_jobs_go_on() {
     release.send(()).unwrap();
     assert!(env.scheduler.stop(Duration::from_secs(5)).is_empty());
 }
+
+/// A `.torrent` file holding `files` at the top level.
+fn torrent_of(files: &[String]) -> Vec<u8> {
+    let list: String = files
+        .iter()
+        .map(|name| format!("d6:lengthi100e4:pathl{}:{name}ee", name.len()))
+        .collect();
+    format!("d4:infod5:filesl{list}e4:name4:Show12:piece lengthi16384eee").into_bytes()
+}
+
+#[test]
+fn a_batch_next_to_files_on_disk_is_counted_by_its_files_and_replaces_the_older_ones() {
+    use kisetsu_clients::anilist::MediaStatus;
+    use kisetsu_services::addshow;
+    use kisetsu_services::context::get_state;
+
+    let env = Env::new();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Grand Blue");
+    std::fs::create_dir(&folder).unwrap();
+    let disk: Vec<String> = (1..=12)
+        .map(|n| format!("[SubsPlease] Grand Blue - {n:02} (1080p) [A13D69{n:02}].mkv"))
+        .collect();
+    for name in &disk {
+        std::fs::write(folder.join(name), "v1").unwrap();
+    }
+    let root = dir
+        .path()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let base = format!("{root}/{{name}}");
+    env.change_settings(move |settings| settings.base_dir = base);
+    let feed_id = env.add_feed("Nyaa", NYAA);
+    let batch_url = "https://nyaa.si/download/2179602.torrent";
+    let batch = article(
+        "[SubsPlease] Grand Blue (01-12) (1080p) [Batch]",
+        Some(START),
+        None,
+        None,
+        Some(batch_url),
+    );
+    let key = format!("{feed_id}:{}", batch.guid);
+    env.feeds()
+        .searchable
+        .insert(NYAA.to_owned(), vec![batch.clone()]);
+    let listed: Vec<String> = (1..=12)
+        .map(|n| {
+            if n <= 5 {
+                format!("[SubsPlease] Grand Blue - {n:02}v2 (1080p) [96D6C3{n:02}].mkv")
+            } else {
+                disk[n - 1].clone()
+            }
+        })
+        .collect();
+    env.remote
+        .torrents
+        .lock()
+        .unwrap()
+        .insert(batch_url.to_owned(), torrent_of(&listed));
+    let entry = ListEntry {
+        total_episodes: Some(12),
+        status: MediaStatus::Finished,
+        ..anilist_show(7, "Grand Blue")
+    };
+
+    let searched = env.jobs.search_new_show(&entry).unwrap();
+
+    let offer = &searched.preview.feeds[0].batches[0];
+    assert_eq!(offer.item_key, key);
+    assert_eq!(
+        (
+            offer.files_known,
+            offer.on_disk,
+            offer.newer.len(),
+            offer.to_download
+        ),
+        (true, 7, 5, 0)
+    );
+    assert_eq!(env.jobs.torrent_files_for(7)[&key], listed);
+
+    let (found, files) = (env.jobs.found_for(7), env.jobs.torrent_files_for(7));
+    let keys = vec![key];
+    env.engine
+        .call(move |ctx| addshow::confirm(ctx, &entry, feed_id, &keys, &found, &files))
+        .unwrap();
+    let waiting = env
+        .engine
+        .read(|ctx| {
+            Ok(ctx
+                .conn
+                .prepare("SELECT key FROM app_state WHERE key LIKE 'older_files:%'")?
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?)
+        })
+        .unwrap();
+    assert_eq!(waiting.len(), 1, "{waiting:?}");
+    let value = env
+        .engine
+        .read(|ctx| get_state(ctx.conn, &waiting[0], ""))
+        .unwrap();
+    for name in &disk[..5] {
+        assert!(value.contains(name), "{value}");
+    }
+    // The files the batch holds too are listed only as the batch's own, never to delete.
+    let files = value.split("\"batch_files\"").next().unwrap();
+    assert!(!files.contains(&disk[5]), "{value}");
+
+    env.jobs.ready.store(true, Ordering::Release);
+    env.jobs.synced.store(true, Ordering::Release);
+    env.jobs.settle().unwrap();
+    assert!(folder.join(&disk[0]).exists());
+    let hash = env.qbit().truth.keys().next().cloned().unwrap();
+    env.qbit().finish(&hash);
+    env.jobs.settle().unwrap();
+    for (index, name) in disk.iter().enumerate() {
+        assert_eq!(folder.join(name).exists(), index >= 5, "{name}");
+    }
+}
+
+/// A show whose folder holds its twelve single-episode files, offered a batch with newer
+/// versions of episodes 1 to 5. Torrent 1 is a finished one Kisetsu takes over, torrent 2 one
+/// it leaves alone.
+struct Replacement {
+    env: Env,
+    folder: std::path::PathBuf,
+    disk: Vec<String>,
+    entry: ListEntry,
+    feed_id: i64,
+    key: String,
+    batch_url: &'static str,
+    _dir: tempfile::TempDir,
+}
+
+fn replacement() -> Replacement {
+    use kisetsu_clients::anilist::MediaStatus;
+    use kisetsu_services::downloads::MANAGED_TAG;
+
+    let env = Env::new();
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("Grand Blue");
+    std::fs::create_dir(&folder).unwrap();
+    let disk: Vec<String> = (1..=12)
+        .map(|n| format!("[SubsPlease] Grand Blue - {n:02} (1080p) [A13D69{n:02}].mkv"))
+        .collect();
+    for name in &disk {
+        std::fs::write(folder.join(name), "v1").unwrap();
+    }
+    let root = dir
+        .path()
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "/");
+    let base = format!("{root}/{{name}}");
+    env.change_settings(move |settings| settings.base_dir = base);
+    let feed_id = env.add_feed("Nyaa", NYAA);
+    let batch_url = "https://nyaa.si/download/2179602.torrent";
+    let batch = article(
+        "[SubsPlease] Grand Blue (01-12) (1080p) [Batch]",
+        Some(START),
+        None,
+        None,
+        Some(batch_url),
+    );
+    let key = format!("{feed_id}:{}", batch.guid);
+    env.feeds().searchable.insert(NYAA.to_owned(), vec![batch]);
+    let listed: Vec<String> = (1..=12)
+        .map(|n| {
+            if n <= 5 {
+                format!("[SubsPlease] Grand Blue - {n:02}v2 (1080p) [96D6C3{n:02}].mkv")
+            } else {
+                disk[n - 1].clone()
+            }
+        })
+        .collect();
+    env.remote
+        .torrents
+        .lock()
+        .unwrap()
+        .insert(batch_url.to_owned(), torrent_of(&listed));
+    let save = folder.to_string_lossy().into_owned();
+    env.qbit().seed(Seed {
+        tags: [MANAGED_TAG.to_owned()].into(),
+        ..Seed::new(disk[0].clone(), save.clone())
+    });
+    env.qbit().seed(Seed::new(disk[1].clone(), save));
+    full_sync(&env);
+    let entry = ListEntry {
+        total_episodes: Some(12),
+        status: MediaStatus::Finished,
+        ..anilist_show(7, "Grand Blue")
+    };
+    Replacement {
+        env,
+        folder,
+        disk,
+        entry,
+        feed_id,
+        key,
+        batch_url,
+        _dir: dir,
+    }
+}
+
+impl Replacement {
+    /// Searches, then adds the show from the batch.
+    fn add(&self) {
+        use kisetsu_services::addshow;
+
+        self.env.jobs.search_new_show(&self.entry).unwrap();
+        let (entry, feed_id) = (self.entry.clone(), self.feed_id);
+        let found = self.env.jobs.found_for(7);
+        let files = self.env.jobs.torrent_files_for(7);
+        let keys = vec![self.key.clone()];
+        self.env
+            .engine
+            .call(move |ctx| addshow::confirm(ctx, &entry, feed_id, &keys, &found, &files))
+            .unwrap();
+        self.env.jobs.ready.store(true, Ordering::Release);
+        self.env.jobs.synced.store(true, Ordering::Release);
+    }
+
+    fn batch_hash(&self) -> String {
+        let url = self.batch_url;
+        self.env
+            .qbit()
+            .truth
+            .values()
+            .find(|torrent| url.ends_with(&torrent.name))
+            .map(|torrent| torrent.hash.clone())
+            .unwrap()
+    }
+
+    fn downloads(&self) -> Vec<Download> {
+        self.env
+            .engine
+            .read(|ctx| Ok(Download::select(ctx.conn, "ORDER BY id", [])?))
+            .unwrap()
+    }
+
+    fn wait(&self) -> String {
+        use kisetsu_services::context::get_state;
+
+        self.env
+            .engine
+            .read(|ctx| {
+                let key: Option<String> = ctx
+                    .conn
+                    .prepare("SELECT key FROM app_state WHERE key LIKE 'older_files:%'")?
+                    .query_map([], |row| row.get(0))?
+                    .next()
+                    .transpose()?;
+                get_state(ctx.conn, &key.unwrap_or_default(), "")
+            })
+            .unwrap()
+    }
+}
+
+#[test]
+fn a_batch_replaces_a_taken_over_torrent_and_deletes_loose_older_files_but_not_held_ones() {
+    use kisetsu_db::schema::DownloadState;
+
+    let r = replacement();
+    r.add();
+
+    let downloads = r.downloads();
+    let adopted = downloads.iter().find(|dl| dl.adopted).unwrap();
+    let replacement = downloads
+        .iter()
+        .find(|dl| dl.supersedes_id.is_some())
+        .unwrap();
+    assert_eq!(replacement.supersedes_id, adopted.id);
+    assert_eq!(adopted.state, DownloadState::Done);
+    // The taken over torrent's file is the replacement's to deal with, not a loose file.
+    let wait = r.wait();
+    assert!(!wait.contains(&r.disk[0]), "{wait}");
+    for name in &r.disk[1..5] {
+        assert!(wait.contains(name), "{wait}");
+    }
+
+    r.env.jobs.settle().unwrap();
+    assert!(
+        r.env
+            .qbit()
+            .truth
+            .contains_key(&adopted.info_hash.clone().unwrap())
+    );
+    let batch = r.batch_hash();
+    r.env.qbit().finish(&batch);
+    r.env.jobs.settle().unwrap();
+
+    let old_hash = adopted.info_hash.clone().unwrap();
+    assert!(r.env.qbit().deleted_with_files.contains(&old_hash));
+    assert!(
+        r.downloads()
+            .iter()
+            .any(|dl| dl.id == adopted.id && dl.state == DownloadState::Superseded)
+    );
+    // Loose files of episodes 3 to 5 are deleted; the one a torrent in qBittorrent holds stays,
+    // as do the files the batch holds too.
+    for (index, name) in r.disk.iter().enumerate() {
+        let gone = (2..5).contains(&index);
+        assert_eq!(r.folder.join(name).exists(), !gone, "{name}");
+    }
+}
+
+#[test]
+fn a_replacement_that_gives_up_leaves_the_files_of_the_batch_in_place() {
+    use kisetsu_db::schema::DownloadState;
+
+    let r = replacement();
+    r.add();
+    r.env.jobs.settle().unwrap();
+    let old_hash = r
+        .downloads()
+        .iter()
+        .find(|dl| dl.adopted)
+        .and_then(|dl| dl.info_hash.clone())
+        .unwrap();
+
+    r.env.advance(SignedDuration::from_hours(49));
+    r.env.jobs.settle().unwrap();
+
+    assert!(r.env.qbit().deleted_with_files.is_empty());
+    assert!(r.env.qbit().truth.contains_key(&old_hash));
+    assert!(
+        r.downloads()
+            .iter()
+            .any(|dl| dl.supersedes_id.is_some() && dl.state == DownloadState::Canceled)
+    );
+    for name in &r.disk {
+        assert!(r.folder.join(name).exists(), "{name}");
+    }
+}

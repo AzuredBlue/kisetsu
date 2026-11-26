@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 use jiff::Timestamp;
 use kisetsu_clients::anilist::{AniListClient, AniListError, ListEntry, Schedules};
-use kisetsu_clients::fetch::Fetcher;
+use kisetsu_clients::fetch::{Fetcher, RequestKind};
 use kisetsu_clients::palette::{self, Hues, ImageError, WebImages};
 use kisetsu_clients::rss::{FeedArticle, FeedFetchError};
 use kisetsu_clients::sites;
@@ -24,6 +24,9 @@ pub trait Remote: Send + Sync {
         term: &str,
         now: Timestamp,
     ) -> Result<Option<Vec<FeedArticle>>, FeedFetchError>;
+
+    /// The `.torrent` file at `url`.
+    fn torrent_file(&self, url: &str) -> Result<Vec<u8>, FeedFetchError>;
 
     /// The titles SubsPlease airs this week; `None` when its answer lists none.
     fn subsplease_schedule(&self) -> Result<Option<Vec<String>>, FeedFetchError>;
@@ -100,6 +103,10 @@ impl Remote for WebRemote {
         now: Timestamp,
     ) -> Result<Option<Vec<FeedArticle>>, FeedFetchError> {
         sites::search_feed(&self.fetcher, feed_url, term, now)
+    }
+
+    fn torrent_file(&self, url: &str) -> Result<Vec<u8>, FeedFetchError> {
+        self.fetcher.fetch_bytes(url, RequestKind::TorrentFile)
     }
 
     fn subsplease_schedule(&self) -> Result<Option<Vec<String>>, FeedFetchError> {

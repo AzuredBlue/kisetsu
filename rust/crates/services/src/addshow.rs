@@ -7,7 +7,7 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::MAIN_SEPARATOR;
 
 use jiff::civil;
 use jiff::{SignedDuration, Timestamp};
@@ -30,6 +30,7 @@ use crate::error::Result;
 use crate::feeds::{self, Evidence};
 use crate::library::{self, is_video_file};
 use crate::manual::{self, Candidate};
+use crate::older_files;
 use crate::{adoption, ingest, shows, watched};
 
 /// The list statuses offered for adding: what the user watches, paused or dropped. Completed ones
@@ -105,9 +106,21 @@ pub struct BatchOffer {
     /// Whether the title gives the range of episodes it holds.
     pub ranged: bool,
     pub published_at: Option<Timestamp>,
-    /// How many of its episodes are already in the folder on disk.
+    /// Where its `.torrent` file is, or its magnet link.
+    pub torrent_url: String,
+    /// How many of its files are in the folder on disk under the same name. Until the batch's
+    /// file list is read (`files_known`) it is how many of its episodes have any file there.
     pub on_disk: usize,
+    /// The episodes whose file in the batch is another version of one in the folder.
+    pub newer: Vec<i64>,
+    /// How many of its files are neither in the folder nor another version of one.
+    pub to_download: usize,
+    /// Whether `on_disk`, `newer` and `to_download` come from the batch's file list.
+    pub files_known: bool,
 }
+
+/// The video files of batch torrents, by item key, as paths inside the torrent.
+pub type TorrentFiles = BTreeMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EpisodeOffer {
@@ -133,6 +146,8 @@ pub struct FeedOffer {
 pub struct FolderSummary {
     pub path: String,
     pub files: usize,
+    /// The names of those files.
+    pub names: Vec<String>,
 }
 
 /// What each feed carries for the entry, and the feed its files on disk came from.
@@ -306,6 +321,18 @@ fn configured_root(base_dir: &str) -> String {
     crate::paths::expand_home(base.trim_end_matches(['/', '\\']))
 }
 
+/// `name` inside `root`, joined with the separator `root` is written with.
+fn join_shown(root: &str, name: &str) -> String {
+    if root.is_empty() {
+        return name.to_owned();
+    }
+    let separator = root
+        .chars()
+        .rfind(|c| matches!(c, '/' | '\\'))
+        .unwrap_or(MAIN_SEPARATOR);
+    format!("{root}{separator}{name}")
+}
+
 /// A folder in the download folder named after one of the show's titles, with the show's video
 /// files in it.
 pub fn existing_folder(ctx: &Context<'_>, entry: &ListEntry) -> Option<ExistingFolder> {
@@ -336,10 +363,7 @@ pub fn existing_folder(ctx: &Context<'_>, entry: &ListEntry) -> Option<ExistingF
     folders.sort();
     let shown_root = configured_root(&ctx.settings.base_dir);
     for name in folders {
-        let path = Path::new(&shown_root)
-            .join(&name)
-            .to_string_lossy()
-            .into_owned();
+        let path = join_shown(&shown_root, &name);
         let Ok(names) = library::file_names(&path) else {
             continue;
         };
@@ -588,6 +612,96 @@ pub fn library_key(name: &str) -> String {
     stem.to_lowercase().trim().to_owned()
 }
 
+/// What a batch's files are to the folder the show already has.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FileCounts {
+    /// Files the folder holds under the same name.
+    pub on_disk: usize,
+    /// The episodes whose batch file is another version of a file in the folder.
+    pub newer: Vec<i64>,
+    /// Files the folder has nothing like.
+    pub to_download: usize,
+    /// The folder's files the newer ones replace, with their episode numbers.
+    pub older: Vec<(i64, String)>,
+}
+
+/// The name of a file in a torrent: its last path component.
+fn file_name(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Sorts the batch's video files by what the folder's `folder_files` already hold.
+pub fn classify(batch_files: &[String], folder_files: &[String]) -> FileCounts {
+    let names: Vec<&str> = batch_files
+        .iter()
+        .map(|path| file_name(path))
+        .filter(|name| is_video_file(name))
+        .collect();
+    let batch_keys: HashSet<String> = names.iter().map(|name| library_key(name)).collect();
+    let disk_keys: HashSet<String> = folder_files.iter().map(|name| library_key(name)).collect();
+    let disk_numbers: BTreeSet<i64> = folder_files
+        .iter()
+        .filter_map(|name| parse_release_title(name).episode)
+        .collect();
+    let mut counts = FileCounts::default();
+    let mut replaced = BTreeSet::new();
+    for name in names {
+        let held = parse_release_title(name)
+            .episode
+            .filter(|number| disk_numbers.contains(number));
+        if disk_keys.contains(&library_key(name)) {
+            counts.on_disk += 1;
+        } else if let Some(number) = held {
+            counts.newer.push(number);
+            replaced.insert(number);
+        } else {
+            counts.to_download += 1;
+        }
+    }
+    counts.older = folder_files
+        .iter()
+        .filter_map(|file| {
+            let number = parse_release_title(file).episode?;
+            (replaced.contains(&number) && !batch_keys.contains(&library_key(file)))
+                .then(|| (number, file.clone()))
+        })
+        .collect();
+    counts
+}
+
+/// Whether the batch holds another file for episode `number` than the one named `held`.
+fn replaces(batch_files: &[String], number: i64, held: &str) -> bool {
+    let held = library_key(held);
+    let mut files = batch_files
+        .iter()
+        .map(|path| file_name(path))
+        .filter(|name| is_video_file(name) && parse_release_title(name).episode == Some(number))
+        .peekable();
+    files.peek().is_some() && files.all(|name| library_key(name) != held)
+}
+
+/// Counts each batch's files against the folder from the file lists read for `files`. A batch
+/// with no list keeps its count by episode number.
+pub fn count_batch_files(preview: &mut Preview, files: &TorrentFiles) {
+    let Some(folder) = &preview.folder else {
+        return;
+    };
+    for batch in preview
+        .feeds
+        .iter_mut()
+        .flat_map(|feed| feed.batches.iter_mut())
+    {
+        let Some(listed) = files.get(&batch.item_key) else {
+            continue;
+        };
+        let counts = classify(listed, &folder.names);
+        batch.on_disk = counts.on_disk;
+        batch.newer = counts.newer;
+        batch.to_download = counts.to_download;
+        batch.files_known = true;
+    }
+}
+
 /// What each feed carries for the entry, episode by episode and in batches, and the feed its
 /// files on disk came from.
 ///
@@ -650,11 +764,15 @@ pub fn preview(
                     numbers: batch.numbers.clone(),
                     ranged: batch_range(&batch.item.title).is_some(),
                     published_at: batch.item.published_at,
+                    torrent_url: batch.item.torrent_url.clone().unwrap_or_default(),
                     on_disk: batch
                         .numbers
                         .iter()
                         .filter(|number| disk_numbers.contains(number))
                         .count(),
+                    newer: Vec::new(),
+                    to_download: 0,
+                    files_known: false,
                 })
                 .collect(),
             episodes: offered
@@ -699,6 +817,7 @@ pub fn preview(
         folder: folder.map(|folder| FolderSummary {
             path: folder.path,
             files: folder.files.len(),
+            names: folder.files,
         }),
         preselect,
         note,
@@ -727,6 +846,7 @@ pub fn confirm(
     feed_id: i64,
     item_keys: &[String],
     found: &[(i64, Vec<FeedArticle>)],
+    torrent_files: &TorrentFiles,
 ) -> Result<Confirmed> {
     if followed(ctx, entry.anilist_id)? {
         return Err(Refusal::AlreadyFollowed.into());
@@ -865,6 +985,10 @@ pub fn confirm(
     };
     // By item, the torrent added for it and the first episode it went to.
     let mut added: HashMap<i64, (String, i64)> = HashMap::new();
+    // By batch item, the downloads that follow its torrent.
+    let mut batch_downloads: HashMap<i64, Vec<i64>> = HashMap::new();
+    // By batch item, the episodes those downloads are for.
+    let mut started_numbers: HashMap<i64, BTreeSet<i64>> = HashMap::new();
     for (number, item) in &picked {
         let Some(mut episode) = Episode::find(
             ctx.conn,
@@ -874,13 +998,23 @@ pub fn confirm(
         else {
             continue;
         };
-        if !matches!(
+        let item_id = item.id.unwrap_or_default();
+        let wanted = matches!(
             episode.status,
             EpisodeStatus::Wanted | EpisodeStatus::Missed
-        ) {
+        );
+        // A finished release of the episode, such as a torrent just taken over from qBittorrent, is
+        // replaced by the batch's file when that is another version of it.
+        let replaced = match torrent_files.get(&item_key(item)) {
+            Some(listed) if !wanted && batch_ids.contains(&item.id) => {
+                downloads::replaceable(ctx, &episode)?
+                    .filter(|old| replaces(listed, *number, &old.title))
+            }
+            _ => None,
+        };
+        if !wanted && replaced.is_none() {
             continue;
         }
-        let item_id = item.id.unwrap_or_default();
         let started = if let Some((info_hash, first)) = added.get(&item_id) {
             // The rest of a batch or double episode already in qBittorrent follow that torrent;
             // adding it again would fetch it again.
@@ -891,12 +1025,16 @@ pub fn confirm(
                 &feed,
                 &mut episode,
                 item,
-                info_hash,
-                source,
+                downloads::Follow {
+                    info_hash,
+                    source_episode: source,
+                    supersedes: replaced.as_ref().and_then(|old| old.id),
+                },
             )?)
         } else {
             let options = StartOptions {
                 batch: batch_ids.contains(&item.id),
+                switch_source: replaced.is_some(),
                 ..StartOptions::default()
             };
             let dl = downloads::start_download(ctx, &mut show, &feed, &mut episode, item, options)?;
@@ -913,7 +1051,16 @@ pub fn confirm(
             dl
         };
         match started {
-            Some(_) => result.started += 1,
+            Some(dl) => {
+                result.started += 1;
+                if replaced.is_none()
+                    && batch_ids.contains(&item.id)
+                    && downloads::is_batch_download(&dl)
+                {
+                    batch_downloads.entry(item_id).or_default().extend(dl.id);
+                    started_numbers.entry(item_id).or_default().insert(*number);
+                }
+            }
             None => result.errors.push(format!(
                 "Ep {number}: {}",
                 episode
@@ -922,6 +1069,33 @@ pub fn confirm(
                     .filter(|error| !error.is_empty())
                     .unwrap_or("could not start the download")
             )),
+        }
+    }
+    if let Some(folder) = &folder {
+        for batch in &offered_batches {
+            let item_id = batch.item.id.unwrap_or_default();
+            let (Some(listed), Some(waiting), Some(numbers)) = (
+                torrent_files.get(&item_key(&batch.item)),
+                batch_downloads.get(&item_id),
+                started_numbers.get(&item_id),
+            ) else {
+                continue;
+            };
+            // Only the files of episodes this batch downloads: a file of any other episode is not
+            // the batch's to delete.
+            let older: Vec<String> = classify(listed, &folder.files)
+                .older
+                .iter()
+                .filter(|(number, _)| numbers.contains(number))
+                .map(|(_, file)| join_shown(&folder.path, file))
+                .collect();
+            if !older.is_empty() {
+                let own: Vec<String> = listed
+                    .iter()
+                    .map(|path| join_shown(&folder.path, path))
+                    .collect();
+                older_files::wait_for_batch(ctx, &name, waiting, &older, &own)?;
+            }
         }
     }
     Ok(result)
@@ -948,5 +1122,150 @@ mod tests {
         );
         assert_eq!(configured_root("D:/Anime/"), "D:/Anime");
         assert_eq!(configured_root(""), "");
+    }
+
+    #[test]
+    fn a_folder_is_joined_to_the_root_with_the_separator_the_root_uses() {
+        assert_eq!(
+            join_shown("D:/Torrents/Seasonal", "Grand Blue Season 3"),
+            "D:/Torrents/Seasonal/Grand Blue Season 3"
+        );
+        assert_eq!(
+            join_shown(r"D:\Torrents\Seasonal", "Grand Blue"),
+            r"D:\Torrents\Seasonal\Grand Blue"
+        );
+        assert_eq!(
+            join_shown(r"D:/Mixed\Seasonal", "Show"),
+            r"D:/Mixed\Seasonal\Show"
+        );
+        assert_eq!(join_shown("", "Show"), "Show");
+        assert_eq!(
+            join_shown("Seasonal", "Show"),
+            format!("Seasonal{MAIN_SEPARATOR}Show")
+        );
+    }
+
+    #[test]
+    fn the_found_folder_is_shown_with_the_separator_of_the_setting() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_string_lossy().replace('\\', "/");
+        let folder = dir.path().join("Grand Blue Season 3");
+        fs::create_dir(&folder).unwrap();
+        fs::write(
+            folder.join("[SubsPlease] Grand Blue S3 - 01 (1080p) [A13D691B].mkv"),
+            "",
+        )
+        .unwrap();
+        let conn = kisetsu_db::store::open_in_memory().unwrap();
+        let mut caches = crate::context::Caches::default();
+        let mut ctx = Context::new(&conn, Timestamp::UNIX_EPOCH, &mut caches).unwrap();
+        ctx.settings.base_dir = format!("{root}/{{name}}");
+        let entry = crate::fakes::anilist_show(1, "Grand Blue Season 3");
+
+        let found = existing_folder(&ctx, &entry).unwrap();
+
+        assert_eq!(found.path, format!("{root}/Grand Blue Season 3"));
+        assert_eq!(found.files.len(), 1);
+    }
+
+    fn disk_files() -> Vec<String> {
+        (1..=12)
+            .map(|n| format!("[SubsPlease] Grand Blue S3 - {n:02} (1080p) [A13D69{n:02}].mkv"))
+            .collect()
+    }
+
+    /// The batch's files: a new version of episodes 1 to 5 and, for 6 to 12, the files on disk.
+    fn batch_files() -> Vec<String> {
+        let own = disk_files();
+        (1..=12)
+            .map(|n| {
+                if n <= 5 {
+                    format!("[SubsPlease] Grand Blue S3 - {n:02}v2 (1080p) [96D6C3{n:02}].mkv")
+                } else {
+                    own[n - 1].clone()
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_batch_is_counted_by_its_files_against_the_folder() {
+        let mut listed = batch_files();
+        listed.push("Extras/Creditless OP.MKV".to_owned());
+        listed.push("Show.nfo".to_owned());
+        let counts = classify(&listed, &disk_files());
+        assert_eq!(counts.on_disk, 7);
+        assert_eq!(counts.newer, [1, 2, 3, 4, 5]);
+        assert_eq!(counts.to_download, 1);
+        let older: Vec<(i64, String)> = (1..=5).zip(disk_files()).collect();
+        assert_eq!(counts.older, older);
+    }
+
+    #[test]
+    fn a_batch_matching_the_folder_in_full_has_nothing_to_download() {
+        let counts = classify(&disk_files(), &disk_files());
+        assert_eq!(
+            counts,
+            FileCounts {
+                on_disk: 12,
+                ..FileCounts::default()
+            }
+        );
+    }
+
+    #[test]
+    fn the_batch_counts_reach_the_offer_only_when_its_files_were_read() {
+        let offer = |key: &str| BatchOffer {
+            item_key: key.to_owned(),
+            title: "Batch".to_owned(),
+            numbers: (1..=12).collect(),
+            ranged: true,
+            published_at: None,
+            torrent_url: String::new(),
+            on_disk: 12,
+            newer: Vec::new(),
+            to_download: 0,
+            files_known: false,
+        };
+        let mut preview = Preview {
+            anilist_id: 1,
+            nothing_offered: false,
+            title: String::new(),
+            status: None,
+            total_episodes: Some(12),
+            episode_count: 12,
+            feeds: vec![FeedOffer {
+                feed_id: 1,
+                feed_name: "Feed".to_owned(),
+                batches: vec![offer("1:read"), offer("1:unread")],
+                episodes: Vec::new(),
+            }],
+            unsearchable: Vec::new(),
+            folder: Some(FolderSummary {
+                path: "D:/x".to_owned(),
+                files: 12,
+                names: disk_files(),
+            }),
+            preselect: None,
+            note: None,
+            watched: None,
+        };
+        let files = TorrentFiles::from([("1:read".to_owned(), batch_files())]);
+
+        count_batch_files(&mut preview, &files);
+
+        let [read, unread] = &preview.feeds[0].batches[..] else {
+            panic!("two batches");
+        };
+        assert_eq!(
+            (
+                read.files_known,
+                read.on_disk,
+                read.newer.len(),
+                read.to_download
+            ),
+            (true, 7, 5, 0)
+        );
+        assert_eq!((unread.files_known, unread.on_disk), (false, 12));
     }
 }

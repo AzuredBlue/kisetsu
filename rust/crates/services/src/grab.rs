@@ -977,8 +977,11 @@ fn take(
             feed,
             &mut episode,
             item,
-            hash,
-            Some(entry.raw),
+            downloads::Follow {
+                info_hash: hash,
+                source_episode: Some(entry.raw),
+                supersedes: None,
+            },
         )?),
         None => {
             let started = downloads::start_download(
