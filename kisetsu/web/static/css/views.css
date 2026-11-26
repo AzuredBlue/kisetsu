@@ -104,10 +104,6 @@
 .content.flush { padding: 0; }
 .show-page { position: relative; isolation: isolate; min-height: 100%; }
 .show-page * { scrollbar-color: rgb(var(--ac) / .45) transparent; }
-@media (min-width: 1024px) {
-  .content.flush { overflow: hidden; }
-  .show-page { display: flex; flex-direction: column; height: 100%; min-height: 0; overflow: hidden; }
-}
 .show-backdrop {
   position: absolute; inset: 0; z-index: -1; overflow: hidden; pointer-events: none;
   mask-image: linear-gradient(to bottom, #000 0, rgb(0 0 0 / .5) 45%, transparent 90%);
@@ -128,14 +124,9 @@
 }
 @media (min-width: 768px) { .show-body { padding: 0 2rem 1.5rem; } }
 @media (min-width: 1024px) {
-  .show-body { flex: 1; min-height: 0; grid-template-columns: minmax(0, 1fr) 23rem; grid-template-rows: auto minmax(0, 1fr); padding-bottom: 1.5rem; }
+  .show-body { grid-template-columns: minmax(0, 1fr) 23rem; grid-template-rows: auto auto; align-items: start; }
   .show-top { grid-column: 1 / -1; }
-  .show-lists, .show-side { display: flex; flex-direction: column; min-height: 0; }
-  .show-side { overflow-y: auto; }
-  .list-card, .side-card { flex: 0 1 auto; min-height: 0; }
-  .list-card { display: flex; flex-direction: column; }
-  .list-card .list { flex: 1; min-height: 0; max-height: none; }
-  .side-card { align-content: start; flex: none; }
+  .list-card .list { max-height: none; }
 }
 .show-top { display: flex; flex-direction: column; gap: 1rem; }
 @media (min-width: 1024px) { .show-top { flex-direction: row; align-items: flex-end; gap: 1.5rem; } }
@@ -143,6 +134,7 @@
   position: relative; z-index: 1; flex: none; width: 9rem; margin-top: -6rem; border-radius: var(--r-md); overflow: hidden; background: rgb(var(--surface));
   border: 1px solid rgb(var(--line)); box-shadow: 0 4px 12px rgb(0 0 0 / .3);
 }
+@media (max-width: 639px) { .show-banner { height: 9.5rem; } .show-poster { width: 7rem; margin-top: -4.5rem; } }
 @media (min-width: 1024px) { .show-poster { width: 13.5rem; margin-top: -10rem; } }
 /* Deleting is final, so it sits last, after Pause, in the bad colour. */
 .show-delete.btn { color: rgb(var(--bad)); &:hover:not(:disabled) { background: var(--danger); color: rgb(var(--bad-fg)); } }
