@@ -150,7 +150,7 @@ export function Setup({ sandbox, reviewing }) {
     <div class="setup-card" key=${name}>
       ${name === 'welcome' ? html`
         <h1>Welcome to Kisetsu</h1>
-        <p class="page-sub">Kisetsu follows your AniList watching list and has qBittorrent download each new episode as it airs. A few questions first.</p>
+        <p class="page-sub">Kisetsu follows your AniList watching list and has qBittorrent download each new episode as it airs.</p>
         ${sandbox ? html`<p class="field-hint">Sandbox: Kisetsu only logs downloads. qBittorrent and your files stay as they are, and Kisetsu drops this data when it stops.</p>` : null}` : null}
       ${name === 'qbit' ? html`
         <h1>qBittorrent</h1>

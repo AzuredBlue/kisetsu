@@ -181,7 +181,7 @@ export function Settings() {
             <${SetRow} name="Category" htmlFor="set-category" size="mid"><input id="set-category" class="field" placeholder="(none)" ...${bind('default_category')} /><//>
             <${SetRow} name="Seed ratio" htmlFor="set-ratio" hint="Stop seeding at this ratio. Shows can set their own." size="num"><input id="set-ratio" type="number" step="0.1" min="0" class="field num" ...${bind('default_seed_ratio')} /><//>
             <${SetRow} name="Delete watched" hint="Skip episodes your AniList progress has passed, and delete each download with its files after you watch it."><${Seg} label="Delete watched" value=${data.delete_watched} onChange=${setDeleteWatched} options=${[[true, 'On'], [false, 'Off']]} /><//>
-            <${SetRow} name="Preferred quality" hint="Or the next one up when a feed lacks it. Never lower."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
+            <${SetRow} name="Preferred quality" hint="If a feed lacks this quality, Kisetsu takes the next higher one."><${Seg} label="Preferred quality" value=${data.min_resolution} onChange=${setMinResolution} options=${[[480, '480p'], [720, '720p'], [1080, '1080p']]} /><//>
             <${SetRow} name="Notifications" hint="A desktop popup when an episode finishes."><${Seg} label="Notifications" value=${data.desktop_notifications} onChange=${setNotifications} options=${[[true, 'On'], [false, 'Off']]} /><//>
           </div>
         </section>
@@ -189,7 +189,7 @@ export function Settings() {
           <h2 class="section-title section-gap">Backup</h2>
           <div class="card card-divided form-grid">
             <${SetRow} name="Export" hint="Settings, shows, feeds and history. Keep it private: feed addresses can hold keys."><button type="button" class="btn sm" onClick=${runExport} disabled=${exporting}>${exporting ? 'Exporting…' : 'Export backup'}</button><//>
-            <${SetRow} name="Restore" hint="Replaces everything, after a preview. The current data is saved first."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
+            <${SetRow} name="Restore" hint="Replaces your settings, shows, feeds and history after a preview. Kisetsu saves the current data first."><button type="button" class="btn sm" onClick=${() => restoreBackup(setRestoring)} disabled=${restoring}>${restoring ? 'Working…' : 'Choose file…'}</button><//>
           </div>
         </section>
         ${updateState ? html`<section class="sec-version">
@@ -216,7 +216,7 @@ export function Settings() {
                 <div class="row"><button type="button" class="btn sm" onClick=${testConnection}>Test connection</button><span class=${`test-${test.state}`}>${test.text}</span></div>
               </div>
             <//>
-            <${SetRow} name="AniList" htmlFor="set-anilist" hint="Your username. Kisetsu follows what airs this season or next on your Watching and Planning lists." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
+            <${SetRow} name="AniList username" htmlFor="set-anilist" hint="Kisetsu follows what airs this season or next on your Watching and Planning lists." size="mid"><input id="set-anilist" class="field" ...${bind('anilist_username')} /><//>
           </div>
         </section>
         <section class="sec-appearance">
