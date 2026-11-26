@@ -12,14 +12,20 @@ const version = (v) => (v > 1 ? ` v${v}` : '');
 const fold = (text) => String(text || '').normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const AIR_LABELS = { RELEASING: 'Releasing', FINISHED: 'Finished', NOT_YET_RELEASED: 'Not yet released', HIATUS: 'On hiatus', CANCELLED: 'Cancelled' };
 
+// Watching and Rewatching come first, then Planning, Paused, Dropped and Completed.
+const LIST_ORDER = { CURRENT: 0, REPEATING: 0, PLANNING: 1, PAUSED: 2, DROPPED: 3, COMPLETED: 4 };
+const listRank = (entry) => LIST_ORDER[entry.list_status] ?? 5;
+const LIST_PILLS = { CURRENT: 'pill-info', REPEATING: 'pill-info' };
+const listPill = (entry) => entry.list_label ? html`<span class=${`pill ${LIST_PILLS[entry.list_status] || 'pill-idle'}`}>${entry.list_label}</span>` : null;
+
 function EntryRow({ entry, onPick }) {
-  const facts = [entry.list_label, AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(', ');
+  const facts = [AIR_LABELS[entry.status] || null, entry.season, entry.total_episodes ? `${entry.total_episodes} ep` : null].filter(Boolean).join(', ');
   const art = { id: `al-${entry.anilist_id}`, title: entry.title, cover: entry.cover };
   return html`<li><button type="button" class="add-entry" onClick=${() => (entry.followed ? go(entry.show_id) : onPick(entry))}>
     <div class="sr-poster"><${Poster} show=${art} dim=${false} small /></div>
     <div class="grow">
       <div class="add-entry-title truncate" title=${entry.title}>${entry.title}</div>
-      <div class="muted truncate">${facts}</div>
+      <div class="add-entry-meta">${listPill(entry)}<span class="muted truncate">${facts}</span></div>
     </div>
     ${entry.followed ? html`<span class="muted">Following</span>` : null}
     <${Icon} name="forward" small />
@@ -47,7 +53,8 @@ function PickEntry({ onPick }) {
       return words.every(w => hay.includes(w));
     });
     // What can still be added comes first; shows already followed follow as shortcuts to their page.
-    return [...found.filter(e => !e.followed), ...found.filter(e => e.followed)];
+    const byList = (a, b) => listRank(a) - listRank(b);
+    return [...found.filter(e => !e.followed).sort(byList), ...found.filter(e => e.followed).sort(byList)];
   }, [list, text]);
   const firstFollowed = shown.findIndex(e => e.followed);
   return html`<div class="stack add-step">
@@ -209,7 +216,7 @@ function PickReleases({ entry, onBack }) {
       <div class="sr-poster"><${Poster} show=${art} dim=${false} small /></div>
       <div class="grow">
         <h2 class="section-title truncate" title=${entry.title}>${entry.title}</h2>
-        <p class="muted">${[entry.list_label, AIR_LABELS[entry.status] || null, entry.total_episodes ? `${entry.total_episodes} episodes` : null].filter(Boolean).join(', ')}</p>
+        <div class="add-entry-meta">${listPill(entry)}<span class="muted">${[AIR_LABELS[entry.status] || null, entry.total_episodes ? `${entry.total_episodes} episodes` : null].filter(Boolean).join(', ')}</span></div>
       </div>
     </div>
     ${error ? html`<p class="error-text">${error}</p>` : null}

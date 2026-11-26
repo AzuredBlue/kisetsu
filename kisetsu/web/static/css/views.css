@@ -524,6 +524,8 @@ section + section { margin-top: .5rem; }
 .add-entry, .add-picked { & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: var(--fs-xs); } } & .grow { flex: 1; min-width: 0; } }
 .add-entry { display: flex; align-items: center; gap: .875rem; width: 100%; padding: .625rem 1.25rem; font-size: var(--fs-xs); text-align: left; transition: background-color .15s;
   &:focus-visible { outline-offset: -2px; } &:hover { background: rgb(var(--raised) / .6); } & > .muted { flex: none; } & > .icon { flex: none; color: rgb(var(--text-4)); transition: color .15s; } &:hover > .icon { color: rgb(var(--text-2)); } }
+.add-entry-meta { display: flex; align-items: center; gap: .5rem; min-width: 0; & .pill { flex: none; } }
+@media (max-width: 639px) { .add-entry-meta { align-items: baseline; & .truncate { white-space: normal; overflow: visible; } } }
 .add-entry-title { font-size: .875rem; line-height: 1.5; font-weight: 500; color: rgb(var(--text)); }
 .add-empty { padding: 1.5rem 1.25rem; text-align: center; font-size: .8125rem; color: rgb(var(--text-2)); }
 .add-picked { display: flex; align-items: center; gap: .875rem; & .sr-poster { width: 3rem; } & .section-title { font-size: 1.125rem; } }
