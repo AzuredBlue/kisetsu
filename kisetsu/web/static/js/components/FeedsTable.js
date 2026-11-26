@@ -1,7 +1,7 @@
 // The feed list with drag-to-reorder, shared by the Feeds page and the setup wizard.
 import { html, useEffect, useRef, useState } from '../ui.js';
 import { apiFetch } from '../api.js';
-import { relativeTime } from '../format.js';
+import { localDate, localTime, relativeTime } from '../format.js';
 import { Icon } from './Icon.js';
 import { confirmDialog, showModal } from './Modal.js';
 import { toast } from './Toast.js';
@@ -11,7 +11,7 @@ export function feedHealth(feed) {
   if (!feed.failing_since) return feed.last_ok_at ? html`<span class="muted" title="The last time this feed was read without an error.">Read ${relativeTime(feed.last_ok_at)}</span>` : null;
   const since = new Date(feed.failing_since);
   const sameDay = since.toDateString() === new Date().toDateString();
-  const when = sameDay ? since.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : since.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const when = sameDay ? localTime(feed.failing_since) : `${localDate(feed.failing_since)}, ${localTime(feed.failing_since)}`;
   return html`<span class="bad" title=${feed.last_error || `This feed has not been readable since ${since.toLocaleString()}`}>Failing since ${when}</span>`;
 }
 

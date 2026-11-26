@@ -593,10 +593,9 @@ textarea.path-field { min-height: 0; resize: none; overflow-wrap: anywhere; line
   .feed-row .feed-name { flex-basis: 100%; }
   .feed-row .feed-use { margin-left: 0; padding-left: 0; }
 }
-/* A feed's edit and delete stay in view at the row's end, quiet until the row is hovered. */
+/* A feed's edit and delete stay in view at the row's end. */
 @media (hover: hover) {
-  .feed-row .feed-actions { position: static; flex: none; align-self: center; padding: 0; background: none; opacity: .6; }
-  .feed-row:hover .feed-actions, .feed-row .feed-actions:focus-within { opacity: 1; }
+  .feed-row .feed-actions { position: static; flex: none; align-self: center; padding: 0; background: none; opacity: 1; }
 }
 .feed-row .feed-delete:hover:not(:disabled), .feed-row .feed-delete:focus-visible { color: rgb(var(--bad)); }
 
