@@ -296,7 +296,7 @@
     & a:hover .poster img { filter: brightness(1.12); }
   }
   & .sr-poster { width: 2.5rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: .875rem; } }
-  & .release-name { margin-top: .125rem; font-size: var(--fs-mono); line-height: 1rem; color: rgb(var(--release)); overflow-wrap: anywhere; user-select: all; }
+  & .release-name { margin-top: .125rem; font-size: var(--fs-mono); line-height: 1.125rem; color: rgb(var(--release)); overflow-wrap: anywhere; user-select: all; }
   & .ep { flex: none; font-size: var(--fs-xs); }
 }
 .history-title { display: flex; align-items: baseline; gap: .5rem; min-width: 0; }

@@ -12,8 +12,8 @@
   --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
-  /* Type: 13px is the floor for any text, 14px for rows and controls, 15px for prose. Release names are mono at 12.5px. */
-  --fs-xs: .8125rem; --fs-sm: .875rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-mono: .78125rem;
+  /* Type: 13px is the floor for any text, 14px for rows and controls, 15px for prose. Release names are mono at 13px. */
+  --fs-xs: .8125rem; --fs-sm: .875rem; --fs-md: .9375rem; --fs-lg: 1.0625rem; --fs-mono: .8125rem;
 
   /* Accent: the primary button, progress, links and focus. */
   --ac-art: 144 166 247; --ac: 165 182 248; --ac-soft: 184 200 255; --ac-strong: 141 162 245; --ac-ink: 19 22 31; --ac2: 184 200 255;
