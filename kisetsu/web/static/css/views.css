@@ -380,7 +380,8 @@ section + section { margin-top: .5rem; }
 .log-time { flex: none; color: rgb(var(--text-3)); user-select: none; }
 .log-msg { flex: 1; color: rgb(var(--text-2)); overflow-wrap: anywhere; & b.bad { color: rgb(var(--bad)); } & b.warn { color: rgb(var(--warn)); } & b.info { color: rgb(var(--info)); } }
 .requests-card { margin-bottom: .75rem; padding: .5rem 1rem; font-size: .8125rem;
-  & summary { cursor: pointer; gap: .5rem; min-height: 2rem; & .btn { margin-left: auto; } }
+  /* The padding keeps the text clear of the Reset button laid over the summary's end. */
+  & summary { cursor: pointer; flex-wrap: wrap; gap: 0 .5rem; min-height: 2rem; padding-right: 3.5rem; & .btn { margin-left: auto; } }
   & p { margin: .5rem 0; }
 }
 .requests-table { margin: .25rem 0 .5rem; overflow-x: auto; display: block;
