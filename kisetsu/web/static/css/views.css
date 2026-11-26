@@ -521,7 +521,7 @@ section + section { margin-top: .5rem; }
 /* Adding a show by hand */
 .add-search { position: relative; & > .icon { position: absolute; left: .875rem; top: 50%; transform: translateY(-50%); color: rgb(var(--text-3)); pointer-events: none; } & .field { padding-left: 2.375rem; } }
 .shows-filter { width: 14rem; max-width: 100%; & .field { padding-block: .35rem; font-size: var(--fs-xs); } }
-.add-hint { margin-top: 0; }
+.add-hint { margin-top: 0; & .btn { margin-left: .25rem; vertical-align: middle; } }
 .add-entry, .add-picked { & .sr-poster { flex: none; width: 2.25rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: var(--fs-xs); } } & .grow { flex: 1; min-width: 0; } }
 .add-entry { display: flex; align-items: center; gap: .875rem; width: 100%; padding: .625rem 1.25rem; font-size: var(--fs-xs); text-align: left; transition: background-color .15s;
   &:focus-visible { outline-offset: -2px; } &:hover { background: rgb(var(--raised) / .6); } & > .muted { flex: none; } & > .icon { flex: none; color: rgb(var(--text-4)); transition: color .15s; } &:hover > .icon { color: rgb(var(--text-2)); } }
@@ -530,27 +530,34 @@ section + section { margin-top: .5rem; }
 .add-entry-title { font-size: .875rem; line-height: 1.5; font-weight: 500; color: rgb(var(--text)); }
 .add-empty { padding: 1.5rem 1.25rem; text-align: center; font-size: .8125rem; color: rgb(var(--text-2)); }
 .add-picked { display: flex; align-items: center; gap: .875rem; & .sr-poster { width: 3rem; } & .section-title { font-size: 1.125rem; } }
-.add-note { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; color: rgb(var(--text-2)); & .icon { flex: none; margin-top: .125rem; color: rgb(var(--info)); } &.warn .icon { color: rgb(var(--warn)); } }
+.add-note { display: flex; align-items: flex-start; gap: .5rem; font-size: .8125rem; color: rgb(var(--text-2)); & .mono { overflow-wrap: anywhere; } & .icon { flex: none; margin-top: .125rem; color: rgb(var(--info)); } &.warn .icon { color: rgb(var(--warn)); } }
 .add-step { grid-template-columns: minmax(0, 1fr); align-content: start;
   /* Keeps a selected or hovered row inside the card's corners; clip, so the footer's sticky still works. */
-  & .feed-list { overflow: clip; border-radius: inherit; } & .add-releases { border-radius: var(--r-lg) var(--r-lg) 0 0; } }
-.add-back { justify-self: start; margin-left: -.7rem; }
+  & .feed-list { overflow: clip; border-radius: inherit; } }
+/* A picked show gets the page's full width for Feed beside Releases; narrower, they stack. */
+.page.add-two { max-width: 48rem; }
+.add-cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1.25rem; align-items: start; }
+@media (min-width: 1024px) {
+  .page.add-two { max-width: 72rem; }
+  .add-cols { grid-template-columns: clamp(19rem, 30%, 24rem) minmax(0, 1fr); &.solo { grid-template-columns: minmax(0, 32rem); } }
+}
 .add-section { display: grid; grid-template-columns: minmax(0, 1fr); gap: .625rem; }
-.add-section-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: .25rem .75rem; min-height: 1.75rem; font-size: var(--fs-xs); & .add-all { margin-left: auto; display: flex; gap: .25rem; } }
-.add-feed { cursor: pointer; align-items: flex-start; & input { flex: none; margin-top: .25rem; accent-color: rgb(var(--ac-strong)); } }
+.add-section-head { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem .75rem; min-height: 2.25rem; font-size: var(--fs-xs); & .add-all { margin-left: auto; display: flex; gap: .25rem; } }
+.add-feed { cursor: pointer; align-items: flex-start; & input { flex: none; margin-top: .25rem; accent-color: rgb(var(--ac-strong)); }
+  & .feed-name { overflow-wrap: anywhere; }
+  & .add-feed-facts { display: flex; flex-wrap: wrap; align-items: center; gap: .125rem .75rem; margin-top: .25rem; font-size: var(--fs-xs); color: rgb(var(--text-2)); }
+  & .add-feed-diff { margin-top: .375rem; font-size: var(--fs-xs); line-height: 1.45; color: rgb(var(--text-3)); overflow-wrap: anywhere; &.mono { font-size: var(--fs-mono); } } }
 .add-release { display: flex; align-items: center; gap: .75rem; min-height: 2.5rem; padding: .375rem 1.25rem; font-size: var(--fs-xs); cursor: pointer; transition: background-color .15s;
   &:hover { background: rgb(var(--raised) / .6); } & input { flex: none; accent-color: rgb(var(--ac-strong)); } & .state, & .pill { flex: none; } }
 .add-hidden { padding: .625rem 1.25rem; font-size: var(--fs-xs); color: rgb(var(--text-3)); }
-/* Pins to the bottom of the page on a long list, and is just the card's last row on a short one. The offset cancels .content's padding, or rows would show below it. */
-.add-foot { position: sticky; bottom: -1.5rem; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1.25rem;
-  background: rgb(var(--surface)); border-radius: 0 0 var(--r-lg) var(--r-lg); & .add-summary { min-width: 0; font-size: .8125rem; color: rgb(var(--text-2)); } & .btn { flex: none; } }
-@media (min-width: 768px) { .add-foot { bottom: -2rem; } }
-.add-foot:first-child { border-radius: inherit; }
-.add-releases + .add-foot { border-top: 1px solid rgb(var(--line-soft)); }
+/* Pins to the bottom of the page on a long list, and is just the last block on a short one. The offset cancels .content's padding, or rows would show below it. */
+.add-bar { position: sticky; bottom: -1.5rem; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1.25rem; background: rgb(var(--surface)); border: 1px solid rgb(var(--line-soft)); border-radius: var(--r-lg); box-shadow: 0 -.5rem 1rem -.5rem rgb(0 0 0 / .3);
+  & .add-outcome { min-width: 0; } & .add-summary { font-size: .8125rem; color: rgb(var(--text)); } & .add-summary-feed { font-size: var(--fs-xs); color: rgb(var(--text-3)); } & .btn { flex: none; } }
+@media (min-width: 768px) { .add-bar { bottom: -2rem; } }
 .add-step .empty .link { font-size: inherit; }
-/* On a phone the name needs its second line, or every row reads the same; the footer keeps only the count, since the feed row says the rest. */
+.add-step .list-head { padding-inline: 1.25rem; }
+/* On a phone the name needs its second line, or every row reads the same. */
 @media (max-width: 36rem) {
-  .add-summary-feed { display: none; }
   .add-release { & .ep-no { width: 4rem; } & .release-name { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; } }
 }
 

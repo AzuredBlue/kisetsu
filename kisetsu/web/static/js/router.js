@@ -1,4 +1,4 @@
-// Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings, #add and #show/<id>.
+// Hash routing: #shows, #calendar, #history, #feeds, #logs, #settings, #add, #add/<anilist id> and #show/<id>.
 import { useEffect, useState } from './ui.js';
 import { feedMatches, feeds, showPage } from './data.js';
 import { coverSet, SHOW_POSTER_SIZES } from './covers.js';
@@ -9,6 +9,8 @@ export function parseHash(hash = window.location.hash) {
   const value = hash.replace(/^#\/?/, '');
   const show = /^show\/(\d+)$/.exec(value);
   if (show) return { name: 'show', id: Number(show[1]), tab: null };
+  const add = /^add\/(\d+)$/.exec(value);
+  if (add) return { name: 'add', id: Number(add[1]), tab: null };
   return { name: TABS.includes(value) ? value : 'shows', id: null, tab: null };
 }
 

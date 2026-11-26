@@ -32,6 +32,8 @@ export const logs = resource(`/api/logs?limit=${LOG_LINES}`, ['logs'], LogLines)
 export const requests = resource('/api/requests', ['requests']);
 // Changes only when setup is finished (which emits 'settings') or a backup is restored (which emits everything).
 export const setupStatus = resource('/api/setup/status', ['settings']);
+// The AniList list the Add show view offers, with a flag on the entries already followed.
+export const addList = resource('/api/add/list', ['shows']);
 export const showPage = (id) => keyedResource(`/api/shows/${id}`, [`show:${id}`, 'shows']);
 export const feedMatches = (id) => keyedResource(`/api/shows/${id}/feed-matches`, [`show:${id}`, 'shows', 'feeds']);
 export const feedItems = (query) => keyedResource(`/api/feeds/items?${query}`, ['feed_items', 'feeds', 'shows', 'episodes']);

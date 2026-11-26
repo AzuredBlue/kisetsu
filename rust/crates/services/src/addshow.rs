@@ -298,6 +298,14 @@ pub fn store_found(ctx: &mut Context<'_>, found: &[(i64, Vec<FeedArticle>)]) -> 
     Ok(added)
 }
 
+/// The download folder as the user wrote it in the settings, for showing paths ("" when none is
+/// set). The folder is compared and read through the normalized form `library::base_root` gives.
+fn configured_root(base_dir: &str) -> String {
+    let base = base_dir.trim();
+    let base = base.split_once("{name}").map_or(base, |(root, _)| root);
+    crate::paths::expand_home(base.trim_end_matches(['/', '\\']))
+}
+
 /// A folder in the download folder named after one of the show's titles, with the show's video
 /// files in it.
 pub fn existing_folder(ctx: &Context<'_>, entry: &ListEntry) -> Option<ExistingFolder> {
@@ -326,8 +334,12 @@ pub fn existing_folder(ctx: &Context<'_>, entry: &ListEntry) -> Option<ExistingF
         }
     }
     folders.sort();
+    let shown_root = configured_root(&ctx.settings.base_dir);
     for name in folders {
-        let path = Path::new(&root).join(&name).to_string_lossy().into_owned();
+        let path = Path::new(&shown_root)
+            .join(&name)
+            .to_string_lossy()
+            .into_owned();
         let Ok(names) = library::file_names(&path) else {
             continue;
         };
@@ -600,9 +612,17 @@ pub fn preview(
         on_disk_feed = feed_from_files(ctx, &show, &folder.files)?;
         if on_disk_feed.is_none() {
             note = Some(format!(
-                "Found {} file(s) in {}, but no feed matches their naming. Pick the feed yourself.",
-                folder.files.len(),
-                folder.path
+                "{} in {} {} no feed's naming. Pick the feed yourself.",
+                match folder.files.len() {
+                    1 => "1 file".to_owned(),
+                    count => format!("{count} files"),
+                },
+                folder.path,
+                if folder.files.len() == 1 {
+                    "matches"
+                } else {
+                    "match"
+                }
             ));
         }
     }
@@ -918,5 +938,15 @@ mod tests {
         assert_eq!(library_key("Show 01.srt"), "show 01.srt");
         assert_eq!(library_key(".mkv"), ".mkv");
         assert_eq!(library_key("No Extension"), "no extension");
+    }
+
+    #[test]
+    fn the_download_folder_is_shown_as_the_user_wrote_it() {
+        assert_eq!(
+            configured_root(r"  D:\Torrents\Seasonal\{name}"),
+            r"D:\Torrents\Seasonal"
+        );
+        assert_eq!(configured_root("D:/Anime/"), "D:/Anime");
+        assert_eq!(configured_root(""), "");
     }
 }

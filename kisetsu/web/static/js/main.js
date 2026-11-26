@@ -5,7 +5,7 @@ import { applyTheme, applyUserAccent, toggleTheme, resolvedTheme, useTheme } fro
 import { go, leaveTarget, requestLeave, useNow, useRoute } from './router.js';
 import { wait } from './format.js';
 import { warmFonts } from './fonts.js';
-import { settings, setupStatus, showPage, status } from './data.js';
+import { addList, settings, setupStatus, showPage, status } from './data.js';
 import { Icon, Spinner } from './components/Icon.js';
 import { LoadError } from './components/LoadError.js';
 import { ModalHost } from './components/Modal.js';
@@ -126,6 +126,13 @@ function ShowTitle({ id }) {
   return html`<h1 class="crumbs"><button type="button" class="crumb" onClick=${requestLeave} title="Back (Esc)">${TITLES[leaveTarget()] || 'Shows'}</button>${name ? html`<${Icon} name="forward" small /><span class="truncate">${name}</span>` : null}</h1>`;
 }
 
+// A picked entry on the Add show page is titled the same way: Add show, which leads back to the list, then the show.
+function AddTitle({ id }) {
+  const list = useResource(addList);
+  const entry = list.data && list.data.entries.find(e => e.anilist_id === id);
+  return html`<h1 class="crumbs"><button type="button" class="crumb" onClick=${() => go('add')} title="Back (Esc)">${TITLES.add}</button>${entry ? html`<${Icon} name="forward" small /><span class="truncate">${entry.title}</span>` : null}</h1>`;
+}
+
 function Shell() {
   const route = useRoute();
   const [menu, setMenu] = useState(false);
@@ -146,7 +153,7 @@ function Shell() {
       <header class="topbar">
         <div class="row" style="min-width:0">
           <button type="button" class="btn plain icon-only menu-btn" onClick=${() => setMenu(true)} aria-label="Open menu"><${Icon} name="menu" /></button>
-          ${route.name === 'show' ? html`<${ShowTitle} id=${route.id} />` : html`<h1 class="truncate">${title}</h1>`}
+          ${route.name === 'show' ? html`<${ShowTitle} id=${route.id} />` : route.name === 'add' && route.id ? html`<${AddTitle} id=${route.id} />` : html`<h1 class="truncate">${title}</h1>`}
         </div>
         <${Notes} info=${info} />
       </header>
