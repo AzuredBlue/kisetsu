@@ -8,13 +8,12 @@ import { EmptyState } from '../components/EmptyState.js';
 import { Poster, posterVars, StatusTag, whenClass } from '../components/ShowSummary.js';
 import { useEdges } from '../edges.js';
 import { useTheme } from '../theme.js';
-import { capitalize, formatDate, releaseState, shownExpected } from '../format.js';
+import { capitalize, formatDate, localTime, releaseState, shownExpected } from '../format.js';
 
 const WEEK = 7 * 86400000;
-const TIME = { hour: 'numeric', minute: '2-digit' };
 const WEEKDAY = { weekday: 'short' };
 const DAY = { month: 'short', day: 'numeric' };
-const time = (date) => formatDate(date, TIME);
+const time = (date) => localTime(date.toISOString());
 const span = (minutes) => minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
 
 // Air times are Japanese and never move for daylight saving, so a guessed week is exactly 7 days of time on.
@@ -94,7 +93,7 @@ function outcome({ show, passed, done, status, release }) {
   return { text: status !== 'missed' && release === 'late' ? 'Late' : 'Aired', tone: show.status !== 'waiting' ? 'warn' : '' };
 }
 
-// "out ~3:35 PM" while a release is still to come.
+// "out ~15:35" while a release is still to come.
 function expectedTag(entry, state) {
   const { show, expected } = entry;
   if (!expected || (state && (state.settled || state.tone === 'info' || state.tone === 'bad'))) return null;

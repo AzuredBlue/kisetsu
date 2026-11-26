@@ -211,7 +211,7 @@
   .cal-day.past .cal-head { border-color: rgb(var(--line-soft)); }
   .cal-rail { display: block; flex: 1; }
   .cal-slot { min-width: 0; }
-  .cal-none { display: none; }
+  .cal-none { padding: 0; line-height: 1.25rem; }
 }
 .cal-time { margin-bottom: .375rem; font-size: .875rem; line-height: 1.25rem; font-weight: 500; font-variant-numeric: tabular-nums; &.passed { color: rgb(var(--text-3)); } }
 .cal-items { display: grid; gap: .75rem; }
@@ -242,6 +242,7 @@
   &::after { content: ""; flex: 1; width: 1px; background: rgb(var(--ac) / .5); }
 }
 @container (min-width: 60rem) {
+  .cal-item .cal-poster { width: 3rem; }
   .cal-now { flex-direction: row; gap: .5rem; margin: .5rem 0 .5rem -.875rem; padding: 0 0 0 .875rem; &::after { width: auto; height: 1px; } }
 }
 
