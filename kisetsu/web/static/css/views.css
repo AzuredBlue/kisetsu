@@ -577,9 +577,10 @@ textarea.path-field { min-height: 0; resize: none; overflow-wrap: anywhere; line
 /* A narrow list puts the air line under the title, so the title keeps the row's width. */
 @container (max-width: 519px) {
   .show-row {
-    display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) auto auto; grid-template-areas: "poster title title actions" "poster air chip actions"; column-gap: .75rem; row-gap: .125rem;
+    display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) auto auto auto; grid-template-areas: "poster title title title actions" "poster air count chip actions"; column-gap: .75rem; row-gap: .125rem;
     & .sr-poster { grid-area: poster; } & .sr-title { grid-area: title; align-self: end; } & .sr-air { grid-area: air; width: auto; } & .row-actions { grid-area: actions; }
     & .sr-chip { display: block; grid-area: chip; }
+    & .sr-progress { display: flex; grid-area: count; & .bar { display: none; } & .count { width: auto; } }
     & .sr-title h3 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   }
 }
