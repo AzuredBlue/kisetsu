@@ -117,8 +117,9 @@ export function progressFraction({ done, aired, total }) {
 }
 
 export function initials(name) {
-  const words = (name || '').split(/\s+/).filter(Boolean);
-  return words.slice(0, 2).map(w => w[0]).join('').toUpperCase() || '?';
+  const title = (name || '').replace(/^(\s*(\[[^\]]*\]|\([^)]*\)))+/, '');
+  const words = title.split(/\s+/).map(w => w.replace(/^[^\p{L}\p{N}]+/u, '')).filter(Boolean);
+  return words.slice(0, 2).map(w => Array.from(w)[0]).join('').toUpperCase() || '?';
 }
 
 export function plural(n, one, many = `${one}s`) {
