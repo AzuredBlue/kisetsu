@@ -77,7 +77,7 @@ export function History() {
   return html`<div class="page narrow history">
     ${!data ? (error ? html`<${LoadError} what="the history" error=${error} reload=${reload} />` : null) : !data.length
       ? html`<${EmptyState} card title="Nothing here yet" hint="Episodes show up here once Kisetsu queues them." />`
-      : html`<div class="page-head"><p class="page-sub">Downloads Kisetsu sent to qBittorrent, newest first.</p><button type="button" class="btn sm" onClick=${clear}><${Icon} name="trash" small />Clear history…</button></div>
+      : html`<div class="page-head"><p class="page-sub">Downloads Kisetsu sent to qBittorrent, newest first.</p><button type="button" class="btn sm danger-outline" onClick=${clear}><${Icon} name="trash" small />Clear history…</button></div>
         ${groups.map((group) => html`<section key=${group.label}>
           <div class="history-day"><h2 class="section-title">${group.label}</h2></div>
           <div class="card card-divided history-card">${group.items.map(item => html`<${Row} key=${item.id} item=${item} now=${now} mode=${resolved} />`)}</div>

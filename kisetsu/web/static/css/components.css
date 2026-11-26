@@ -17,6 +17,8 @@
   &.icon-only { padding: .45rem; }
   &.primary { background: rgb(var(--ac-strong)); color: rgb(var(--ac-ink)); font-weight: 600; &:hover:not(:disabled) { background: rgb(var(--ac)); color: rgb(var(--ac-ink)); } }
   &.danger { background: var(--danger); color: rgb(var(--bad-fg)); &:hover:not(:disabled) { background: var(--danger-h); color: rgb(var(--bad-fg)); } }
+  /* A warning for an action that clears data: the normal surface with a red edge and red text. */
+  &.danger-outline { color: rgb(var(--bad)); border-color: rgb(var(--bad) / .55); &:hover:not(:disabled) { background: var(--danger); color: rgb(var(--bad)); } }
   &.plain { background: transparent; color: rgb(var(--text-3)); &:hover:not(:disabled) { background: rgb(var(--raised)); color: rgb(var(--text)); } }
 }
 
