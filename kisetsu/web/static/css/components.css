@@ -79,12 +79,12 @@ textarea.field { resize: vertical; min-height: 4.5rem; }
 }
 @media (max-width: 639px) { .set-row .set-ctl:not(.num) { flex: 1 1 100%; width: 100% !important; } }
 
-.adv > summary {
+.adv > summary, .requests-card > summary {
   display: flex; align-items: center; gap: .4rem; width: max-content; margin-bottom: .5rem; padding: 0 .25rem; cursor: pointer; list-style: none;
   &::-webkit-details-marker { display: none; }
   &::before { content: ""; width: .4rem; height: .4rem; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
 }
-.adv[open] > summary::before { transform: rotate(45deg); }
+.adv[open] > summary::before, .requests-card[open] > summary::before { transform: rotate(45deg); }
 
 /* Save bar: floats at the bottom while a form has unsaved changes. */
 .save-bar-slot { position: sticky; bottom: 1.25rem; height: 0; z-index: 30; }

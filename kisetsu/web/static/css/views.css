@@ -80,7 +80,7 @@
   & .sr-progress .count { width: 2.5rem; text-align: right; }
   & .row-actions { flex: none; display: flex; align-items: center; gap: .125rem; }
 }
-@container (min-width: 520px) { .show-row .sr-progress { display: flex; width: 7rem; } }
+@container (min-width: 520px) { .show-row .sr-progress { display: flex; width: 7rem; } .show-row .sr-air { width: 13rem; } }
 @container (min-width: 680px) { .show-row .sr-chip { display: block; width: 4.5rem; text-align: right; } .show-row .sr-feed-sub { display: none; } .show-row .sr-feed { display: flex; width: 9rem; } }
 @container (min-width: 1020px) { .show-row .sr-feed { width: 14rem; } }
 
@@ -298,6 +298,9 @@
     & a:hover .poster img { filter: brightness(1.12); }
   }
   & .sr-poster { width: 2.5rem; & .poster { border-radius: var(--r-xs); } & .no-art { font-size: .875rem; } }
+  /* The show's link stretches over the whole row; the texts to copy sit above it. */
+  & a.history-show::after { content: ''; position: absolute; inset: 0; }
+  & .release-name, & .history-reason { position: relative; z-index: 1; }
   & .release-name { margin-top: .125rem; font-size: var(--fs-mono); line-height: 1.125rem; color: rgb(var(--release)); overflow-wrap: anywhere; user-select: all; }
   & .ep { flex: none; font-size: var(--fs-xs); }
 }
@@ -383,7 +386,7 @@ section + section { margin-top: .5rem; }
 .log-msg { flex: 1; color: rgb(var(--text-2)); overflow-wrap: anywhere; & b.bad { color: rgb(var(--bad)); } & b.warn { color: rgb(var(--warn)); } & b.info { color: rgb(var(--info)); } }
 .requests-card { margin-bottom: .75rem; padding: .5rem 1rem; font-size: .8125rem;
   /* The padding keeps the text clear of the Reset button laid over the summary's end. */
-  & summary { cursor: pointer; flex-wrap: wrap; gap: 0 .5rem; min-height: 2rem; padding-right: 3.5rem; & .btn { margin-left: auto; } }
+  & summary { width: auto; margin-bottom: 0; cursor: pointer; flex-wrap: wrap; gap: 0 .5rem; min-height: 2rem; padding-right: 3.5rem; & .btn { margin-left: auto; } }
   & p { margin: .5rem 0; }
 }
 .requests-table { margin: .25rem 0 .5rem; overflow-x: auto; display: block;
@@ -420,6 +423,8 @@ section + section { margin-top: .5rem; }
   & .set-text { display: contents; }
   /* Lined up with the middle of a one-line control. */
   & .set-name { grid-column: 1; grid-row: 1; padding-top: .45rem; }
+  /* A stacked row starts with a label of its own: the name lines up with it. */
+  &:has(.set-stack) .set-name { padding-top: 0; }
   & .set-text .field-hint { grid-column: 2; grid-row: 2; margin-top: 0; max-width: 34rem; }
   & .set-ctl { grid-column: 2; grid-row: 1; justify-self: start; min-width: 0; }
   & .set-ctl.wide { justify-self: stretch; width: auto; }
@@ -589,7 +594,7 @@ textarea.path-field { min-height: 0; resize: none; overflow-wrap: anywhere; line
 @container (max-width: 519px) {
   .show-row {
     display: grid; grid-template-columns: 2.5rem minmax(0, 1fr) auto auto auto; grid-template-areas: "poster title title title actions" "poster air count chip actions"; column-gap: .75rem; row-gap: .125rem;
-    & .sr-poster { grid-area: poster; } & .sr-title { grid-area: title; align-self: end; } & .sr-air { grid-area: air; width: auto; } & .row-actions { grid-area: actions; }
+    & .sr-poster { grid-area: poster; } & .sr-title { grid-area: title; align-self: end; } & .sr-air { grid-area: air; width: auto; overflow: visible; white-space: normal; } & .row-actions { grid-area: actions; }
     & .sr-chip { display: block; grid-area: chip; }
     & .sr-progress { display: flex; grid-area: count; & .bar { display: none; } & .count { width: auto; } }
     & .sr-title h3 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }

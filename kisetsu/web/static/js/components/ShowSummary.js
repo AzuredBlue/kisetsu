@@ -154,14 +154,21 @@ function torrentList(torrents) {
   </div>`;
 }
 
+// What the dialog says about the show's folder: `top` goes above the lists, `list` names the other files, `after` closes the body.
 function folderNote(folder, slash) {
-  if (!folder || !folder.exists) return null;
+  if (!folder || !folder.exists) return {};
   const path = slash === '/' ? folder.path.replaceAll('\\', '/') : folder.path;
-  if (!folder.remove) return html`<p class="field-hint">The folder <span class="mono">${path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>`;
+  if (!folder.remove) return { after: html`<p class="field-hint">The folder <span class="mono">${path}</span> is kept: ${folder.reason} Only this show's files are deleted.</p>` };
+  if (!folder.leftover_count) return { after: html`<p class="field-hint">The folder <span class="mono">${path}</span> is deleted too.</p>` };
   const more = folder.leftover_count - folder.leftovers.length;
-  return html`<p class="field-hint">The folder <span class="mono">${path}</span> is deleted too${folder.leftover_count ? ', with these other files in it:' : '.'}</p>
-    ${folder.leftover_count ? html`<ul class="torrent-list" tabindex="0" aria-label="Other files">${folder.leftovers.map(name => html`<li key=${name}><span class="mono file-name">${breakable(name)}</span></li>`)}
-      ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>` : null}`;
+  return {
+    top: html`<p class="add-note warn"><${Icon} name="alert" small /><span>${plural(folder.leftover_count, 'other file')} in <span class="mono">${path}</span> ${folder.leftover_count === 1 ? 'is' : 'are'} deleted too.</span></p>`,
+    list: html`<div>
+      <div class="field-label">Other files <span class="count-badge">${folder.leftover_count}</span></div>
+      <ul class="torrent-list" tabindex="0" aria-label="Other files">${folder.leftovers.map(name => html`<li key=${name}><span class="mono file-name">${breakable(name)}</span></li>`)}
+        ${more > 0 ? html`<li><span class="muted">and ${more} more</span></li>` : null}</ul>
+    </div>`,
+  };
 }
 
 // A nameless torrent is a stale hash qBittorrent no longer lists, and a folder that stays loses nothing.
@@ -170,14 +177,17 @@ const hasFiles = ({ torrents, folder }) => torrents.some(t => t.name) || !!(fold
 function DeleteBody({ preview, kept, onKeep, slash }) {
   if (preview && !hasFiles(preview)) {
     return html`<p class="field-hint" style="margin:0">Removes the show. It has no torrents or files to delete.</p>
-      ${preview.folder && preview.folder.remove ? folderNote(preview.folder, slash) : null}`;
+      ${preview.folder && preview.folder.remove ? folderNote(preview.folder, slash).after : null}`;
   }
+  const note = kept ? {} : folderNote(preview && preview.folder, slash);
   return html`<p class="field-hint" style="margin:0">${kept ? 'Removes the show and its torrents. The files stay on disk.' : 'Removes the show, its torrents and their files.'}</p>
     <label class="switch-row"><span>Keep files</span>
       <input type="checkbox" class="sr-only" checked=${kept} onChange=${(e) => onKeep(e.target.checked)} />
       <span class="switch" aria-hidden="true"></span></label>
+    ${note.top}
     ${torrentList(preview ? preview.torrents : null)}
-    ${kept ? null : folderNote(preview && preview.folder, slash)}`;
+    ${note.list}
+    ${note.after}`;
 }
 
 // The switch is held here, so the confirm button follows it; `keep` is what the caller reads once the dialog closes.
@@ -267,7 +277,7 @@ export function ShowRow({ show, now }) {
       <h3 class="truncate" title=${show.title}>${show.title}</h3>
       <div class="sr-feed-sub truncate" title=${feedName(show)}>${feedName(show)}${show.counts.failed ? html`<span class="bad"> ${show.counts.failed} failed</span>` : null}${show.counts.missed ? html`<span class="warn"> ${show.counts.missed} missed</span>` : null}</div>
     </div>
-    <div class="sr-air"><span class="ep">${air.ep}</span>${' '}<span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span>${air.expected ? html`${' '}<span class="muted" title=${air.title}>${air.expected}</span>` : null}</div>
+    <div class="sr-air"><span class="ep">${air.ep}</span>${' '}<span class=${whenClass(air.tone)} title=${air.title}>${air.info}</span>${air.expected ? html`<span class="muted" title=${air.title}>, out ${air.expected}</span>` : null}</div>
     <div class="sr-feed" title=${feedName(show)}><${Icon} name="feeds" small /><span class="truncate">${feedName(show)}</span></div>
     <div class="sr-progress" title=${doneText(show)}><${ProgressBar} show=${show} /><span class="count">${countText(show)}</span></div>
     <div class="sr-chip"><${StatusTag} show=${show} /></div>
