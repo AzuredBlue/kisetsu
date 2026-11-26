@@ -44,7 +44,7 @@
 }
 .tag-slot { position: absolute; top: .5rem; right: .5rem; z-index: 2; }
 /* The fill takes --bar, the show's own art colour, when its colours are known. */
-.bar { height: 5px; background: rgb(var(--line-soft)); overflow: hidden; & > div { height: 100%; border-radius: inherit; background: rgb(var(--bar, var(--ac-art))); &.dim { background: rgb(var(--line-strong)); } } }
+.bar { box-sizing: border-box; height: 5px; background: rgb(var(--line-soft)); overflow: hidden; &.open { background: none; border: 1px dashed rgb(var(--line-strong)); } & > div { height: 100%; border-radius: inherit; background: rgb(var(--bar, var(--ac-art))); &.dim { background: rgb(var(--line-strong)); } } }
 .show-text { position: relative; display: flex; flex-direction: column; gap: .125rem; padding: .625rem .5rem .5rem; min-width: 0; border-radius: 0 0 var(--r-sm) var(--r-sm); }
 .show-text h3 { font-size: .875rem; font-weight: 500; line-height: 1.4; color: rgb(var(--text)); text-wrap: pretty; }
 .meta { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; min-width: 0; font-size: var(--fs-xs); line-height: 1rem; color: rgb(var(--text-3)); }
@@ -146,13 +146,13 @@
 .show-head .ext { flex: none; color: rgb(var(--ac-soft)); display: grid; &:hover { color: rgb(var(--text)); } }
 .show-facts { display: flex; flex-wrap: wrap; align-items: center; gap: .375rem .75rem; margin-top: .75rem; font-size: .8125rem; }
 .show-facts .feed-fact { display: inline-flex; align-items: center; gap: .375rem; min-width: 0; font-size: var(--fs-xs); }
-.show-progress { display: flex; align-items: center; gap: .75rem; max-width: 24rem; margin-top: .75rem; font-size: var(--fs-xs); & .bar { flex: 1; height: .5rem; border-radius: var(--r-full); background: rgb(var(--text) / .15); } }
+.show-progress { display: flex; align-items: center; gap: .75rem; max-width: 24rem; margin-top: .75rem; font-size: var(--fs-xs); & .bar { flex: 1; height: .5rem; border-radius: var(--r-full); background: rgb(var(--text) / .15); &.open { background: none; } } }
 
 .pane-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 2.125rem; margin-bottom: .5rem; padding: 0 .25rem; }
 .link { font-size: var(--fs-xs); color: rgb(var(--text-3)); text-decoration: underline; text-underline-offset: 4px; text-decoration-color: rgb(var(--ac) / .5); transition: color .15s, text-decoration-color .15s; &:hover { color: rgb(var(--text)); text-decoration-color: rgb(var(--ac-soft)); } }
 .show-page .card { background: rgb(var(--surface) / .92); border-color: rgb(var(--line)); }
 /* In dark theme a secondary button's fill is as dark as the show's art behind it, so it is lifted towards the text colour. */
-:root:not([data-theme="light"]) .show-page .btn:not(.primary, .danger, .plain) {
+:root:not([data-theme="light"]) .show-page .btn:not(.primary, .danger, .plain, .outline) {
   background: color-mix(in srgb, rgb(var(--btn-h)) 92%, rgb(var(--text)));
   &:hover:not(:disabled) { background: color-mix(in srgb, rgb(var(--btn-h)) 84%, rgb(var(--text))); }
 }
@@ -178,6 +178,8 @@
   &:hover { background: rgb(var(--raised)); color: rgb(var(--text)); } &:active { transform: scale(.95); } &:disabled { opacity: .5; pointer-events: none; }
 }
 .side-card { display: grid; gap: .75rem; padding: 1rem; }
+/* The tab control heads the card it switches. */
+.side-card > .seg { display: flex; & > button { flex: 1; justify-content: center; } }
 /* The name a release was matched by, beside its label, wrapping onto more lines when long; it is selected whole for copying. */
 .matched-as { display: flex; align-items: baseline; gap: .75rem; min-width: 0; & .field-label { flex: none; margin: 0; } & .field-hint { margin: 0; } & .matched-name { min-width: 0; overflow-wrap: break-word; color: rgb(var(--text-2)); } & .mono { user-select: all; } }
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
@@ -571,7 +573,8 @@ section + section { margin-top: .5rem; }
 .feed-state { display: inline-flex; align-items: center; gap: .25rem; margin-left: .25rem; color: rgb(var(--text-3)); &.locked { color: rgb(var(--text-2)); } }
 .feed-reset { margin-top: .5rem; }
 /* The side panel scrolls; its last card keeps a margin above the page's bottom edge. */
-@media (min-width: 1024px) { .show-side { padding-bottom: .25rem; } }
+/* The card starts level with the episode card, below that pane's own heading row. */
+@media (min-width: 1024px) { .show-side { padding-top: 2.625rem; padding-bottom: .25rem; } }
 .pane-head .tabular { white-space: nowrap; }
 /* In light theme a button's fill is close to the banner's pale fade; an edge keeps it visible. */
 :root[data-theme="light"] .show-head .btn { border-color: rgb(var(--line-field) / .7); }

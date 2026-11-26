@@ -108,12 +108,9 @@ export function wait(seconds) {
   return m > 0 ? `in ${h}h ${m}m` : `in ${h}h`;
 }
 
-// How full a show's progress bar is. With a known season total it is done/total; while the total is
-// unknown it is done out of the episodes out so far plus the one still to come, so a running show
-// never looks finished and a backlog shows.
-export function progressFraction({ done, aired, total }) {
-  if (total > 0) return Math.min(1, done / total);
-  return Math.min(1, done / (Math.max(aired, done) + 1));
+// How full a show's progress bar is, for a season with a known total.
+export function progressFraction({ done, total }) {
+  return Math.min(1, done / total);
 }
 
 export function initials(name) {

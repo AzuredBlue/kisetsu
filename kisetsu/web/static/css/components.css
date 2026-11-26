@@ -15,6 +15,8 @@
   &:disabled { opacity: .5; cursor: not-allowed; transform: none; }
   &.sm { padding: .35rem .75rem; font-size: var(--fs-xs); }
   &.icon-only { padding: .45rem; }
+  /* A button that is not the main action of its row, and must not read as a selected tab. */
+  &.outline { background: rgb(var(--surface)); border-color: rgb(var(--line-field)); color: rgb(var(--text-btn)); &:hover:not(:disabled) { background: rgb(var(--raised)); border-color: rgb(var(--line-strong)); color: rgb(var(--text)); } }
   &.primary { background: rgb(var(--ac-strong)); color: rgb(var(--ac-ink)); font-weight: 600; &:hover:not(:disabled) { background: rgb(var(--ac)); color: rgb(var(--ac-ink)); } }
   &.danger { background: var(--danger); color: rgb(var(--bad-fg)); &:hover:not(:disabled) { background: var(--danger-h); color: rgb(var(--bad-fg)); } }
   /* A warning for an action that clears data: the normal surface with a red edge and red text. */

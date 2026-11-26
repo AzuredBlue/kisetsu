@@ -103,13 +103,13 @@ export function Poster({ show, dim: dimmedOverride, small = false, sizes }) {
 
 // Filled with the accent the show's own page uses (its --ac-art), or the user's when its colours are not computed yet.
 export function ProgressBar({ show }) {
-  const { done, total } = show.progress;
+  const { total } = show.progress;
   const { resolved } = useTheme();
-  const known = total > 0 || done > 0 || !!show.next_airing;
-  const pct = known ? Math.round(progressFraction(show.progress) * 100) : 0;
+  // Without a season total there is nothing to fill: the track stays empty, outlined.
+  const open = !(total > 0);
   const hues = show.accent_hues;
   const color = hues && hues.length >= 4 ? paletteFromHues(hues, resolved).ac : null;
-  return html`<div class="bar" title=${doneText(show)} style=${color ? `--bar:${color}` : undefined}><div class=${dimmed(show) ? 'dim' : ''} style=${`width:${pct}%`}></div></div>`;
+  return html`<div class=${open ? 'bar open' : 'bar'} title=${doneText(show)} style=${color ? `--bar:${color}` : undefined}>${open ? null : html`<div class=${dimmed(show) ? 'dim' : ''} style=${`width:${Math.round(progressFraction(show.progress) * 100)}%`}></div>`}</div>`;
 }
 
 export function countText(show) {

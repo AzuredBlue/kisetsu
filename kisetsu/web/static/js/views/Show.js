@@ -201,7 +201,7 @@ export function Show({ route }) {
           <${Seg} label="List" value=${listTab} onChange=${setListTab} options=${[['episodes', 'Episodes'], ['releases', 'Releases']]} />
           <span class="row">
             <span class="muted tabular">${listTab === 'episodes' ? `${data.episodes.length} episode${data.episodes.length === 1 ? '' : 's'}` : matchData ? `${matchData.reduce((n, g) => n + g.matches.length, 0)} releases` : matches.error ? 'not loaded' : 'checking feed…'}</span>
-            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : data.status === 'upcoming' ? null : html`<button type="button" class="btn sm" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
+            ${searching ? html`<span class="muted row"><${Spinner} small /> Searching…</span>` : data.status === 'upcoming' ? null : html`<button type="button" class="btn outline sm" onClick=${searchOlder} title="Ask the feeds' sites for this show's older releases, for episodes that are no longer in their RSS">Search older</button>`}
           </span>
         </div>
         <div class="card list-card">
@@ -212,10 +212,8 @@ export function Show({ route }) {
         </div>
       </section>
       <aside class="show-side" aria-label="Show settings">
-        <div class="pane-head">
-          <${Seg} label="Settings" value=${sideTab} onChange=${setSideTab} options=${[['feed', 'Feed'], ['download', 'Download']]} />
-        </div>
         <div class="card side-card">
+          <${Seg} label="Settings" value=${sideTab} onChange=${setSideTab} options=${[['feed', 'Feed'], ['download', 'Download']]} />
           ${sideTab === 'feed' ? html`
             <div>
               <label for="show-feed-id" class="field-label">Feed</label>
